@@ -1,6 +1,6 @@
 {
   "name": "gitclaw",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A universal git-native agent powered by pi-agent-core",
   "type": "module",
   "main": "./dist/exports.js",
@@ -31,6 +31,14 @@
     "@mariozechner/pi-agent-core": "^0.55.4",
     "@sinclair/typebox": "^0.34.41",
     "js-yaml": "^4.1.0"
+  },
+  "peerDependencies": {
+    "gitmachine": ">=0.1.0"
+  },
+  "peerDependenciesMeta": {
+    "gitmachine": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",
