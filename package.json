@@ -1,0 +1,30 @@
+{
+  "name": "gitclaw",
+  "version": "0.1.0",
+  "description": "A universal git-native agent powered by pi-agent-core",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "gitclaw": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start": "node dist/index.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@mariozechner/pi-ai": "^0.55.4",
+    "@mariozechner/pi-agent-core": "^0.55.4",
+    "@sinclair/typebox": "^0.34.41",
+    "js-yaml": "^4.1.0"
+  },
+  "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  }
+}
