@@ -50,6 +50,7 @@
     "@mariozechner/pi-agent-core": "^0.55.4",
     "@mariozechner/pi-ai": "^0.55.4",
     "@sinclair/typebox": "^0.34.41",
+    "baileys": "^7.0.0-rc.9",
     "js-yaml": "^4.1.0",
     "ws": "^8.19.0"
   },
