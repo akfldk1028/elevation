@@ -1,4 +1,4 @@
-import { copyFile, mkdir } from "node:fs/promises";
+import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { stableJson, sha256 } from "./core.mjs";
 import { renderDrawings } from "./results.mjs";
@@ -53,5 +53,24 @@ export async function renderUnifiedDrawings({ runDir, glbPath, sourceMesh, camer
 	});
 	await renderDrawings(absoluteRunDir, ["hunyuan"], { views: DRAWING_NAMES, port: 0 });
 	const drawingDir = join(absoluteRunDir, "drawings", "hunyuan");
-	return Object.fromEntries(DRAWING_NAMES.map((name) => [name, join(drawingDir, `${name}.png`)]));
+	const drawings = Object.fromEntries(DRAWING_NAMES.map((name) => [name, join(drawingDir, `${name}.png`)]));
+	const configPath = join(absoluteRunDir, "viewer", "config.json");
+	const glbHash = sha256(await readFile(selectedGlb));
+	const configHash = sha256(await readFile(configPath));
+	const drawingEntries = {};
+	for (const [name, path] of Object.entries(drawings)) {
+		const bytes = await readFile(path);
+		drawingEntries[name] = {
+			path: portable(relative(absoluteRunDir, path)), sha256: sha256(bytes),
+			width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20),
+			glb_sha256: glbHash, viewer_config_sha256: configHash,
+		};
+	}
+	await writeFile(join(absoluteRunDir, "drawing-provenance.json"), JSON.stringify({
+		schema_version: "arr.elevation3d.drawing-provenance.v1",
+		selected_glb: { path: portable(relative(absoluteRunDir, selectedGlb)), sha256: glbHash },
+		viewer_config: { path: "viewer/config.json", sha256: configHash },
+		drawings: drawingEntries,
+	}, null, 2));
+	return drawings;
 }
