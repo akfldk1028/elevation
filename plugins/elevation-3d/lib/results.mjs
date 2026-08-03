@@ -25,7 +25,7 @@ function safeExtension(file) {
 	return byType[file.type] ?? (extname(new URL(file.url).pathname) || ".bin");
 }
 
-async function findChrome() {
+export async function findChrome() {
 	for (const path of [process.env.CHROME_PATH, "C:/Program Files/Google/Chrome/Application/chrome.exe", "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe", "/usr/bin/google-chrome", "/usr/bin/chromium"]) {
 		if (!path) continue;
 		try { await access(path); return path; } catch {}

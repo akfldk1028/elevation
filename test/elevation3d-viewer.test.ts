@@ -19,6 +19,25 @@ test("builds a standalone Three.js viewer bundle with locked cameras", async () 
 	} finally { await rm(root, { recursive: true, force: true }); }
 });
 
+test("builds a competition viewer config with one selected GLB and no alternate mesh geometry", async () => {
+	const root = await mkdtemp(join(tmpdir(), "elevation3d-competition-viewer-"));
+	try {
+		await buildViewerBundle({
+			runDir: root,
+			config: {
+				candidate_id: "fixture",
+				cameras: { views: { front: { projection_axes: { horizontal: [1, 0, 0], vertical: [0, 0, 1], depth: [0, -1, 0] } } } },
+				strategies: { hunyuan: { glb: "selected.glb" } },
+				competition_elevation: { view: "front", output_size: 2400 },
+			},
+		});
+		const config = JSON.parse(await readFile(join(root, "viewer", "config.json"), "utf8"));
+		assert.equal(config.mesh, undefined);
+		assert.equal(config.strategies.hunyuan.glb, "selected.glb");
+		assert.equal(config.competition_elevation.view, "front");
+	} finally { await rm(root, { recursive: true, force: true }); }
+});
+
 test("serves viewer assets from the returned preview URL", async () => {
 	const root = await mkdtemp(join(tmpdir(), "elevation3d-preview-"));
 	const port = 44000 + Math.floor(Math.random() * 1000);
