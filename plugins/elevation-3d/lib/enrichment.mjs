@@ -13,27 +13,29 @@ function clamp(value, [minimum, maximum]) {
 	return Math.min(maximum, Math.max(minimum, Number(value)));
 }
 
-function createPrism(plane, { start_m, width_m, bottom_m, height_m, depth_m }) {
-	const [nx, ny] = plane.normal;
-	const tangent = [-ny, nx, 0];
-	const point = (offset, elevation, depth) => [
-		plane.origin[0] + tangent[0] * offset + nx * depth,
-		plane.origin[1] + tangent[1] * offset + ny * depth,
-		plane.origin[2] + elevation,
+function subtract(left, right) {
+	return left.map((value, axis) => value - right[axis]);
+}
+
+function dot(left, right) {
+	return left.reduce((sum, value, axis) => sum + value * right[axis], 0);
+}
+
+function cross(left, right) {
+	return [
+		left[1] * right[2] - left[2] * right[1],
+		left[2] * right[0] - left[0] * right[2],
+		left[0] * right[1] - left[1] * right[0],
 	];
-	return {
-		positions: [
-			point(start_m, bottom_m, 0), point(start_m + width_m, bottom_m, 0),
-			point(start_m + width_m, bottom_m + height_m, 0), point(start_m, bottom_m + height_m, 0),
-			point(start_m, bottom_m, depth_m), point(start_m + width_m, bottom_m, depth_m),
-			point(start_m + width_m, bottom_m + height_m, depth_m), point(start_m, bottom_m + height_m, depth_m),
-		],
-		indices: [
-			[0, 2, 1], [0, 3, 2], [4, 5, 6], [4, 6, 7],
-			[0, 1, 5], [0, 5, 4], [1, 2, 6], [1, 6, 5],
-			[2, 3, 7], [2, 7, 6], [3, 0, 4], [3, 4, 7],
-		],
-	};
+}
+
+function normalize(vector) {
+	const length = Math.sqrt(dot(vector, vector));
+	return length ? vector.map((value) => value / length) : [0, 0, 0];
+}
+
+function centroid(points) {
+	return [0, 1, 2].map((axis) => points.reduce((sum, point) => sum + point[axis], 0) / points.length);
 }
 
 function connectedComponents(mesh) {
@@ -59,123 +61,200 @@ function connectedComponents(mesh) {
 	const groups = new Map();
 	for (const index of referenced) {
 		const root = find(index);
-		if (!groups.has(root)) groups.set(root, []);
-		groups.get(root).push(mesh.vertices[index]);
+		if (!groups.has(root)) groups.set(root, { vertex_indices: [], triangles: [] });
+		groups.get(root).vertex_indices.push(index);
 	}
-	return [...groups.values()];
+	mesh.triangles.forEach((triangle, triangleIndex) => groups.get(find(triangle[0])).triangles.push({
+		index: triangleIndex,
+		vertices: triangle.map((index) => mesh.vertices[index]),
+	}));
+	return [...groups.values()].map((group, componentId) => ({ ...group, id: componentId }));
 }
 
-function facadeSegments(components, plane) {
+function interpolate(left, right, amount) {
+	return left.map((value, axis) => value + (right[axis] - value) * amount);
+}
+
+function clipHalfSpace(polygon, scalar, threshold, keepAbove) {
+	const result = [];
+	for (let index = 0; index < polygon.length; index++) {
+		const current = polygon[index];
+		const previous = polygon[(index + polygon.length - 1) % polygon.length];
+		const currentValue = scalar(current);
+		const previousValue = scalar(previous);
+		const currentInside = keepAbove ? currentValue >= threshold - 1e-10 : currentValue <= threshold + 1e-10;
+		const previousInside = keepAbove ? previousValue >= threshold - 1e-10 : previousValue <= threshold + 1e-10;
+		if (currentInside !== previousInside) {
+			const denominator = currentValue - previousValue;
+			if (Math.abs(denominator) > 1e-12) result.push(interpolate(previous, current, (threshold - previousValue) / denominator));
+		}
+		if (currentInside) result.push(current);
+	}
+	return result.filter((point, index) => index === 0 || point.some((value, axis) => Math.abs(value - result[index - 1][axis]) > 1e-10));
+}
+
+function clipRange(polygon, scalar, minimum, maximum) {
+	if (maximum - minimum <= 1e-8) return [];
+	return clipHalfSpace(clipHalfSpace(polygon, scalar, minimum, true), scalar, maximum, false);
+}
+
+function polygonAreaMagnitude(polygon) {
+	if (polygon.length < 3) return 0;
+	let sum = [0, 0, 0];
+	for (let index = 0; index < polygon.length; index++) {
+		const edgeCross = cross(polygon[index], polygon[(index + 1) % polygon.length]);
+		sum = sum.map((value, axis) => value + edgeCross[axis]);
+	}
+	return Math.sqrt(dot(sum, sum)) / 2;
+}
+
+function createPolygonPrism(polygon, direction, depth) {
+	if (polygon.length < 3 || polygonAreaMagnitude(polygon) <= 1e-10) return null;
+	const extrusion = normalize(direction).map((value) => value * depth);
+	const positions = [...polygon, ...polygon.map((point) => point.map((value, axis) => value + extrusion[axis]))];
+	const count = polygon.length;
+	const indices = [];
+	for (let index = 1; index + 1 < count; index++) {
+		indices.push([0, index + 1, index]);
+		indices.push([count, count + index, count + index + 1]);
+	}
+	for (let index = 0; index < count; index++) {
+		const next = (index + 1) % count;
+		indices.push([index, next, count + next], [index, count + next, count + index]);
+	}
+	return { positions, indices };
+}
+
+function triangleRecords(mesh) {
+	const massCentroid = centroid(mesh.vertices);
+	return connectedComponents(mesh).map((component) => ({
+		...component,
+		triangles: component.triangles.map((triangle) => {
+			const center = centroid(triangle.vertices);
+			let normal = normalize(cross(subtract(triangle.vertices[1], triangle.vertices[0]), subtract(triangle.vertices[2], triangle.vertices[0])));
+			if (dot(normal, subtract(center, massCentroid)) < 0) normal = normal.map((value) => -value);
+			return { ...triangle, center, normal };
+		}),
+	}));
+}
+
+function extentTriangles(component, plane) {
 	const [width, height] = plane.extent_m;
-	const [nx, ny] = plane.normal;
-	const tangent = [-ny, nx];
-	const segments = [];
-	for (const points of components) {
-		const signedDistances = points.map((point) => (point[0] - plane.origin[0]) * nx + (point[1] - plane.origin[1]) * ny);
-		if (Math.max(...signedDistances) < -1e-5) continue;
-		const offsets = points.map((point) => (point[0] - plane.origin[0]) * tangent[0] + (point[1] - plane.origin[1]) * tangent[1]);
-		const elevations = points.map((point) => point[2] - plane.origin[2]);
-		if (Math.max(...elevations) < 0 || Math.min(...elevations) > height) continue;
-		const start = Math.max(0, Math.min(...offsets));
-		const end = Math.min(width, Math.max(...offsets));
-		if (end - start > 1e-8) segments.push([start, end]);
-	}
-	if (!segments.length) return [[0, width]];
-	segments.sort((left, right) => left[0] - right[0]);
-	const merged = [];
-	for (const segment of segments) {
-		const previous = merged.at(-1);
-		if (previous && segment[0] <= previous[1] + 1e-8) previous[1] = Math.max(previous[1], segment[1]);
-		else merged.push([...segment]);
-	}
-	return merged;
+	const tangent = [-plane.normal[1], plane.normal[0], 0];
+	const offset = (point) => dot(subtract(point, plane.origin), tangent);
+	const elevation = (point) => point[2] - plane.origin[2];
+	return component.triangles.filter((triangle) => {
+		const offsets = triangle.vertices.map(offset);
+		const elevations = triangle.vertices.map(elevation);
+		return Math.max(...offsets) >= -1e-8 && Math.min(...offsets) <= width + 1e-8
+			&& Math.max(...elevations) >= -1e-8 && Math.min(...elevations) <= height + 1e-8;
+	});
+}
+
+function viewTriangles(component, plane) {
+	const inExtent = extentTriangles(component, plane);
+	const facing = inExtent.filter((triangle) => dot(triangle.normal, plane.normal) >= 0.15);
+	if (facing.length) return facing;
+	const maximumAlignment = Math.max(...inExtent.map((triangle) => dot(triangle.normal, plane.normal)), -Infinity);
+	return inExtent.filter((triangle) => dot(triangle.normal, plane.normal) >= maximumAlignment - 1e-10);
+}
+
+function addClippedDetail(details, triangle, plane, polygon, depth, extras) {
+	const geometry = createPolygonPrism(polygon, plane.normal, depth);
+	if (!geometry) return false;
+	details.push({
+		...extras,
+		view: plane.view,
+		component_id: extras.component_id,
+		source_triangle_index: triangle.index,
+		depth_m: Math.abs(depth),
+		...geometry,
+	});
+	return true;
 }
 
 function facadeDetails(mesh, floorGuides, facadePlanes, grammar) {
 	const details = [];
-	const components = connectedComponents(mesh);
+	const components = triangleRecords(mesh);
 	const frameDepth = clamp(grammar.frame_depth_m, DETAIL_LIMITS.frame_depth_m);
 	const mullionDepth = clamp(grammar.mullion_depth_m, DETAIL_LIMITS.mullion_depth_m);
-	const panelDepth = clamp(grammar.glazing_recess_m, DETAIL_LIMITS.glazing_recess_m);
+	const glazingRecess = clamp(grammar.glazing_recess_m, DETAIL_LIMITS.glazing_recess_m);
+	const parapetHeight = Math.max(0, Number(grammar.parapet_height_m));
 	for (const plane of facadePlanes.facade_planes) {
 		const [width, height] = plane.extent_m;
-		const segments = facadeSegments(components, plane);
-		for (const elevation of floorGuides.floor_guides_m) {
-			const bottom = Math.max(0, elevation - 0.06);
-			const top = Math.min(height, elevation + 0.06);
-			if (top <= bottom) continue;
-			for (const [segmentStart, segmentEnd] of segments) details.push({
-				kind: "floor-band", view: plane.view, elevation_m: elevation, depth_m: frameDepth,
-				material: "bronze", ...createPrism(plane, {
-					start_m: segmentStart, width_m: segmentEnd - segmentStart,
-					bottom_m: bottom, height_m: top - bottom, depth_m: frameDepth,
-				}),
-			});
-		}
+		const tangent = [-plane.normal[1], plane.normal[0], 0];
+		const offset = (point) => dot(subtract(point, plane.origin), tangent);
+		const elevation = (point) => point[2] - plane.origin[2];
 		const bayCount = Math.max(1, Math.round(width / grammar.bay_width_m));
 		const spacing = width / bayCount;
 		const mullionWidth = Math.min(0.08, spacing);
-		const coveredSegments = new Set();
-		for (let bay = 0; bay <= bayCount; bay++) {
-			const offset = spacing * bay;
-			const start = offset - mullionWidth / 2;
-			for (const [segmentIndex, [segmentStart, segmentEnd]] of segments.entries()) {
-				const clippedStart = Math.max(start, 0, segmentStart);
-				const clippedEnd = Math.min(start + mullionWidth, width, segmentEnd);
-				if (clippedEnd <= clippedStart) continue;
-				coveredSegments.add(segmentIndex);
-				details.push({
-					kind: "mullion", view: plane.view, offset_m: offset, depth_m: mullionDepth,
-					material: "bronze", ...createPrism(plane, {
-						start_m: clippedStart, width_m: clippedEnd - clippedStart,
-						bottom_m: 0, height_m: height, depth_m: mullionDepth,
-					}),
-				});
+		for (const component of components) {
+			const triangles = viewTriangles(component, plane);
+			if (!triangles.length) continue;
+			for (const authoredElevation of floorGuides.floor_guides_m) {
+				const localElevation = authoredElevation - plane.origin[2];
+				const minimum = Math.max(0, localElevation - 0.06);
+				const maximum = Math.min(height, localElevation + 0.06);
+				let bandAdded = false;
+				for (const triangle of triangles) bandAdded = addClippedDetail(
+					details, triangle, plane, clipRange(triangle.vertices, elevation, minimum, maximum), frameDepth,
+					{ kind: "floor-band", elevation_m: authoredElevation, material: "concrete", component_id: component.id },
+				) || bandAdded;
+				if (!bandAdded) for (const triangle of extentTriangles(component, plane)) addClippedDetail(
+					details, triangle, plane, clipRange(triangle.vertices, elevation, minimum, maximum), frameDepth,
+					{ kind: "floor-band", elevation_m: authoredElevation, material: "concrete", component_id: component.id },
+				);
 			}
-		}
-		for (const [segmentIndex, [segmentStart, segmentEnd]] of segments.entries()) {
-			if (coveredSegments.has(segmentIndex)) continue;
-			const componentWidth = Math.min(mullionWidth, segmentEnd - segmentStart);
-			const offset = (segmentStart + segmentEnd) / 2;
-			details.push({
-				kind: "mullion", view: plane.view, offset_m: offset, depth_m: mullionDepth,
-				material: "bronze", ...createPrism(plane, {
-					start_m: offset - componentWidth / 2, width_m: componentWidth,
-					bottom_m: 0, height_m: height, depth_m: mullionDepth,
-				}),
-			});
-		}
-		for (let floor = 0; floor + 1 < floorGuides.floor_guides_m.length; floor++) {
-			const bottom = floorGuides.floor_guides_m[floor];
-			const top = Math.min(height, floorGuides.floor_guides_m[floor + 1]);
-			if (top <= bottom) continue;
-			for (let bay = 0; bay < bayCount; bay++) {
-				const start = spacing * bay + mullionWidth / 2;
-				const end = spacing * (bay + 1) - mullionWidth / 2;
-				for (const [segmentStart, segmentEnd] of segments) {
-					const panelStart = Math.max(start, segmentStart);
-					const panelEnd = Math.min(end, segmentEnd);
-					const panelWidth = panelEnd - panelStart;
-					const opaqueBottom = Math.min(top, bottom + 0.06);
-					const opaqueTop = Math.min(top, bottom + 0.45);
-					if (panelWidth > 0 && opaqueTop > opaqueBottom) details.push({
-						kind: "opaque-panel", view: plane.view, floor_m: bottom, bay, depth_m: frameDepth,
-						material: "opaque", ...createPrism(plane, {
-							start_m: panelStart, width_m: panelWidth, bottom_m: opaqueBottom,
-							height_m: opaqueTop - opaqueBottom, depth_m: frameDepth,
-						}),
-					});
-					const glassBottom = opaqueTop;
-					const glassTop = Math.max(glassBottom, top - 0.06);
-					if (panelWidth > 0 && glassTop > glassBottom) details.push({
-						kind: "glazing", view: plane.view, floor_m: bottom, bay, depth_m: panelDepth,
-						material: "glass", ...createPrism(plane, {
-							start_m: panelStart, width_m: panelWidth, bottom_m: glassBottom,
-							height_m: glassTop - glassBottom, depth_m: panelDepth,
-						}),
-					});
+
+			let componentHasMullion = false;
+			for (let bay = 0; bay <= bayCount; bay++) {
+				const nominalOffset = spacing * bay;
+				const minimum = Math.max(0, nominalOffset - mullionWidth / 2);
+				const maximum = Math.min(width, nominalOffset + mullionWidth / 2);
+				for (const triangle of triangles) componentHasMullion = addClippedDetail(
+					details, triangle, plane, clipRange(triangle.vertices, offset, minimum, maximum), mullionDepth,
+					{ kind: "mullion", offset_m: nominalOffset, material: "bronze", component_id: component.id },
+				) || componentHasMullion;
+			}
+			if (!componentHasMullion) {
+				const triangle = [...triangles].sort((left, right) => left.index - right.index)[0];
+				const localOffset = Math.max(0, Math.min(width, offset(triangle.center)));
+				addClippedDetail(
+					details, triangle, plane,
+					clipRange(triangle.vertices, offset, localOffset - mullionWidth / 2, localOffset + mullionWidth / 2),
+					mullionDepth,
+					{ kind: "mullion", offset_m: localOffset, material: "bronze", component_id: component.id },
+				);
+			}
+
+			for (let floor = 0; floor + 1 < floorGuides.floor_guides_m.length; floor++) {
+				const floorElevation = floorGuides.floor_guides_m[floor];
+				const nextElevation = Math.min(plane.origin[2] + height, floorGuides.floor_guides_m[floor + 1]);
+				const opaqueMinimum = floorElevation + 0.06;
+				const opaqueMaximum = Math.min(nextElevation - 0.06, floorElevation + 0.45);
+				const glassMinimum = opaqueMaximum;
+				const glassMaximum = nextElevation - 0.06;
+				for (let bay = 0; bay < bayCount; bay++) {
+					const bayMinimum = spacing * bay + mullionWidth / 2;
+					const bayMaximum = spacing * (bay + 1) - mullionWidth / 2;
+					for (const triangle of triangles) {
+						const bayPolygon = clipRange(triangle.vertices, offset, bayMinimum, bayMaximum);
+						addClippedDetail(details, triangle, plane, clipRange(bayPolygon, (point) => point[2], opaqueMinimum, opaqueMaximum), frameDepth, {
+							kind: "opaque-panel", floor_m: floorElevation, bay, material: "opaque", component_id: component.id,
+						});
+						addClippedDetail(details, triangle, plane, clipRange(bayPolygon, (point) => point[2], glassMinimum, glassMaximum), -glazingRecess, {
+							kind: "glazing", floor_m: floorElevation, bay, material: "glass", component_id: component.id,
+						});
+					}
 				}
 			}
+
+			if (parapetHeight > 0) for (const triangle of triangles) addClippedDetail(
+				details, triangle, plane,
+				clipRange(triangle.vertices, elevation, Math.max(0, height - parapetHeight), height),
+				frameDepth,
+				{ kind: "parapet", material: "concrete", component_id: component.id, parapet_height_m: parapetHeight },
+			);
 		}
 	}
 	return details;

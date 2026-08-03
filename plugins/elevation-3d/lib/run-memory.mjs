@@ -186,8 +186,9 @@ function selectedOutputArtifacts(run, selectedVersion) {
 	const validationArtifacts = selectedVersion.validation?.artifacts;
 	if (!validationArtifacts?.glb) throw new Error(`Selected version ${selectedVersion.id} has no GLB artifact`);
 	const drawings = Object.fromEntries(DRAWING_NAMES.map((name) => {
-		const path = validationArtifacts.drawings?.[name];
-		if (!path) throw new Error(`Selected version ${selectedVersion.id} is missing drawing ${name}`);
+		const entry = validationArtifacts.drawings?.[name];
+		const path = typeof entry === "string" ? entry : entry?.path;
+		if (typeof path !== "string" || !path) throw new Error(`Selected version ${selectedVersion.id} is missing drawing ${name}`);
 		return [name, runRelativePath(runDir, path, `drawing ${name}`)];
 	}));
 	return {

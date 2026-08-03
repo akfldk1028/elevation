@@ -205,13 +205,15 @@ test("rejects floor-band vertices moved away from their declared elevation", asy
 	const f = await fixture();
 	const io = new NodeIO();
 	const document = await io.read(f.artifact.path);
-	const primitive = document.getRoot().listNodes().find((node) => node.getName() === "facade-details")!.getMesh()!.listPrimitives()
-		.find((item) => item.getExtras().kind === "floor-band" && item.getExtras().elevation_m === 0)!;
-	const positions = primitive.getAttribute("POSITION")!;
-	for (let index = 0; index < positions.getCount(); index++) {
-		const point = positions.getElement(index, [0, 0, 0]);
-		point[2] += 0.1;
-		positions.setElement(index, point);
+	const primitives = document.getRoot().listNodes().find((node) => node.getName() === "facade-details")!.getMesh()!.listPrimitives()
+		.filter((item) => item.getExtras().kind === "floor-band" && item.getExtras().elevation_m === 0);
+	for (const primitive of primitives) {
+		const positions = primitive.getAttribute("POSITION")!;
+		for (let index = 0; index < positions.getCount(); index++) {
+			const point = positions.getElement(index, [0, 0, 0]);
+			point[2] += 0.1;
+			positions.setElement(index, point);
+		}
 	}
 	await io.write(f.artifact.path, document);
 	await refreshArtifact(f);

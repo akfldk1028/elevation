@@ -275,7 +275,10 @@ for (const scenario of [
 			metrics: { selected_version: scenario.selected },
 			artifacts: {
 				glb: join(selected.dir, glbName),
-				drawings: Object.fromEntries(drawingNames.map((name) => [name, join(selected.dir, "drawings", `${name}.png`)])),
+				drawings: Object.fromEntries(drawingNames.map((name) => {
+					const path = join(selected.dir, "drawings", `${name}.png`);
+					return [name, scenario.selected === "v001" ? { path, sha256: `${name}-sha256`, width: 2, height: 3 } : path];
+				})),
 			},
 		});
 		await selectFinal(run, { selected: scenario.selected, reason: "accepted" });
