@@ -1,12 +1,14 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 
 const params = new URLSearchParams(location.search);
 const config = await fetch("config.json").then((response) => response.json());
 const canvas = document.querySelector("canvas");
 const competitionElevation = params.get("mode") === "competition-elevation" && config.competition_elevation;
 const competitionPlan = params.get("mode") === "competition-plan" && config.competition_plan;
-const competition = competitionElevation || competitionPlan;
+const competitionAxon = params.get("mode") === "competition-axon" && config.competition_axon;
+const competition = competitionElevation || competitionPlan || competitionAxon;
 const outputSize = competition?.output_size ?? 2048;
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true, alpha: false });
 renderer.setPixelRatio(1);
@@ -431,6 +433,184 @@ function renderCompetitionPlan(root, view) {
 	renderMode("base");
 }
 
+function proceduralSurfaceTextures(role, parameters) {
+	const size = 32;
+	const colorBytes = new Uint8Array(size * size * 4);
+	const normalBytes = new Uint8Array(size * size * 4);
+	const seed = { concrete: 17, glass: 43, bronze: 71, opaque: 101 }[role];
+	for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+		const offset = (y * size + x) * 4;
+		const noise = (((x * 29 + y * 47 + seed) * 17) % 31) / 30 * 2 - 1;
+		const value = Math.round(255 * (1 - parameters.texture_intensity * 0.12 + noise * parameters.texture_intensity * 0.08));
+		colorBytes[offset] = value; colorBytes[offset + 1] = value; colorBytes[offset + 2] = value; colorBytes[offset + 3] = 255;
+		const nx = Math.round(128 + noise * 28), ny = Math.round(128 + ((((x * 13 + y * 11 + seed) % 23) / 22 * 2 - 1)) * 28);
+		normalBytes[offset] = nx; normalBytes[offset + 1] = ny; normalBytes[offset + 2] = 250; normalBytes[offset + 3] = 255;
+	}
+	const configure = (texture) => {
+		texture.wrapS = THREE.RepeatWrapping; texture.wrapT = THREE.RepeatWrapping; texture.repeat.set(5, 5); texture.needsUpdate = true;
+		return texture;
+	};
+	const color = configure(new THREE.DataTexture(colorBytes, size, size, THREE.RGBAFormat));
+	color.colorSpace = THREE.SRGBColorSpace;
+	return { color, normal: configure(new THREE.DataTexture(normalBytes, size, size, THREE.RGBAFormat)) };
+}
+
+function competitionAxonMaterials(root, palette) {
+	const meshes = [];
+	const counts = { concrete: 0, glass: 0, bronze: 0, opaque: 0 };
+	const roleColors = { concrete: 0xff0000, glass: 0x00ff00, bronze: 0x0000ff, opaque: 0xffff00 };
+	const textures = Object.fromEntries(Object.entries(palette.roles).map(([role, parameters]) => [role, proceduralSurfaceTextures(role, parameters)]));
+	root.traverse((object) => {
+		if (!object.isMesh) return;
+		if (!object.geometry.getAttribute("normal")) object.geometry.computeVertexNormals();
+		if (!object.geometry.getAttribute("uv")) {
+			object.geometry.computeBoundingBox();
+			const position = object.geometry.getAttribute("position"), bounds = object.geometry.boundingBox;
+			const size = bounds.getSize(new THREE.Vector3());
+			const uv = [];
+			for (let index = 0; index < position.count; index++) {
+				const point = new THREE.Vector3().fromBufferAttribute(position, index);
+				uv.push((point.x - bounds.min.x) / Math.max(size.x, 1e-6), (point.z - bounds.min.z) / Math.max(size.z, 1e-6));
+			}
+			object.geometry.setAttribute("uv", new THREE.Float32BufferAttribute(uv, 2));
+		}
+		const originals = Array.isArray(object.material) ? object.material : [object.material];
+		const roles = originals.map(semanticRole);
+		for (const role of roles) counts[role] += object.geometry.getAttribute("position")?.count ?? 0;
+		const pbrs = roles.map((role) => {
+			const parameters = palette.roles[role];
+			const color = new THREE.Color(); color.setStyle(parameters.axon_pbr);
+			const material = new THREE.MeshStandardMaterial({
+				name: role, color, roughness: parameters.roughness, metalness: parameters.metalness,
+				opacity: parameters.opacity, transparent: parameters.opacity < 1, depthWrite: parameters.opacity >= 0.85,
+				side: THREE.DoubleSide, map: textures[role].color, normalMap: textures[role].normal,
+				normalScale: new THREE.Vector2(parameters.normal_intensity, parameters.normal_intensity),
+			});
+			material.userData = { texture_intensity: parameters.texture_intensity, normal_intensity: parameters.normal_intensity };
+			return material;
+		});
+		const ids = roles.map((role) => new THREE.MeshBasicMaterial({ color: roleColors[role], side: THREE.DoubleSide }));
+		meshes.push({ object, originals, roles, pbrs, ids });
+		object.material = Array.isArray(object.material) ? pbrs : pbrs[0];
+		object.castShadow = true;
+		object.receiveShadow = true;
+	});
+	return { meshes, counts };
+}
+
+function boxCorners(box) {
+	const corners = [];
+	for (const x of [box.min.x, box.max.x]) for (const y of [box.min.y, box.max.y]) for (const z of [box.min.z, box.max.z]) corners.push(new THREE.Vector3(x, y, z));
+	return corners;
+}
+
+function createCompetitionAxonCamera(root, definition, marginRatio) {
+	if (definition?.projection !== "perspective") throw new Error("competition axon camera projection must be perspective");
+	const box = new THREE.Box3().setFromObject(root);
+	if (box.isEmpty()) throw new Error("loaded GLB has no geometry");
+	const center = box.getCenter(new THREE.Vector3());
+	const forward = new THREE.Vector3(...definition.target).sub(new THREE.Vector3(...definition.position)).normalize();
+	const sourceUp = new THREE.Vector3(...definition.up).normalize();
+	const right = new THREE.Vector3().crossVectors(forward, sourceUp).normalize();
+	if (right.lengthSq() < 0.99) throw new Error("competition axon camera up is parallel to view direction");
+	const up = new THREE.Vector3().crossVectors(right, forward).normalize();
+	const tanHalf = Math.tan(THREE.MathUtils.degToRad(definition.fov_degrees / 2));
+	const usable = 1 - marginRatio * 2;
+	let distance = 0;
+	for (const corner of boxCorners(box)) {
+		const relative = corner.sub(center);
+		const depthOffset = relative.dot(forward);
+		distance = Math.max(distance, Math.abs(relative.dot(right)) / (tanHalf * usable) - depthOffset, Math.abs(relative.dot(up)) / (tanHalf * usable) - depthOffset);
+	}
+	const size = box.getSize(new THREE.Vector3());
+	const diagonal = size.length();
+	distance = Math.max(distance, diagonal);
+	const camera = new THREE.PerspectiveCamera(definition.fov_degrees, 1, Math.max(0.05, distance - diagonal * 0.75), distance + diagonal * 0.75);
+	camera.position.copy(center).sub(forward.clone().multiplyScalar(distance));
+	camera.up.copy(up); camera.lookAt(center); camera.updateProjectionMatrix(); camera.updateMatrixWorld(true);
+	const projected = boxCorners(box).map((corner) => corner.project(camera));
+	const clipExtents = {
+		min_x: Math.min(...projected.map((point) => point.x)), max_x: Math.max(...projected.map((point) => point.x)),
+		min_y: Math.min(...projected.map((point) => point.y)), max_y: Math.max(...projected.map((point) => point.y)),
+		min_z: Math.min(...projected.map((point) => point.z)), max_z: Math.max(...projected.map((point) => point.z)),
+	};
+	const horizontalDepth = camera.position.clone().sub(center); horizontalDepth.z = 0; horizontalDepth.normalize();
+	return {
+		camera, box, center, size, diagonal, clipExtents,
+		manifest: {
+			type: "perspective", position: camera.position.toArray(), target: center.toArray(), up: camera.up.toArray(),
+			fov_degrees: camera.fov, near: camera.near, far: camera.far, aspect: camera.aspect,
+			depth: horizontalDepth.toArray(), margin_ratio: marginRatio,
+		},
+	};
+}
+
+function renderCompetitionAxon(root, view) {
+	const settings = config.competition_axon;
+	const fitted = createCompetitionAxonCamera(root, view, settings.margin_ratio);
+	renderer.shadowMap.enabled = true;
+	renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+	renderer.toneMapping = THREE.ACESFilmicToneMapping;
+	renderer.toneMappingExposure = 1.08;
+	const pmrem = new THREE.PMREMGenerator(renderer);
+	const environmentTarget = pmrem.fromScene(new RoomEnvironment(), 0.04);
+	scene.environment = environmentTarget.texture;
+	scene.environmentIntensity = settings.lighting.environment.intensity;
+	const hemisphere = new THREE.HemisphereLight(settings.lighting.hemisphere.sky, settings.lighting.hemisphere.ground, settings.lighting.hemisphere.intensity);
+	scene.add(hemisphere);
+	const sunSettings = settings.lighting.sun;
+	const sun = new THREE.DirectionalLight(sunSettings.color, sunSettings.intensity);
+	sun.position.set(...sunSettings.position).add(fitted.center);
+	sun.target.position.copy(fitted.center);
+	sun.castShadow = true;
+	sun.shadow.mapSize.set(sunSettings.shadow_map_size, sunSettings.shadow_map_size);
+	sun.shadow.radius = sunSettings.radius;
+	sun.shadow.bias = -0.00015;
+	const shadowSpan = fitted.diagonal * 0.75;
+	Object.assign(sun.shadow.camera, { left: -shadowSpan, right: shadowSpan, top: shadowSpan, bottom: -shadowSpan, near: 0.1, far: fitted.diagonal * 5 });
+	sun.shadow.camera.updateProjectionMatrix();
+	scene.add(sun, sun.target);
+	const contextGroup = new THREE.Group();
+	contextGroup.name = settings.context.group_identity;
+	contextGroup.userData = { authoritative: false };
+	const groundSeparation = Math.max(0.02, fitted.diagonal * 0.001);
+	const groundZ = fitted.box.min.z - groundSeparation;
+	const groundSize = fitted.diagonal * 2.4;
+	const ground = new THREE.Mesh(new THREE.PlaneGeometry(groundSize, groundSize), new THREE.MeshStandardMaterial({ color: settings.background, roughness: 1, metalness: 0 }));
+	ground.position.set(fitted.center.x, fitted.center.y, groundZ);
+	ground.receiveShadow = true;
+	contextGroup.add(ground);
+	scene.add(contextGroup);
+	const semantic = competitionAxonMaterials(root, settings.palette);
+	function renderMode(mode) {
+		if (mode === "material-id") {
+			contextGroup.visible = false; applyMaterials(semantic.meshes, "ids"); renderer.toneMapping = THREE.NoToneMapping; renderer.outputColorSpace = THREE.SRGBColorSpace; renderer.setClearColor(0x000000, 1);
+		} else {
+			contextGroup.visible = true; applyMaterials(semantic.meshes, "pbrs"); renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.outputColorSpace = THREE.SRGBColorSpace; renderer.setClearColor(settings.background, 1);
+		}
+		renderer.render(scene, fitted.camera);
+		return renderer.domElement.toDataURL("image/png");
+	}
+	const clipped = fitted.clipExtents.min_x < -1 || fitted.clipExtents.max_x > 1 || fitted.clipExtents.min_y < -1 || fitted.clipExtents.max_y > 1 || fitted.clipExtents.min_z < -1 || fitted.clipExtents.max_z > 1;
+	globalThis.__ELEVATION3D_ARTIFACT__ = {
+		camera: fitted.manifest,
+		loaded_bounds: { min: fitted.box.min.toArray(), max: fitted.box.max.toArray(), size: fitted.size.toArray() },
+		clipping: { clipped, ndc_extents: fitted.clipExtents },
+		lights: {
+			environment: settings.lighting.environment, hemisphere: settings.lighting.hemisphere,
+			sun: { ...sunSettings, position: sun.position.toArray(), target: sun.target.position.toArray() },
+			contact_shadow: { ...settings.lighting.contact_shadow, plane_size_m: groundSize, ground_z_m: groundZ, shadow_camera_span_m: shadowSpan * 2 },
+		},
+		context: {
+			group_identity: contextGroup.name, authoritative: false, geometry: "separate-ground-plane",
+			ground_z_m: groundZ, building_min_z_m: fitted.box.min.z, separation_m: groundSeparation, intersects_building: groundZ >= fitted.box.min.z,
+		},
+		material_roles: Object.fromEntries(Object.entries(semantic.counts).map(([role, geometry_vertices]) => [role, { geometry_vertices }])),
+	};
+	globalThis.__ELEVATION3D_RENDER_MODE__ = async (mode) => renderMode(mode);
+	renderMode("base");
+}
+
 const strategy = params.get("strategy") ?? (config.strategies.hunyuan?.glb ? "hunyuan" : "wan_projection");
 let loadedRoot;
 if (strategy === "hunyuan" && config.strategies.hunyuan?.glb) {
@@ -451,6 +631,7 @@ if (strategy === "hunyuan" && config.strategies.hunyuan?.glb) {
 const viewName = params.get("view") ?? "axon";
 if (competitionElevation) renderCompetition(loadedRoot, config.cameras.views[viewName]);
 else if (competitionPlan) renderCompetitionPlan(loadedRoot, config.cameras.views[viewName]);
+else if (competitionAxon) renderCompetitionAxon(loadedRoot, config.cameras.views[viewName]);
 else renderer.render(scene, createLegacyCamera(viewName));
 document.querySelector("[data-status]").textContent = `${config.candidate_id} · ${strategy} · ${viewName}`;
 globalThis.__ELEVATION3D_READY__ = true;
