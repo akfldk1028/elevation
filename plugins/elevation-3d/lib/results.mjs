@@ -91,9 +91,11 @@ export async function verifyAllViewsViewer({ runDir, outputDir = join(runDir, "b
 		await page.goto(base, { waitUntil: "networkidle0" });
 		await page.waitForFunction(() => globalThis.__ELEVATION3D_READY__ === true, { timeout: 60_000 });
 		const initial = join(outputDir, "viewer-initial.png"); await page.screenshot({ path: initial });
-		const activatedViews = [];
+		const activatedViews = [], cameraPresets = {};
 		for (const name of await page.$$eval("[data-view]", (items) => items.map((item) => item.dataset.view))) {
-			signal?.throwIfAborted(); await page.click(`[data-view="${name}"]`); activatedViews.push((await page.evaluate(() => globalThis.__ELEVATION3D_VIEWER_STATE__)).view);
+			signal?.throwIfAborted(); await page.click(`[data-view="${name}"]`);
+			const state = await page.evaluate(() => globalThis.__ELEVATION3D_VIEWER_STATE__); activatedViews.push(state.view);
+			cameraPresets[name] = { ...state.camera, clipping: state.clipping };
 		}
 		const activatedPalettes = [];
 		for (const name of ["warm", "neutral", "stone"]) {
@@ -103,6 +105,11 @@ export async function verifyAllViewsViewer({ runDir, outputDir = join(runDir, "b
 		const before = await page.evaluate(() => globalThis.__ELEVATION3D_VIEWER_STATE__);
 		await page.evaluate(() => globalThis.__ELEVATION3D_TEST_CONTROLS__.rotateAndZoom());
 		const after = await page.evaluate(() => globalThis.__ELEVATION3D_VIEWER_STATE__);
+		const fullscreenControl = await page.$("[data-fullscreen]") != null;
+		await page.click("[data-fullscreen]");
+		await new Promise((resolve) => setTimeout(resolve, 50));
+		const fullscreenState = await page.evaluate(() => globalThis.__ELEVATION3D_VIEWER_STATE__);
+		if (fullscreenState.fullscreen_active) await page.evaluate(() => globalThis.__ELEVATION3D_TEST_CONTROLS__.toggleFullscreen());
 		const distance = (state) => Math.hypot(...state.camera.position.map((value, index) => value - state.camera.target[index]));
 		const interacted = join(outputDir, "viewer-interacted.png"); await page.screenshot({ path: interacted });
 		await page.click("[data-reset]");
@@ -115,11 +122,12 @@ export async function verifyAllViewsViewer({ runDir, outputDir = join(runDir, "b
 		}
 		const report = {
 			schema_version: "arr.elevation3d.browser-verification.v1", page_loaded: true,
-			activated_views: activatedViews, activated_palettes: activatedPalettes,
+			activated_views: activatedViews, activated_palettes: activatedPalettes, camera_presets: cameraPresets,
 			validation_badge: await page.$eval("[data-validation-badge]", (item) => item.textContent),
 			glb_download: await page.$eval("[data-glb-download]", (item) => item.href), glb_load_count: after.glb_load_count,
 			rotated: JSON.stringify(after.camera.position) !== JSON.stringify(before.camera.position),
 			zoomed: Math.abs(distance(after) - distance(before)) > 1e-6,
+			fullscreen_control: fullscreenControl, fullscreen_requests: fullscreenState.fullscreen_requests,
 			opened_artifacts: openedArtifacts, console_errors: consoleErrors, screenshots: { initial, interacted },
 		};
 		const reportPath = join(outputDir, "browser-verification.json");

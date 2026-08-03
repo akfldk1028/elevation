@@ -91,8 +91,16 @@ test("interactive all-views viewer loads one GLB and exposes controls without re
 	try {
 		const palettes = Object.fromEntries(["warm", "neutral", "stone"].map((name) => [name, resolveMaterialPalette(`competition-${name}`)]));
 		const names = ["front", "back", "left", "right", "plan", "top", "axon", "opposite-axon"];
+		const orthographic = (depth, vertical = [0, 0, 1]) => ({ type: "orthographic", projection_axes: { horizontal: [1, 0, 0], vertical, depth }, frustum: { left: -15, right: 15, top: 15, bottom: -15, near: 0.1, far: 300 } });
+		const cameraViews = {
+			front: orthographic([0, -1, 0]), back: orthographic([0, 1, 0]), left: orthographic([-1, 0, 0]), right: orthographic([1, 0, 0]),
+			plan: { ...orthographic([0, 0, 1], [0, 1, 0]), cut: { enabled: true, elevation_m: 1.2, plane_world: [0, 0, 1, -1.2] } },
+			top: { ...orthographic([0, 0, 1], [0, 1, 0]), cut: { enabled: false, elevation_m: null, plane_world: null } },
+			axon: { type: "perspective", position: [40, -40, 45], target: [0, 0, 5], up: [0, 0, 1], fov_degrees: 32, near: 1, far: 200, depth: [0.707, -0.707, 0] },
+			"opposite-axon": { type: "perspective", position: [-40, 40, 45], target: [0, 0, 5], up: [0, 0, 1], fov_degrees: 32, near: 1, far: 200, depth: [-0.707, 0.707, 0] },
+		};
 		await buildViewerBundle({ runDir: root, config: {
-			candidate_id: "creative-013", strategies: { hunyuan: { glb: "../enriched.glb" } },
+			candidate_id: "creative-013", strategies: { hunyuan: { glb: "../enriched.glb" } }, cameras: { views: cameraViews },
 			all_views: { selected_glb: { path: "../enriched.glb", sha256: "a".repeat(64) }, palettes, views: Object.fromEntries(names.map((name) => [name, {}])), validation: { accepted: true, codes: [] }, artifacts: [] },
 		} });
 		await copyFile(assets.selectedGlb, join(root, "enriched.glb"));
@@ -103,6 +111,14 @@ test("interactive all-views viewer loads one GLB and exposes controls without re
 		assert.match(verification.glb_download, /enriched\.glb$/);
 		assert.equal(verification.glb_load_count, 1);
 		assert.equal(verification.rotated, true); assert.equal(verification.zoomed, true);
+		assert.equal(verification.fullscreen_control, true); assert.ok(verification.fullscreen_requests >= 1);
+		assert.equal(verification.camera_presets.front.type, "orthographic");
+		assert.notDeepEqual(verification.camera_presets.front.position, verification.camera_presets.back.position);
+		assert.equal(verification.camera_presets.plan.clipping.enabled, true);
+		assert.equal(verification.camera_presets.plan.clipping.elevation_m, 1.2);
+		assert.equal(verification.camera_presets.top.clipping.enabled, false);
+		assert.equal(verification.camera_presets.axon.type, "perspective");
+		assert.ok(verification.camera_presets.axon.depth.reduce((sum, value, index) => sum + value * verification.camera_presets["opposite-axon"].depth[index], 0) < -0.8);
 		assert.deepEqual(verification.console_errors, []);
 		await stat(verification.screenshots.initial);
 		await stat(verification.screenshots.interacted);
