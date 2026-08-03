@@ -24,48 +24,15 @@ async function enrichVersion({ sourceMesh, floorGuides, facadePlanes, grammar, s
 		grammar,
 		safeFallback,
 	});
-	try {
-		return await writeEnrichedGlb(scene, outputPath);
-	} catch (error) {
-		if (error instanceof TypeError) throw error;
-		throw new GeneratedStageError({
-			stage: "enrich",
-			code: "GLB_EXPORT_FAILED",
-			message: "GLB export failed",
-			cause: error,
-			evidence: { system_code: error?.code },
-		});
-	}
+	return executeDefaultStage("enrich", () => writeEnrichedGlb(scene, outputPath));
 }
 
 async function renderVersion(args) {
-	try {
-		return await renderUnifiedDrawings(args);
-	} catch (error) {
-		if (error instanceof TypeError) throw error;
-		throw new GeneratedStageError({
-			stage: "render",
-			code: "DRAWING_RENDER_FAILED",
-			message: "drawing render failed",
-			cause: error,
-			evidence: { system_code: error?.code },
-		});
-	}
+	return executeDefaultStage("render", () => renderUnifiedDrawings(args));
 }
 
 async function validateVersion(args) {
-	try {
-		return await validateEnrichment(args);
-	} catch (error) {
-		if (error instanceof TypeError || (!(error instanceof SyntaxError) && typeof error?.code !== "string")) throw error;
-		throw new GeneratedStageError({
-			stage: "validate",
-			code: "VALIDATION_IO_FAILED",
-			message: "validation input/output failed",
-			cause: error,
-			evidence: { system_code: error?.code },
-		});
-	}
+	return executeDefaultStage("validate", () => validateEnrichment(args));
 }
 
 const STAGE_FAILURE_CODES = {
@@ -73,6 +40,18 @@ const STAGE_FAILURE_CODES = {
 	render: "RENDER_FAILED",
 	validate: "VALIDATION_FAILED",
 };
+const GENERATED_STAGE_CODE_PAIRS = Object.freeze({
+	enrich: Object.freeze(["GLB_EXPORT_FAILED"]),
+	render: Object.freeze(["DRAWING_RENDER_FAILED"]),
+	validate: Object.freeze(["VALIDATION_IO_FAILED"]),
+});
+const FILESYSTEM_OPERATIONAL_CODES = Object.freeze([
+	"EACCES", "EBUSY", "EDQUOT", "EFBIG", "EIO", "EMFILE", "ENFILE",
+	"ENOENT", "ENOMEM", "ENOSPC", "EPERM", "EROFS",
+]);
+const RENDER_OPERATIONAL_ERROR_NAMES = Object.freeze([
+	"BrowserError", "NetworkError", "ProtocolError", "TargetCloseError", "TimeoutError",
+]);
 const REQUIRED_SOURCE_VIEWS = ["front", "right", "back", "left", "top", "axon"];
 const RETRYABLE_VALIDATION_CODES = new Set([
 	"ARTIFACT_HASH_MISMATCH",
@@ -94,14 +73,51 @@ const RETRYABLE_VALIDATION_CODES = new Set([
 	"PRIMITIVE_BUDGET_EXCEEDED",
 ]);
 
+function isAllowedGeneratedStageCode(stage, code) {
+	return Object.hasOwn(GENERATED_STAGE_CODE_PAIRS, stage)
+		&& GENERATED_STAGE_CODE_PAIRS[stage].includes(code);
+}
+
+function defaultStageCode(stage, error) {
+	const filesystemFailure = FILESYSTEM_OPERATIONAL_CODES.includes(error?.code)
+		&& typeof error?.syscall === "string"
+		&& error?.name !== "AssertionError";
+	if (stage === "enrich" && filesystemFailure) return "GLB_EXPORT_FAILED";
+	if (stage === "render" && (
+		filesystemFailure || RENDER_OPERATIONAL_ERROR_NAMES.includes(error?.name)
+	)) return "DRAWING_RENDER_FAILED";
+	if (stage === "validate" && filesystemFailure) return "VALIDATION_IO_FAILED";
+	return null;
+}
+
+export async function executeDefaultStage(stage, operation) {
+	if (!Object.hasOwn(GENERATED_STAGE_CODE_PAIRS, stage)) throw new TypeError(`Unknown generated stage: ${stage}`);
+	try {
+		return await operation();
+	} catch (error) {
+		const code = defaultStageCode(stage, error);
+		if (!code) throw error;
+		throw new GeneratedStageError({
+			stage,
+			code,
+			message: `${stage} operational failure`,
+			cause: error,
+			evidence: { system_code: error?.code, system_name: error?.name },
+		});
+	}
+}
+
 export class GeneratedStageError extends Error {
 	constructor({ stage, code, message, cause, evidence }) {
-		if (!Object.hasOwn(STAGE_FAILURE_CODES, stage)) throw new TypeError(`Unknown generated stage: ${stage}`);
-		if (typeof code !== "string" || !/^[A-Z][A-Z0-9_]*$/.test(code)) throw new TypeError("Generated stage code must be stable uppercase text");
+		if (!isAllowedGeneratedStageCode(stage, code)) {
+			throw new TypeError(`Generated stage/code pair is not allowed: ${stage}/${code}`);
+		}
 		super(message ?? `${stage} failed: ${code}`, { cause });
 		this.name = "GeneratedStageError";
-		this.stage = stage;
-		this.code = code;
+		Object.defineProperties(this, {
+			stage: { value: stage, enumerable: true },
+			code: { value: code, enumerable: true },
+		});
 		this.evidence = evidence ?? {};
 	}
 }
@@ -117,7 +133,9 @@ export class BlockedRunError extends Error {
 }
 
 function thrownFailure(error, stage) {
-	const generatedFailure = error instanceof GeneratedStageError && error.stage === stage;
+	const generatedFailure = error instanceof GeneratedStageError
+		&& error.stage === stage
+		&& isAllowedGeneratedStageCode(error.stage, error.code);
 	return {
 		stage,
 		codes: [generatedFailure ? error.code : STAGE_FAILURE_CODES[stage]],

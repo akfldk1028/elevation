@@ -10,6 +10,7 @@ import sharp from "sharp";
 import { sha256 } from "../plugins/elevation-3d/lib/core.mjs";
 import { buildEnrichedScene, writeEnrichedGlb } from "../plugins/elevation-3d/lib/enrichment.mjs";
 import { GeneratedStageError, runElevation3d } from "../plugins/elevation-3d/lib/unified-flow.mjs";
+import * as unifiedFlow from "../plugins/elevation-3d/lib/unified-flow.mjs";
 
 const temporaryRoots: string[] = [];
 const originalCwd = process.cwd();
@@ -372,6 +373,87 @@ test("retries one explicitly typed renderer-stage failure", async () => {
 	assert.equal(failure.stage, "render");
 	assert.deepEqual(failure.codes, ["DRAWING_RENDER_FAILED"]);
 	assert.equal(failure.retryable, true);
+});
+
+test("default stage wrappers type only recognized filesystem and renderer failures", async () => {
+	for (const [stage, error, expectedCode] of [
+		["enrich", Object.assign(new Error("disk full"), { code: "ENOSPC", errno: -28, syscall: "write" }), "GLB_EXPORT_FAILED"],
+		["enrich", Object.assign(new Error("access denied"), { code: "EACCES", errno: -13, syscall: "open" }), "GLB_EXPORT_FAILED"],
+		["render", Object.assign(new Error("browser timed out"), { name: "TimeoutError" }), "DRAWING_RENDER_FAILED"],
+		["render", Object.assign(new Error("browser protocol failed"), { name: "ProtocolError" }), "DRAWING_RENDER_FAILED"],
+	] as const) {
+		await assert.rejects(
+			() => unifiedFlow.executeDefaultStage(stage, async () => { throw error; }),
+			(caught: Error & { code?: string; cause?: unknown; stage?: string }) => {
+				assert.equal(caught instanceof GeneratedStageError, true);
+				assert.equal(caught.stage, stage);
+				assert.equal(caught.code, expectedCode);
+				assert.equal(caught.cause, error);
+				return true;
+			},
+		);
+	}
+});
+
+test("default stage wrappers preserve programming and unclassified exceptions", async () => {
+	const assertion = Object.assign(new Error("assertion failed"), { name: "AssertionError", code: "ERR_ASSERTION" });
+	for (const [stage, error] of [
+		["enrich", new ReferenceError("missing binding")],
+		["render", new RangeError("bad index")],
+		["enrich", assertion],
+		["enrich", Object.assign(new Error("forged access code"), { code: "EACCES" })],
+		["render", new Error("unclassified renderer bug")],
+		["validate", new SyntaxError("validator programming error")],
+	] as const) {
+		await assert.rejects(
+			() => unifiedFlow.executeDefaultStage(stage, async () => { throw error; }),
+			(caught) => {
+				assert.equal(caught, error);
+				return true;
+			},
+		);
+	}
+});
+
+test("rejects mistyped stage-code pairs and never retries a forged pair", async () => {
+	assert.throws(
+		() => new GeneratedStageError({ stage: "render", code: "GLB_EXPORT_FAILED" }),
+		/stage.*code|allowed/i,
+	);
+	const input = await fixture();
+	process.chdir(input.root);
+	const deps = validationDeps(input.mesh, {});
+	const renderCalls: string[] = [];
+	const forged = Object.assign(Object.create(GeneratedStageError.prototype), {
+		name: "GeneratedStageError",
+		message: "forged stage-code pair",
+		stage: "render",
+		code: "GLB_EXPORT_FAILED",
+		evidence: {},
+	});
+	deps.render = async ({ versionId }: any) => {
+		renderCalls.push(versionId);
+		throw forged;
+	};
+	const runDir = join(input.outputRoot, input.candidateId, "forged-stage-code");
+
+	await assert.rejects(
+		() => runElevation3d({
+			candidateId: input.candidateId,
+			datasetRoot: input.datasetRoot,
+			outputRoot: input.outputRoot,
+			runId: "forged-stage-code",
+			deps,
+		}),
+		(error: Error & { code?: string }) => {
+			assert.equal(error.code, "RUN_BLOCKED");
+			return true;
+		},
+	);
+	assert.deepEqual(renderCalls, ["v001"]);
+	const failure = await readJson(join(runDir, "versions", "v001", "failure.json"));
+	assert.deepEqual(failure.codes, ["RENDER_FAILED"]);
+	assert.equal(failure.retryable, false);
 });
 
 test("blocks an unknown validation report code without v002 or fallback", async () => {
