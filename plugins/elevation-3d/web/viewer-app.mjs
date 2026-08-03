@@ -13,10 +13,13 @@ const scene = new THREE.Scene();
 scene.add(new THREE.HemisphereLight(0xffffff, 0x777777, 2.2));
 const sun = new THREE.DirectionalLight(0xffffff, 2.5); sun.position.set(10, -10, 20); scene.add(sun);
 
-function boundsOfMesh(mesh) {
-	const box = new THREE.Box3();
-	for (const point of mesh.vertices) box.expandByPoint(new THREE.Vector3(...point));
-	return box;
+function contentCenter() {
+	if (config.mesh?.vertices?.length) {
+		const box = new THREE.Box3();
+		for (const point of config.mesh.vertices) box.expandByPoint(new THREE.Vector3(...point));
+		return box.getCenter(new THREE.Vector3());
+	}
+	return new THREE.Box3().setFromObject(scene).getCenter(new THREE.Vector3());
 }
 
 function createCamera(name) {
@@ -28,7 +31,7 @@ function createCamera(name) {
 	const camera = new THREE.OrthographicCamera(-width * margin / 2, width * margin / 2, height * margin / 2, -height * margin / 2, 0.01, 10000);
 	const axes = view.projection_axes;
 	if (axes) {
-		const center = boundsOfMesh(config.mesh).getCenter(new THREE.Vector3());
+		const center = contentCenter();
 		const depth = new THREE.Vector3(...axes.depth);
 		camera.position.copy(center).sub(depth.multiplyScalar(100));
 		camera.up.set(...axes.vertical);
@@ -79,7 +82,18 @@ function projectedMeshes() {
 
 const strategy = params.get("strategy") ?? (config.strategies.hunyuan?.glb ? "hunyuan" : "wan_projection");
 if (strategy === "hunyuan" && config.strategies.hunyuan?.glb) {
-	const gltf = await new GLTFLoader().loadAsync(config.strategies.hunyuan.glb); scene.add(gltf.scene);
+	const gltf = await new GLTFLoader().loadAsync(config.strategies.hunyuan.glb);
+	if (config.cameras.views[params.get("view") ?? "axon"]?.rendering?.material_mode === "line-oriented") {
+		gltf.scene.traverse((object) => {
+			if (!object.isMesh) return;
+			object.material = new THREE.MeshBasicMaterial({ color: 0xf7f7f5, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: 1 });
+			object.add(new THREE.LineSegments(
+				new THREE.EdgesGeometry(object.geometry),
+				new THREE.LineBasicMaterial({ color: 0x202020 }),
+			));
+		});
+	}
+	scene.add(gltf.scene);
 } else scene.add(projectedMeshes());
 const viewName = params.get("view") ?? "axon";
 const camera = createCamera(viewName);

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -32,5 +32,30 @@ test("serves viewer assets from the returned preview URL", async () => {
 	} finally {
 		await stopPreview(port);
 		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test("assigns isolated ephemeral ports and stops previews independently", async () => {
+	const roots = await Promise.all([
+		mkdtemp(join(tmpdir(), "elevation3d-preview-a-")),
+		mkdtemp(join(tmpdir(), "elevation3d-preview-b-")),
+	]);
+	let ports: number[] = [];
+	try {
+		await Promise.all(roots.map(async (root, index) => {
+			await mkdir(join(root, "viewer"), { recursive: true });
+			await writeFile(join(root, "viewer", "index.html"), `preview-${index}`);
+		}));
+		const urls = await Promise.all(roots.map((root) => startPreview(root, 0)));
+		ports = urls.map((url) => Number(new URL(url).port));
+		assert.notEqual(ports[0], ports[1]);
+		await stopPreview(ports[0]);
+		await assert.rejects(fetch(urls[0]));
+		assert.equal(await (await fetch(urls[1])).text(), "preview-1");
+		await stopPreview(ports[1]);
+		await assert.rejects(fetch(urls[1]));
+	} finally {
+		await Promise.all([...new Set(ports)].map((port) => stopPreview(port)));
+		await Promise.all(roots.map((root) => rm(root, { recursive: true, force: true })));
 	}
 });

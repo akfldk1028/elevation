@@ -3,7 +3,7 @@ import { basename, extname, join } from "node:path";
 import puppeteer from "puppeteer-core";
 import { loadCandidatePackage, redactSecrets, sha256 } from "./core.mjs";
 import { compareGeometry, readGeometry } from "./geometry.mjs";
-import { startPreview } from "./preview.mjs";
+import { startPreview, stopPreview } from "./preview.mjs";
 import { buildViewerBundle } from "./viewer.mjs";
 
 const VIEW_NAMES = ["front", "right", "back", "left", "top"];
@@ -33,21 +33,26 @@ async function findChrome() {
 	throw new Error("Chrome or Edge executable not found; set CHROME_PATH");
 }
 
-export async function renderDrawings(runDir, strategies) {
-	const port = 42000 + Math.floor(Math.random() * 1000);
-	const base = await startPreview(runDir, port);
-	const browser = await puppeteer.launch({ executablePath: await findChrome(), headless: true, args: ["--disable-gpu-sandbox", "--no-sandbox"] });
+export async function renderDrawings(runDir, strategies, { views = [...VIEW_NAMES, "axon"], port = 0 } = {}) {
+	let browser;
+	let previewPort;
 	try {
+		const base = await startPreview(runDir, port);
+		previewPort = Number(new URL(base).port);
+		browser = await puppeteer.launch({ executablePath: await findChrome(), headless: true, args: ["--disable-gpu-sandbox", "--no-sandbox"] });
 		for (const strategy of strategies) {
 			const dir = join(runDir, "drawings", strategy); await mkdir(dir, { recursive: true });
-			for (const view of [...VIEW_NAMES, "axon"]) {
+			for (const view of views) {
 				const page = await browser.newPage(); await page.setViewport({ width: 2048, height: 2048, deviceScaleFactor: 1 });
 				await page.goto(`${base}?strategy=${strategy}&view=${view}`, { waitUntil: "networkidle0" });
 				await page.waitForFunction(() => globalThis.__ELEVATION3D_READY__ === true, { timeout: 30_000 });
 				await captureCanvas(page, join(dir, `${view}.png`)); await page.close();
 			}
 		}
-	} finally { await browser.close(); }
+	} finally {
+		try { if (browser) await browser.close(); }
+		finally { if (previewPort) await stopPreview(previewPort); }
+	}
 }
 
 export async function finalizeResults({ plan, state, downloader = downloadUrl, render = true }) {

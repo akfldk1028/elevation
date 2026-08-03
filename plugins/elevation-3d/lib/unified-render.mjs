@@ -1,7 +1,6 @@
 import { copyFile, mkdir } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { stableJson, sha256 } from "./core.mjs";
-import { stopPreview } from "./preview.mjs";
 import { renderDrawings } from "./results.mjs";
 import { buildViewerBundle } from "./viewer.mjs";
 
@@ -48,21 +47,11 @@ export async function renderUnifiedDrawings({ runDir, glbPath, sourceMesh, camer
 		config: {
 			candidate_id: "unified-enrichment",
 			geometry_hash: sha256(stableJson(sourceMesh)),
-			mesh: sourceMesh,
 			cameras: unifiedCameras(cameras),
 			strategies: { hunyuan: { glb } },
 		},
 	});
-	const originalRandom = Math.random;
-	const renderPort = 42000 + Math.floor(originalRandom() * 1000);
-	Math.random = () => (renderPort - 42000 + 0.5) / 1000;
-	try {
-		await renderDrawings(absoluteRunDir, ["hunyuan"]);
-	} finally {
-		Math.random = originalRandom;
-		await stopPreview(renderPort);
-	}
+	await renderDrawings(absoluteRunDir, ["hunyuan"], { views: DRAWING_NAMES, port: 0 });
 	const drawingDir = join(absoluteRunDir, "drawings", "hunyuan");
-	await copyFile(join(drawingDir, "top.png"), join(drawingDir, "plan.png"));
 	return Object.fromEntries(DRAWING_NAMES.map((name) => [name, join(drawingDir, `${name}.png`)]));
 }
