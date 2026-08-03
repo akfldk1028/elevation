@@ -105,3 +105,40 @@ test("pair validation rejects relabeled top pixels and elevation-only annotation
 	report = await validateCompetitionPlanTopPair({ plan, top, sourceMesh: inputs.sourceMesh, camera: inputs.camera, selectedGlbPath: assets.selectedGlb });
 	assert.ok(report.codes.includes("PLAN_TOP_LEVEL_ANNOTATION_LEAKAGE"));
 });
+
+test("rejects non-unit top camera axes before rendering and in pair validation", async () => {
+	const inputs = await realInputs();
+	const malformedCamera = structuredClone(inputs.camera);
+	malformedCamera.projection_axes = {
+		horizontal: [2, 0, 0],
+		vertical: [0, 2, 0],
+		depth: [0, 0, 1],
+	};
+	await assert.rejects(
+		() => renderCompetitionPlan({ ...inputs, camera: malformedCamera, mode: "top" }),
+		/orthonormal right-handed horizontal top camera axes required/,
+	);
+	const selectedGlbSha256 = sha256(await readFile(assets.selectedGlb));
+	const artifact = (mode: "plan" | "top", hash: string) => ({
+		sha256: hash,
+		width: 2400,
+		height: 2400,
+		manifest: {
+			mode,
+			selected_glb: { path: assets.selectedGlb, sha256: selectedGlbSha256 },
+			geometry_hash: inputs.sourceMesh.identity.geometry_hash,
+			camera: { type: "orthographic", projection_axes: malformedCamera.projection_axes, px_per_m_x: 80, px_per_m_y: 80 },
+			exact_mass_projected_bounds_m: { min: malformedCamera.projected_bounds_m[0], max: malformedCamera.projected_bounds_m[1] },
+			cut: mode === "plan" ? { enabled: true, elevation_m: 1.2, plane_world: [0, 0, 1, -1.2] } : { enabled: false, elevation_m: null, plane_world: null },
+			annotations: { enabled: false, level_labels: [] },
+		},
+	});
+	const report = await validateCompetitionPlanTopPair({
+		plan: artifact("plan", "a".repeat(64)),
+		top: artifact("top", "b".repeat(64)),
+		sourceMesh: inputs.sourceMesh,
+		camera: malformedCamera,
+		selectedGlbPath: assets.selectedGlb,
+	});
+	assert.ok(report.codes.includes("PLAN_TOP_CAMERA_INVALID"));
+});

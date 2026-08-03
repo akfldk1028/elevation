@@ -10,14 +10,31 @@ import { buildViewerBundle } from "./viewer.mjs";
 
 const OUTPUT_SIZE = 2400;
 
+function validHorizontalTopAxes(axes) {
+	const valid = (axis) => Array.isArray(axis) && axis.length === 3 && axis.every((value) => typeof value === "number" && Number.isFinite(value));
+	if (!valid(axes?.horizontal) || !valid(axes?.vertical) || !valid(axes?.depth)) return false;
+	const dot = (left, right) => left.reduce((sum, value, index) => sum + value * right[index], 0);
+	const length = (axis) => Math.sqrt(dot(axis, axis));
+	const [horizontal, vertical, depth] = [axes.horizontal, axes.vertical, axes.depth];
+	const determinant = horizontal[0] * (vertical[1] * depth[2] - vertical[2] * depth[1])
+		- horizontal[1] * (vertical[0] * depth[2] - vertical[2] * depth[0])
+		+ horizontal[2] * (vertical[0] * depth[1] - vertical[1] * depth[0]);
+	return [horizontal, vertical, depth].every((axis) => Math.abs(length(axis) - 1) <= 1e-6)
+		&& Math.abs(dot(horizontal, vertical)) <= 1e-6
+		&& Math.abs(dot(horizontal, depth)) <= 1e-6
+		&& Math.abs(dot(vertical, depth)) <= 1e-6
+		&& Math.abs(determinant - 1) <= 1e-6
+		&& Math.abs(Math.abs(depth[2]) - 1) <= 1e-6
+		&& Math.abs(horizontal[2]) <= 1e-6
+		&& Math.abs(vertical[2]) <= 1e-6;
+}
+
 function assertInputs({ mode, cutElevationM, camera, palette, sourceMesh }) {
 	if (mode !== "plan" && mode !== "top") throw new Error(`unsupported competition plan mode: ${mode}`);
 	if (mode === "plan" && !Number.isFinite(cutElevationM)) throw new Error("plan cutElevationM must be finite");
 	if (camera?.projection !== "orthographic" || camera?.name !== "top") throw new Error("orthographic top camera required");
 	const axes = camera.projection_axes;
-	if (!axes || Math.abs(axes.depth?.[2] ?? 0) < 0.999 || Math.abs(axes.horizontal?.[2] ?? 1) > 0.001 || Math.abs(axes.vertical?.[2] ?? 1) > 0.001) {
-		throw new Error("horizontal top camera axes required");
-	}
+	if (!validHorizontalTopAxes(axes)) throw new Error("orthonormal right-handed horizontal top camera axes required");
 	if (!palette?.sha256 || !palette?.roles) throw new Error("resolved material palette required");
 	if (!sourceMesh?.identity?.geometry_hash || !Array.isArray(sourceMesh.vertices)) throw new Error("source exact-MASS mesh required");
 }
