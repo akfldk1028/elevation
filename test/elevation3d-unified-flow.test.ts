@@ -167,6 +167,12 @@ test("selects v001 when enrichment and all gates pass", async () => {
 	assert.equal(result.fallback, false);
 	assert.equal((await readJson(join(result.run_dir, "final.json"))).selected, "v001");
 	assert.equal((await readJson(join(result.run_dir, "versions", "v001", "version.json"))).status, "passed");
+	assert.deepEqual(await readJson(join(result.run_dir, "versions", "v001", "validation.json")), {
+		accepted: true,
+		codes: [],
+		metrics: {},
+		artifacts: {},
+	});
 });
 
 test("applies exactly one bounded correction and selects v002", async () => {

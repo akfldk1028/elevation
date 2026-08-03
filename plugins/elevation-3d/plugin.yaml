@@ -1,6 +1,6 @@
 id: elevation-3d
 name: Geometry-Locked Elevation 3D
-version: 0.1.0
+version: 0.2.0
 description: Generate and verify architectural 3D appearance from immutable MASS evidence.
 engine: ">=2.0.2"
 provides:
