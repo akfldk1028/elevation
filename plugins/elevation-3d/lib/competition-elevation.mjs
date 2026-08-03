@@ -6,6 +6,8 @@ import { sha256, stableJson } from "./core.mjs";
 import { startPreview, stopPreview } from "./preview.mjs";
 import { findChrome } from "./results.mjs";
 import { buildViewerBundle } from "./viewer.mjs";
+import { buildElevationAnnotations } from "./elevation-annotations.mjs";
+import { validateCompetitionElevation } from "./elevation-presentation-validation.mjs";
 
 const OUTPUT_SIZE = 2400;
 
@@ -348,4 +350,154 @@ export async function renderCompetitionElevationBase({
 			finally { if (previewPort) await stop(previewPort); }
 		}
 	}
+}
+
+function semanticRole(raw, offset) {
+	const red = raw[offset], green = raw[offset + 1], blue = raw[offset + 2];
+	if (red < 80 && green < 80 && blue > 200) return "bronze";
+	if (red > 180 && green > 180 && blue < 80) return "opaque";
+	if (red > 200 && green < 80 && blue < 80) return "concrete";
+	if (green > 200 && red < 80 && blue < 80) return "glass";
+	return undefined;
+}
+
+async function classifyAndCleanDarkArtifacts(base) {
+	const [baseImage, materialImage, depthImage] = await Promise.all([
+		sharp(base.path).removeAlpha().raw().toBuffer({ resolveWithObject: true }),
+		sharp(base.diagnostic_paths.material_id).removeAlpha().raw().toBuffer({ resolveWithObject: true }),
+		sharp(base.diagnostic_paths.depth).removeAlpha().raw().toBuffer({ resolveWithObject: true }),
+	]);
+	const { width, height } = baseImage.info;
+	const pixels = Buffer.from(baseImage.data);
+	const mask = new Uint8Array(width * height);
+	const visited = new Uint8Array(mask.length);
+	const bounds = base.content_bounds_px;
+	for (let y = bounds.min_y; y <= bounds.max_y; y++) for (let x = bounds.min_x; x <= bounds.max_x; x++) {
+		const offset = (y * width + x) * 3;
+		const luminance = 0.2126 * pixels[offset] + 0.7152 * pixels[offset + 1] + 0.0722 * pixels[offset + 2];
+		if (luminance < 50) mask[y * width + x] = 1;
+	}
+	const invalidTinyPixels = [];
+	let validPixels = 0, rejectedPixels = 0, validComponents = 0, suppressedComponents = 0;
+	for (let y = bounds.min_y; y <= bounds.max_y; y++) for (let x = bounds.min_x; x <= bounds.max_x; x++) {
+		const start = y * width + x;
+		if (!mask[start] || visited[start]) continue;
+		const stack = [start], component = [];
+		visited[start] = 1;
+		let minX = x, maxX = x, minY = y, maxY = y, semantic = 0, authored = 0, depthValid = 0;
+		while (stack.length) {
+			const index = stack.pop(), px = index % width, py = Math.floor(index / width), offset = index * 3;
+			component.push(index); minX = Math.min(minX, px); maxX = Math.max(maxX, px); minY = Math.min(minY, py); maxY = Math.max(maxY, py);
+			const role = semanticRole(materialImage.data, offset);
+			if (role) semantic++;
+			if (role === "bronze" || role === "opaque") authored++;
+			if (!(depthImage.data[offset] === 255 && depthImage.data[offset + 1] === 255 && depthImage.data[offset + 2] === 255)) depthValid++;
+			for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+				const nx = px + dx, ny = py + dy;
+				if (nx < bounds.min_x || nx > bounds.max_x || ny < bounds.min_y || ny > bounds.max_y || (!dx && !dy)) continue;
+				const next = ny * width + nx;
+				if (mask[next] && !visited[next]) { visited[next] = 1; stack.push(next); }
+			}
+		}
+		const narrowDetail = component.length <= 300 && maxX - minX + 1 <= 12 && maxY - minY + 1 <= 50;
+		if (!narrowDetail) continue;
+		if (semantic > 0 && authored / semantic >= 0.7 && depthValid >= authored) {
+			validPixels += component.length; validComponents++;
+		} else if (component.length <= 16 && semantic === 0) {
+			invalidTinyPixels.push(...component); suppressedComponents++;
+		} else rejectedPixels += component.length;
+	}
+	const background = [pixels[0], pixels[1], pixels[2]];
+	for (const index of invalidTinyPixels) {
+		const offset = index * 3;
+		pixels[offset] = background[0]; pixels[offset + 1] = background[1]; pixels[offset + 2] = background[2];
+	}
+	return {
+		pixels,
+		info: baseImage.info,
+		report: {
+			classification: "connected dark details with bronze/opaque material-ID and finite depth are authored geometry",
+			valid_pixels: validPixels,
+			valid_components: validComponents,
+			invalid_pixels: rejectedPixels,
+			suppressed_screen_artifact_pixels: invalidTinyPixels.length,
+			suppressed_screen_artifact_components: suppressedComponents,
+			geometry_clipped: false,
+			selected_glb_altered: false,
+		},
+	};
+}
+
+export async function renderCompetitionElevation({
+	runDir, glbPath, sourceMesh, floorGuides, facadePlanes, camera, palette, dimensions, view, candidateId, signal, lifecycle,
+}) {
+	const base = await renderCompetitionElevationBase({ runDir, glbPath, sourceMesh, camera, palette, dimensions, view, signal, lifecycle });
+	const outputDir = join(resolve(runDir), "competition-elevation", "front");
+	const annotation = buildElevationAnnotations({ dimensions, camera: base.camera, contentBounds: base.content_bounds_px, canvas: [base.width, base.height], candidateId });
+	const dimensionsPath = join(outputDir, "front-dimensions.json");
+	const svgPath = join(outputDir, "front-annotations.svg");
+	await writeFile(dimensionsPath, JSON.stringify(dimensions, null, 2));
+	await writeFile(svgPath, annotation.svg);
+	const dimensionsRecord = { path: dimensionsPath, sha256: sha256(await readFile(dimensionsPath)) };
+	const svgRecord = { path: svgPath, sha256: sha256(await readFile(svgPath)) };
+	const presentationBase = await classifyAndCleanDarkArtifacts(base);
+	const finalPath = join(outputDir, "front.png");
+	const finalBytes = await sharp(presentationBase.pixels, { raw: presentationBase.info })
+		.composite([{ input: Buffer.from(annotation.svg), blend: "over" }])
+		.png()
+		.toBuffer();
+	await writeFile(finalPath, finalBytes);
+	const finalRecord = { path: finalPath, sha256: sha256(finalBytes) };
+	const displayedDimensions = {
+		overall_width: dimensions.overall_width.display_mm,
+		overall_height: dimensions.overall_height.display_mm,
+		levels: dimensions.levels.map((item) => item.display_mm),
+		floor_intervals: dimensions.floor_intervals.map((item) => item.display_mm),
+		facade_width: dimensions.facade_extent.width.display_mm,
+		facade_height: dimensions.facade_extent.height.display_mm,
+		scale_bar: dimensions.scale_bar.display_mm,
+	};
+	const renderManifestPath = join(outputDir, "front-render-manifest.json");
+	const renderManifest = {
+		schema_version: "arr.elevation3d.competition-elevation.v1",
+		view: "front",
+		candidate_id: candidateId ?? sourceMesh.identity?.candidate_id,
+		palette: { preset: palette.preset, sha256: palette.sha256 },
+		selected_glb_sha256: base.selected_glb_sha256,
+		viewer_config_sha256: base.viewer_config_sha256,
+		geometry_hash: dimensions.geometry_hash,
+		camera: base.camera,
+		content_bounds_px: base.content_bounds_px,
+		displayed_dimensions: displayedDimensions,
+		provenance: {
+			base_png_sha256: base.sha256,
+			annotations_svg_sha256: svgRecord.sha256,
+			dimensions_json_sha256: dimensionsRecord.sha256,
+			final_png_sha256: finalRecord.sha256,
+			palette_sha256: palette.sha256,
+		},
+		presentation: { authored_dark_geometry: presentationBase.report },
+	};
+	await writeFile(renderManifestPath, JSON.stringify(renderManifest, null, 2));
+	const manifestRecord = { path: renderManifestPath, sha256: sha256(await readFile(renderManifestPath)) };
+	const draft = {
+		base,
+		dimensions,
+		annotation,
+		final_png: finalRecord,
+		annotations_svg: svgRecord,
+		dimensions_json: dimensionsRecord,
+		render_manifest: manifestRecord,
+		displayed_dimensions: displayedDimensions,
+		presentation: { authored_dark_geometry: presentationBase.report },
+	};
+	const validation = await validateCompetitionElevation({ artifacts: draft, sourceMesh, facadePlanes, floorGuides, view: camera, selectedGlbPath: glbPath });
+	const validationPath = join(outputDir, "front-validation.json");
+	await writeFile(validationPath, JSON.stringify(validation, null, 2));
+	return {
+		schema_version: "arr.elevation3d.elevation-artifacts.v1",
+		...draft,
+		validation,
+		validation_report: { path: validationPath, sha256: sha256(await readFile(validationPath)) },
+	};
 }
