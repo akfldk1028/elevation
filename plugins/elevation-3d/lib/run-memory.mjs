@@ -1,6 +1,8 @@
-import { appendFile, mkdir, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { redactSecrets } from "./core.mjs";
+
+const memoryAppendQueues = new Map();
 
 function portableRelativePath(path) {
 	const relativePath = isAbsolute(path) ? relative(process.cwd(), path) : path;
@@ -18,8 +20,19 @@ function omitBinary(value) {
 	return value;
 }
 
+function redactAdditionalCredentials(value) {
+	if (Array.isArray(value)) return value.map(redactAdditionalCredentials);
+	if (!value || typeof value !== "object") return value;
+	return Object.fromEntries(Object.entries(value).map(([key, item]) => [
+		key,
+		/(password|passwd|cookie|session(?:[_-]?id)?)/i.test(key)
+			? "[REDACTED]"
+			: redactAdditionalCredentials(item),
+	]));
+}
+
 function persistent(value) {
-	return redactSecrets(omitBinary(value));
+	return redactSecrets(redactAdditionalCredentials(omitBinary(value)));
 }
 
 function artifactReferences(input, approvedDesign) {
@@ -33,8 +46,8 @@ function artifactReferences(input, approvedDesign) {
 	];
 }
 
-async function writeJson(path, value) {
-	await writeFile(path, `${JSON.stringify(persistent(value), null, 2)}\n`);
+async function writeJson(path, value, options) {
+	await writeFile(path, `${JSON.stringify(persistent(value), null, 2)}\n`, options);
 }
 
 export async function createUnifiedRun({ input, approvedDesign, outputRoot, runId }) {
@@ -47,8 +60,9 @@ export async function createUnifiedRun({ input, approvedDesign, outputRoot, runI
 		identity: input.identity,
 		artifacts: artifactReferences(input, approvedDesign),
 	};
+	await mkdir(dir, { recursive: true });
+	await writeJson(join(dir, "run.json"), metadata, { flag: "wx" });
 	await mkdir(join(dir, "versions"), { recursive: true });
-	await writeJson(join(dir, "run.json"), metadata);
 	return { id: runId, dir, metadata, versions: [], final: null };
 }
 
@@ -110,6 +124,25 @@ export async function appendRunMemory(run, memoryRoot) {
 		}))),
 		final: run.final,
 	});
-	await mkdir(resolve(memoryRoot), { recursive: true });
-	await appendFile(join(resolve(memoryRoot), "unified-runs.jsonl"), `${JSON.stringify(event)}\n`);
+	const memoryFile = join(resolve(memoryRoot), "unified-runs.jsonl");
+	const previousAppend = memoryAppendQueues.get(memoryFile) ?? Promise.resolve();
+	const currentAppend = previousAppend.catch(() => {}).then(async () => {
+		await mkdir(resolve(memoryRoot), { recursive: true });
+		let previous = "";
+		try {
+			previous = await readFile(memoryFile, "utf8");
+		} catch (error) {
+			if (error.code !== "ENOENT") throw error;
+		}
+		const alreadyAppended = previous.split(/\r?\n/)
+			.filter(Boolean)
+			.some((line) => JSON.parse(line).run_id === run.id);
+		if (!alreadyAppended) await appendFile(memoryFile, `${JSON.stringify(event)}\n`);
+	});
+	memoryAppendQueues.set(memoryFile, currentAppend);
+	try {
+		await currentAppend;
+	} finally {
+		if (memoryAppendQueues.get(memoryFile) === currentAppend) memoryAppendQueues.delete(memoryFile);
+	}
 }
