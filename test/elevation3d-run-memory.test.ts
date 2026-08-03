@@ -54,6 +54,24 @@ test("creates immutable run metadata and v001 directories", async () => {
 	assert.equal(JSON.parse(await readFile(join(version.dir, "grammar.json"), "utf8")).schema_version, "arr.facade-grammar.v1");
 });
 
+test("rejects a run ID collision without replacing initial metadata", async () => {
+	const outputRoot = await mkdtemp(join(tmpdir(), "elevation3d-run-collision-"));
+	temporaryRoots.push(outputRoot);
+	const run = await createUnifiedRun({ input, approvedDesign, outputRoot, runId: "same-run" });
+	const initial = await readFile(join(run.dir, "run.json"), "utf8");
+
+	await assert.rejects(
+		() => createUnifiedRun({
+			input: { ...input, identity: { geometry_hash: "replacement-hash" } },
+			approvedDesign,
+			outputRoot,
+			runId: "same-run",
+		}),
+		/already exists/i,
+	);
+	assert.equal(await readFile(join(run.dir, "run.json"), "utf8"), initial);
+});
+
 test("records each version failure and appends one redacted final memory event", async () => {
 	const outputRoot = await mkdtemp(join(tmpdir(), "elevation3d-run-failures-"));
 	const memoryRoot = await mkdtemp(join(tmpdir(), "elevation3d-durable-memory-"));
@@ -65,7 +83,13 @@ test("records each version failure and appends one redacted final memory event",
 	await recordVersionFailure(run, v1, {
 		stage: "validate",
 		codes: ["DETAIL_BOUNDS_EXCEEDED"],
-		evidence: { response: { authorization: "Bearer secret" } },
+		evidence: {
+			response: {
+				authorization: "Bearer secret",
+				credentials: { password: "password-value", cookie: "cookie-value" },
+			},
+			session: "session-value",
+		},
 		retryable: true,
 	});
 	await recordVersionFailure(run, v2, {
@@ -75,7 +99,7 @@ test("records each version failure and appends one redacted final memory event",
 		retryable: false,
 	});
 	await selectFinal(run, { selected: "fallback", reason: "two generated versions failed" });
-	await appendRunMemory(run, memoryRoot);
+	await Promise.all([appendRunMemory(run, memoryRoot), appendRunMemory(run, memoryRoot)]);
 
 	const firstFailure = JSON.parse(await readFile(join(v1.dir, "failure.json"), "utf8"));
 	const secondFailure = JSON.parse(await readFile(join(v2.dir, "failure.json"), "utf8"));
@@ -86,6 +110,13 @@ test("records each version failure and appends one redacted final memory event",
 	assert.equal(firstVersion.status, "failed");
 	assert.equal(firstVersion.failure_path, "failure.json");
 	assert.equal(JSON.stringify(firstFailure).includes("secret"), false);
+	assert.deepEqual(firstFailure.evidence, {
+		response: {
+			authorization: "[REDACTED]",
+			credentials: { password: "[REDACTED]", cookie: "[REDACTED]" },
+		},
+		session: "[REDACTED]",
+	});
 
 	const final = JSON.parse(await readFile(join(run.dir, "final.json"), "utf8"));
 	assert.equal(final.schema_version, "arr.elevation3d.final-selection.v1");
@@ -102,4 +133,7 @@ test("records each version failure and appends one redacted final memory event",
 		["MISSING_COMPONENT"],
 	]);
 	assert.equal(JSON.stringify(event).includes("secret"), false);
+	for (const credential of ["password-value", "cookie-value", "session-value"]) {
+		assert.equal(JSON.stringify(event).includes(credential), false);
+	}
 });
