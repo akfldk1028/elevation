@@ -98,6 +98,15 @@ export async function recordVersionFailure(run, version, failure) {
 	version.failures.push(record);
 }
 
+export async function recordVersionSuccess(run, version) {
+	if (!run.versions.includes(version)) throw new Error(`Version ${version.id} does not belong to run ${run.id}`);
+	if (version.metadata.status !== "started") {
+		throw new Error(`Version ${version.id} cannot pass from status ${version.metadata.status}`);
+	}
+	version.metadata = { ...version.metadata, status: "passed" };
+	await writeJson(join(version.dir, "version.json"), version.metadata);
+}
+
 export async function selectFinal(run, selection) {
 	const final = persistent({
 		schema_version: "arr.elevation3d.final-selection.v1",

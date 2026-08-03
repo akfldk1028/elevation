@@ -166,6 +166,7 @@ test("selects v001 when enrichment and all gates pass", async () => {
 	assert.equal(result.attempts, 1);
 	assert.equal(result.fallback, false);
 	assert.equal((await readJson(join(result.run_dir, "final.json"))).selected, "v001");
+	assert.equal((await readJson(join(result.run_dir, "versions", "v001", "version.json"))).status, "passed");
 });
 
 test("applies exactly one bounded correction and selects v002", async () => {
@@ -190,6 +191,7 @@ test("applies exactly one bounded correction and selects v002", async () => {
 	const corrected = await readJson(join(result.run_dir, "versions", "v002", "grammar.json"));
 	assert.equal(corrected.frame_depth_m, 0.09);
 	assert.equal(corrected.mullion_depth_m, 0.04);
+	assert.equal((await readJson(join(result.run_dir, "versions", "v002", "version.json"))).status, "passed");
 });
 
 test("quarantines both failures and selects a rendered and validated exact-mass fallback", async () => {
@@ -219,11 +221,107 @@ test("quarantines both failures and selects a rendered and validated exact-mass 
 	assert.equal((await readJson(join(result.run_dir, "versions", "v001", "failure.json"))).codes.length > 0, true);
 	assert.equal((await readJson(join(result.run_dir, "versions", "v002", "failure.json"))).codes.length > 0, true);
 	assert.equal((await readJson(join(result.run_dir, "final.json"))).selected, "fallback");
+	assert.equal((await readJson(join(result.run_dir, "versions", "fallback", "version.json"))).status, "passed");
 	const memoryLines = (await readFile(join(input.root, "memory", "elevation-3d", "unified-runs.jsonl"), "utf8"))
 		.trim().split(/\r?\n/);
 	assert.equal(memoryLines.length, 1);
 	assert.equal(JSON.parse(memoryLines[0]).final.selected, "fallback");
 });
+
+test("blocks a non-correctable validation code without launching v002 or fallback", async () => {
+	const input = await fixture();
+	process.chdir(input.root);
+	const deps = validationDeps(input.mesh, { v001: ["BASE_GEOMETRY_CHANGED"] });
+	const runDir = join(input.outputRoot, input.candidateId, "base-corruption");
+
+	await assert.rejects(
+		() => runElevation3d({
+			candidateId: input.candidateId,
+			datasetRoot: input.datasetRoot,
+			outputRoot: input.outputRoot,
+			runId: "base-corruption",
+			deps,
+		}),
+		(error: Error & { code?: string; retryable?: boolean }) => {
+			assert.equal(error.code, "RUN_BLOCKED");
+			assert.equal(error.retryable, false);
+			assert.match(error.message, /BASE_GEOMETRY_CHANGED/);
+			return true;
+		},
+	);
+	assert.deepEqual(deps.validateCalls, ["v001"]);
+	assert.deepEqual(deps.enrichCalls, [{ versionId: "v001", safeFallback: false }]);
+	assert.equal((await readJson(join(runDir, "final.json"))).selected, "blocked");
+	const memoryLines = (await readFile(join(input.root, "memory", "elevation-3d", "unified-runs.jsonl"), "utf8"))
+		.trim().split(/\r?\n/);
+	assert.equal(memoryLines.length, 1);
+	assert.equal(JSON.parse(memoryLines[0]).final.selected, "blocked");
+});
+
+for (const failureStage of ["enrich", "render", "validate"] as const) {
+	test(`blocks an unexpected ${failureStage} exception after v001 and preserves its cause`, async () => {
+		const input = await fixture();
+		process.chdir(input.root);
+		const calls: string[] = [];
+		const fault = Object.assign(new Error(`${failureStage} programming fault`), { code: "EACCES" });
+		const deps = {
+			enrich: async ({ outputPath, versionId }: { outputPath: string; versionId: string }) => {
+				calls.push(`enrich:${versionId}`);
+				if (failureStage === "enrich") throw fault;
+				return {
+					path: outputPath,
+					sha256: "a".repeat(64),
+					base_primitive: { positions: input.mesh.vertices, indices: input.mesh.triangles },
+					bounds: { min: [-2.18, -1.18, 0], max: [2.18, 1.18, 3] },
+				};
+			},
+			render: async ({ runDir, versionId }: { runDir: string; versionId: string }) => {
+				calls.push(`render:${versionId}`);
+				if (failureStage === "render") throw fault;
+				return Object.fromEntries(
+					["plan", "front", "back", "left", "right", "top", "axon"]
+						.map((name) => [name, join(runDir, `${name}.png`)]),
+				);
+			},
+			validate: async ({ versionId }: { versionId: string }) => {
+				calls.push(`validate:${versionId}`);
+				if (failureStage === "validate") throw fault;
+				return { accepted: true, codes: [], metrics: {}, artifacts: {} };
+			},
+		};
+		const runId = `throw-${failureStage}`;
+		const runDir = join(input.outputRoot, input.candidateId, runId);
+
+		await assert.rejects(
+			() => runElevation3d({
+				candidateId: input.candidateId,
+				datasetRoot: input.datasetRoot,
+				outputRoot: input.outputRoot,
+				runId,
+				deps,
+			}),
+			(error: Error & { cause?: unknown; code?: string }) => {
+				assert.equal(error.code, "RUN_BLOCKED");
+				assert.equal(error.cause, fault);
+				return true;
+			},
+		);
+		const expectedCalls = failureStage === "enrich"
+			? ["enrich:v001"]
+			: failureStage === "render"
+				? ["enrich:v001", "render:v001"]
+				: ["enrich:v001", "render:v001", "validate:v001"];
+		assert.deepEqual(calls, expectedCalls);
+		const failure = await readJson(join(runDir, "versions", "v001", "failure.json"));
+		assert.equal(failure.stage, failureStage);
+		assert.deepEqual(failure.codes, [{ enrich: "ENRICHMENT_FAILED", render: "RENDER_FAILED", validate: "VALIDATION_FAILED" }[failureStage]]);
+		assert.equal(failure.retryable, false);
+		assert.equal((await readJson(join(runDir, "final.json"))).selected, "blocked");
+		const memoryLines = (await readFile(join(input.root, "memory", "elevation-3d", "unified-runs.jsonl"), "utf8"))
+			.trim().split(/\r?\n/);
+		assert.equal(memoryLines.length, 1);
+	});
+}
 
 test("blocks an untrusted approved-image hash without attempting or falling back", async () => {
 	const input = await fixture();

@@ -9,6 +9,7 @@ import {
 	beginVersion,
 	createUnifiedRun,
 	recordVersionFailure,
+	recordVersionSuccess,
 	selectFinal,
 } from "../plugins/elevation-3d/lib/run-memory.mjs";
 
@@ -70,6 +71,19 @@ test("rejects a run ID collision without replacing initial metadata", async () =
 		/already exists/i,
 	);
 	assert.equal(await readFile(join(run.dir, "run.json"), "utf8"), initial);
+});
+
+test("transitions an accepted version from started to passed", async () => {
+	const outputRoot = await mkdtemp(join(tmpdir(), "elevation3d-run-success-"));
+	temporaryRoots.push(outputRoot);
+	const run = await createUnifiedRun({ input, approvedDesign, outputRoot, runId: "run-passed" });
+	const version = await beginVersion(run, "v001", grammar);
+
+	await recordVersionSuccess(run, version);
+
+	const persisted = JSON.parse(await readFile(join(version.dir, "version.json"), "utf8"));
+	assert.equal(persisted.status, "passed");
+	assert.equal(version.metadata.status, "passed");
 });
 
 test("records each version failure and appends one redacted final memory event", async () => {
