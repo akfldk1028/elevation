@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import sharp from "sharp";
-import { renderAllViews, validateAllViewsRun } from "../plugins/elevation-3d/lib/all-views.mjs";
+import { renderAllViews, validateAllViewsRun, verifyPersistedAllViewsArtifacts } from "../plugins/elevation-3d/lib/all-views.mjs";
 import { sha256 } from "../plugins/elevation-3d/lib/core.mjs";
 import { resolveMaterialPalette } from "../plugins/elevation-3d/lib/material-palettes.mjs";
 import { resolveElevation3dAssets } from "./helpers/elevation3d-assets.ts";
@@ -54,6 +55,8 @@ test("packages one inspectable GLB and eight accepted views", { timeout: 600_000
 	assert.equal(run.manifest.selected_glb.path, "enriched.glb");
 	assert.equal(run.manifest.selected_glb.sha256, sha256(await readFile(join(runDir, "enriched.glb"))));
 	assert.equal(run.manifest.viewer.path, "viewer/index.html");
+	assert.deepEqual(run.manifest.palette, { preset: "competition-warm", sha256: resolveMaterialPalette("competition-warm").sha256 });
+	assert.deepEqual(Object.keys(run.manifest.verified_evidence.views).sort(), Object.keys(run.views).sort());
 	for (const view of Object.values(run.views)) {
 		assert.deepEqual(await sharp(view.path).metadata().then(({ width, height }) => [width, height]), [2400, 2400]);
 		assert.equal(view.selected_glb_sha256, run.manifest.selected_glb.sha256);
@@ -64,10 +67,10 @@ test("rejects cross-view substitution, duplicates, and invalid viewer geometry",
 	const names = ["front", "back", "left", "right", "plan", "top", "axon", "opposite-axon"];
 	const views = Object.fromEntries(names.map((name, index) => [name, {
 		path: `${name}.png`, sha256: String(index).padStart(64, "a"), width: 2400, height: 2400,
-		selected_glb_sha256: "b".repeat(64), validation: { accepted: true, codes: [] },
+		selected_glb_sha256: "b".repeat(64), palette: { preset: "competition-warm", sha256: "c".repeat(64) }, validation: { accepted: true, codes: [] },
 		camera: name === "axon" ? { depth: [1, 0, 0] } : name === "opposite-axon" ? { depth: [-1, 0, 0] } : {},
 	}]));
-	const valid = { views, selectedGlbSha256: "b".repeat(64), paletteSha256: "c".repeat(64), viewer: {
+	const valid = { views, selectedGlbSha256: "b".repeat(64), palette: { preset: "competition-warm", sha256: "c".repeat(64) }, viewer: {
 		controls: ["orbit", "pan", "zoom", "reset", "view-buttons", "palette-selector", "glb-download"],
 		config: { strategies: { hunyuan: { glb: "../enriched.glb" } }, all_views: { selected_glb: { path: "../enriched.glb", sha256: "b".repeat(64) } } },
 	} };
@@ -76,6 +79,7 @@ test("rejects cross-view substitution, duplicates, and invalid viewer geometry",
 		(value) => { delete value.views.back; },
 		(value) => { value.views.right.sha256 = value.views.left.sha256; },
 		(value) => { value.views.right.selected_glb_sha256 = "d".repeat(64); },
+		(value) => { value.views.right.palette.preset = "competition-neutral"; },
 		(value) => { value.views.top.width = 1200; },
 		(value) => { value.views.top.sha256 = value.views.plan.sha256; },
 		(value) => { value.views["opposite-axon"].camera.depth = [1, 0, 0]; },
@@ -87,4 +91,40 @@ test("rejects cross-view substitution, duplicates, and invalid viewer geometry",
 		const changed = structuredClone(valid); mutate(changed);
 		assert.equal(validateAllViewsRun(changed).accepted, false);
 	}
+});
+
+async function copyPackagedEvidence() {
+	const root = await mkdtemp(join(tmpdir(), "elevation3d-all-views-evidence-"));
+	const manifest = JSON.parse(await readFile(join(runDir, "all-views-manifest.json"), "utf8"));
+	for (const view of Object.values(manifest.views)) for (const record of [view, view.manifest, view.validation_report]) {
+		const destination = join(root, record.path); await mkdir(dirname(destination), { recursive: true });
+		await copyFile(join(runDir, record.path), destination);
+	}
+	await writeFile(join(root, "all-views-manifest.json"), JSON.stringify(manifest, null, 2));
+	return { root, manifest };
+}
+
+test("rejects a substituted 2400 PNG when manifest and accepted validation remain stale", async () => {
+	const fixture = await copyPackagedEvidence();
+	try {
+		await copyFile(join(fixture.root, fixture.manifest.views.left.path), join(fixture.root, fixture.manifest.views.right.path));
+		await assert.rejects(() => verifyPersistedAllViewsArtifacts({ runDir: fixture.root }), /right image SHA-256 does not match verified evidence|right manifest image SHA-256/);
+	} finally { await rm(fixture.root, { recursive: true, force: true }); }
+});
+
+test("rejects a rehashed persisted manifest carrying a mixed palette identity", async () => {
+	const fixture = await copyPackagedEvidence();
+	try {
+		const record = fixture.manifest.views.right.manifest;
+		const manifestPath = join(fixture.root, record.path);
+		const persisted = JSON.parse(await readFile(manifestPath, "utf8"));
+		const neutral = resolveMaterialPalette("competition-neutral");
+		persisted.palette = { preset: neutral.preset, sha256: neutral.sha256 };
+		persisted.provenance.palette_sha256 = neutral.sha256;
+		await writeFile(manifestPath, JSON.stringify(persisted, null, 2));
+		record.sha256 = sha256(await readFile(manifestPath));
+		delete fixture.manifest.verified_evidence;
+		await writeFile(join(fixture.root, "all-views-manifest.json"), JSON.stringify(fixture.manifest, null, 2));
+		await assert.rejects(() => verifyPersistedAllViewsArtifacts({ runDir: fixture.root }), /all views must use one persisted palette identity/);
+	} finally { await rm(fixture.root, { recursive: true, force: true }); }
 });
