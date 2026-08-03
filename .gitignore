@@ -11,6 +11,7 @@ examples/debug-events.ts
 .env
 cmd
 workspace/
+results/
 memory/.latest-frame.jpg
 memory/.latest-screen.jpg
 .DS_Store

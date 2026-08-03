@@ -1,0 +1,19 @@
+id: elevation-3d
+name: Geometry-Locked Elevation 3D
+version: 0.1.0
+description: Generate and verify architectural 3D appearance from immutable MASS evidence.
+engine: ">=2.0.2"
+provides:
+  prompt: prompt.md
+entry: index.mjs
+config:
+  properties:
+    dataset_root:
+      type: string
+      default: "D:/Data/50_ELE/MAAS_ELEVATION_TEST_SET_20260730"
+    output_root:
+      type: string
+      default: "results"
+    preview_port:
+      type: number
+      default: 4173
