@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
+import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 
 const params = new URLSearchParams(location.search);
 const config = await fetch("config.json").then((response) => response.json());
@@ -9,6 +10,7 @@ const competitionElevation = params.get("mode") === "competition-elevation" && c
 const competitionPlan = params.get("mode") === "competition-plan" && config.competition_plan;
 const competitionAxon = params.get("mode") === "competition-axon" && config.competition_axon;
 const competition = competitionElevation || competitionPlan || competitionAxon;
+const allViews = config.all_views;
 const outputSize = competition?.output_size ?? 2048;
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true, alpha: false });
 renderer.setPixelRatio(1);
@@ -47,6 +49,77 @@ function createLegacyCamera(name) {
 	} else { camera.position.set(0, -100, 0); camera.up.set(0, 0, 1); camera.lookAt(0, 0, 0); }
 	camera.updateProjectionMatrix();
 	return camera;
+}
+
+function renderInteractiveAllViews(root) {
+	const panel = document.querySelector("[data-all-views-panel]");
+	panel.hidden = false;
+	document.querySelector("[data-status]").hidden = true;
+	renderer.setSize(innerWidth, innerHeight, false);
+	renderer.setClearColor(0xfafaf7, 1);
+	const bounds = new THREE.Box3().setFromObject(root);
+	const center = bounds.getCenter(new THREE.Vector3());
+	const radius = Math.max(bounds.getSize(new THREE.Vector3()).length() * 0.75, 1);
+	const camera = new THREE.PerspectiveCamera(32, innerWidth / innerHeight, radius / 1000, radius * 100);
+	const controls = new OrbitControls(camera, canvas);
+	controls.enableDamping = true;
+	controls.enablePan = true;
+	controls.enableZoom = true;
+	controls.target.copy(center);
+	const directions = {
+		front: [0, -1, 0], back: [0, 1, 0], left: [-1, 0, 0], right: [1, 0, 0],
+		plan: [0, 0, 1], top: [0.001, 0.001, 1], axon: [1, -1, 0.95], "opposite-axon": [-1, 1, 0.95],
+	};
+	const materialRecords = [];
+	root.traverse((object) => {
+		if (!object.isMesh) return;
+		const materials = Array.isArray(object.material) ? object.material : [object.material];
+		materialRecords.push({ object, roles: materials.map(semanticRole), array: Array.isArray(object.material) });
+	});
+	let currentView = "axon", currentPalette = "warm", glbLoadCount = 1;
+	function state() {
+		globalThis.__ELEVATION3D_VIEWER_STATE__ = {
+			view: currentView, palette: currentPalette, selected_glb_sha256: allViews.selected_glb.sha256,
+			glb_load_count: glbLoadCount, camera: { position: camera.position.toArray(), target: controls.target.toArray(), zoom: camera.zoom },
+		};
+		document.querySelector("[data-current-state]").textContent = `view=${currentView} · palette=${currentPalette} · sha256=${allViews.selected_glb.sha256}`;
+	}
+	function activateView(name) {
+		const direction = new THREE.Vector3(...directions[name]).normalize();
+		camera.position.copy(center).addScaledVector(direction, radius * 2.35);
+		camera.up.set(0, 0, 1);
+		if (Math.abs(direction.z) > 0.999) camera.up.set(0, 1, 0);
+		camera.lookAt(center); controls.target.copy(center); controls.update(); currentView = name;
+		document.querySelectorAll("[data-view]").forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.view === name)));
+		state();
+	}
+	function applyPalette(name) {
+		const palette = allViews.palettes[name];
+		for (const record of materialRecords) {
+			const replacements = record.roles.map((role) => {
+				const values = palette.roles[role];
+				const material = new THREE.MeshStandardMaterial({ color: values.axon_pbr, roughness: values.roughness, metalness: values.metalness, opacity: values.opacity, transparent: values.opacity < 1, side: THREE.DoubleSide });
+				return material;
+			});
+			record.object.material = record.array ? replacements : replacements[0];
+		}
+		currentPalette = name; state();
+	}
+	const buttons = document.querySelector("[data-view-buttons]");
+	for (const name of Object.keys(directions)) {
+		const button = document.createElement("button"); button.type = "button"; button.dataset.view = name; button.textContent = name; button.addEventListener("click", () => activateView(name)); buttons.append(button);
+	}
+	document.querySelector("[data-palette]").addEventListener("change", (event) => applyPalette(event.target.value));
+	document.querySelector("[data-reset]").addEventListener("click", () => activateView(currentView));
+	const download = document.querySelector("[data-glb-download]"); download.href = allViews.selected_glb.path;
+	const badge = document.querySelector("[data-validation-badge]"); badge.textContent = allViews.validation.accepted ? "Accepted" : "Rejected"; badge.classList.toggle("rejected", !allViews.validation.accepted);
+	const links = document.querySelector("[data-artifact-links]");
+	for (const artifact of allViews.artifacts ?? []) { const link = document.createElement("a"); link.href = artifact.path; link.textContent = artifact.label; link.target = "_blank"; links.append(link); }
+	controls.addEventListener("change", state);
+	addEventListener("resize", () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight, false); });
+	globalThis.__ELEVATION3D_TEST_CONTROLS__ = { rotateAndZoom() { controls.rotateLeft(0.25); controls.dollyIn(1.2); controls.update(); state(); }, reset() { activateView(currentView); } };
+	applyPalette("warm"); activateView("axon");
+	renderer.setAnimationLoop(() => { controls.update(); renderer.render(scene, camera); });
 }
 
 function projectedMeshes() {
@@ -616,7 +689,7 @@ let loadedRoot;
 if (strategy === "hunyuan" && config.strategies.hunyuan?.glb) {
 	const gltf = await new GLTFLoader().loadAsync(config.strategies.hunyuan.glb);
 	loadedRoot = gltf.scene;
-	if (!competition && config.cameras.views[params.get("view") ?? "axon"]?.rendering?.material_mode === "line-oriented") {
+	if (!competition && !allViews && config.cameras.views[params.get("view") ?? "axon"]?.rendering?.material_mode === "line-oriented") {
 		gltf.scene.traverse((object) => {
 			if (!object.isMesh) return;
 			object.material = new THREE.MeshBasicMaterial({ color: 0xf7f7f5, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: 1 });
@@ -629,7 +702,8 @@ if (strategy === "hunyuan" && config.strategies.hunyuan?.glb) {
 	scene.add(loadedRoot);
 }
 const viewName = params.get("view") ?? "axon";
-if (competitionElevation) renderCompetition(loadedRoot, config.cameras.views[viewName]);
+if (allViews) renderInteractiveAllViews(loadedRoot);
+else if (competitionElevation) renderCompetition(loadedRoot, config.cameras.views[viewName]);
 else if (competitionPlan) renderCompetitionPlan(loadedRoot, config.cameras.views[viewName]);
 else if (competitionAxon) renderCompetitionAxon(loadedRoot, config.cameras.views[viewName]);
 else renderer.render(scene, createLegacyCamera(viewName));

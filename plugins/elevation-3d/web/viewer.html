@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width,initial-scale=1">
+	<link rel="icon" href="data:,">
+	<title>Elevation 3D — All Views</title>
+	<style>
+		:root{color-scheme:dark;font:14px/1.4 Inter,system-ui,sans-serif}*{box-sizing:border-box}html,body{margin:0;min-height:100%;background:#151515;color:#f2f0eb}body{overflow:hidden}main{height:100vh}canvas{display:block;width:100%;height:100%;background:#fafaf7}.panel{position:fixed;z-index:2;top:16px;left:16px;width:min(340px,calc(100vw - 32px));padding:16px;border:1px solid #ffffff24;border-radius:12px;background:#181818e8;box-shadow:0 16px 48px #0006;backdrop-filter:blur(12px)}h1{font-size:15px;margin:0 0 12px}.row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:10px}.views{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}button,select,a{border:1px solid #ffffff2b;border-radius:6px;background:#2b2b2b;color:inherit;padding:7px 9px;text-decoration:none;cursor:pointer}button[aria-pressed="true"]{background:#eee;color:#171717}.meta{font:12px/1.5 ui-monospace,monospace;color:#c8c5bd;overflow-wrap:anywhere}.badge{padding:3px 7px;border-radius:999px;background:#274a36;color:#bcf2ce}.badge.rejected{background:#5a2929;color:#ffc2c2}.artifacts{max-height:120px;overflow:auto}.artifacts a{display:block;margin-top:5px}.legacy-status{position:fixed;right:16px;bottom:16px;background:#111c;padding:8px 10px;border-radius:6px}
+	</style>
+</head>
+<body>
+	<section class="panel" data-all-views-panel hidden>
+		<h1>Inspectable selected GLB <span class="badge" data-validation-badge>Checking</span></h1>
+		<div class="views" data-view-buttons></div>
+		<div class="row"><label>Palette <select data-palette><option value="warm">Warm</option><option value="neutral">Neutral</option><option value="stone">Stone</option></select></label><button type="button" data-reset>Reset camera</button></div>
+		<div class="row"><a data-glb-download download="enriched.glb">Download GLB</a><span>Orbit · pan · zoom enabled</span></div>
+		<div class="meta" data-current-state></div>
+		<div class="artifacts" data-artifact-links></div>
+	</section>
+	<aside class="legacy-status" data-status>loading</aside>
+	<main><canvas width="2048" height="2048" aria-label="Interactive 3D model"></canvas></main>
+	<script type="module" src="app.js"></script>
+</body>
+</html>
