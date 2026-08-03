@@ -46,7 +46,7 @@ export function correctGrammar(grammar, failureCodes) {
 		corrected.mullion_depth_m = clamp(grammar.mullion_depth_m / 2, LIMITS.mullion_depth_m);
 	}
 	if (failureCodes.includes("PRIMITIVE_BUDGET_EXCEEDED")) {
-		corrected.bay_width_m = clamp(grammar.bay_width_m * 1.5, LIMITS.bay_width_m);
+		corrected.bay_width_m = 2.25;
 	}
 	return corrected;
 }
