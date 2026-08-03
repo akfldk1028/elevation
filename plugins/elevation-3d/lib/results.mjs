@@ -33,25 +33,44 @@ async function findChrome() {
 	throw new Error("Chrome or Edge executable not found; set CHROME_PATH");
 }
 
-export async function renderDrawings(runDir, strategies, { views = [...VIEW_NAMES, "axon"], port = 0 } = {}) {
+export async function renderDrawings(runDir, strategies, {
+	views = [...VIEW_NAMES, "axon"], port = 0, signal, lifecycle = {},
+} = {}) {
+	const start = lifecycle.startPreview ?? startPreview;
+	const stop = lifecycle.stopPreview ?? stopPreview;
+	const launch = lifecycle.launchBrowser ?? (async () => puppeteer.launch({
+		executablePath: await findChrome(), headless: true, args: ["--disable-gpu-sandbox", "--no-sandbox"],
+	}));
 	let browser;
 	let previewPort;
 	try {
-		const base = await startPreview(runDir, port);
+		signal?.throwIfAborted();
+		const base = await start(runDir, port);
 		previewPort = Number(new URL(base).port);
-		browser = await puppeteer.launch({ executablePath: await findChrome(), headless: true, args: ["--disable-gpu-sandbox", "--no-sandbox"] });
+		signal?.throwIfAborted();
+		browser = await launch();
+		signal?.throwIfAborted();
 		for (const strategy of strategies) {
 			const dir = join(runDir, "drawings", strategy); await mkdir(dir, { recursive: true });
 			for (const view of views) {
-				const page = await browser.newPage(); await page.setViewport({ width: 2048, height: 2048, deviceScaleFactor: 1 });
-				await page.goto(`${base}?strategy=${strategy}&view=${view}`, { waitUntil: "networkidle0" });
-				await page.waitForFunction(() => globalThis.__ELEVATION3D_READY__ === true, { timeout: 30_000 });
-				await captureCanvas(page, join(dir, `${view}.png`)); await page.close();
+				signal?.throwIfAborted();
+				const page = await browser.newPage();
+				try {
+					await page.setViewport({ width: 2048, height: 2048, deviceScaleFactor: 1 });
+					await page.goto(`${base}?strategy=${strategy}&view=${view}`, { waitUntil: "networkidle0" });
+					signal?.throwIfAborted();
+					await page.waitForFunction(() => globalThis.__ELEVATION3D_READY__ === true, { timeout: 30_000 });
+					signal?.throwIfAborted();
+					await captureCanvas(page, join(dir, `${view}.png`));
+					signal?.throwIfAborted();
+				} finally {
+					await page.close();
+				}
 			}
 		}
 	} finally {
 		try { if (browser) await browser.close(); }
-		finally { if (previewPort) await stopPreview(previewPort); }
+		finally { if (previewPort) await stop(previewPort); }
 	}
 }
 

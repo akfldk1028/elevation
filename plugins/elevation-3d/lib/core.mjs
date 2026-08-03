@@ -115,8 +115,34 @@ export function assertExecutionApproved(plan, { approvalId, confirmLive, approve
 	if (!Number.isFinite(approvedMaxCostCny) || approvedMaxCostCny < plan.estimated_cost_cny) throw new Error(`Approved cost cap must be at least ${plan.estimated_cost_cny} CNY`);
 }
 
+function redactString(value) {
+	let safe = value;
+	safe = safe.replace(/data:[^;,\s]+(?:;[^,\s]+)*;base64,[A-Za-z0-9+/=_-]+/gi, "[REDACTED_DATA_URI]");
+	safe = safe.replace(/https?:\/\/[^\s"'<>]+/gi, (raw) => {
+		const trailing = raw.match(/[),.;!?]+$/)?.[0] ?? "";
+		const candidate = trailing ? raw.slice(0, -trailing.length) : raw;
+		try {
+			const url = new URL(candidate);
+			url.username = "";
+			url.password = "";
+			url.search = "";
+			url.hash = "";
+			return `${url.toString().replace(/\/$/, candidate.endsWith("/") ? "/" : "")}${trailing}`;
+		} catch {
+			return "[REDACTED_URL]";
+		}
+	});
+	safe = safe.replace(/\bAuthorization\s*:\s*(?:Bearer|Basic)\s+[^\s;,]+/gi, "Authorization: [REDACTED]");
+	safe = safe.replace(/\b(?:Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/gi, "[REDACTED_AUTH]");
+	safe = safe.replace(/\b(?:sk-(?:live|test|proj)?[-_A-Za-z0-9]{8,}|AIza[A-Za-z0-9_-]{12,}|AKIA[A-Z0-9]{12,})\b/g, "[REDACTED_API_KEY]");
+	safe = safe.replace(/\b(api[_-]?key|access[_-]?token|refresh[_-]?token|secret|password|passwd|session(?:[_-]?id)?)\s*[=:]\s*[^\s,;]+/gi, "$1=[REDACTED]");
+	safe = safe.replace(/\b[A-Za-z0-9+/]{80,}={0,2}\b/g, "[REDACTED_BASE64]");
+	return safe;
+}
+
 export function redactSecrets(value) {
 	if (Array.isArray(value)) return value.map(redactSecrets);
+	if (typeof value === "string") return redactString(value);
 	if (!value || typeof value !== "object") return value;
 	const out = {};
 	for (const [key, item] of Object.entries(value)) {

@@ -1,6 +1,6 @@
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
-import { redactSecrets } from "./core.mjs";
+import { redactSecrets, sha256 } from "./core.mjs";
 
 const memoryAppendQueues = new Map();
 const DRAWING_NAMES = ["plan", "front", "back", "left", "right", "top", "axon"];
@@ -97,7 +97,11 @@ export async function beginVersion(run, versionId, grammar) {
 	await mkdir(dir, { recursive: true });
 	await writeJson(join(dir, "version.json"), metadata);
 	await writeJson(join(dir, "grammar.json"), { ...grammar, schema_version: "arr.facade-grammar.v1" });
-	const version = { id: versionId, dir, metadata, failures: [] };
+	const previousGrammar = run.versions.at(-1)?.grammar ?? {};
+	const grammarDelta = Object.fromEntries([...new Set([...Object.keys(previousGrammar), ...Object.keys(grammar)])]
+		.filter((key) => previousGrammar[key] !== grammar[key])
+		.map((key) => [key, { from: previousGrammar[key] ?? null, to: grammar[key] ?? null }]));
+	const version = { id: versionId, dir, metadata, failures: [], grammar: persistent(grammar), grammar_delta: grammarDelta };
 	run.versions.push(version);
 	return version;
 }
@@ -109,13 +113,32 @@ export async function recordVersionFailure(run, version, failure) {
 		version_id: version.id,
 		stage: failure.stage,
 		codes: [...failure.codes],
-		evidence: failure.evidence ?? {},
+		reason: failure.reason ?? failure.evidence?.message ?? failure.codes?.join(", ") ?? "version failed",
+		error_class: failure.error_class ?? null,
+		error_code: failure.error_code ?? null,
+		evidence: Object.fromEntries(Object.entries(failure.evidence ?? {})
+			.filter(([key]) => ["message", "metrics", "artifacts", "system_code", "system_name"].includes(key))),
 		retryable: failure.retryable,
 	});
 	await writeJson(join(version.dir, "failure.json"), record);
 	version.metadata = { ...version.metadata, status: "failed", failure_path: "failure.json" };
 	await writeJson(join(version.dir, "version.json"), version.metadata);
 	version.failures.push(record);
+}
+
+export async function recordVersionCancelled(run, version, cancellation = {}) {
+	if (!run.versions.includes(version)) throw new Error(`Version ${version.id} does not belong to run ${run.id}`);
+	if (version.metadata.status !== "started") return;
+	const record = persistent({
+		schema_version: "arr.elevation3d.version-cancellation.v1",
+		version_id: version.id,
+		stage: cancellation.stage ?? "unknown",
+		reason: cancellation.reason ?? "operation cancelled",
+	});
+	await writeJson(join(version.dir, "cancellation.json"), record);
+	version.cancellation = record;
+	version.metadata = { ...version.metadata, status: "cancelled", cancellation_path: "cancellation.json" };
+	await writeJson(join(version.dir, "version.json"), version.metadata);
 }
 
 export async function recordVersionSuccess(run, version, validation) {
@@ -200,30 +223,84 @@ function selectedOutputArtifacts(run, selectedVersion) {
 	};
 }
 
+function artifactEntry(run, value, sha256, label) {
+	const path = typeof value === "string" ? value : value?.path;
+	if (!path) return null;
+	return { path: runRelativePath(run.dir, path, label), sha256: sha256 ?? value?.sha256 ?? null };
+}
+
+function correctionSummary(version) {
+	if (version.id !== "v002") return "none";
+	const changes = Object.entries(version.grammar_delta).map(([key, change]) =>
+		`${key}: ${JSON.stringify(change.from)} -> ${JSON.stringify(change.to)}`);
+	return changes.length ? changes.join("; ") : "no grammar field changed";
+}
+
+async function versionHistory(run) {
+	return Promise.all(run.versions.map(async (version, index) => {
+		const failure = version.failures.at(-1);
+		const artifacts = version.validation?.artifacts ?? {};
+		const validationPath = join(version.dir, "validation.json");
+		const validationSha = version.validation ? sha256(await readFile(validationPath)) : null;
+		return persistent({
+			id: version.id,
+			status: version.metadata.status,
+			artifacts: {
+				glb: artifactEntry(run, artifacts.glb, artifacts.glb_sha256, `${version.id} GLB`),
+				drawings: Object.fromEntries(Object.entries(artifacts.drawings ?? {}).map(([name, entry]) => [
+					name,
+					artifactEntry(run, entry, entry?.sha256, `${version.id} drawing ${name}`),
+				])),
+				validation_report: version.validation
+					? { path: runRelativePath(run.dir, validationPath, `${version.id} validation`), sha256: validationSha }
+					: null,
+			},
+			validation: version.validation ? {
+				accepted: version.validation.accepted,
+				codes: version.validation.codes ?? [],
+				metrics: version.validation.metrics ?? {},
+			} : null,
+			failure: failure ? {
+				reason: failure.reason,
+				error_class: failure.error_class,
+				error_code: failure.error_code,
+				stage: failure.stage,
+				codes: failure.codes,
+				retryable: failure.retryable,
+			} : version.cancellation ? {
+				reason: version.cancellation.reason,
+				stage: version.cancellation.stage,
+				retryable: false,
+			} : null,
+			correction: {
+				applied: version.id === "v002",
+				summary: correctionSummary(version),
+				grammar_delta: index === 0 ? {} : version.grammar_delta,
+			},
+		});
+	}));
+}
+
 export async function appendRunMemory(run, memoryRoot) {
 	if (!run.final) throw new Error("A final selection is required before appending run memory");
 	const runId = assertSafePathSegment(run.id, "run_id");
 	const candidateId = assertSafePathSegment(run.metadata.candidate_id, "candidate_id");
+	const versions = await versionHistory(run);
 	const event = persistent({
-		schema_version: "arr.elevation3d.run-memory.v1",
+		schema_version: "arr.elevation3d.run-memory.v2",
 		run_id: runId,
 		candidate_id: candidateId,
-		artifacts: run.metadata.artifacts,
-		versions: run.versions.flatMap((version) => version.failures.map((failure) => ({
-			id: version.id,
-			stage: failure.stage,
-			codes: failure.codes,
-			retryable: failure.retryable,
-			evidence: failure.evidence,
-		}))),
+		input_artifacts: run.metadata.artifacts,
+		versions,
 		final: run.final,
 	});
 	const selectedVersion = run.versions.find((version) => version.id === run.final.selected);
 	const candidateEvent = persistent({
-		schema_version: "arr.elevation3d.candidate-run-memory.v1",
+		schema_version: "arr.elevation3d.candidate-run-memory.v2",
 		run_id: runId,
 		candidate_id: candidateId,
 		selected_version: run.final.selected,
+		versions,
 		attempts: run.versions.filter((version) => version.id !== "fallback").length,
 		metrics: selectedVersion?.validation?.metrics ?? {},
 		failure_codes: [...new Set(run.versions.flatMap((version) => version.failures.flatMap((failure) => failure.codes)))],

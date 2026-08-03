@@ -724,3 +724,47 @@ test("rejects unsafe agent identifiers before dataset access or output writes", 
 	}
 	await assert.rejects(() => access(outputRoot), /ENOENT/);
 });
+
+test("honors abort before input loading without creating a run", async () => {
+	const input = await fixture();
+	process.chdir(input.root);
+	const controller = new AbortController();
+	controller.abort(new DOMException("stop now", "AbortError"));
+	await assert.rejects(() => runElevation3d({
+		candidateId: input.candidateId,
+		datasetRoot: input.datasetRoot,
+		outputRoot: input.outputRoot,
+		runId: "abort-before",
+		signal: controller.signal,
+		deps: acceptedDeps(input.mesh),
+	}), { name: "AbortError" });
+	await assert.rejects(() => access(input.outputRoot), /ENOENT/);
+});
+
+test("abort during render persists one cancelled v001 and never retries", async () => {
+	const input = await fixture();
+	process.chdir(input.root);
+	const controller = new AbortController();
+	const calls: string[] = [];
+	const deps = acceptedDeps(input.mesh);
+	deps.render = async ({ versionId }: any) => {
+		calls.push(`render:${versionId}`);
+		controller.abort(new DOMException("render cancelled", "AbortError"));
+		return {};
+	};
+	await assert.rejects(() => runElevation3d({
+		candidateId: input.candidateId,
+		datasetRoot: input.datasetRoot,
+		outputRoot: input.outputRoot,
+		runId: "abort-render",
+		signal: controller.signal,
+		deps,
+	}), { name: "AbortError" });
+	assert.deepEqual(calls, ["render:v001"]);
+	const runDir = join(input.outputRoot, input.candidateId, "abort-render");
+	assert.equal((await readJson(join(runDir, "versions", "v001", "version.json"))).status, "cancelled");
+	assert.equal((await readJson(join(runDir, "final.json"))).selected, "cancelled");
+	await assert.rejects(() => access(join(runDir, "versions", "v002")), /ENOENT/);
+	const event = JSON.parse(await readFile(join(input.root, "memory", "elevation-3d", "unified-runs.jsonl"), "utf8"));
+	assert.deepEqual(event.versions.map((version: any) => [version.id, version.status]), [["v001", "cancelled"]]);
+});
