@@ -7,6 +7,7 @@ const SCHEMA_VERSION = "arr.elevation3d.dimension-manifest.v1";
 const ENVELOPE_TOLERANCE_M = 0.001;
 const IDENTITY_FIELDS = ["candidate_id", "geometry_hash", "pnu", "program_hash", "run_id"];
 const IDENTITY_MATRIX = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+const ELEVATION_VIEWS = new Set(["front", "back", "left", "right"]);
 
 function dot(left, right) {
 	return left.reduce((sum, value, axis) => sum + value * right[axis], 0);
@@ -16,17 +17,22 @@ function vectorLength(vector) {
 	return Math.sqrt(dot(vector, vector));
 }
 
-function projectionView(view) {
-	if (!view || typeof view !== "object" || view.name !== "front") throw new Error("dimension source missing: front camera");
-	const horizontal = view.projection_axes?.horizontal;
-	const vertical = view.projection_axes?.vertical;
-	for (const [name, vector] of [["horizontal", horizontal], ["vertical", vertical]]) {
+function validateProjectionAxes(projectionAxes) {
+	const { horizontal, vertical, depth } = projectionAxes ?? {};
+	for (const [name, vector] of [["horizontal", horizontal], ["vertical", vertical], ["depth", depth]]) {
 		if (!Array.isArray(vector) || vector.length !== 3 || !vector.every(Number.isFinite) || Math.abs(vectorLength(vector) - 1) > 1e-6) {
-			throw new Error(`dimension source invalid: front camera ${name} axis`);
+			throw new Error(`dimension source invalid: elevation camera ${name} axis`);
 		}
 	}
-	if (Math.abs(dot(horizontal, vertical)) > 1e-6) throw new Error("dimension source invalid: front camera axes");
-	return { name: view.name, identity: view.identity, axes: { horizontal: [...horizontal], vertical: [...vertical] } };
+	if (Math.abs(dot(horizontal, vertical)) > 1e-6 || Math.abs(dot(horizontal, depth)) > 1e-6 || Math.abs(dot(vertical, depth)) > 1e-6) {
+		throw new Error("dimension source invalid: elevation camera axes");
+	}
+	return { horizontal: [...horizontal], vertical: [...vertical], depth: [...depth] };
+}
+
+function projectionView(view) {
+	if (!view || typeof view !== "object" || !ELEVATION_VIEWS.has(view.name)) throw new Error("dimension source missing: elevation camera");
+	return { name: view.name, identity: view.identity, axes: validateProjectionAxes(view.projection_axes) };
 }
 
 function assertBoundIdentity(sourceIdentity, targetIdentity, label) {
@@ -75,12 +81,20 @@ function assertInsideEnvelope(values, minimum, maximum) {
 	}
 }
 
-function frontFacade(facadePlanes) {
+function projectedFacade(facadePlanes, axes, viewName) {
 	const planes = facadePlanes?.facade_planes;
 	if (!Array.isArray(planes)) throw new Error("dimension source missing: facade_planes.facade_planes");
-	const index = planes.findIndex((plane) => plane?.view === "front");
-	if (index < 0) throw new Error("dimension source missing: front facade plane");
-	return { plane: planes[index], index };
+	const validNormal = (plane) => Array.isArray(plane?.normal) && plane.normal.length === 3
+		&& plane.normal.every(Number.isFinite) && Math.abs(vectorLength(plane.normal) - 1) <= 1e-6;
+	const aligned = planes.map((plane, index) => ({ plane, index }))
+		.filter(({ plane }) => validNormal(plane) && Math.abs(dot(plane.normal, axes.depth) - 1) <= 1e-6);
+	if (aligned.length > 1) throw new Error("dimension source invalid: ambiguous elevation facade plane");
+	if (!aligned.length) {
+		if (planes.some((plane) => plane?.view === viewName && !validNormal(plane))) throw new Error("dimension source invalid: facade_planes.facade_planes");
+		throw new Error("dimension source missing: elevation facade plane");
+	}
+	const [{ plane, index }] = aligned;
+	return { plane, index };
 }
 
 function sortedGuideRecords(floorGuides) {
@@ -159,7 +173,7 @@ export async function deriveElevationDimensions({ sourceMesh, artifact, facadePl
 		throw new Error("dimension source missing: exact-mass.POSITION");
 	}
 
-	const { plane, index: planeIndex } = frontFacade(facadePlanes);
+	const { plane, index: planeIndex } = projectedFacade(facadePlanes, axes, projection.name);
 	const validVector = (value) => Array.isArray(value) && value.length === 3 && value.every(Number.isFinite);
 	const validExtent = Array.isArray(plane.extent_m) && plane.extent_m.length === 2
 		&& plane.extent_m.every((value) => Number.isFinite(value) && value > 0);
