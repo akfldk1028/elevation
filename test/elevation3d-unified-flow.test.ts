@@ -2,10 +2,14 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { afterEach, test } from "node:test";
+import { NodeIO } from "@gltf-transform/core";
+import sharp from "sharp";
 
-import { runElevation3d } from "../plugins/elevation-3d/lib/unified-flow.mjs";
+import { sha256 } from "../plugins/elevation-3d/lib/core.mjs";
+import { buildEnrichedScene, writeEnrichedGlb } from "../plugins/elevation-3d/lib/enrichment.mjs";
+import { GeneratedStageError, runElevation3d } from "../plugins/elevation-3d/lib/unified-flow.mjs";
 
 const temporaryRoots: string[] = [];
 const originalCwd = process.cwd();
@@ -157,6 +161,75 @@ function validationDeps(
 	};
 }
 
+const drawingNames = ["plan", "front", "back", "left", "right", "top", "axon"];
+
+async function renderRealFiles({ runDir, glbPath }: { runDir: string; glbPath: string }) {
+	const viewerDir = join(runDir, "viewer");
+	const drawingDir = join(runDir, "drawings", "hunyuan");
+	await mkdir(viewerDir, { recursive: true });
+	await mkdir(drawingDir, { recursive: true });
+	const configPath = join(viewerDir, "config.json");
+	await writeJson(configPath, { strategies: { hunyuan: { glb: `../${relative(runDir, glbPath).replaceAll("\\", "/")}` } } });
+	const configHash = sha256(await readFile(configPath));
+	let glbHash = "0".repeat(64);
+	try { glbHash = sha256(await readFile(glbPath)); } catch {}
+	const png = await sharp({
+		create: { width: 2, height: 3, channels: 4, background: { r: 40, g: 80, b: 120, alpha: 1 } },
+	}).png().toBuffer();
+	const drawings: Record<string, string> = {};
+	const provenanceDrawings: Record<string, unknown> = {};
+	for (const name of drawingNames) {
+		const path = join(drawingDir, `${name}.png`);
+		await writeFile(path, png);
+		drawings[name] = path;
+		provenanceDrawings[name] = {
+			path: relative(runDir, path).replaceAll("\\", "/"),
+			sha256: sha256(png),
+			width: 2,
+			height: 3,
+			glb_sha256: glbHash,
+			viewer_config_sha256: configHash,
+		};
+	}
+	await writeJson(join(runDir, "drawing-provenance.json"), {
+		schema_version: "arr.elevation3d.drawing-provenance.v1",
+		selected_glb: { path: relative(runDir, glbPath).replaceAll("\\", "/"), sha256: glbHash },
+		viewer_config: { path: "viewer/config.json", sha256: configHash },
+		drawings: provenanceDrawings,
+	});
+	return drawings;
+}
+
+function realFileDeps(defects: Record<string, "missing-glb" | "corrupt-glb" | "missing-drawing" | "corrupt-drawing">) {
+	const calls: string[] = [];
+	return {
+		calls,
+		enrich: async (args: any) => {
+			calls.push(`enrich:${args.versionId}`);
+			const artifact = await writeEnrichedGlb(buildEnrichedScene({
+				mesh: args.sourceMesh,
+				floorGuides: args.floorGuides,
+				facadePlanes: args.facadePlanes,
+				grammar: args.grammar,
+				safeFallback: args.safeFallback,
+			}), args.outputPath);
+			if (defects[args.versionId] === "missing-glb") await rm(artifact.path);
+			if (defects[args.versionId] === "corrupt-glb") {
+				await writeFile(artifact.path, Buffer.from("not a glb"));
+				artifact.sha256 = sha256(await readFile(artifact.path));
+			}
+			return artifact;
+		},
+		render: async (args: any) => {
+			calls.push(`render:${args.versionId}`);
+			const drawings = await renderRealFiles(args);
+			if (defects[args.versionId] === "missing-drawing") await rm(drawings.top);
+			if (defects[args.versionId] === "corrupt-drawing") await writeFile(drawings.top, Buffer.from("not a png"));
+			return drawings;
+		},
+	};
+}
+
 async function readJson(path: string) {
 	return JSON.parse(await readFile(path, "utf8"));
 }
@@ -245,29 +318,184 @@ test("quarantines both failures and selects a rendered and validated exact-mass 
 	assert.equal(JSON.parse(memoryLines[0]).final.selected, "fallback");
 });
 
-test("blocks a non-correctable validation code without launching v002 or fallback", async () => {
+test("retries a generated base-integrity defect once without changing grammar", async () => {
 	const input = await fixture();
 	process.chdir(input.root);
 	const deps = validationDeps(input.mesh, { v001: ["BASE_GEOMETRY_CHANGED"] });
-	const runDir = join(input.outputRoot, input.candidateId, "base-corruption");
+	const result = await runElevation3d({
+		candidateId: input.candidateId,
+		datasetRoot: input.datasetRoot,
+		outputRoot: input.outputRoot,
+		runId: "base-corruption",
+		deps,
+	});
+
+	assert.equal(result.selected_version, "v002");
+	assert.deepEqual(deps.validateCalls, ["v001", "v002"]);
+	assert.deepEqual(deps.enrichCalls, [
+		{ versionId: "v001", safeFallback: false },
+		{ versionId: "v002", safeFallback: false },
+	]);
+	assert.deepEqual(
+		await readJson(join(result.run_dir, "versions", "v002", "grammar.json")),
+		await readJson(join(result.run_dir, "versions", "v001", "grammar.json")),
+	);
+});
+
+test("retries one explicitly typed renderer-stage failure", async () => {
+	const input = await fixture();
+	process.chdir(input.root);
+	const deps = validationDeps(input.mesh, {});
+	const renderCalls: string[] = [];
+	const render = deps.render;
+	deps.render = async (args: any) => {
+		renderCalls.push(args.versionId);
+		if (args.versionId === "v001") throw new GeneratedStageError({
+			stage: "render",
+			code: "DRAWING_RENDER_FAILED",
+			message: "renderer could not produce drawings",
+		});
+		return render(args);
+	};
+
+	const result = await runElevation3d({
+		candidateId: input.candidateId,
+		datasetRoot: input.datasetRoot,
+		outputRoot: input.outputRoot,
+		runId: "typed-render",
+		deps,
+	});
+
+	assert.equal(result.selected_version, "v002");
+	assert.deepEqual(renderCalls, ["v001", "v002"]);
+	const failure = await readJson(join(result.run_dir, "versions", "v001", "failure.json"));
+	assert.equal(failure.stage, "render");
+	assert.deepEqual(failure.codes, ["DRAWING_RENDER_FAILED"]);
+	assert.equal(failure.retryable, true);
+});
+
+test("blocks an unknown validation report code without v002 or fallback", async () => {
+	const input = await fixture();
+	process.chdir(input.root);
+	const deps = validationDeps(input.mesh, { v001: ["UNKNOWN_OUTPUT_DEFECT"] });
+	const runDir = join(input.outputRoot, input.candidateId, "unknown-report");
 
 	await assert.rejects(
 		() => runElevation3d({
 			candidateId: input.candidateId,
 			datasetRoot: input.datasetRoot,
 			outputRoot: input.outputRoot,
-			runId: "base-corruption",
+			runId: "unknown-report",
 			deps,
 		}),
-		(error: Error & { code?: string; retryable?: boolean }) => {
+		(error: Error & { code?: string }) => {
 			assert.equal(error.code, "RUN_BLOCKED");
-			assert.equal(error.retryable, false);
-			assert.match(error.message, /BASE_GEOMETRY_CHANGED/);
+			assert.match(error.message, /UNKNOWN_OUTPUT_DEFECT/);
 			return true;
 		},
 	);
 	assert.deepEqual(deps.validateCalls, ["v001"]);
 	assert.deepEqual(deps.enrichCalls, [{ versionId: "v001", safeFallback: false }]);
+	assert.equal((await readJson(join(runDir, "final.json"))).selected, "blocked");
+	const memoryLines = (await readFile(join(input.root, "memory", "elevation-3d", "unified-runs.jsonl"), "utf8"))
+		.trim().split(/\r?\n/);
+	assert.equal(memoryLines.length, 1);
+});
+
+for (const [defect, expectedCode] of [
+	["missing-glb", "ARTIFACT_MISSING"],
+	["corrupt-glb", "GLB_INVALID"],
+	["missing-drawing", "DRAWING_MISSING"],
+	["corrupt-drawing", "DRAWING_INVALID"],
+] as const) {
+	test(`re-exports and rerenders v002 after a real ${defect} defect`, async () => {
+		const input = await fixture();
+		process.chdir(input.root);
+		const deps = realFileDeps({ v001: defect });
+		const result = await runElevation3d({
+			candidateId: input.candidateId,
+			datasetRoot: input.datasetRoot,
+			outputRoot: input.outputRoot,
+			runId: `real-${defect}`,
+			deps,
+		});
+
+		assert.equal(result.selected_version, "v002");
+		assert.deepEqual(deps.calls, ["enrich:v001", "render:v001", "enrich:v002", "render:v002"]);
+		const failure = await readJson(join(result.run_dir, "versions", "v001", "failure.json"));
+		assert.equal(failure.retryable, true);
+		assert.equal(failure.codes.includes(expectedCode), true);
+		assert.equal((await readJson(join(result.run_dir, "versions", "v002", "validation.json"))).accepted, true);
+	});
+}
+
+test("strictly validates and selects an exact-base fallback after two real generated defects", async () => {
+	const input = await fixture();
+	process.chdir(input.root);
+	const deps = realFileDeps({ v001: "corrupt-glb", v002: "corrupt-drawing" });
+	const result = await runElevation3d({
+		candidateId: input.candidateId,
+		datasetRoot: input.datasetRoot,
+		outputRoot: input.outputRoot,
+		runId: "real-fallback",
+		deps,
+	});
+
+	assert.equal(result.selected_version, "fallback");
+	assert.equal(result.attempts, 2);
+	assert.equal(result.fallback, true);
+	assert.deepEqual(deps.calls, [
+		"enrich:v001", "render:v001",
+		"enrich:v002", "render:v002",
+		"enrich:fallback", "render:fallback",
+	]);
+	assert.equal((await readJson(join(result.run_dir, "versions", "v001", "failure.json"))).codes.includes("GLB_INVALID"), true);
+	assert.equal((await readJson(join(result.run_dir, "versions", "v002", "failure.json"))).codes.includes("DRAWING_INVALID"), true);
+	const validation = await readJson(join(result.run_dir, "versions", "fallback", "validation.json"));
+	assert.equal(validation.accepted, true);
+	assert.deepEqual(validation.codes, []);
+	const document = await new NodeIO().read(result.artifact.path);
+	assert.equal(document.getRoot().listMeshes().length, 1);
+	assert.deepEqual(document.getRoot().listMaterials().map((material) => material.getName()), ["concrete"]);
+	assert.equal((await readJson(join(result.run_dir, "final.json"))).selected, "fallback");
+	const memoryLines = (await readFile(join(input.root, "memory", "elevation-3d", "unified-runs.jsonl"), "utf8"))
+		.trim().split(/\r?\n/);
+	assert.equal(memoryLines.length, 1);
+	assert.equal(JSON.parse(memoryLines[0]).final.selected, "fallback");
+});
+
+test("persists blocked and throws when strict fallback validation fails", async () => {
+	const input = await fixture();
+	process.chdir(input.root);
+	const deps = realFileDeps({
+		v001: "corrupt-glb",
+		v002: "corrupt-drawing",
+		fallback: "missing-drawing",
+	});
+	const runDir = join(input.outputRoot, input.candidateId, "rejected-fallback");
+
+	await assert.rejects(
+		() => runElevation3d({
+			candidateId: input.candidateId,
+			datasetRoot: input.datasetRoot,
+			outputRoot: input.outputRoot,
+			runId: "rejected-fallback",
+			deps,
+		}),
+		(error: Error & { code?: string }) => {
+			assert.equal(error.code, "RUN_BLOCKED");
+			assert.match(error.message, /DRAWING_MISSING/);
+			return true;
+		},
+	);
+	assert.deepEqual(deps.calls, [
+		"enrich:v001", "render:v001",
+		"enrich:v002", "render:v002",
+		"enrich:fallback", "render:fallback",
+	]);
+	const fallbackFailure = await readJson(join(runDir, "versions", "fallback", "failure.json"));
+	assert.equal(fallbackFailure.codes.includes("DRAWING_MISSING"), true);
+	assert.equal(fallbackFailure.retryable, false);
 	assert.equal((await readJson(join(runDir, "final.json"))).selected, "blocked");
 	const memoryLines = (await readFile(join(input.root, "memory", "elevation-3d", "unified-runs.jsonl"), "utf8"))
 		.trim().split(/\r?\n/);
@@ -365,6 +593,34 @@ test("blocks an untrusted approved-image hash without attempting or falling back
 	);
 	assert.deepEqual(deps.enrichCalls, []);
 	await assert.rejects(() => readFile(join(input.root, "memory", "elevation-3d", "unified-runs.jsonl")), /ENOENT/);
+});
+
+test("blocks an incomplete trusted camera package before creating a run", async () => {
+	const input = await fixture();
+	process.chdir(input.root);
+	const cameraPath = join(
+		input.datasetRoot, "candidates", input.candidateId, "mass", "elevation-research", "camera-poses.json",
+	);
+	const cameras = await readJson(cameraPath);
+	delete cameras.views.top;
+	await writeJson(cameraPath, cameras);
+
+	await assert.rejects(
+		() => runElevation3d({
+			candidateId: input.candidateId,
+			datasetRoot: input.datasetRoot,
+			outputRoot: input.outputRoot,
+			runId: "missing-camera",
+			deps: acceptedDeps(input.mesh),
+		}),
+		(error: Error & { code?: string; stage?: string }) => {
+			assert.equal(error.code, "RUN_BLOCKED");
+			assert.equal(error.stage, "input");
+			assert.match(error.message, /camera/i);
+			return true;
+		},
+	);
+	await assert.rejects(() => access(input.outputRoot), /ENOENT/);
 });
 
 test("rejects unsafe agent identifiers before dataset access or output writes", async () => {
