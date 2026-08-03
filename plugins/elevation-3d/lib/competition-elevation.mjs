@@ -498,6 +498,7 @@ export async function renderCompetitionElevation({
 	const manifestRecord = { path: renderManifestPath, sha256: sha256(await readFile(renderManifestPath)) };
 	const draft = {
 		base,
+		palette: { preset: palette.preset, sha256: palette.sha256 },
 		base_manifest: baseManifestRecord,
 		presentation_base_png: presentationBaseRecord,
 		diagnostics: diagnosticRecords,
