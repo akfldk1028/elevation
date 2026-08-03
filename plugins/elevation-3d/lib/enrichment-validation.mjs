@@ -41,8 +41,9 @@ function primitiveWorldBounds(primitive, matrix) {
 	const positions = primitive.getAttribute("POSITION");
 	const min = [Infinity, Infinity, Infinity];
 	const max = [-Infinity, -Infinity, -Infinity];
-	if (!positions) return { min, max, centroid: [NaN, NaN, NaN] };
+	if (!positions) return { min, max, centroid: [NaN, NaN, NaN], samples: [] };
 	const centroid = [0, 0, 0];
+	const points = [];
 	for (let index = 0; index < positions.getCount(); index++) {
 		const [x, y, z] = positions.getElement(index, [0, 0, 0]);
 		const point = [
@@ -50,13 +51,26 @@ function primitiveWorldBounds(primitive, matrix) {
 			matrix[1] * x + matrix[5] * y + matrix[9] * z + matrix[13],
 			matrix[2] * x + matrix[6] * y + matrix[10] * z + matrix[14],
 		];
+		points.push(point);
 		for (let axis = 0; axis < 3; axis++) {
 			min[axis] = Math.min(min[axis], point[axis]);
 			max[axis] = Math.max(max[axis], point[axis]);
 			centroid[axis] += point[axis] / positions.getCount();
 		}
 	}
-	return { min, max, centroid };
+	const samples = [...points];
+	const indices = primitive.getIndices();
+	const values = indices ? Array.from(indices.getArray()) : Array.from({ length: points.length }, (_, index) => index);
+	for (let index = 0; index + 2 < values.length; index += 3) {
+		const a = points[values[index]], b = points[values[index + 1]], c = points[values[index + 2]];
+		samples.push(
+			a.map((value, axis) => (value + b[axis]) / 2),
+			b.map((value, axis) => (value + c[axis]) / 2),
+			c.map((value, axis) => (value + a[axis]) / 2),
+			a.map((value, axis) => (value + b[axis] + c[axis]) / 3),
+		);
+	}
+	return { min, max, centroid, samples };
 }
 
 function components(indices, vertexCount) {
@@ -83,14 +97,68 @@ function componentRegions(mesh) {
 	const groups = new Map();
 	for (const index of referenced) {
 		const root = find(index);
-		if (!groups.has(root)) groups.set(root, []);
-		groups.get(root).push(mesh.vertices[index]);
+		if (!groups.has(root)) groups.set(root, { vertices: [], triangles: [] });
+		groups.get(root).vertices.push(mesh.vertices[index]);
 	}
-	return [...groups.values()].map(boundsOf);
+	for (const triangle of mesh.triangles) groups.get(find(triangle[0])).triangles.push(triangle.map((index) => mesh.vertices[index]));
+	return [...groups.values()].map((group) => ({ ...boundsOf(group.vertices), triangles: group.triangles }));
 }
 
 function overlaps(bounds, region, tolerance) {
 	return [0, 1, 2].every((axis) => bounds.max[axis] >= region.min[axis] - tolerance && bounds.min[axis] <= region.max[axis] + tolerance);
+}
+
+function subtract(a, b) {
+	return [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+}
+
+function dot(a, b) {
+	return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+}
+
+function pointSegmentDistanceSquared(point, a, b) {
+	const ab = subtract(b, a);
+	const denominator = dot(ab, ab);
+	const t = denominator ? Math.max(0, Math.min(1, dot(subtract(point, a), ab) / denominator)) : 0;
+	const closest = a.map((value, axis) => value + ab[axis] * t);
+	const delta = subtract(point, closest);
+	return dot(delta, delta);
+}
+
+function pointTriangleDistanceSquared(point, a, b, c) {
+	const ab = subtract(b, a), ac = subtract(c, a), ap = subtract(point, a);
+	const d1 = dot(ab, ap), d2 = dot(ac, ap);
+	if (d1 <= 0 && d2 <= 0) return dot(ap, ap);
+	const bp = subtract(point, b);
+	const d3 = dot(ab, bp), d4 = dot(ac, bp);
+	if (d3 >= 0 && d4 <= d3) return dot(bp, bp);
+	const vc = d1 * d4 - d3 * d2;
+	if (vc <= 0 && d1 >= 0 && d3 <= 0) return pointSegmentDistanceSquared(point, a, b);
+	const cp = subtract(point, c);
+	const d5 = dot(ab, cp), d6 = dot(ac, cp);
+	if (d6 >= 0 && d5 <= d6) return dot(cp, cp);
+	const vb = d5 * d2 - d1 * d6;
+	if (vb <= 0 && d2 >= 0 && d6 <= 0) return pointSegmentDistanceSquared(point, a, c);
+	const va = d3 * d6 - d5 * d4;
+	if (va <= 0 && d4 - d3 >= 0 && d5 - d6 >= 0) return pointSegmentDistanceSquared(point, b, c);
+	const denominator = va + vb + vc;
+	if (Math.abs(denominator) <= Number.EPSILON) return Math.min(
+		pointSegmentDistanceSquared(point, a, b),
+		pointSegmentDistanceSquared(point, b, c),
+		pointSegmentDistanceSquared(point, c, a),
+	);
+	const inverse = 1 / denominator;
+	const closest = a.map((value, axis) => value + ab[axis] * vb * inverse + ac[axis] * vc * inverse);
+	const delta = subtract(point, closest);
+	return dot(delta, delta);
+}
+
+function detailComponentDistance(record, component) {
+	let minimum = Infinity;
+	for (const point of record.bounds.samples) for (const triangle of component.triangles) {
+		minimum = Math.min(minimum, pointTriangleDistanceSquared(point, triangle[0], triangle[1], triangle[2]));
+	}
+	return Math.sqrt(minimum);
 }
 
 export async function validateEnrichment({ sourceMesh, artifact, grammar, requiredDrawings, safeFallback = false }) {
@@ -177,8 +245,12 @@ export async function validateEnrichment({ sourceMesh, artifact, grammar, requir
 			bounds: primitiveWorldBounds(primitive, detailMatrix),
 		}));
 		const sourceRegions = componentRegions(sourceMesh);
-		const attachmentCounts = detailRecords.map((record) => sourceRegions.filter((region) => overlaps(record.bounds, region, allowedDetailExcess)).length);
-		metrics.source_component_regions = sourceRegions;
+		const attachmentDistances = detailRecords.map((record) => sourceRegions.map((region) => (
+			overlaps(record.bounds, region, allowedDetailExcess) ? detailComponentDistance(record, region) : Infinity
+		)));
+		const attachmentCounts = attachmentDistances.map((distances) => distances.filter((distance) => distance <= allowedDetailExcess + 1e-7).length);
+		metrics.source_component_regions = sourceRegions.map(({ min, max }) => ({ min, max }));
+		metrics.detail_component_distances_m = attachmentDistances.map((distances) => distances.map((distance) => Number.isFinite(distance) ? rounded(distance) : null));
 		metrics.detail_component_attachment_counts = attachmentCounts;
 		if (attachmentCounts.some((count) => count === 0)) codes.push("DETAIL_COMPONENT_UNATTACHED");
 		if (attachmentCounts.some((count) => count > 1)) codes.push("DETAIL_COMPONENT_BRIDGE");
