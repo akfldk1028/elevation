@@ -1,12 +1,32 @@
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import { copyFile, mkdir, open, readFile, readdir, rename, rm } from "node:fs/promises";
-import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 const memoryRoot = resolve(process.env.ELEVATION3D_MEMORY_ROOT ?? "memory/elevation-3d");
 const globalPath = join(memoryRoot, "unified-runs.jsonl");
 const runsRoot = join(memoryRoot, "runs");
 const failAfter = Number.parseInt(process.env.ELEVATION3D_MIGRATION_FAIL_AFTER_REPLACEMENTS ?? "", 10);
+const SAFE_PATH_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+function assertSafePathSegment(value, label) {
+	if (typeof value !== "string" || !SAFE_PATH_SEGMENT.test(value) || value.includes("..")) {
+		throw new Error(`${label} must be a safe path segment`);
+	}
+	return value;
+}
+
+function assertDescendant(root, target, label) {
+	const fromRoot = relative(resolve(root), resolve(target));
+	if (!fromRoot || fromRoot === ".." || fromRoot.startsWith(`..\\`) || fromRoot.startsWith("../") || isAbsolute(fromRoot)) {
+		throw new Error(`${label} must remain below ${resolve(root)}`);
+	}
+	return resolve(target);
+}
+
+function resolveDescendant(root, ...segments) {
+	return assertDescendant(root, resolve(root, ...segments), "migration path");
+}
 
 async function parseLines(path, optional = false) {
 	try {
@@ -124,7 +144,18 @@ const candidateFiles = (await readdir(runsRoot, { withFileTypes: true }))
 	.map((entry) => join(runsRoot, entry.name))
 	.sort();
 const globals = await parseLines(globalPath, true);
-const candidatesByFile = new Map(await Promise.all(candidateFiles.map(async (path) => [path, await parseLines(path)])));
+for (const event of globals) assertSafePathSegment(event.candidate_id, `global candidate_id for ${event.run_id}`);
+const candidatesByFile = new Map();
+for (const discoveredPath of candidateFiles) {
+	const path = assertDescendant(runsRoot, discoveredPath, "discovered candidate file");
+	const stem = assertSafePathSegment(basename(path, ".jsonl"), "candidate file stem");
+	const events = await parseLines(path);
+	for (const event of events) {
+		const candidateId = assertSafePathSegment(event.candidate_id, `candidate_id in ${basename(path)}`);
+		if (candidateId !== stem) throw new Error(`candidate_id ${candidateId} does not match candidate file stem ${stem}`);
+	}
+	candidatesByFile.set(path, events);
+}
 const globalByRun = new Map(globals.map((event) => [event.run_id, event]));
 const candidateByRun = new Map([...candidatesByFile].flatMap(([path, events]) => events.map((event) => [event.run_id, { path, event }])));
 const runIds = [...new Set([...globalByRun.keys(), ...candidateByRun.keys()])];
@@ -135,9 +166,13 @@ for (const runId of runIds) {
 	const globalEvent = globalByRun.get(runId);
 	const candidateRecord = candidateByRun.get(runId);
 	const candidateEvent = candidateRecord?.event;
+	if (globalEvent && candidateEvent && globalEvent.candidate_id !== candidateEvent.candidate_id) {
+		throw new Error(`run ${runId} has conflicting candidate_id values`);
+	}
 	const versions = await canonicalHistory(globalEvent, candidateEvent);
 	const migratedGlobal = asGlobal(globalEvent, candidateEvent, versions);
-	const candidatePath = candidateRecord?.path ?? join(runsRoot, `${migratedGlobal.candidate_id}.jsonl`);
+	const candidateId = assertSafePathSegment(migratedGlobal.candidate_id, `candidate_id for ${runId}`);
+	const candidatePath = candidateRecord?.path ?? resolveDescendant(runsRoot, `${candidateId}.jsonl`);
 	migratedGlobalByRun.set(runId, migratedGlobal);
 	migratedCandidateByRun.set(runId, { path: candidatePath, event: asCandidate(candidateEvent, migratedGlobal, versions) });
 }
@@ -153,11 +188,13 @@ for (const path of new Set([...migratedCandidateByRun.values()].map((record) => 
 const prepared = [];
 try {
 	for (const [target, values] of targetValues) {
+		assertDescendant(memoryRoot, target, "migration target");
 		const bytes = `${values.map(JSON.stringify).join("\n")}\n`;
 		for (const line of bytes.trim().split(/\r?\n/)) JSON.parse(line);
 		try { if (await readFile(target, "utf8") === bytes) continue; }
 		catch (error) { if (error.code !== "ENOENT") throw error; }
 		const temp = join(dirname(target), `.${basename(target)}.${process.pid}.tmp`);
+		assertDescendant(memoryRoot, temp, "migration temp");
 		const handle = await open(temp, "wx");
 		try { await handle.writeFile(bytes); await handle.sync(); }
 		finally { await handle.close(); }
@@ -166,7 +203,8 @@ try {
 
 	let replacements = 0;
 	for (const { target, temp } of prepared) {
-		try { await copyFile(target, `${target}.bak-v1`, constants.COPYFILE_EXCL); }
+		const backup = assertDescendant(memoryRoot, `${target}.bak-v1`, "migration backup");
+		try { await copyFile(target, backup, constants.COPYFILE_EXCL); }
 		catch (error) { if (error.code !== "EEXIST" && error.code !== "ENOENT") throw error; }
 		await rename(temp, target);
 		replacements++;

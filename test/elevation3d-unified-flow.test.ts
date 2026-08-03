@@ -881,3 +881,77 @@ test("abort after enrichment retains GLB and abort after rendering also retains 
 		assert.equal(event.versions[0].status, "cancelled");
 	}
 });
+
+async function productionRenderAbort(mode: "first-view" | "provenance") {
+	const input = await fixture();
+	process.chdir(input.root);
+	const controller = new AbortController();
+	const calls: string[] = [];
+	const png = await sharp({ create: { width: 2, height: 3, channels: 4, background: { r: 1, g: 2, b: 3, alpha: 1 } } }).png().toBuffer();
+	let captures = 0;
+	const page = {
+		setViewport: async () => {}, goto: async () => {}, waitForFunction: async () => {},
+		$: async () => ({ screenshot: async ({ path }: { path: string }) => {
+			await writeFile(path, png);
+			captures++;
+			if (mode === "first-view" && captures === 1) controller.abort(new DOMException("stop after first view", "AbortError"));
+		} }),
+		close: async () => calls.push("page.close"),
+	};
+	const browser = { newPage: async () => page, close: async () => calls.push("browser.close") };
+	const enrich = async ({ outputPath }: any) => {
+		const bytes = Buffer.from("production-render-glb");
+		await writeFile(outputPath, bytes);
+		return { path: outputPath, sha256: sha256(bytes), metrics: { bytes: bytes.length } };
+	};
+	const safetyTimer = setTimeout(() => {
+		if (!controller.signal.aborted) controller.abort(new DOMException("render test safety timeout", "AbortError"));
+	}, 2_000);
+	try {
+	await assert.rejects(() => runElevation3d({
+		candidateId: input.candidateId, datasetRoot: input.datasetRoot, outputRoot: input.outputRoot,
+		runId: `production-render-abort-${mode}`, signal: controller.signal,
+		deps: {
+			enrich,
+			validate: async () => { throw new Error("validation must not run after render abort"); },
+			renderLifecycle: {
+				startPreview: async () => "http://127.0.0.1:4181/",
+				stopPreview: async () => calls.push("preview.stop"),
+				launchBrowser: async () => browser,
+			},
+			onRenderProgress: async (event: any) => {
+				if (mode === "provenance" && event.type === "provenance") {
+					controller.abort(new DOMException("stop after provenance", "AbortError"));
+				}
+			},
+		},
+	}), { name: "AbortError" });
+	} finally {
+		clearTimeout(safetyTimer);
+	}
+	const runDir = join(input.outputRoot, input.candidateId, `production-render-abort-${mode}`);
+	const event = JSON.parse(await readFile(join(input.root, "memory", "elevation-3d", "unified-runs.jsonl"), "utf8"));
+	return { calls, captures, event, runDir };
+}
+
+test("production renderer checkpoints a completed view before observing its abort", async () => {
+	const { calls, captures, event, runDir } = await productionRenderAbort("first-view");
+	assert.equal(captures, 1);
+	assert.deepEqual(Object.keys(event.versions[0].artifacts.drawings), ["plan"]);
+	assert.match(event.versions[0].artifacts.drawings.plan.sha256, /^[a-f0-9]{64}$/);
+	assert.deepEqual(event.versions[0].artifacts.drawings.plan.metrics, { width: 2, height: 3 });
+	assert.equal(event.versions[0].status, "cancelled");
+	assert.equal(calls.filter((call) => call === "page.close").length, 1);
+	assert.deepEqual(calls.slice(-2), ["browser.close", "preview.stop"]);
+	await assert.rejects(() => access(join(runDir, "versions", "v002")), /ENOENT/);
+});
+
+test("production renderer checkpoints provenance before an observer-triggered abort", async () => {
+	const { calls, captures, event, runDir } = await productionRenderAbort("provenance");
+	assert.equal(captures, 7);
+	assert.equal(Object.keys(event.versions[0].artifacts.drawings).length, 7);
+	assert.match(event.versions[0].artifacts.provenance.sha256, /^[a-f0-9]{64}$/);
+	assert.equal(event.versions[0].status, "cancelled");
+	assert.deepEqual(calls.slice(-2), ["browser.close", "preview.stop"]);
+	await assert.rejects(() => access(join(runDir, "versions", "fallback")), /ENOENT/);
+});

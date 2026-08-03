@@ -34,7 +34,7 @@ async function findChrome() {
 }
 
 export async function renderDrawings(runDir, strategies, {
-	views = [...VIEW_NAMES, "axon"], port = 0, signal, lifecycle = {},
+	views = [...VIEW_NAMES, "axon"], port = 0, signal, lifecycle = {}, onProgress,
 } = {}) {
 	const start = lifecycle.startPreview ?? startPreview;
 	const stop = lifecycle.stopPreview ?? stopPreview;
@@ -61,7 +61,9 @@ export async function renderDrawings(runDir, strategies, {
 					signal?.throwIfAborted();
 					await page.waitForFunction(() => globalThis.__ELEVATION3D_READY__ === true, { timeout: 30_000 });
 					signal?.throwIfAborted();
-					await captureCanvas(page, join(dir, `${view}.png`));
+					const path = join(dir, `${view}.png`);
+					await captureCanvas(page, path);
+					await onProgress?.({ type: "view", strategy, view, path });
 					signal?.throwIfAborted();
 				} finally {
 					await page.close();

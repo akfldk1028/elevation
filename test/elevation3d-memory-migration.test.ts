@@ -84,3 +84,45 @@ test("migration discovers candidates, repairs an interrupted mixed-state run, an
 	const twice = await Promise.all(paths.map((path) => readFile(path)));
 	assert.deepEqual(twice, once);
 });
+
+test("migration rejects a traversal candidate before touching an outside sentinel", async () => {
+	const root = await mkdtemp(join(tmpdir(), "elevation3d-memory-traversal-"));
+	roots.push(root);
+	const memoryRoot = join(root, "memory", "elevation-3d");
+	await mkdir(join(memoryRoot, "runs"), { recursive: true });
+	const outside = join(root, "outside-sentinel.jsonl");
+	const sentinel = Buffer.from("outside must remain unchanged\n");
+	await writeFile(outside, sentinel);
+	await jsonl(join(memoryRoot, "unified-runs.jsonl"), [{
+		...legacyGlobal("../../../outside-sentinel"), run_id: "unsafe-global-only",
+	}]);
+	await assert.rejects(() => execute(process.execPath, [script], {
+		env: { ...process.env, ELEVATION3D_MEMORY_ROOT: memoryRoot },
+	}));
+	assert.deepEqual(await readFile(outside), sentinel);
+	await assert.rejects(() => readFile(`${outside}.bak-v1`), /ENOENT/);
+});
+
+test("migration rejects unsafe or mismatched discovered candidate file associations", async () => {
+	for (const scenario of [
+		{ filename: ".unsafe.jsonl", eventCandidate: "alpha", runId: "alpha-run" },
+		{ filename: "beta.jsonl", eventCandidate: "alpha", runId: "alpha-run" },
+		{ filename: "beta.jsonl", eventCandidate: "beta", runId: "alpha-run" },
+	]) {
+		const root = await mkdtemp(join(tmpdir(), "elevation3d-memory-stem-"));
+		roots.push(root);
+		const memoryRoot = join(root, "memory", "elevation-3d");
+		const runsRoot = join(memoryRoot, "runs");
+		await mkdir(runsRoot, { recursive: true });
+		await jsonl(join(memoryRoot, "unified-runs.jsonl"), [legacyGlobal("alpha")]);
+		const candidatePath = join(runsRoot, scenario.filename);
+		await jsonl(candidatePath, [{
+			...legacyCandidate(scenario.eventCandidate, join(root, "results")), run_id: scenario.runId,
+		}]);
+		const before = await readFile(candidatePath);
+		await assert.rejects(() => execute(process.execPath, [script], {
+			env: { ...process.env, ELEVATION3D_MEMORY_ROOT: memoryRoot },
+		}));
+		assert.deepEqual(await readFile(candidatePath), before);
+	}
+});
