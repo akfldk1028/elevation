@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { NodeIO } from "@gltf-transform/core";
 import { sha256, stableJson } from "./core.mjs";
+import { compareGeometry } from "./geometry.mjs";
 
 const SCHEMA_VERSION = "arr.elevation3d.dimension-manifest.v1";
 const ENVELOPE_TOLERANCE_M = 0.001;
@@ -113,16 +114,25 @@ async function exactMassPositions(artifact) {
 	const node = root.listNodes().find((item) => item.getName() === "exact-mass");
 	const mesh = node?.getMesh() ?? root.listMeshes().find((item) => item.getName() === "exact-mass");
 	if (!mesh) throw new Error("dimension source missing: exact-mass");
-	const accessors = mesh.listPrimitives().map((primitive) => primitive.getAttribute("POSITION")).filter(Boolean);
-	if (!accessors.length) throw new Error("dimension source missing: exact-mass.POSITION");
+	const primitives = mesh.listPrimitives();
+	if (!primitives.length) throw new Error("dimension source missing: exact-mass.POSITION");
 	const positions = [];
-	for (const accessor of accessors) {
+	const triangles = [];
+	for (const primitive of primitives) {
+		const accessor = primitive.getAttribute("POSITION");
+		if (!accessor) throw new Error("dimension source missing: exact-mass.POSITION");
+		const offset = positions.length;
 		for (let index = 0; index < accessor.getCount(); index++) {
 			const value = accessor.getElement(index, [0, 0, 0]);
 			positions.push(value.map((coordinate) => Math.fround(coordinate)));
 		}
+		const indices = primitive.getIndices();
+		const values = indices
+			? Array.from({ length: indices.getCount() }, (_, index) => indices.getScalar(index))
+			: Array.from({ length: accessor.getCount() }, (_, index) => index);
+		for (let index = 0; index + 2 < values.length; index += 3) triangles.push(values.slice(index, index + 3).map((value) => value + offset));
 	}
-	return { actualSha256, positions };
+	return { actualSha256, geometry: { vertices: positions, triangles } };
 }
 
 export async function deriveElevationDimensions({ sourceMesh, artifact, facadePlanes, floorGuides, view }) {
@@ -131,7 +141,9 @@ export async function deriveElevationDimensions({ sourceMesh, artifact, facadePl
 	assertBoundIdentity(sourceMesh.identity, floorGuides?.identity, "floorGuides");
 	assertBoundIdentity(sourceMesh.identity, facadePlanes?.identity, "facadePlanes");
 	const axes = projection.axes;
-	const { actualSha256, positions } = await exactMassPositions(artifact);
+	const { actualSha256, geometry: exactMassGeometry } = await exactMassPositions(artifact);
+	if (!compareGeometry(sourceMesh, exactMassGeometry, 1e-5).accepted) throw new Error("exact MASS geometry mismatch");
+	const positions = exactMassGeometry.vertices;
 	const horizontalValues = positions.map((point) => dot(point, axes.horizontal));
 	const verticalValues = positions.map((point) => dot(point, axes.vertical));
 	const minimumHorizontal = Math.min(...horizontalValues);

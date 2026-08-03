@@ -141,11 +141,21 @@ test("derives front dimensions from parsed exact MASS and authored floor guides"
 
 test("uses selected GLB exact-mass bounds instead of stale sourceMesh bounds", async () => {
 	const inputs = await realCreative013Inputs();
-	inputs.sourceMesh.vertices = [[-100, 0, -100], [100, 0, 100]];
 	inputs.sourceMesh.bounds = { min: [-100, 0, -100], max: [100, 0, 100] };
 	const manifest = await deriveElevationDimensions(inputs);
 	assert.equal(manifest.overall_width.display_mm, 24361);
 	assert.equal(manifest.overall_height.display_mm, 9900);
+});
+
+test("rejects a larger exact-mass GLB carrying the source identity", async () => {
+	const inputs = await rotatedFixture();
+	const positions = [...inputs.sourceMesh.vertices, [0, 0, 1], [0.1, 0.1, 1], [0, 0.1, 1.1]];
+	const indices = [...inputs.sourceMesh.triangles, [8, 9, 10]];
+	inputs.artifact = await writeEnrichedGlb(
+		{ base: { positions, indices }, details: [] },
+		inputs.artifact.path.replace("rotated.glb", "mismatched.glb"),
+	);
+	await assert.rejects(() => deriveElevationDimensions(inputs), /exact MASS geometry mismatch/);
 });
 
 test("projects rotated exact MASS geometry with authoritative front camera axes", async () => {
