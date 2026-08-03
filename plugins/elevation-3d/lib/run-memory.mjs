@@ -1,5 +1,6 @@
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { pathToFileURL } from "node:url";
 import { redactSecrets, sha256 } from "./core.mjs";
 
 const memoryAppendQueues = new Map();
@@ -26,6 +27,10 @@ function resolveDescendant(root, ...segments) {
 function portableRelativePath(path) {
 	const relativePath = isAbsolute(path) ? relative(process.cwd(), path) : path;
 	return relativePath.replaceAll("\\", "/");
+}
+
+function artifactBase(runDir) {
+	return pathToFileURL(`${resolve(runDir)}${sep}`).href;
 }
 
 function omitBinary(value) {
@@ -214,7 +219,7 @@ function runRelativePath(runDir, path, label) {
 	return relativePath.replaceAll("\\", "/");
 }
 
-function selectedOutputArtifacts(run, selectedVersion) {
+function selectedOutputArtifacts(run, selectedVersion, selectedHistory) {
 	const runDir = resolve(run.dir);
 	if (!selectedVersion) {
 		return {
@@ -222,6 +227,7 @@ function selectedOutputArtifacts(run, selectedVersion) {
 			run_dir: runDir.replaceAll("\\", "/"),
 			selected_glb: null,
 			validation_report: null,
+			drawing_provenance: null,
 			drawings: {},
 		};
 	}
@@ -238,6 +244,7 @@ function selectedOutputArtifacts(run, selectedVersion) {
 		run_dir: runDir.replaceAll("\\", "/"),
 		selected_glb: runRelativePath(runDir, validationArtifacts.glb, "selected GLB"),
 		validation_report: runRelativePath(runDir, join(selectedVersion.dir, "validation.json"), "validation report"),
+		drawing_provenance: selectedHistory?.artifacts?.drawing_provenance ?? null,
 		drawings,
 	};
 }
@@ -297,6 +304,7 @@ async function versionHistory(run) {
 					artifactEntry(run, entry, entry?.sha256, `${version.id} drawing ${name}`),
 				])),
 				provenance: artifactEntry(run, artifacts.provenance, artifacts.provenance_sha256, `${version.id} provenance`),
+				drawing_provenance: artifactEntry(run, artifacts.provenance, artifacts.provenance_sha256, `${version.id} provenance`),
 				validation_report: validation
 					? { path: runRelativePath(run.dir, validationPath, `${version.id} validation`), sha256: validationSha }
 					: null,
@@ -336,15 +344,18 @@ export async function appendRunMemory(run, memoryRoot) {
 		schema_version: "arr.elevation3d.run-memory.v2",
 		run_id: runId,
 		candidate_id: candidateId,
+		artifact_base: artifactBase(run.dir),
 		input_artifacts: run.metadata.artifacts,
 		versions,
 		final: run.final,
 	});
 	const selectedVersion = run.versions.find((version) => version.id === run.final.selected);
+	const selectedHistory = versions.find((version) => version.id === run.final.selected);
 	const candidateEvent = persistent({
 		schema_version: "arr.elevation3d.candidate-run-memory.v2",
 		run_id: runId,
 		candidate_id: candidateId,
+		artifact_base: artifactBase(run.dir),
 		selected_version: run.final.selected,
 		versions,
 		attempts: run.versions.filter((version) => version.id !== "fallback").length,
@@ -355,7 +366,7 @@ export async function appendRunMemory(run, memoryRoot) {
 			? "bounded facade grammar correction attempted"
 			: "none",
 		fallback: run.final.selected === "fallback",
-		artifacts: selectedOutputArtifacts(run, selectedVersion),
+		artifacts: selectedOutputArtifacts(run, selectedVersion, selectedHistory),
 		final: run.final,
 	});
 	const root = resolve(memoryRoot);
