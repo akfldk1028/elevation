@@ -3,6 +3,11 @@ import { describe, test } from "node:test";
 
 import { buildHunyuanRequest, normalizeHunyuanStatus } from "../plugins/elevation-3d/lib/providers/hunyuan.mjs";
 import { buildWanRequest, normalizeWanStatus } from "../plugins/elevation-3d/lib/providers/wan.mjs";
+import { createStabilityProvider } from "../plugins/elevation-3d/lib/providers/stability.mjs";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import sharp from "sharp";
 
 describe("Hunyuan provider contract", () => {
 	test("builds a prompt-only 3.1 texture request for the UV-less source", () => {
@@ -38,5 +43,38 @@ describe("Wan provider contract", () => {
 	test("normalizes asynchronous success content", () => {
 		const response = { output: { task_status: "SUCCEEDED", choices: [{ message: { content: [{ type: "image", image: "https://x/1.png" }, { type: "image", image: "https://x/2.png" }] } }] } };
 		assert.deepEqual(normalizeWanStatus(response), { status: "succeeded", task_id: undefined, images: ["https://x/1.png", "https://x/2.png"] });
+	});
+});
+
+describe("Stability SPAR3D provider contract", () => {
+	test("writes a successful binary GLB response without exposing the API key", async () => {
+		const dir = await mkdtemp(join(tmpdir(), "spar3d-provider-"));
+		const image = join(dir, "input.png");
+		const output = join(dir, "output.glb");
+		await sharp({ create: { width: 640, height: 640, channels: 3, background: "white" } }).png().toFile(image);
+		const provider = createStabilityProvider({ STABILITY_API_KEY: "sk-secret-test" }, async (_url, request) => {
+			assert.equal(request.method, "POST");
+			assert.equal(request.headers.authorization, "Bearer sk-secret-test");
+			return new Response(Buffer.from("glTFbinary"), { status: 200, headers: { "content-type": "model/gltf-binary" } });
+		});
+		const result = await provider.generate({ imagePath: image, outputPath: output, textureResolution: 512, targetType: "face", targetCount: 1000, seed: 7 });
+		assert.deepEqual(await readFile(output), Buffer.from("glTFbinary"));
+		assert.deepEqual(result, { outputPath: output, bytes: 10, credits: 4 });
+	});
+
+	test("rejects a successful response that is not a GLB", async () => {
+		const dir = await mkdtemp(join(tmpdir(), "spar3d-provider-"));
+		const image = join(dir, "input.png");
+		await sharp({ create: { width: 640, height: 640, channels: 3, background: "white" } }).png().toFile(image);
+		const provider = createStabilityProvider({ STABILITY_API_KEY: "sk-secret-test" }, async () => new Response("{}", { status: 200, headers: { "content-type": "application/json" } }));
+		await assert.rejects(() => provider.generate({ imagePath: image, outputPath: join(dir, "output.glb") }), /expected GLB/);
+	});
+
+	test("rejects images smaller than the live endpoint minimum before submission", async () => {
+		const dir = await mkdtemp(join(tmpdir(), "spar3d-provider-"));
+		const image = join(dir, "small.png");
+		await sharp({ create: { width: 512, height: 512, channels: 3, background: "white" } }).png().toFile(image);
+		const provider = createStabilityProvider({ STABILITY_API_KEY: "sk-secret-test" }, async () => { throw new Error("network must not be called"); });
+		await assert.rejects(() => provider.generate({ imagePath: image, outputPath: join(dir, "output.glb") }), /at least 640x640/);
 	});
 });
