@@ -1,6 +1,7 @@
-import { readFile } from "node:fs/promises";
+import { readFile, realpath } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { getBounds, NodeIO } from "@gltf-transform/core";
+import sharp from "sharp";
 import { sha256 } from "./core.mjs";
 
 const DRAWING_NAMES = ["plan", "front", "back", "left", "right", "top", "axon"];
@@ -22,16 +23,40 @@ function rounded(value) {
 	return Number(value.toFixed(12));
 }
 
-function pngInfo(bytes) {
-	const signature = [137, 80, 78, 71, 13, 10, 26, 10];
-	if (bytes.length < 24 || !signature.every((value, index) => bytes[index] === value) || bytes.toString("ascii", 12, 16) !== "IHDR") return null;
-	const width = bytes.readUInt32BE(16);
-	const height = bytes.readUInt32BE(20);
-	return width > 0 && height > 0 ? { width, height } : null;
+async function pngInfo(bytes) {
+	try {
+		const { data, info } = await sharp(bytes, { failOn: "error" }).raw().toBuffer({ resolveWithObject: true });
+		if (info.format !== "raw" || info.width <= 0 || info.height <= 0 || data.length !== info.width * info.height * info.channels) return null;
+		return { width: info.width, height: info.height };
+	} catch {
+		return null;
+	}
 }
 
 function pathFrom(root, path) {
 	return isAbsolute(path) ? resolve(path) : resolve(root, path);
+}
+
+function primitiveWorldBounds(primitive, matrix) {
+	const positions = primitive.getAttribute("POSITION");
+	const min = [Infinity, Infinity, Infinity];
+	const max = [-Infinity, -Infinity, -Infinity];
+	if (!positions) return { min, max, centroid: [NaN, NaN, NaN] };
+	const centroid = [0, 0, 0];
+	for (let index = 0; index < positions.getCount(); index++) {
+		const [x, y, z] = positions.getElement(index, [0, 0, 0]);
+		const point = [
+			matrix[0] * x + matrix[4] * y + matrix[8] * z + matrix[12],
+			matrix[1] * x + matrix[5] * y + matrix[9] * z + matrix[13],
+			matrix[2] * x + matrix[6] * y + matrix[10] * z + matrix[14],
+		];
+		for (let axis = 0; axis < 3; axis++) {
+			min[axis] = Math.min(min[axis], point[axis]);
+			max[axis] = Math.max(max[axis], point[axis]);
+			centroid[axis] += point[axis] / positions.getCount();
+		}
+	}
+	return { min, max, centroid };
 }
 
 function components(indices, vertexCount) {
@@ -45,14 +70,40 @@ function components(indices, vertexCount) {
 	return new Set(indices.map(find)).size;
 }
 
+function componentRegions(mesh) {
+	const parent = Array.from({ length: mesh.vertices.length }, (_, index) => index);
+	const find = (value) => parent[value] === value ? value : (parent[value] = find(parent[value]));
+	const union = (a, b) => { const x = find(a), y = find(b); if (x !== y) parent[y] = x; };
+	const referenced = new Set();
+	for (const triangle of mesh.triangles) {
+		triangle.forEach((index) => referenced.add(index));
+		union(triangle[0], triangle[1]);
+		union(triangle[0], triangle[2]);
+	}
+	const groups = new Map();
+	for (const index of referenced) {
+		const root = find(index);
+		if (!groups.has(root)) groups.set(root, []);
+		groups.get(root).push(mesh.vertices[index]);
+	}
+	return [...groups.values()].map(boundsOf);
+}
+
+function overlaps(bounds, region, tolerance) {
+	return [0, 1, 2].every((axis) => bounds.max[axis] >= region.min[axis] - tolerance && bounds.min[axis] <= region.max[axis] + tolerance);
+}
+
 export async function validateEnrichment({ sourceMesh, artifact, grammar, requiredDrawings, safeFallback = false }) {
 	const codes = [];
 	const metrics = { missing_drawings: [], drawing_dimensions: {} };
 	const artifacts = { glb: resolve(artifact.path), drawings: {} };
 	let glbBytes;
 	let glbHash;
+	let artifactRealPath;
 	let document;
 	try {
+		artifactRealPath = await realpath(artifact.path);
+		artifacts.glb = artifactRealPath;
 		glbBytes = await readFile(artifact.path);
 		glbHash = sha256(glbBytes);
 		artifacts.glb_sha256 = glbHash;
@@ -120,16 +171,34 @@ export async function validateEnrichment({ sourceMesh, artifact, grammar, requir
 		if (primitives.length > primitiveBudget) codes.push("PRIMITIVE_BUDGET_EXCEEDED");
 
 		const floorGuides = (grammar.floor_elevations_m ?? []).map(Number);
-		const detailExtras = detailPrimitives.map((primitive) => primitive.getExtras());
+		const detailMatrix = detailNode?.getWorldMatrix() ?? IDENTITY_MATRIX;
+		const detailRecords = detailPrimitives.map((primitive) => ({
+			extras: primitive.getExtras(),
+			bounds: primitiveWorldBounds(primitive, detailMatrix),
+		}));
+		const sourceRegions = componentRegions(sourceMesh);
+		const attachmentCounts = detailRecords.map((record) => sourceRegions.filter((region) => overlaps(record.bounds, region, allowedDetailExcess)).length);
+		metrics.source_component_regions = sourceRegions;
+		metrics.detail_component_attachment_counts = attachmentCounts;
+		if (attachmentCounts.some((count) => count === 0)) codes.push("DETAIL_COMPONENT_UNATTACHED");
+		if (attachmentCounts.some((count) => count > 1)) codes.push("DETAIL_COMPONENT_BRIDGE");
+		const detailExtras = detailRecords.map((record) => record.extras);
 		const facadeViews = Object.keys(grammar.facade_lengths_m ?? {});
 		if (!safeFallback && facadeViews.some((view) => !detailExtras.some((extras) => extras?.kind === "mullion" && extras.view === view))) codes.push("DETAIL_COVERAGE_MISSING");
 		if (!safeFallback && floorGuides.length) {
-			const bands = detailExtras.filter((extras) => extras?.kind === "floor-band");
-			const elevations = bands.map((extras) => Number(extras.elevation_m)).filter(Number.isFinite);
+			const bands = detailRecords.filter((record) => record.extras?.kind === "floor-band");
+			const elevations = bands.map((record) => Number(record.extras.elevation_m)).filter(Number.isFinite);
+			const alignedBands = bands.filter((record) => {
+				const elevation = Number(record.extras.elevation_m);
+				return Number.isFinite(elevation)
+					&& elevation >= record.bounds.min[2] - 1e-5
+					&& elevation <= record.bounds.max[2] + 1e-5
+					&& Math.abs(record.bounds.centroid[2] - elevation) <= 0.061;
+			});
 			metrics.floor_band_elevations_m = [...new Set(elevations)].sort((a, b) => a - b);
 			const coverageMissing = facadeViews.length
-				? facadeViews.some((view) => floorGuides.some((guide) => !bands.some((band) => band.view === view && Math.abs(Number(band.elevation_m) - guide) <= 1e-5)))
-				: floorGuides.some((guide) => !elevations.some((value) => Math.abs(value - guide) <= 1e-5));
+				? facadeViews.some((view) => floorGuides.some((guide) => !alignedBands.some((band) => band.extras.view === view && Math.abs(Number(band.extras.elevation_m) - guide) <= 1e-5)))
+				: floorGuides.some((guide) => !alignedBands.some((band) => Math.abs(Number(band.extras.elevation_m) - guide) <= 1e-5));
 			if (coverageMissing) codes.push("FLOOR_GUIDE_COVERAGE_MISSING");
 			if (elevations.some((value) => value < sourceBounds.min[2] - 1e-5 || value > sourceBounds.max[2] + 1e-5 || !floorGuides.some((guide) => Math.abs(value - guide) <= 1e-5))) codes.push("NEW_STOREY_DETECTED");
 		}
@@ -144,7 +213,7 @@ export async function validateEnrichment({ sourceMesh, artifact, grammar, requir
 		}
 		try {
 			const bytes = await readFile(path);
-			const dimensions = pngInfo(bytes);
+			const dimensions = await pngInfo(bytes);
 			const hash = sha256(bytes);
 			drawingState[name] = { path: resolve(path), sha256: hash, ...dimensions };
 			artifacts.drawings[name] = drawingState[name];
@@ -164,21 +233,25 @@ export async function validateEnrichment({ sourceMesh, artifact, grammar, requir
 	catch { codes.push("DRAWING_PROVENANCE_MISSING"); }
 	if (provenance) {
 		let mismatch = provenance.selected_glb?.sha256 !== glbHash;
-		const configPath = join(runDir, "viewer", "config.json");
+			const configPath = join(runDir, "viewer", "config.json");
 		try {
-			const configBytes = await readFile(configPath);
+			const configRealPath = await realpath(configPath);
+			const configBytes = await readFile(configRealPath);
 			const configHash = sha256(configBytes);
 			const config = JSON.parse(configBytes.toString("utf8"));
-			artifacts.viewer_config = configPath;
+			artifacts.viewer_config = configRealPath;
 			artifacts.viewer_config_sha256 = configHash;
 			mismatch ||= provenance.viewer_config?.sha256 !== configHash;
+			mismatch ||= await realpath(pathFrom(runDir, provenance.viewer_config?.path ?? "")) !== configRealPath;
 			mismatch ||= "mesh" in config || JSON.stringify(Object.keys(config.strategies ?? {})) !== JSON.stringify(["hunyuan"]);
 			const configuredGlb = config.strategies?.hunyuan?.glb;
 			if (!configuredGlb) mismatch = true;
 			else {
-				const configuredPath = resolve(dirname(configPath), configuredGlb);
-				const provenanceGlbPath = pathFrom(runDir, provenance.selected_glb?.path ?? "");
-				mismatch ||= configuredPath !== provenanceGlbPath;
+				const configuredPath = await realpath(resolve(dirname(configRealPath), configuredGlb));
+				const provenanceGlbPath = await realpath(pathFrom(runDir, provenance.selected_glb?.path ?? ""));
+				const configuredHash = sha256(await readFile(configuredPath));
+				mismatch ||= configuredPath !== provenanceGlbPath || configuredPath !== artifactRealPath || provenanceGlbPath !== artifactRealPath;
+				mismatch ||= configuredHash !== glbHash || provenance.selected_glb?.sha256 !== configuredHash;
 			}
 			for (const name of DRAWING_NAMES) {
 				const actual = drawingState[name];
