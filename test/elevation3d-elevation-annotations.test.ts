@@ -53,6 +53,8 @@ test("lays out authoritative overall and level dimensions outside the building",
 	assert.match(annotation.svg, /<g id="facade-extent">/);
 	assert.match(annotation.svg, /<g id="scale-bar">/);
 	assert.match(annotation.svg, /data-source-id="level-3300"/);
+	assert.match(annotation.svg, /data-source-id="facade-height"[^>]*data-display-mm="9900"[^>]*>9900</);
+	assert.match(annotation.svg, /data-source-id="scale-bar"[^>]*data-display-mm="5000"[^>]*>5 m</);
 	for (const box of annotation.annotation_boxes) {
 		assert.ok(box.min_x >= 48 && box.min_y >= 48 && box.max_x <= 2352 && box.max_y <= 2352, `${box.id} violates page clearance`);
 	}

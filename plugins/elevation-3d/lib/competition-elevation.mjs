@@ -341,7 +341,9 @@ export async function renderCompetitionElevationBase({
 				palette_delta_e00: paletteContrasts(palette),
 			},
 		};
-		await writeFile(join(outputDir, "front-render-manifest.json"), JSON.stringify(artifact, null, 2));
+		const manifestPath = join(outputDir, "front-base-render-manifest.json");
+		await writeFile(manifestPath, JSON.stringify(artifact, null, 2));
+		artifact.manifest_path = manifestPath;
 		return artifact;
 	} finally {
 		try { if (page) await page.close(); }
@@ -379,6 +381,7 @@ async function classifyAndCleanDarkArtifacts(base) {
 	}
 	const invalidTinyPixels = [];
 	let validPixels = 0, rejectedPixels = 0, validComponents = 0, suppressedComponents = 0;
+	const componentEvidence = [];
 	for (let y = bounds.min_y; y <= bounds.max_y; y++) for (let x = bounds.min_x; x <= bounds.max_x; x++) {
 		const start = y * width + x;
 		if (!mask[start] || visited[start]) continue;
@@ -401,9 +404,10 @@ async function classifyAndCleanDarkArtifacts(base) {
 		}
 		const narrowDetail = component.length <= 300 && maxX - minX + 1 <= 12 && maxY - minY + 1 <= 50;
 		if (!narrowDetail) continue;
-		if (semantic > 0 && authored / semantic >= 0.7 && depthValid >= authored) {
+		if ((semantic > 0 && authored / semantic >= 0.7 && depthValid >= authored) || depthValid === component.length) {
 			validPixels += component.length; validComponents++;
-		} else if (component.length <= 16 && semantic === 0) {
+			componentEvidence.push({ bbox_px: [minX, minY, maxX, maxY], pixels: component.length, bronze_or_opaque_pixels: authored, finite_depth_pixels: depthValid, classification: authored > 0 ? "semantic-bronze-opaque" : "selected-glb-depth-silhouette" });
+		} else if (component.length <= 16 && semantic === 0 && depthValid === 0) {
 			invalidTinyPixels.push(...component); suppressedComponents++;
 		} else rejectedPixels += component.length;
 	}
@@ -416,12 +420,13 @@ async function classifyAndCleanDarkArtifacts(base) {
 		pixels,
 		info: baseImage.info,
 		report: {
-			classification: "connected dark details with bronze/opaque material-ID and finite depth are authored geometry",
+			classification: "connected dark details with bronze/opaque material-ID or complete selected-GLB depth are authored geometry",
 			valid_pixels: validPixels,
 			valid_components: validComponents,
 			invalid_pixels: rejectedPixels,
 			suppressed_screen_artifact_pixels: invalidTinyPixels.length,
 			suppressed_screen_artifact_components: suppressedComponents,
+			component_evidence: componentEvidence,
 			geometry_clipped: false,
 			selected_glb_altered: false,
 		},
@@ -441,8 +446,12 @@ export async function renderCompetitionElevation({
 	const dimensionsRecord = { path: dimensionsPath, sha256: sha256(await readFile(dimensionsPath)) };
 	const svgRecord = { path: svgPath, sha256: sha256(await readFile(svgPath)) };
 	const presentationBase = await classifyAndCleanDarkArtifacts(base);
+	const presentationBasePath = join(outputDir, "front-presentation-base.png");
+	const presentationBaseBytes = await sharp(presentationBase.pixels, { raw: presentationBase.info }).png().toBuffer();
+	await writeFile(presentationBasePath, presentationBaseBytes);
+	const presentationBaseRecord = { path: presentationBasePath, sha256: sha256(presentationBaseBytes) };
 	const finalPath = join(outputDir, "front.png");
-	const finalBytes = await sharp(presentationBase.pixels, { raw: presentationBase.info })
+	const finalBytes = await sharp(presentationBaseBytes)
 		.composite([{ input: Buffer.from(annotation.svg), blend: "over" }])
 		.png()
 		.toBuffer();
@@ -458,6 +467,8 @@ export async function renderCompetitionElevation({
 		scale_bar: dimensions.scale_bar.display_mm,
 	};
 	const renderManifestPath = join(outputDir, "front-render-manifest.json");
+	const baseManifestRecord = { path: base.manifest_path, sha256: sha256(await readFile(base.manifest_path)) };
+	const diagnosticRecords = Object.fromEntries(await Promise.all(Object.entries(base.diagnostic_paths).map(async ([name, path]) => [name, { path, sha256: sha256(await readFile(path)) }])));
 	const renderManifest = {
 		schema_version: "arr.elevation3d.competition-elevation.v1",
 		view: "front",
@@ -471,6 +482,9 @@ export async function renderCompetitionElevation({
 		displayed_dimensions: displayedDimensions,
 		provenance: {
 			base_png_sha256: base.sha256,
+			base_manifest_sha256: baseManifestRecord.sha256,
+			presentation_base_png_sha256: presentationBaseRecord.sha256,
+			diagnostic_sha256: Object.fromEntries(Object.entries(diagnosticRecords).map(([name, record]) => [name, record.sha256])),
 			annotations_svg_sha256: svgRecord.sha256,
 			dimensions_json_sha256: dimensionsRecord.sha256,
 			final_png_sha256: finalRecord.sha256,
@@ -482,6 +496,9 @@ export async function renderCompetitionElevation({
 	const manifestRecord = { path: renderManifestPath, sha256: sha256(await readFile(renderManifestPath)) };
 	const draft = {
 		base,
+		base_manifest: baseManifestRecord,
+		presentation_base_png: presentationBaseRecord,
+		diagnostics: diagnosticRecords,
 		dimensions,
 		annotation,
 		final_png: finalRecord,

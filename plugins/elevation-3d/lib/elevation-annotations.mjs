@@ -73,15 +73,18 @@ export function buildElevationAnnotations({ dimensions, camera, contentBounds, c
 	const overallHeight = `${line(heightX, top, heightX, bottom, "overall")}${line(heightX - 11, top, heightX + 11, top, "overall")}${line(heightX - 11, bottom, heightX + 11, bottom, "overall")}${text(dimensions.overall_height.display_mm, heightX - 8, overallMidY, `class="dimension-label halo" text-anchor="middle" transform="rotate(-90 ${heightX - 8} ${overallMidY})" data-source-id="overall-height" data-display-mm="${dimensions.overall_height.display_mm}"`)}`;
 	const widthCentre = (left + right) / 2;
 	boxes.push(textBox("facade-width", widthCentre, facadeY - 8, 72, 22));
+	boxes.push(textBox("facade-height", right, facadeY + 32, 54, 22, "end"));
 	boxes.push(textBox("overall-width", widthCentre, widthY - 8, 72, 22));
 	labels.push(String(dimensions.facade_extent.width.display_mm), String(dimensions.overall_width.display_mm));
 	displayed.push(
 		{ id: "facade-width", label: String(dimensions.facade_extent.width.display_mm), display_mm: dimensions.facade_extent.width.display_mm, source: dimensions.facade_extent.width.source },
+		{ id: "facade-height", label: String(dimensions.facade_extent.height.display_mm), display_mm: dimensions.facade_extent.height.display_mm, source: dimensions.facade_extent.height.source },
 		{ id: "overall-width", label: String(dimensions.overall_width.display_mm), display_mm: dimensions.overall_width.display_mm, source: dimensions.overall_width.source },
 	);
 	const horizontalDimension = (id, y, value, className) => `${line(left, bottom + 12, left, y)}${line(right, bottom + 12, right, y)}${line(left, y, right, y, className)}${line(left, y - 9, left, y + 9, className)}${line(right, y - 9, right, y + 9, className)}${text(value, widthCentre, y - 8, `class="dimension-label halo" text-anchor="middle" data-source-id="${id}" data-display-mm="${value}"`)}`;
 	const scaleBarPx = dimensions.scale_bar.value_m * scaleX;
 	const scaleX0 = 215, scaleBarY = 1900.5;
+	displayed.push({ id: "scale-bar", label: `${dimensions.scale_bar.value_m} m`, display_mm: dimensions.scale_bar.display_mm, source: dimensions.scale_bar.source });
 	boxes.push(textBox("scale-bar-label", scaleX0 + scaleBarPx / 2, scaleBarY - 14, 82, 20));
 	boxes.push(textBox("title", 120, 120, 520, 34, "start"));
 	boxes.push(textBox("candidate", 120, 164, 420, 20, "start"));
@@ -98,7 +101,7 @@ export function buildElevationAnnotations({ dimensions, camera, contentBounds, c
 <g id="levels">${levelLines.join("")}</g>
 <g id="floor-intervals">${intervalParts.join("")}</g>
 <g id="overall-height">${overallHeight}</g>
-<g id="facade-extent">${horizontalDimension("facade-width", facadeY, dimensions.facade_extent.width.display_mm, "dimension")}</g>
+<g id="facade-extent">${horizontalDimension("facade-width", facadeY, dimensions.facade_extent.width.display_mm, "dimension")}${text("FACADE H", right - 72, facadeY + 32, `class="note" text-anchor="end"`)}${text(dimensions.facade_extent.height.display_mm, right, facadeY + 32, `class="dimension-label" text-anchor="end" data-source-id="facade-height" data-display-mm="${dimensions.facade_extent.height.display_mm}"`)}</g>
 <g id="overall-width">${horizontalDimension("overall-width", widthY, dimensions.overall_width.display_mm, "overall")}</g>
 <g id="scale-bar">${line(scaleX0, scaleBarY, scaleX0 + scaleBarPx, scaleBarY, "overall")}${line(scaleX0, scaleBarY - 9, scaleX0, scaleBarY + 9, "overall")}${line(scaleX0 + scaleBarPx, scaleBarY - 9, scaleX0 + scaleBarPx, scaleBarY + 9, "overall")}${text(`${dimensions.scale_bar.value_m} m`, scaleX0 + scaleBarPx / 2, scaleBarY - 14, `class="dimension-label" text-anchor="middle" data-source-id="scale-bar" data-display-mm="${dimensions.scale_bar.display_mm}"`)}</g>
 <g id="notes">${text(NOTE, 215, 2240, `class="note" text-anchor="start"`)}</g>

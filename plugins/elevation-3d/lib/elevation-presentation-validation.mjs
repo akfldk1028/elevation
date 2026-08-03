@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import sharp from "sharp";
-import { sha256 } from "./core.mjs";
+import { sha256, stableJson } from "./core.mjs";
 import { deriveElevationDimensions } from "./elevation-dimensions.mjs";
 
 function dot(left, right) {
@@ -24,7 +24,7 @@ function dimensionValues(manifest) {
 }
 
 function sameJson(left, right) {
-	return JSON.stringify(left) === JSON.stringify(right);
+	return stableJson(left) === stableJson(right);
 }
 
 async function validRecord(record) {
@@ -35,6 +35,187 @@ async function validRecord(record) {
 
 function add(codes, code, condition) {
 	if (condition && !codes.includes(code)) codes.push(code);
+}
+
+async function decodedRgb(path) {
+	return sharp(path).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+}
+
+function rasterMetrics(raw, width, height) {
+	const corners = [[0, 0], [width - 1, 0], [0, height - 1], [width - 1, height - 1]];
+	const background = [0, 1, 2].map((channel) => Math.round(corners.reduce((sum, [x, y]) => sum + raw[(y * width + x) * 3 + channel], 0) / 4));
+	let minX = width, minY = height, maxX = -1, maxY = -1, foreground = 0, dark = 0;
+	for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+		const offset = (y * width + x) * 3;
+		const red = raw[offset], green = raw[offset + 1], blue = raw[offset + 2];
+		if (Math.hypot(red - background[0], green - background[1], blue - background[2]) > 10) {
+			minX = Math.min(minX, x); minY = Math.min(minY, y); maxX = Math.max(maxX, x); maxY = Math.max(maxY, y); foreground++;
+		}
+		if (0.2126 * red + 0.7152 * green + 0.0722 * blue < 90) dark++;
+	}
+	let edges = 0, strong = 0, samples = 0;
+	const luminance = (x, y) => { const offset = (y * width + x) * 3; return 0.2126 * raw[offset] + 0.7152 * raw[offset + 1] + 0.0722 * raw[offset + 2]; };
+	for (let y = 2; y < height - 2; y += 2) for (let x = 2; x < width - 2; x += 2) {
+		const gx = -luminance(x - 1, y - 1) + luminance(x + 1, y - 1) - 2 * luminance(x - 1, y) + 2 * luminance(x + 1, y) - luminance(x - 1, y + 1) + luminance(x + 1, y + 1);
+		const gy = -luminance(x - 1, y - 1) - 2 * luminance(x, y - 1) - luminance(x + 1, y - 1) + luminance(x - 1, y + 1) + 2 * luminance(x, y + 1) + luminance(x + 1, y + 1);
+		const magnitude = Math.hypot(gx, gy);
+		if (magnitude > 80) edges++;
+		if (magnitude > 180) strong++;
+		samples++;
+	}
+	return { background, bounds: { min_x: minX, min_y: minY, max_x: maxX, max_y: maxY }, foreground_fraction: foreground / (width * height), dark_fraction: dark / (width * height), total_edge_density: edges / samples, strong_edge_density: strong / samples };
+}
+
+function roleCounts(raw) {
+	const counts = { concrete: 0, glass: 0, bronze: 0, opaque: 0 };
+	for (let offset = 0; offset < raw.length; offset += 3) {
+		const red = raw[offset], green = raw[offset + 1], blue = raw[offset + 2];
+		if (red > 200 && green < 80 && blue < 80) counts.concrete++;
+		else if (green > 200 && red < 80 && blue < 80) counts.glass++;
+		else if (blue > 200 && red < 80 && green < 80) counts.bronze++;
+		else if (red > 180 && green > 180 && blue < 80) counts.opaque++;
+	}
+	return counts;
+}
+
+function decodeDepth(raw, offset, near, far) {
+	return near + (raw[offset] / 255 + raw[offset + 1] / (255 ** 2) + raw[offset + 2] / (255 ** 3)) * (far - near);
+}
+
+function decodeNormal(raw, offset) {
+	const value = [raw[offset] / 255 * 2 - 1, raw[offset + 1] / 255 * 2 - 1, raw[offset + 2] / 255 * 2 - 1];
+	const magnitude = Math.hypot(...value);
+	return magnitude ? value.map((item) => item / magnitude) : value;
+}
+
+function persistedSeamMetrics(base, material, depth, normal, width, height, bounds, near, far) {
+	const sameMaterial = (left, right) => material[left] === material[right] && material[left + 1] === material[right + 1] && material[left + 2] === material[right + 2];
+	const background = (offset) => material[offset] === 0 && material[offset + 1] === 0 && material[offset + 2] === 0;
+	const luminance = (offset) => 0.2126 * base[offset] + 0.7152 * base[offset + 1] + 0.0722 * base[offset + 2];
+	const candidates = new Uint8Array(width * height);
+	let count = 0;
+	for (let y = bounds.min_y + 7; y <= bounds.max_y - 7; y += 2) for (let x = bounds.min_x + 7; x <= bounds.max_x - 7; x += 2) {
+		const offset = (y * width + x) * 3;
+		if (background(offset)) continue;
+		if (![[-6, 0], [6, 0], [0, -6], [0, 6]].every(([dx, dy]) => sameMaterial(offset, ((y + dy) * width + x + dx) * 3))) continue;
+		const at = (dx, dy) => luminance(offset + (dy * width + dx) * 3);
+		const gx = -at(-1, -1) + at(1, -1) - 2 * at(-1, 0) + 2 * at(1, 0) - at(-1, 1) + at(1, 1);
+		const gy = -at(-1, -1) - 2 * at(0, -1) - at(1, -1) + at(-1, 1) + 2 * at(0, 1) + at(1, 1);
+		if (Math.hypot(gx, gy) <= 80) continue;
+		const stepX = Math.abs(gx) >= Math.abs(gy) ? 2 : 0, stepY = Math.abs(gy) >= Math.abs(gx) ? 2 : 0;
+		const left = ((y - stepY) * width + x - stepX) * 3, right = ((y + stepY) * width + x + stepX) * 3;
+		if (!sameMaterial(left, right) || Math.abs(decodeDepth(depth, left, near, far) - decodeDepth(depth, right, near, far)) >= 0.0005) continue;
+		const leftNormal = decodeNormal(normal, left), rightNormal = decodeNormal(normal, right);
+		if (dot(leftNormal, rightNormal) < Math.cos(2 * Math.PI / 180)) continue;
+		candidates[y * width + x] = 1; count++;
+	}
+	const visited = new Uint8Array(candidates.length);
+	let longSegments = 0;
+	for (let y = bounds.min_y; y <= bounds.max_y; y++) for (let x = bounds.min_x; x <= bounds.max_x; x++) {
+		const start = y * width + x;
+		if (!candidates[start] || visited[start]) continue;
+		const stack = [start]; visited[start] = 1; let size = 0;
+		while (stack.length) {
+			const index = stack.pop(), px = index % width, py = Math.floor(index / width); size++;
+			for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
+				const next = (py + dy) * width + px + dx;
+				if ((dx || dy) && candidates[next] && !visited[next]) { visited[next] = 1; stack.push(next); }
+			}
+		}
+		if (size >= 6) longSegments++;
+	}
+	const area = (bounds.max_x - bounds.min_x + 1) * (bounds.max_y - bounds.min_y + 1);
+	return { fraction: count / area, connected_at_least_12px: longSegments };
+}
+
+function persistedDarkGeometry(base, material, depth, width, height, bounds) {
+	const mask = new Uint8Array(width * height), visited = new Uint8Array(width * height);
+	for (let y = bounds.min_y; y <= bounds.max_y; y++) for (let x = bounds.min_x; x <= bounds.max_x; x++) {
+		const offset = (y * width + x) * 3;
+		if (0.2126 * base[offset] + 0.7152 * base[offset + 1] + 0.0722 * base[offset + 2] < 50) mask[y * width + x] = 1;
+	}
+	let validPixels = 0, validComponents = 0, invalidPixels = 0;
+	const evidence = [];
+	for (let y = bounds.min_y; y <= bounds.max_y; y++) for (let x = bounds.min_x; x <= bounds.max_x; x++) {
+		const start = y * width + x;
+		if (!mask[start] || visited[start]) continue;
+		const stack = [start]; visited[start] = 1; let pixels = 0, authored = 0, finiteDepth = 0, minX = x, maxX = x, minY = y, maxY = y;
+		while (stack.length) {
+			const index = stack.pop(), px = index % width, py = Math.floor(index / width), offset = index * 3; pixels++;
+			minX = Math.min(minX, px); maxX = Math.max(maxX, px); minY = Math.min(minY, py); maxY = Math.max(maxY, py);
+			const bronze = material[offset] < 80 && material[offset + 1] < 80 && material[offset + 2] > 200;
+			const opaque = material[offset] > 180 && material[offset + 1] > 180 && material[offset + 2] < 80;
+			if (bronze || opaque) authored++;
+			if (!(depth[offset] === 255 && depth[offset + 1] === 255 && depth[offset + 2] === 255)) finiteDepth++;
+			for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+				const nx = px + dx, ny = py + dy, next = ny * width + nx;
+				if ((dx || dy) && nx >= bounds.min_x && nx <= bounds.max_x && ny >= bounds.min_y && ny <= bounds.max_y && mask[next] && !visited[next]) { visited[next] = 1; stack.push(next); }
+			}
+		}
+		const narrow = pixels <= 300 && maxX - minX + 1 <= 12 && maxY - minY + 1 <= 50;
+		if (!narrow) continue;
+		if (finiteDepth === pixels || authored > 0) {
+			validPixels += pixels; validComponents++;
+			evidence.push({ bbox_px: [minX, minY, maxX, maxY], pixels, bronze_or_opaque_pixels: authored, finite_depth_pixels: finiteDepth, classification: authored ? "semantic-bronze-opaque" : "selected-glb-depth-silhouette" });
+		} else invalidPixels += pixels;
+	}
+	return { classification: "connected dark details with bronze/opaque material-ID or complete selected-GLB depth are authored geometry", valid_pixels: validPixels, valid_components: validComponents, invalid_pixels: invalidPixels, suppressed_screen_artifact_pixels: 0, suppressed_screen_artifact_components: 0, component_evidence: evidence, geometry_clipped: false, selected_glb_altered: false };
+}
+
+function decodeXml(value) {
+	return value.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, "&");
+}
+
+function attributes(source) {
+	return Object.fromEntries(Array.from(source.matchAll(/([\w:-]+)="([^"]*)"/g), (match) => [match[1], decodeXml(match[2])]));
+}
+
+function intersects(left, right) {
+	return left.min_x < right.max_x && left.max_x > right.min_x && left.min_y < right.max_y && left.max_y > right.min_y;
+}
+
+function inspectSvg(svg, authoritative, contentBounds) {
+	const textItems = Array.from(svg.matchAll(/<text\b([^>]*)>([\s\S]*?)<\/text>/g), (match) => ({ attrs: attributes(match[1]), visible: decodeXml(match[2].replace(/<[^>]*>/g, "")) }));
+	const bySource = new Map();
+	for (const item of textItems) if (item.attrs["data-source-id"]) {
+		const list = bySource.get(item.attrs["data-source-id"]) ?? []; list.push(item); bySource.set(item.attrs["data-source-id"], list);
+	}
+	const expected = new Map([
+		["overall-width", [authoritative.overall_width.display_mm, String(authoritative.overall_width.display_mm)]],
+		["overall-height", [authoritative.overall_height.display_mm, String(authoritative.overall_height.display_mm)]],
+		["facade-width", [authoritative.facade_extent.width.display_mm, String(authoritative.facade_extent.width.display_mm)]],
+		["facade-height", [authoritative.facade_extent.height.display_mm, String(authoritative.facade_extent.height.display_mm)]],
+		["scale-bar", [authoritative.scale_bar.display_mm, `${authoritative.scale_bar.value_m} m`]],
+		...authoritative.levels.map((item) => [item.id, [item.display_mm, item.label]]),
+		...authoritative.floor_intervals.map((item) => [item.id, [item.display_mm, String(item.display_mm)]]),
+	]);
+	let mismatch = false;
+	for (const [id, [displayMm, visible]] of expected) {
+		const items = bySource.get(id) ?? [];
+		if (items.length !== 1 || items[0].attrs["data-display-mm"] !== String(displayMm) || items[0].visible !== visible) mismatch = true;
+	}
+	let pageViolation = !/<svg\b[^>]*width="2400"[^>]*height="2400"[^>]*viewBox="0 0 2400 2400"/.test(svg), overlap = false;
+	const page = { min_x: 48, min_y: 48, max_x: 2352, max_y: 2352 };
+	for (const item of textItems) {
+		const x = Number(item.attrs.x), y = Number(item.attrs.y);
+		if (!Number.isFinite(x) || !Number.isFinite(y)) { pageViolation = true; continue; }
+		const font = item.attrs.class?.includes("title") ? 34 : item.attrs.class?.includes("subtitle") || item.attrs.class?.includes("note") ? 18 : 20;
+		let boxWidth = Math.max(font, item.visible.length * font * 0.62), boxHeight = font * 1.25;
+		if (/rotate\(-90/.test(item.attrs.transform ?? "")) [boxWidth, boxHeight] = [boxHeight, boxWidth];
+		const anchor = item.attrs["text-anchor"] ?? "start";
+		const minX = anchor === "end" ? x - boxWidth : anchor === "middle" ? x - boxWidth / 2 : x;
+		const box = { min_x: minX, min_y: y - boxHeight * 0.78, max_x: minX + boxWidth, max_y: y + boxHeight * 0.22 };
+		if (box.min_x < page.min_x || box.min_y < page.min_y || box.max_x > page.max_x || box.max_y > page.max_y) pageViolation = true;
+		if (intersects(box, { min_x: contentBounds.min_x, min_y: contentBounds.min_y, max_x: contentBounds.max_x + 1, max_y: contentBounds.max_y + 1 })) overlap = true;
+	}
+	for (const match of svg.matchAll(/<line\b([^>]*)\/>/g)) {
+		const attrs = attributes(match[1]);
+		const x1 = Number(attrs.x1), x2 = Number(attrs.x2), y1 = Number(attrs.y1), y2 = Number(attrs.y2);
+		const box = { min_x: Math.min(x1, x2) - 1, min_y: Math.min(y1, y2) - 1, max_x: Math.max(x1, x2) + 1, max_y: Math.max(y1, y2) + 1 };
+		if (![x1, x2, y1, y2].every(Number.isFinite)) pageViolation = true;
+		else if (intersects(box, { min_x: contentBounds.min_x, min_y: contentBounds.min_y, max_x: contentBounds.max_x + 1, max_y: contentBounds.max_y + 1 })) overlap = true;
+	}
+	return { mismatch, overlap, pageViolation, source_count: bySource.size };
 }
 
 export async function validateCompetitionElevation({ artifacts, sourceMesh, facadePlanes, floorGuides, view, selectedGlbPath }) {
@@ -67,16 +248,40 @@ export async function validateCompetitionElevation({ artifacts, sourceMesh, faca
 		|| (view?.projection_axes?.vertical && Math.abs(Math.abs(dot(axes?.vertical ?? [], view.projection_axes.vertical)) - 1) > 1e-6)
 		|| Math.abs((camera?.px_per_m_x ?? 0) / (camera?.px_per_m_y ?? 1) - 1) > 0.0025;
 	add(codes, "ELEVATION_AXIS_MISMATCH", axesInvalid);
-	const bounds = artifacts.base?.content_bounds_px;
+	let bounds = artifacts.base?.content_bounds_px;
 	const size = artifacts.base?.width;
+	let diagnostics = artifacts.base?.diagnostics ?? {};
+	let computedDark = artifacts.presentation?.authored_dark_geometry ?? null;
+	let computedSvg = null;
+	let finalCompositeMismatch = false, finalDarkExcess = 0, finalEdgeExcess = 0;
+	if (artifacts.base?.path && artifacts.diagnostics?.material_id?.path && artifacts.diagnostics?.depth?.path && artifacts.diagnostics?.normal?.path) {
+		try {
+			const [baseImage, materialImage, depthImage, normalImage] = await Promise.all([
+				decodedRgb(artifacts.base.path), decodedRgb(artifacts.diagnostics.material_id.path), decodedRgb(artifacts.diagnostics.depth.path), decodedRgb(artifacts.diagnostics.normal.path),
+			]);
+			const measured = rasterMetrics(baseImage.data, baseImage.info.width, baseImage.info.height);
+			bounds = measured.bounds;
+			const seams = persistedSeamMetrics(baseImage.data, materialImage.data, depthImage.data, normalImage.data, baseImage.info.width, baseImage.info.height, bounds, camera.frustum.near, camera.frustum.far);
+			computedDark = persistedDarkGeometry(baseImage.data, materialImage.data, depthImage.data, baseImage.info.width, baseImage.info.height, bounds);
+			diagnostics = {
+				background_fraction: 1 - measured.foreground_fraction,
+				dark_pixel_fraction: measured.dark_fraction,
+				total_edge_density: measured.total_edge_density,
+				strong_edge_density: measured.strong_edge_density,
+				role_pixel_counts: roleCounts(materialImage.data),
+				same_material_seam_fraction: seams.fraction,
+				seam_segments: { connected_at_least_12px: seams.connected_at_least_12px },
+			};
+			add(codes, "DIMENSION_SOURCE_MISSING", !sameJson(bounds, artifacts.base.content_bounds_px));
+			add(codes, "MATERIAL_VISIBILITY_INVALID", !sameJson(computedDark, artifacts.presentation?.authored_dark_geometry));
+		} catch { add(codes, "DIMENSION_SOURCE_MISSING", true); }
+	}
 	add(codes, "ELEVATION_CONTENT_CLIPPED", !bounds || size !== 2400 || artifacts.base?.height !== 2400
 		|| bounds.min_x < size * 0.08 || bounds.max_x > size * 0.92 - 1 || bounds.min_y < 48 || bounds.max_y > size - 48);
-	const diagnostics = artifacts.base?.diagnostics ?? {};
 	add(codes, "MATERIAL_ROLE_MISSING", ["concrete", "glass", "bronze", "opaque"].some((role) => !(diagnostics.role_pixel_counts?.[role] > 0)));
-	add(codes, "MATERIAL_VISIBILITY_INVALID", diagnostics.dark_pixel_fraction > 0.07 || artifacts.presentation?.authored_dark_geometry?.invalid_pixels > 0);
+	add(codes, "MATERIAL_VISIBILITY_INVALID", diagnostics.dark_pixel_fraction > 0.07 || computedDark?.invalid_pixels > 0);
 	add(codes, "LINE_DENSITY_EXCEEDED", diagnostics.total_edge_density > 0.035 || diagnostics.strong_edge_density > 0.015);
 	add(codes, "TRIANGULATION_VISIBLE", diagnostics.same_material_seam_fraction > 0.001 || diagnostics.seam_segments?.connected_at_least_12px > 0);
-	add(codes, "ELEVATION_CONTENT_CLIPPED", artifacts.annotation?.overlaps_content || artifacts.annotation?.overlaps_annotations || artifacts.annotation?.min_page_clearance_px < 48);
 	if (artifacts.final_png?.path) {
 		try {
 			const metadata = await sharp(artifacts.final_png.path).metadata();
@@ -85,8 +290,15 @@ export async function validateCompetitionElevation({ artifacts, sourceMesh, faca
 	}
 	const selectedBytes = selectedGlbPath ? await readFile(selectedGlbPath).catch(() => undefined) : undefined;
 	add(codes, "DIMENSION_SOURCE_MISSING", !selectedBytes || artifacts.base?.selected_glb_sha256 !== sha256(selectedBytes));
-	const records = [artifacts.final_png, artifacts.annotations_svg, artifacts.dimensions_json, artifacts.render_manifest].filter(Boolean);
+	const records = [artifacts.final_png, artifacts.presentation_base_png, artifacts.annotations_svg, artifacts.dimensions_json, artifacts.base_manifest, artifacts.render_manifest, ...Object.values(artifacts.diagnostics ?? {})].filter(Boolean);
 	if (records.length) add(codes, "DIMENSION_SOURCE_MISSING", !(await Promise.all(records.map(validRecord))).every(Boolean));
+	if (artifacts.base_manifest?.path) {
+		try {
+			const manifest = JSON.parse(await readFile(artifacts.base_manifest.path, "utf8"));
+			add(codes, "DIMENSION_SOURCE_MISSING", manifest.path !== artifacts.base.path || manifest.sha256 !== artifacts.base.sha256
+				|| manifest.selected_glb_sha256 !== artifacts.base.selected_glb_sha256 || !sameJson(manifest.diagnostic_paths, artifacts.base.diagnostic_paths));
+		} catch { add(codes, "DIMENSION_SOURCE_MISSING", true); }
+	}
 	if (artifacts.dimensions_json?.path) {
 		try {
 			const persisted = JSON.parse(await readFile(artifacts.dimensions_json.path, "utf8"));
@@ -97,24 +309,41 @@ export async function validateCompetitionElevation({ artifacts, sourceMesh, faca
 	if (artifacts.annotations_svg?.path) {
 		try {
 			const svg = await readFile(artifacts.annotations_svg.path, "utf8");
-			for (const displayed of artifacts.annotation?.displayed_dimensions ?? []) {
-				const source = `data-source-id="${displayed.id}"`;
-				const value = `data-display-mm="${displayed.display_mm}"`;
-				add(codes, "DIMENSION_MISMATCH", !svg.includes(source) || !svg.includes(value));
+			if (authoritative) {
+				computedSvg = inspectSvg(svg, authoritative, bounds);
+				add(codes, "DIMENSION_MISMATCH", computedSvg.mismatch);
+				add(codes, "LEVEL_GUIDE_MISMATCH", computedSvg.mismatch && authoritative.levels.some((level) => !svg.includes(`>${level.label}</text>`)));
+				add(codes, "ELEVATION_CONTENT_CLIPPED", computedSvg.overlap || computedSvg.pageViolation);
 			}
-			for (const level of artifacts.dimensions?.levels ?? []) add(codes, "LEVEL_GUIDE_MISMATCH", !svg.includes(level.label));
+			if (artifacts.presentation_base_png?.path && artifacts.final_png?.path) {
+				const expectedBytes = await sharp(artifacts.presentation_base_png.path).composite([{ input: Buffer.from(svg) }]).png().toBuffer();
+				const actualBytes = await readFile(artifacts.final_png.path);
+				finalCompositeMismatch = sha256(expectedBytes) !== sha256(actualBytes);
+				if (finalCompositeMismatch) {
+					const [expected, actual] = await Promise.all([sharp(expectedBytes).removeAlpha().raw().toBuffer({ resolveWithObject: true }), sharp(actualBytes).removeAlpha().raw().toBuffer({ resolveWithObject: true })]);
+					const expectedMetrics = rasterMetrics(expected.data, expected.info.width, expected.info.height), actualMetrics = rasterMetrics(actual.data, actual.info.width, actual.info.height);
+					finalDarkExcess = actualMetrics.dark_fraction - expectedMetrics.dark_fraction;
+					finalEdgeExcess = actualMetrics.total_edge_density - expectedMetrics.total_edge_density;
+				}
+			}
 		} catch { add(codes, "DIMENSION_SOURCE_MISSING", true); }
 	}
+	add(codes, "LINE_DENSITY_EXCEEDED", finalCompositeMismatch && (finalEdgeExcess > 0.002 || finalDarkExcess > 0.002));
+	add(codes, "MATERIAL_VISIBILITY_INVALID", finalCompositeMismatch && finalDarkExcess > 0.002);
+	add(codes, "DIMENSION_SOURCE_MISSING", finalCompositeMismatch && finalEdgeExcess <= 0.002 && finalDarkExcess <= 0.002);
 	if (artifacts.render_manifest?.path) {
 		try {
 			const manifest = JSON.parse(await readFile(artifacts.render_manifest.path, "utf8"));
 			const expected = {
 				base_png_sha256: artifacts.base?.sha256,
+				base_manifest_sha256: artifacts.base_manifest?.sha256,
+				presentation_base_png_sha256: artifacts.presentation_base_png?.sha256,
 				annotations_svg_sha256: artifacts.annotations_svg?.sha256,
 				dimensions_json_sha256: artifacts.dimensions_json?.sha256,
 				final_png_sha256: artifacts.final_png?.sha256,
 			};
 			add(codes, "DIMENSION_SOURCE_MISSING", !Object.entries(expected).every(([field, value]) => manifest.provenance?.[field] === value)
+				|| !Object.entries(artifacts.diagnostics ?? {}).every(([name, record]) => manifest.provenance?.diagnostic_sha256?.[name] === record.sha256)
 				|| manifest.selected_glb_sha256 !== artifacts.base?.selected_glb_sha256
 				|| manifest.viewer_config_sha256 !== artifacts.base?.viewer_config_sha256
 				|| !sameJson(manifest.displayed_dimensions, dimensionValues(artifacts.dimensions)));
@@ -131,8 +360,9 @@ export async function validateCompetitionElevation({ artifacts, sourceMesh, faca
 			strong_edge_density: diagnostics.strong_edge_density ?? null,
 			same_material_seam_fraction: diagnostics.same_material_seam_fraction ?? null,
 			content_bounds_px: bounds ?? null,
-			annotation_overlap: Boolean(artifacts.annotation?.overlaps_content || artifacts.annotation?.overlaps_annotations),
-			authored_dark_geometry: artifacts.presentation?.authored_dark_geometry ?? null,
+			annotation_overlap: computedSvg ? computedSvg.overlap : Boolean(artifacts.annotation?.overlaps_content || artifacts.annotation?.overlaps_annotations),
+			authored_dark_geometry: computedDark,
+			final_composite_mismatch: finalCompositeMismatch,
 		},
 	};
 }

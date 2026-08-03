@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, test } from "node:test";
@@ -43,9 +43,57 @@ test("renders and accepts a dimensioned creative-013 front with complete provena
 	assert.equal(artifacts.displayed_dimensions.overall_height, 9900);
 	assert.equal(artifacts.presentation.authored_dark_geometry.invalid_pixels, 0);
 	assert.ok(artifacts.presentation.authored_dark_geometry.valid_pixels > 0);
-	for (const record of [artifacts.final_png, artifacts.annotations_svg, artifacts.dimensions_json, artifacts.render_manifest, artifacts.validation_report]) {
+	assert.equal(artifacts.presentation.authored_dark_geometry.suppressed_screen_artifact_pixels, 0);
+	for (const bbox of [[1455, 807, 1461, 807], [356, 1016, 358, 1016]]) {
+		const evidence = artifacts.presentation.authored_dark_geometry.component_evidence.find((item) => JSON.stringify(item.bbox_px) === JSON.stringify(bbox));
+		assert.equal(evidence.classification, "selected-glb-depth-silhouette");
+		assert.equal(evidence.finite_depth_pixels, evidence.pixels);
+	}
+	assert.notEqual(artifacts.base_manifest.path, artifacts.render_manifest.path);
+	assert.match(artifacts.base_manifest.path, /front-base-render-manifest\.json$/);
+	for (const record of [artifacts.final_png, artifacts.presentation_base_png, artifacts.annotations_svg, artifacts.dimensions_json, artifacts.base_manifest, artifacts.render_manifest, artifacts.validation_report, ...Object.values(artifacts.diagnostics)]) {
 		assert.equal(sha256(await readFile(record.path)), record.sha256);
 	}
+});
+
+test("rejects rehashed visible SVG dimension tampering even when data attributes remain authoritative", { timeout: 180_000 }, async () => {
+	const runDir = await mkdtemp(join(tmpdir(), "elevation3d-svg-tamper-")); roots.push(runDir);
+	const input = await inputs();
+	const artifacts = await renderCompetitionElevation({ runDir, glbPath: assets.selectedGlb, ...input, palette: resolveMaterialPalette("competition-warm"), view: "front", candidateId: "creative-013" });
+	const svg = await readFile(artifacts.annotations_svg.path, "utf8");
+	const tamperedSvg = svg.replace(/(<text[^>]*data-source-id="overall-height"[^>]*>)9900(<\/text>)/, "$19901$2");
+	assert.notEqual(tamperedSvg, svg);
+	await writeFile(artifacts.annotations_svg.path, tamperedSvg);
+	artifacts.annotations_svg.sha256 = sha256(await readFile(artifacts.annotations_svg.path));
+	const tamperedFinal = await sharp(artifacts.presentation_base_png.path).composite([{ input: Buffer.from(tamperedSvg) }]).png().toBuffer();
+	await writeFile(artifacts.final_png.path, tamperedFinal);
+	artifacts.final_png.sha256 = sha256(tamperedFinal);
+	const manifest = JSON.parse(await readFile(artifacts.render_manifest.path, "utf8"));
+	manifest.provenance.annotations_svg_sha256 = artifacts.annotations_svg.sha256;
+	manifest.provenance.final_png_sha256 = artifacts.final_png.sha256;
+	await writeFile(artifacts.render_manifest.path, JSON.stringify(manifest, null, 2));
+	artifacts.render_manifest.sha256 = sha256(await readFile(artifacts.render_manifest.path));
+	const report = await validateCompetitionElevation({ artifacts, sourceMesh: input.sourceMesh, facadePlanes: input.facadePlanes, floorGuides: input.floorGuides, view: input.camera, selectedGlbPath: assets.selectedGlb });
+	assert.equal(report.accepted, false);
+	assert.ok(report.codes.includes("DIMENSION_MISMATCH"));
+});
+
+test("rejects a rehashed black seam-heavy final PNG from persisted pixels", { timeout: 180_000 }, async () => {
+	const runDir = await mkdtemp(join(tmpdir(), "elevation3d-png-tamper-")); roots.push(runDir);
+	const input = await inputs();
+	const artifacts = await renderCompetitionElevation({ runDir, glbPath: assets.selectedGlb, ...input, palette: resolveMaterialPalette("competition-warm"), view: "front", candidateId: "creative-013" });
+	const stripes = `<svg width="2400" height="2400" xmlns="http://www.w3.org/2000/svg"><defs><pattern id="p" width="12" height="12" patternUnits="userSpaceOnUse"><path d="M0 0H12V6H0Z" fill="#000"/></pattern></defs><rect x="215" y="805" width="1970" height="790" fill="url(#p)"/></svg>`;
+	const bytes = await sharp(artifacts.final_png.path).composite([{ input: Buffer.from(stripes) }]).png().toBuffer();
+	await writeFile(artifacts.final_png.path, bytes);
+	artifacts.final_png.sha256 = sha256(bytes);
+	const manifest = JSON.parse(await readFile(artifacts.render_manifest.path, "utf8"));
+	manifest.provenance.final_png_sha256 = artifacts.final_png.sha256;
+	await writeFile(artifacts.render_manifest.path, JSON.stringify(manifest, null, 2));
+	artifacts.render_manifest.sha256 = sha256(await readFile(artifacts.render_manifest.path));
+	const report = await validateCompetitionElevation({ artifacts, sourceMesh: input.sourceMesh, facadePlanes: input.facadePlanes, floorGuides: input.floorGuides, view: input.camera, selectedGlbPath: assets.selectedGlb });
+	assert.equal(report.accepted, false);
+	assert.ok(report.codes.includes("LINE_DENSITY_EXCEEDED"));
+	assert.ok(report.codes.includes("MATERIAL_VISIBILITY_INVALID"));
 });
 
 test("rejects a one-millimetre dimension tamper and visible seam overload", async () => {
