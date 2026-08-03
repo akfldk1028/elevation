@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import sharp from "sharp";
 import { sha256, stableJson } from "./core.mjs";
 import { deriveElevationDimensions } from "./elevation-dimensions.mjs";
+import { buildElevationAnnotations } from "./elevation-annotations.mjs";
 
 function dot(left, right) {
 	return left.reduce((sum, value, index) => sum + value * right[index], 0);
@@ -252,7 +253,7 @@ export async function validateCompetitionElevation({ artifacts, sourceMesh, faca
 	const size = artifacts.base?.width;
 	let diagnostics = artifacts.base?.diagnostics ?? {};
 	let computedDark = artifacts.presentation?.authored_dark_geometry ?? null;
-	let computedSvg = null;
+	let computedSvg = null, canonicalSvgMismatch = false;
 	let finalCompositeMismatch = false, finalDarkExcess = 0, finalEdgeExcess = 0;
 	if (artifacts.base?.path && artifacts.diagnostics?.material_id?.path && artifacts.diagnostics?.depth?.path && artifacts.diagnostics?.normal?.path) {
 		try {
@@ -312,6 +313,15 @@ export async function validateCompetitionElevation({ artifacts, sourceMesh, faca
 			if (authoritative) {
 				computedSvg = inspectSvg(svg, authoritative, bounds);
 				add(codes, "DIMENSION_MISMATCH", computedSvg.mismatch);
+				const canonicalSvg = buildElevationAnnotations({
+					dimensions: authoritative,
+					camera,
+					contentBounds: bounds,
+					canvas: [2400, 2400],
+					candidateId: sourceMesh?.identity?.candidate_id ?? "unknown",
+				}).svg;
+				canonicalSvgMismatch = Buffer.byteLength(svg) !== Buffer.byteLength(canonicalSvg) || svg !== canonicalSvg;
+				add(codes, "DIMENSION_MISMATCH", canonicalSvgMismatch);
 				add(codes, "LEVEL_GUIDE_MISMATCH", computedSvg.mismatch && authoritative.levels.some((level) => !svg.includes(`>${level.label}</text>`)));
 				add(codes, "ELEVATION_CONTENT_CLIPPED", computedSvg.overlap || computedSvg.pageViolation);
 			}
@@ -363,6 +373,7 @@ export async function validateCompetitionElevation({ artifacts, sourceMesh, faca
 			annotation_overlap: computedSvg ? computedSvg.overlap : Boolean(artifacts.annotation?.overlaps_content || artifacts.annotation?.overlaps_annotations),
 			authored_dark_geometry: computedDark,
 			final_composite_mismatch: finalCompositeMismatch,
+			canonical_svg_mismatch: canonicalSvgMismatch,
 		},
 	};
 }

@@ -78,6 +78,30 @@ test("rejects rehashed visible SVG dimension tampering even when data attributes
 	assert.ok(report.codes.includes("DIMENSION_MISMATCH"));
 });
 
+test("rejects a hidden authoritative label with an unbound visible overlay after full rehash", { timeout: 180_000 }, async () => {
+	const runDir = await mkdtemp(join(tmpdir(), "elevation3d-svg-overlay-")); roots.push(runDir);
+	const input = await inputs();
+	const artifacts = await renderCompetitionElevation({ runDir, glbPath: assets.selectedGlb, ...input, palette: resolveMaterialPalette("competition-warm"), view: "front", candidateId: "creative-013" });
+	const svg = await readFile(artifacts.annotations_svg.path, "utf8");
+	const tamperedSvg = svg
+		.replace(/(<text[^>]*data-source-id="overall-height")/, "$1 opacity=\"0\"")
+		.replace("</svg>", '<text x="76.5" y="1200" class="dimension-label halo" text-anchor="middle" transform="rotate(-90 76.5 1200)">9901</text></svg>');
+	assert.notEqual(tamperedSvg, svg);
+	await writeFile(artifacts.annotations_svg.path, tamperedSvg);
+	artifacts.annotations_svg.sha256 = sha256(await readFile(artifacts.annotations_svg.path));
+	const tamperedFinal = await sharp(artifacts.presentation_base_png.path).composite([{ input: Buffer.from(tamperedSvg) }]).png().toBuffer();
+	await writeFile(artifacts.final_png.path, tamperedFinal);
+	artifacts.final_png.sha256 = sha256(tamperedFinal);
+	const manifest = JSON.parse(await readFile(artifacts.render_manifest.path, "utf8"));
+	manifest.provenance.annotations_svg_sha256 = artifacts.annotations_svg.sha256;
+	manifest.provenance.final_png_sha256 = artifacts.final_png.sha256;
+	await writeFile(artifacts.render_manifest.path, JSON.stringify(manifest, null, 2));
+	artifacts.render_manifest.sha256 = sha256(await readFile(artifacts.render_manifest.path));
+	const report = await validateCompetitionElevation({ artifacts, sourceMesh: input.sourceMesh, facadePlanes: input.facadePlanes, floorGuides: input.floorGuides, view: input.camera, selectedGlbPath: assets.selectedGlb });
+	assert.equal(report.accepted, false);
+	assert.ok(report.codes.includes("DIMENSION_MISMATCH"));
+});
+
 test("rejects a rehashed black seam-heavy final PNG from persisted pixels", { timeout: 180_000 }, async () => {
 	const runDir = await mkdtemp(join(tmpdir(), "elevation3d-png-tamper-")); roots.push(runDir);
 	const input = await inputs();
