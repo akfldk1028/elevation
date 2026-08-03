@@ -1,0 +1,176 @@
+import { readFile } from "node:fs/promises";
+import { NodeIO } from "@gltf-transform/core";
+import { sha256, stableJson } from "./core.mjs";
+
+const SCHEMA_VERSION = "arr.elevation3d.dimension-manifest.v1";
+const ENVELOPE_TOLERANCE_M = 0.001;
+const FRONT_AXES = {
+	horizontal: [1, 0, 0],
+	vertical: [0, 0, 1],
+};
+
+function dot(left, right) {
+	return left.reduce((sum, value, axis) => sum + value * right[axis], 0);
+}
+
+function displayMillimetres(valueM) {
+	return Math.round(valueM * 1000);
+}
+
+function canonicalMetres(valueM) {
+	return displayMillimetres(valueM) / 1000;
+}
+
+function exactMassSource(extra = {}) {
+	return { kind: "selected_glb_accessor", field: "exact-mass.POSITION", ...extra };
+}
+
+function floorGuideSource(index) {
+	return { kind: "authored_floor_guide", field: "floor_guides.floor_guides_m", index };
+}
+
+function facadePlaneSource(index, component) {
+	return { kind: "authored_facade_plane", field: "facade_planes.facade_planes", index, component };
+}
+
+function dimension(valueM, source, endpoints_m) {
+	const result = { value_m: canonicalMetres(valueM), display_mm: displayMillimetres(valueM), source };
+	if (endpoints_m) result.projected_endpoints_m = endpoints_m;
+	return result;
+}
+
+function outsideEnvelope(value, minimum, maximum) {
+	return value < minimum - ENVELOPE_TOLERANCE_M || value > maximum + ENVELOPE_TOLERANCE_M;
+}
+
+function assertInsideEnvelope(values, minimum, maximum) {
+	if (values.some((value) => outsideEnvelope(value, minimum, maximum))) {
+		throw new Error("dimension source outside exact MASS");
+	}
+}
+
+function frontFacade(facadePlanes) {
+	const planes = facadePlanes?.facade_planes;
+	if (!Array.isArray(planes)) throw new Error("dimension source missing: facade_planes.facade_planes");
+	const index = planes.findIndex((plane) => plane?.view === "front");
+	if (index < 0) throw new Error("dimension source missing: front facade plane");
+	return { plane: planes[index], index };
+}
+
+function sortedGuideRecords(floorGuides) {
+	if (!Array.isArray(floorGuides?.floor_guides_m)) throw new Error("dimension source missing: floor_guides.floor_guides_m");
+	const records = floorGuides.floor_guides_m.map((value, index) => ({ value: Number(value), index }));
+	if (records.some(({ value }) => !Number.isFinite(value))) throw new Error("dimension source invalid: floor_guides.floor_guides_m");
+	records.sort((left, right) => left.value - right.value || left.index - right.index);
+	const unique = [];
+	for (const record of records) {
+		if (!unique.length || displayMillimetres(record.value) !== displayMillimetres(unique.at(-1).value)) unique.push(record);
+	}
+	return unique;
+}
+
+function chooseScaleBar(widthM) {
+	const candidates = [20, 10, 5, 2, 1, 0.5, 0.2, 0.1];
+	return candidates.find((candidate) => candidate <= widthM / 4) ?? 0.1;
+}
+
+function geometryHash(sourceMesh) {
+	return sourceMesh?.identity?.geometry_hash
+		?? sha256(stableJson({ vertices: sourceMesh?.vertices ?? [], triangles: sourceMesh?.triangles ?? [] }));
+}
+
+async function exactMassPositions(artifact) {
+	if (!artifact?.path) throw new Error("dimension source missing: selected GLB path");
+	const bytes = await readFile(artifact.path);
+	const actualSha256 = sha256(bytes);
+	if (artifact.sha256 && String(artifact.sha256).toLowerCase() !== actualSha256) throw new Error("selected GLB SHA-256 mismatch");
+	const document = await new NodeIO().read(artifact.path);
+	const root = document.getRoot();
+	const node = root.listNodes().find((item) => item.getName() === "exact-mass");
+	const mesh = node?.getMesh() ?? root.listMeshes().find((item) => item.getName() === "exact-mass");
+	if (!mesh) throw new Error("dimension source missing: exact-mass");
+	const accessors = mesh.listPrimitives().map((primitive) => primitive.getAttribute("POSITION")).filter(Boolean);
+	if (!accessors.length) throw new Error("dimension source missing: exact-mass.POSITION");
+	const positions = [];
+	for (const accessor of accessors) {
+		for (let index = 0; index < accessor.getCount(); index++) {
+			const value = accessor.getElement(index, [0, 0, 0]);
+			positions.push(value.map((coordinate) => Math.fround(coordinate)));
+		}
+	}
+	return { actualSha256, positions };
+}
+
+export async function deriveElevationDimensions({ sourceMesh, artifact, facadePlanes, floorGuides, view }) {
+	if (view !== "front") throw new Error(`dimension view unsupported: ${view}`);
+	const { actualSha256, positions } = await exactMassPositions(artifact);
+	const horizontalValues = positions.map((point) => dot(point, FRONT_AXES.horizontal));
+	const verticalValues = positions.map((point) => dot(point, FRONT_AXES.vertical));
+	const minimumHorizontal = Math.min(...horizontalValues);
+	const maximumHorizontal = Math.max(...horizontalValues);
+	const minimumVertical = Math.min(...verticalValues);
+	const maximumVertical = Math.max(...verticalValues);
+	if (![minimumHorizontal, maximumHorizontal, minimumVertical, maximumVertical].every(Number.isFinite)) {
+		throw new Error("dimension source missing: exact-mass.POSITION");
+	}
+
+	const guides = sortedGuideRecords(floorGuides);
+	assertInsideEnvelope(guides.map(({ value }) => value), minimumVertical, maximumVertical);
+	const { plane, index: planeIndex } = frontFacade(facadePlanes);
+	if (!Array.isArray(plane.origin) || !Array.isArray(plane.normal) || !Array.isArray(plane.extent_m) || plane.extent_m.length !== 2) {
+		throw new Error("dimension source invalid: facade_planes.facade_planes");
+	}
+	const tangent = [-plane.normal[1], plane.normal[0], 0];
+	const horizontalStart = dot(plane.origin, FRONT_AXES.horizontal);
+	const horizontalEnd = dot(plane.origin.map((value, axis) => value + tangent[axis] * plane.extent_m[0]), FRONT_AXES.horizontal);
+	const verticalStart = dot(plane.origin, FRONT_AXES.vertical);
+	const verticalEnd = verticalStart + Number(plane.extent_m[1]);
+	assertInsideEnvelope([horizontalStart, horizontalEnd], minimumHorizontal, maximumHorizontal);
+	assertInsideEnvelope([verticalStart, verticalEnd], minimumVertical, maximumVertical);
+
+	const projectedBounds = [
+		[minimumHorizontal, minimumVertical],
+		[maximumHorizontal, maximumVertical],
+	];
+	const overallWidth = maximumHorizontal - minimumHorizontal;
+	const overallHeight = maximumVertical - minimumVertical;
+	const levels = guides.map(({ value, index }) => ({
+		id: `level-${displayMillimetres(value)}`,
+		...dimension(value, floorGuideSource(index), [[minimumHorizontal, value], [maximumHorizontal, value]]),
+		label: `EL. ${value < 0 ? "-" : "+"}${Math.abs(canonicalMetres(value)).toFixed(3)}`,
+	}));
+	const floorIntervals = guides.slice(1).map(({ value }, intervalIndex) => {
+		const previous = guides[intervalIndex];
+		return {
+			id: `floor-interval-${intervalIndex}`,
+			...dimension(value - previous.value, {
+				kind: "authored_floor_guide_interval",
+				field: "floor_guides.floor_guides_m",
+				indices: [previous.index, guides[intervalIndex + 1].index],
+			}, [[minimumHorizontal, previous.value], [minimumHorizontal, value]]),
+		};
+	});
+	const scaleBarM = chooseScaleBar(overallWidth);
+
+	return {
+		schema_version: SCHEMA_VERSION,
+		view,
+		selected_glb_sha256: actualSha256,
+		geometry_hash: geometryHash(sourceMesh),
+		projected_bounds_m: {
+			min: projectedBounds[0],
+			max: projectedBounds[1],
+			source: exactMassSource({ projection_axes: FRONT_AXES }),
+		},
+		overall_width: dimension(overallWidth, exactMassSource({ projection_axis: "horizontal" }), [[minimumHorizontal, minimumVertical], [maximumHorizontal, minimumVertical]]),
+		overall_height: dimension(overallHeight, exactMassSource({ projection_axis: "vertical" }), [[maximumHorizontal, minimumVertical], [maximumHorizontal, maximumVertical]]),
+		levels,
+		floor_intervals: floorIntervals,
+		facade_extent: {
+			width: dimension(Math.abs(horizontalEnd - horizontalStart), facadePlaneSource(planeIndex, "extent_m[0]"), [[horizontalStart, verticalStart], [horizontalEnd, verticalStart]]),
+			height: dimension(Math.abs(verticalEnd - verticalStart), facadePlaneSource(planeIndex, "extent_m[1]"), [[horizontalStart, verticalStart], [horizontalStart, verticalEnd]]),
+		},
+		scale_bar: dimension(scaleBarM, exactMassSource({ derivation: "projected_width" }), [[minimumHorizontal, minimumVertical], [minimumHorizontal + scaleBarM, minimumVertical]]),
+		tolerance_mm: 1,
+	};
+}
