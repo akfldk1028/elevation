@@ -1,17 +1,23 @@
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import { after, test } from "node:test";
+import { fileURLToPath } from "node:url";
 import sharp from "sharp";
 import { renderCompetitionElevationBase } from "../plugins/elevation-3d/lib/competition-elevation.mjs";
 import { sha256 } from "../plugins/elevation-3d/lib/core.mjs";
 import { deriveElevationDimensions } from "../plugins/elevation-3d/lib/elevation-dimensions.mjs";
 import { resolveMaterialPalette } from "../plugins/elevation-3d/lib/material-palettes.mjs";
+import { resolveElevation3dAssets } from "./helpers/elevation3d-assets.ts";
 
-const workspaceRoot = resolve("..", "..", "..");
-const datasetMassRoot = join(process.env.ELEVATION3D_DATASET_ROOT ?? join(workspaceRoot, "MAAS_ELEVATION_TEST_SET_20260730"), "candidates", "creative-013", "mass");
-const selectedGlbPath = process.env.ELEVATION3D_SELECTED_GLB ?? join(workspaceRoot, "elevation-3d-e2e-results", "creative-013", "final-fix-b-round1-20260803-190000", "versions", "v001", "enriched.glb");
+const assets = resolveElevation3dAssets({
+	start: dirname(fileURLToPath(import.meta.url)),
+	datasetOverride: process.env.ELEVATION3D_DATASET_ROOT,
+	glbOverride: process.env.ELEVATION3D_SELECTED_GLB,
+});
+const datasetMassRoot = join(assets.datasetRoot, "candidates", "creative-013", "mass");
+const selectedGlbPath = assets.selectedGlb;
 const temporaryRoots: string[] = [];
 
 after(async () => Promise.all(temporaryRoots.map((root) => rm(root, { recursive: true, force: true }))));
