@@ -64,14 +64,14 @@ test("uses equal bay spacing without exceeding facade extents and clamps detail 
 	const narrowGrammar = { ...grammar, bay_width_m: 3, frame_depth_m: 9, mullion_depth_m: 9 };
 	const scene = buildEnrichedScene({ mesh, floorGuides, facadePlanes, grammar: narrowGrammar, safeFallback: false });
 	const frontMullions = scene.details.filter((detail) => detail.kind === "mullion" && detail.view === "front");
+	assert.deepEqual(frontMullions.map((detail) => Number(detail.offset_m.toFixed(12))),
+		[0, Number((8 / 3).toFixed(12)), Number((16 / 3).toFixed(12)), 8]);
 	assert.deepEqual(frontMullions.map((detail) => {
 		const horizontal = detail.positions.map((point) => point[0] - facadePlanes.facade_planes[0].origin[0]);
-		return Number(((Math.min(...horizontal) + Math.max(...horizontal)) / 2).toFixed(12));
-	}), [0, Number((8 / 3).toFixed(12)), Number((16 / 3).toFixed(12)), 8]);
-	assert.deepEqual(frontMullions.map((detail) => {
-		const horizontal = detail.positions.map((point) => point[0] - facadePlanes.facade_planes[0].origin[0]);
-		return Number((Math.max(...horizontal) - Math.min(...horizontal)).toFixed(12));
-	}), [0.04, 0.08, 0.08, 0.04]);
+		return [Number(Math.min(...horizontal).toFixed(12)), Number(Math.max(...horizontal).toFixed(12))];
+	}), [[0, 0.04], [8 / 3 - 0.04, 8 / 3 + 0.04], [16 / 3 - 0.04, 16 / 3 + 0.04], [7.96, 8]].map(
+		(bounds) => bounds.map((value) => Number(value.toFixed(12))),
+	));
 	assert.equal(frontMullions.every((detail) => detail.depth_m === 0.12), true);
 	assert.equal(scene.details.filter((detail) => detail.kind === "floor-band").every((detail) => detail.depth_m === 0.25), true);
 });
@@ -160,12 +160,39 @@ test("adds mullion coverage inside every intersecting component span between glo
 		grammar,
 		safeFallback: false,
 	});
-	const centers = scene.details
+	const mullionBounds = scene.details
 		.filter((detail) => detail.kind === "mullion" && detail.view === "front")
 		.map((detail) => {
 			const offsets = detail.positions.map((point) => point[0] - facadePlanes.facade_planes[0].origin[0]);
-			return (Math.min(...offsets) + Math.max(...offsets)) / 2;
+			return [Math.min(...offsets), Math.max(...offsets)];
 		});
+	const centers = mullionBounds.map(([minimum, maximum]) => (minimum + maximum) / 2);
 	assert.equal(centers.some((center) => center >= 1.2 && center <= 1.8), true);
 	assert.equal(centers.some((center) => center >= 4.2 && center <= 4.8), true);
+	assert.equal(mullionBounds.every(([minimum, maximum]) => (
+		(minimum >= 1.2 && maximum <= 1.8) || (minimum >= 4.2 && maximum <= 4.8)
+	)), true);
+});
+
+test("clips a nominal endpoint mullion to a tiny intersecting component span", () => {
+	const tinyComponent = {
+		vertices: [
+			[-3.99, -2, 0], [-3.985, -2, 0], [-3.985, -2, 6.6], [-3.99, -2, 6.6],
+		],
+		triangles: [[0, 1, 2], [0, 2, 3]],
+	};
+	const scene = buildEnrichedScene({
+		mesh: tinyComponent,
+		floorGuides,
+		facadePlanes: { facade_planes: [facadePlanes.facade_planes[0]] },
+		grammar,
+		safeFallback: false,
+	});
+	const mullions = scene.details.filter((detail) => detail.kind === "mullion");
+	assert.deepEqual(mullions.map((detail) => detail.offset_m), [0]);
+	const offsets = mullions[0].positions.map((point) => point[0] - facadePlanes.facade_planes[0].origin[0]);
+	assert.deepEqual(
+		[Number(Math.min(...offsets).toFixed(12)), Number(Math.max(...offsets).toFixed(12))],
+		[0.01, 0.015],
+	);
 });

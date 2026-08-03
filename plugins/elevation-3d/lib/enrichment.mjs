@@ -118,13 +118,10 @@ function facadeDetails(mesh, floorGuides, facadePlanes, grammar) {
 		const coveredSegments = new Set();
 		for (let bay = 0; bay <= bayCount; bay++) {
 			const offset = spacing * bay;
-			const endpoint = bay === 0 || bay === bayCount;
-			const primitiveWidth = endpoint ? mullionWidth / 2 : mullionWidth;
-			const start = offset - primitiveWidth / 2;
+			const start = offset - mullionWidth / 2;
 			for (const [segmentIndex, [segmentStart, segmentEnd]] of segments.entries()) {
-				const intersects = Math.max(start, segmentStart) < Math.min(start + primitiveWidth, segmentEnd);
-				const clippedStart = endpoint && intersects ? start : Math.max(start, segmentStart);
-				const clippedEnd = endpoint && intersects ? start + primitiveWidth : Math.min(start + primitiveWidth, segmentEnd);
+				const clippedStart = Math.max(start, 0, segmentStart);
+				const clippedEnd = Math.min(start + mullionWidth, width, segmentEnd);
 				if (clippedEnd <= clippedStart) continue;
 				coveredSegments.add(segmentIndex);
 				details.push({
