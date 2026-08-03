@@ -49,6 +49,7 @@
     "node": ">=20"
   },
   "dependencies": {
+    "@gltf-transform/core": "^4.4.2",
     "@mariozechner/pi-agent-core": "^0.70.2",
     "@mariozechner/pi-ai": "^0.70.2",
     "@modelcontextprotocol/sdk": "^1.29.0",
@@ -63,8 +64,13 @@
     "@opentelemetry/sdk-trace-node": "^2.7.0",
     "@opentelemetry/semantic-conventions": "^1.40.0",
     "@sinclair/typebox": "^0.34.41",
+    "cos-nodejs-sdk-v5": "^3.0.0",
     "js-yaml": "^4.1.0",
     "node-cron": "^3.0.3",
+    "puppeteer-core": "^25.4.0",
+    "sharp": "^0.35.3",
+    "tencentcloud-sdk-nodejs-ai3d": "^4.1.265",
+    "three": "^0.185.1",
     "yaml": "^2.8.2"
   },
   "peerDependencies": {
@@ -79,6 +85,7 @@
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^22.0.0",
     "@types/node-cron": "^3.0.11",
+    "esbuild": "^0.28.1",
     "typescript": "^5.7.0"
   }
 }
