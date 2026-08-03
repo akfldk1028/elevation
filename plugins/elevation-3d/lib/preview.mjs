@@ -8,10 +8,11 @@ const MIME = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; cha
 export async function startPreview(runDir, port = 4173) {
 	const root = resolve(runDir);
 	await stat(root);
-	if (servers.has(port)) return `http://127.0.0.1:${port}/`;
+	if (servers.has(port)) return `http://127.0.0.1:${port}/viewer/`;
 	const server = createServer(async (request, response) => {
 		try {
-			const requested = decodeURIComponent(new URL(request.url, "http://localhost").pathname).replace(/^\/+/, "") || "viewer/index.html";
+			const pathname = decodeURIComponent(new URL(request.url, "http://localhost").pathname).replace(/^\/+/, "");
+			const requested = !pathname ? "viewer/index.html" : pathname.endsWith("/") ? `${pathname}index.html` : pathname;
 			const path = resolve(root, normalize(requested));
 			if (path !== root && !path.startsWith(root + "\\") && !path.startsWith(root + "/")) throw new Error("forbidden");
 			const bytes = await readFile(path);
@@ -23,5 +24,12 @@ export async function startPreview(runDir, port = 4173) {
 	});
 	await new Promise((resolveReady, reject) => { server.once("error", reject); server.listen(port, "127.0.0.1", resolveReady); });
 	servers.set(port, server);
-	return `http://127.0.0.1:${port}/`;
+	return `http://127.0.0.1:${port}/viewer/`;
+}
+
+export async function stopPreview(port) {
+	const server = servers.get(port);
+	if (!server) return;
+	await new Promise((resolveClosed, reject) => server.close((error) => error ? reject(error) : resolveClosed()));
+	servers.delete(port);
 }

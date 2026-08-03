@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { test } from "node:test";
 import { prepareRun } from "../plugins/elevation-3d/lib/core.mjs";
-import { finalizeResults } from "../plugins/elevation-3d/lib/results.mjs";
+import { captureCanvas, finalizeResults } from "../plugins/elevation-3d/lib/results.mjs";
 
 const DATASET = resolve("..", "..", "..", "MAAS_ELEVATION_TEST_SET_20260730");
 const brief = { summary_ko: "교육시설", materials: ["벽돌"], window_rhythm: "층 정렬", ground_floor: "유리", roof: "평지붕", negative_constraints: ["형상 변경 금지"] };
@@ -25,4 +25,11 @@ test("downloads terminal results, verifies geometry, and builds viewer", async (
 		assert.equal(manifest.state, "completed");
 		assert.equal(manifest.outputs.wan_views.length, 5);
 	} finally { await rm(output, { recursive: true, force: true }); }
+});
+
+test("captures the canvas through Puppeteer's ElementHandle API", async () => {
+	const calls: any[] = [];
+	const page = { $: async (selector: string) => selector === "canvas" ? { screenshot: async (options: any) => calls.push(options) } : null };
+	await captureCanvas(page, "drawing.png");
+	assert.deepEqual(calls, [{ path: "drawing.png" }]);
 });
