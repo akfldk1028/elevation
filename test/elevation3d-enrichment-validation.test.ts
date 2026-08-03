@@ -251,6 +251,30 @@ test("rejects one detail primitive bridging two detached source components", asy
 	assert.equal(report.accepted, false);
 });
 
+test("rejects glazing moved inside a component AABB but away from its surface", async () => {
+	const f = await fixture();
+	const io = new NodeIO();
+	const document = await io.read(f.artifact.path);
+	const primitive = document.getRoot().listNodes().find((node) => node.getName() === "facade-details")!.getMesh()!.listPrimitives()
+		.find((item) => item.getExtras().kind === "glazing")!;
+	const positions = primitive.getAttribute("POSITION")!;
+	const originalZ = Array.from({ length: positions.getCount() }, (_, index) => positions.getElement(index, [0, 0, 0])[2]);
+	const minZ = Math.min(...originalZ);
+	const spanZ = Math.max(...originalZ) - minZ;
+	for (let index = 0; index < positions.getCount(); index++) {
+		const point = positions.getElement(index, [0, 0, 0]);
+		point[0] *= 0.2;
+		point[1] += 1;
+		point[2] = 1 + (point[2] - minZ) / spanZ;
+		positions.setElement(index, point);
+	}
+	await io.write(f.artifact.path, document);
+	await refreshArtifact(f);
+	const report = await validateEnrichment({ sourceMesh, artifact: f.artifact, grammar, requiredDrawings: f.drawings });
+	assert.ok(report.codes.includes("DETAIL_COMPONENT_UNATTACHED"));
+	assert.equal(report.accepted, false);
+});
+
 test("renders provenance binding seven real drawings to one GLB and viewer config", async () => {
 	const f = await fixture({ fallback: true });
 	await rm(join(f.root, "drawing-provenance.json"));
