@@ -115,13 +115,18 @@ function facadeDetails(mesh, floorGuides, facadePlanes, grammar) {
 		const bayCount = Math.max(1, Math.round(width / grammar.bay_width_m));
 		const spacing = width / bayCount;
 		const mullionWidth = Math.min(0.08, spacing);
+		const coveredSegments = new Set();
 		for (let bay = 0; bay <= bayCount; bay++) {
 			const offset = spacing * bay;
-			const start = Math.max(0, Math.min(width - mullionWidth, offset - mullionWidth / 2));
-			for (const [segmentStart, segmentEnd] of segments) {
-				const clippedStart = Math.max(start, segmentStart);
-				const clippedEnd = Math.min(start + mullionWidth, segmentEnd);
+			const endpoint = bay === 0 || bay === bayCount;
+			const primitiveWidth = endpoint ? mullionWidth / 2 : mullionWidth;
+			const start = offset - primitiveWidth / 2;
+			for (const [segmentIndex, [segmentStart, segmentEnd]] of segments.entries()) {
+				const intersects = Math.max(start, segmentStart) < Math.min(start + primitiveWidth, segmentEnd);
+				const clippedStart = endpoint && intersects ? start : Math.max(start, segmentStart);
+				const clippedEnd = endpoint && intersects ? start + primitiveWidth : Math.min(start + primitiveWidth, segmentEnd);
 				if (clippedEnd <= clippedStart) continue;
+				coveredSegments.add(segmentIndex);
 				details.push({
 					kind: "mullion", view: plane.view, offset_m: offset, depth_m: mullionDepth,
 					material: "bronze", ...createPrism(plane, {
@@ -130,6 +135,18 @@ function facadeDetails(mesh, floorGuides, facadePlanes, grammar) {
 					}),
 				});
 			}
+		}
+		for (const [segmentIndex, [segmentStart, segmentEnd]] of segments.entries()) {
+			if (coveredSegments.has(segmentIndex)) continue;
+			const componentWidth = Math.min(mullionWidth, segmentEnd - segmentStart);
+			const offset = (segmentStart + segmentEnd) / 2;
+			details.push({
+				kind: "mullion", view: plane.view, offset_m: offset, depth_m: mullionDepth,
+				material: "bronze", ...createPrism(plane, {
+					start_m: offset - componentWidth / 2, width_m: componentWidth,
+					bottom_m: 0, height_m: height, depth_m: mullionDepth,
+				}),
+			});
 		}
 		for (let floor = 0; floor + 1 < floorGuides.floor_guides_m.length; floor++) {
 			const bottom = floorGuides.floor_guides_m[floor];
