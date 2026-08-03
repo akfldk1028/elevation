@@ -64,6 +64,8 @@ test("renders four accepted elevations from one selected GLB", { timeout: 600_00
 async function verifiedViews() {
 	const root = await mkdtemp(join(tmpdir(), "elevation3d-cross-view-"));
 	const diagnostics = {};
+	const renderManifests = {};
+	const palette = { preset: "competition-warm", sha256: "palette-warm-sha256" };
 	for (const name of ["front", "back", "left", "right"]) {
 		diagnostics[name] = {};
 		for (const diagnostic of ["material_id", "depth", "normal"]) {
@@ -71,8 +73,10 @@ async function verifiedViews() {
 			await writeFile(path, Buffer.from(`${name}:${diagnostic}:persisted-pixels`));
 			diagnostics[name][diagnostic] = { path, sha256: sha256(await readFile(path)) };
 		}
+		const path = join(root, `${name}-render-manifest.json`);
+		await writeFile(path, JSON.stringify({ palette }));
+		renderManifests[name] = { path, sha256: sha256(await readFile(path)) };
 	}
-	const palette = { preset: "competition-warm", sha256: "palette-warm-sha256" };
 	const view = (name: string, hash = "selected") => ({
 		selected_glb_sha256: hash,
 		palette,
@@ -80,8 +84,9 @@ async function verifiedViews() {
 		height: 2400,
 		validation: { accepted: true, codes: [], metrics: { canonical_svg_mismatch: false } },
 		displayed_dimensions: { levels: [0, 3300, 6600, 9900] },
-		base: { clipping: { applied: false } },
+		base: { clipping: { applied: false }, palette_sha256: palette.sha256 },
 		diagnostics: diagnostics[name],
+		render_manifest: renderManifests[name],
 	});
 	return { root, views: Object.fromEntries(["front", "back", "left", "right"].map((name) => [name, view(name)])) };
 }
@@ -118,5 +123,29 @@ test("rejects mixed resolved palettes", async () => {
 	try {
 		fixture.views.right.palette = { preset: "competition-neutral", sha256: "palette-neutral-sha256" };
 		await assert.rejects(() => buildMultiElevationManifest(fixture.views), /one resolved palette SHA-256/);
+	} finally { await rm(fixture.root, { recursive: true, force: true }); }
+});
+
+test("rejects a caller-masked palette substitution in persisted right-view evidence", async () => {
+	const fixture = await verifiedViews();
+	try {
+		const substituted = { preset: "competition-neutral", sha256: "palette-neutral-sha256" };
+		fixture.views.right.base.palette_sha256 = substituted.sha256;
+		await writeFile(fixture.views.right.render_manifest.path, JSON.stringify({ palette: substituted }));
+		fixture.views.right.render_manifest.sha256 = sha256(await readFile(fixture.views.right.render_manifest.path));
+		await assert.rejects(
+			() => buildMultiElevationManifest(fixture.views),
+			/right palette SHA-256 does not match base evidence/,
+		);
+		fixture.views.right.base.palette_sha256 = fixture.views.right.palette.sha256;
+		await assert.rejects(
+			() => buildMultiElevationManifest(fixture.views),
+			/right render manifest palette does not match resolved evidence/,
+		);
+		await writeFile(fixture.views.right.render_manifest.path, Buffer.from("tampered render manifest"));
+		await assert.rejects(
+			() => buildMultiElevationManifest(fixture.views),
+			/right render manifest SHA-256 does not match persisted bytes/,
+		);
 	} finally { await rm(fixture.root, { recursive: true, force: true }); }
 });
