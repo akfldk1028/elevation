@@ -1,6 +1,6 @@
 # ADR-003: Condition Single-Render Reconstruction with the Source MASS
 
-Status: accepted as the next local feasibility test
+Status: superseded as the production direction by ADR-004; retained as a research experiment
 
 Date: 2026-08-03
 
