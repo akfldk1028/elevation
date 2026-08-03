@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { access, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, test } from "node:test";
 
 import {
@@ -323,6 +324,10 @@ for (const scenario of [
 			artifacts: {
 				glb: join(selected.dir, glbName),
 				glb_sha256: `${scenario.selected}-glb-sha256`,
+				provenance: {
+					path: join(selected.dir, "drawing-provenance.json"),
+					sha256: `${scenario.selected}-provenance-sha256`,
+				},
 				drawings: Object.fromEntries(drawingNames.map((name) => {
 					const path = join(selected.dir, "drawings", `${name}.png`);
 					return [name, scenario.selected === "v001" ? { path, sha256: `${name}-sha256`, width: 2, height: 3 } : path];
@@ -333,6 +338,9 @@ for (const scenario of [
 		await appendRunMemory(run, memoryRoot);
 
 		const event = JSON.parse(await readFile(join(memoryRoot, "runs", "creative-013.jsonl"), "utf8"));
+		const globalEvent = JSON.parse(await readFile(join(memoryRoot, "unified-runs.jsonl"), "utf8"));
+		assert.equal(fileURLToPath(event.artifact_base), `${resolve(run.dir)}${sep}`);
+		assert.equal(globalEvent.artifact_base, event.artifact_base);
 		assert.equal(event.selected_version, scenario.selected);
 		assert.equal(event.attempts, scenario.attempts);
 		assert.equal(event.correction_applied, scenario.correction);
@@ -342,12 +350,20 @@ for (const scenario of [
 		const selectedHistory = event.versions.find((version: any) => version.id === scenario.selected);
 		assert.equal(selectedHistory.status, "passed");
 		assert.equal(selectedHistory.artifacts.glb.sha256, `${scenario.selected}-glb-sha256`);
+		assert.deepEqual(selectedHistory.artifacts.drawing_provenance, {
+			path: `versions/${scenario.selected}/drawing-provenance.json`,
+			sha256: `${scenario.selected}-provenance-sha256`,
+		});
 		assert.match(selectedHistory.artifacts.validation_report.sha256, /^[a-f0-9]{64}$/);
 		assert.deepEqual(event.artifacts, {
 			path_base: "run_dir",
 			run_dir: run.dir.replaceAll("\\", "/"),
 			selected_glb: `versions/${scenario.selected}/${glbName}`,
 			validation_report: `versions/${scenario.selected}/validation.json`,
+			drawing_provenance: {
+				path: `versions/${scenario.selected}/drawing-provenance.json`,
+				sha256: `${scenario.selected}-provenance-sha256`,
+			},
 			drawings: Object.fromEntries(drawingNames.map((name) => [name, `versions/${scenario.selected}/drawings/${name}.png`])),
 		});
 	});
