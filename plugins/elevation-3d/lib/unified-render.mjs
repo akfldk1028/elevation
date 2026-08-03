@@ -38,7 +38,7 @@ function unifiedCameras(cameras) {
 	return { ...cameras, views };
 }
 
-export async function renderUnifiedDrawings({ runDir, glbPath, sourceMesh, cameras, signal }) {
+export async function renderUnifiedDrawings({ runDir, glbPath, sourceMesh, cameras, signal, lifecycle, onProgress }) {
 	signal?.throwIfAborted();
 	const absoluteRunDir = resolve(runDir);
 	const selectedGlb = await placeSelectedGlb(absoluteRunDir, glbPath);
@@ -54,13 +54,23 @@ export async function renderUnifiedDrawings({ runDir, glbPath, sourceMesh, camer
 		},
 	});
 	signal?.throwIfAborted();
-	await renderDrawings(absoluteRunDir, ["hunyuan"], { views: DRAWING_NAMES, port: 0, signal });
-	signal?.throwIfAborted();
-	const drawingDir = join(absoluteRunDir, "drawings", "hunyuan");
-	const drawings = Object.fromEntries(DRAWING_NAMES.map((name) => [name, join(drawingDir, `${name}.png`)]));
 	const configPath = join(absoluteRunDir, "viewer", "config.json");
 	const glbHash = sha256(await readFile(selectedGlb));
 	const configHash = sha256(await readFile(configPath));
+	const checkpointDrawings = {};
+	await renderDrawings(absoluteRunDir, ["hunyuan"], {
+		views: DRAWING_NAMES, port: 0, signal, lifecycle,
+		onProgress: async ({ view, path }) => {
+			const bytes = await readFile(path);
+			checkpointDrawings[view] = {
+				path, sha256: sha256(bytes), metrics: { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) },
+			};
+			await onProgress?.({ type: "view", view, render: { drawings: { ...checkpointDrawings }, provenance: null } });
+		},
+	});
+	signal?.throwIfAborted();
+	const drawingDir = join(absoluteRunDir, "drawings", "hunyuan");
+	const drawings = Object.fromEntries(DRAWING_NAMES.map((name) => [name, join(drawingDir, `${name}.png`)]));
 	const drawingEntries = {};
 	for (const [name, path] of Object.entries(drawings)) {
 		signal?.throwIfAborted();
@@ -71,12 +81,21 @@ export async function renderUnifiedDrawings({ runDir, glbPath, sourceMesh, camer
 			glb_sha256: glbHash, viewer_config_sha256: configHash,
 		};
 	}
-	await writeFile(join(absoluteRunDir, "drawing-provenance.json"), JSON.stringify({
+	const provenancePath = join(absoluteRunDir, "drawing-provenance.json");
+	const provenanceBytes = Buffer.from(JSON.stringify({
 		schema_version: "arr.elevation3d.drawing-provenance.v1",
 		selected_glb: { path: portable(relative(absoluteRunDir, selectedGlb)), sha256: glbHash },
 		viewer_config: { path: "viewer/config.json", sha256: configHash },
 		drawings: drawingEntries,
 	}, null, 2));
+	await writeFile(provenancePath, provenanceBytes);
+	await onProgress?.({
+		type: "provenance",
+		render: {
+			drawings: { ...checkpointDrawings },
+			provenance: { path: provenancePath, sha256: sha256(provenanceBytes) },
+		},
+	});
 	signal?.throwIfAborted();
 	return drawings;
 }

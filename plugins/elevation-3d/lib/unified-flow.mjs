@@ -199,7 +199,10 @@ async function renderCheckpoint(version, drawings) {
 	};
 }
 
-async function runVersion({ run, versionId, grammar, safeFallback, input, enrich, render, validate, signal }) {
+async function runVersion({
+	run, versionId, grammar, safeFallback, input, enrich, render, validate, signal,
+	renderLifecycle, renderProgressObserver,
+}) {
 	throwIfAborted(signal);
 	const version = await beginVersion(run, versionId, grammar);
 	throwIfAborted(signal);
@@ -239,6 +242,11 @@ async function runVersion({ run, versionId, grammar, safeFallback, input, enrich
 			versionId,
 			safeFallback,
 			signal,
+			lifecycle: renderLifecycle,
+			onProgress: async (event) => {
+				await recordVersionCheckpoint(run, version, { render: event.render });
+				await renderProgressObserver?.(event);
+			},
 		});
 		await recordVersionCheckpoint(run, version, { render: await renderCheckpoint(version, drawings) });
 		throwIfAborted(signal);
@@ -346,6 +354,7 @@ export async function runElevation3d({
 	try {
 	const first = await runVersion({
 		run, versionId: "v001", grammar, safeFallback: false, input, enrich, render, validate, signal,
+		renderLifecycle: deps.renderLifecycle, renderProgressObserver: deps.onRenderProgress,
 	});
 	if (!first.failure) {
 		await selectFinal(run, { selected: first.version.id, reason: "enrichment and all gates passed" });
@@ -365,6 +374,7 @@ export async function runElevation3d({
 	const correctedGrammar = correctGrammar(grammar, first.failure.codes);
 	const second = await runVersion({
 		run, versionId: "v002", grammar: correctedGrammar, safeFallback: false, input, enrich, render, validate, signal,
+		renderLifecycle: deps.renderLifecycle, renderProgressObserver: deps.onRenderProgress,
 	});
 	if (!second.failure) {
 		await selectFinal(run, { selected: second.version.id, reason: "bounded correction passed all gates" });
@@ -383,6 +393,7 @@ export async function runElevation3d({
 
 	const fallback = await runVersion({
 		run, versionId: "fallback", grammar: correctedGrammar, safeFallback: true, input, enrich, render, validate, signal,
+		renderLifecycle: deps.renderLifecycle, renderProgressObserver: deps.onRenderProgress,
 	});
 	if (fallback.failure) await terminateBlocked(
 		run, memoryRoot, { ...fallback.failure, retryable: false }, fallback.cause,
