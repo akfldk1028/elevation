@@ -4,32 +4,34 @@ This folder is the durable research memory for reconstructing one 3D architectur
 
 ## Current conclusion
 
-Current feasibility experiment:
+Current recommended feasibility experiment:
 
-1. Extract the isometric panel from the candidate's existing `render.png`.
-2. Submit that single image once to Tripo `image_to_model`.
-3. Download one generated GLB.
-4. Render every presentation view and drawing from that GLB.
-5. Compare the generated GLB against the source OBJ and the unused reference panels.
+1. Produce one detailed architectural isometric from the exact MASS.
+2. Sample a 512-point surface cloud from the source `mass.obj`.
+3. Run local SPAR3D with the image and point cloud together.
+4. Restore the original coordinates and dimensions.
+5. Render every presentation view and drawing from the same generated GLB.
+6. Compare local landmarks and held-out views against the source.
 
-This is not per-elevation image generation, multi-view image submission, or fixed-mesh texturing. It is a one-call test of the professor's proposed shortcut.
+This is not per-elevation image generation. It is a test of the professor's proposed shortcut with a geometric scaffold supplied at reconstruction time.
 
-It is not yet accepted as the production workflow. The current brown `render.png` contains no design information that is absent from `mass.obj`; converting it back to 3D is therefore lossy and redundant. Single-image reconstruction becomes useful when the source image is a newly authored or AI-generated architectural render containing facade or form information worth transferring, and when plausible rather than measured hidden geometry is acceptable.
+Tripo image-to-model plus source registration remains the API fallback. The current brown `render.png` is suitable only for pipeline validation because it contains no added architecture detail; the meaningful test needs a newly authored or AI-generated detailed isometric.
 
 ## Reading order
 
 1. `contract/problem-definition.md`
 2. `contract/input-data-map.md`
-3. `decisions/ADR-002-single-render-to-3d.md`
-4. `approaches/approach-c-tripo-single-image.md`
-5. `evaluation/single-render-test-plan.md`
+3. `decisions/ADR-003-mass-conditioned-single-render-to-3d.md`
+4. `approaches/approach-d-spar3d-mass-conditioned.md`
+5. `evaluation/spar3d-vs-tripo-test-plan.md`
 6. `research/providers.md`
 7. `research/single-image-validity-review-2026-08-03.md`
 8. `sources/bibliography.md`
 
 ## Status
 
-- Current architecture correction: recorded on 2026-08-03.
+- Current architecture correction: MASS-conditioned reconstruction recorded on 2026-08-03.
+- SPAR3D weights: not downloaded; gated Hugging Face access is required.
 - Tripo credential: configured in ignored local `.env`.
 - Tripo API balance at last check: 0 credits.
 - Paid generation calls: none submitted.

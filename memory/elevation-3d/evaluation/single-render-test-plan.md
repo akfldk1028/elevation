@@ -1,6 +1,6 @@
 # Single Render to 3D Test Plan
 
-Status: bounded concept-feasibility benchmark. Passing this test does not authorize technical drawing use.
+Status: superseded as the primary test by `spar3d-vs-tripo-test-plan.md`; retained for the image-only Tripo fallback.
 
 ## Hypothesis
 
