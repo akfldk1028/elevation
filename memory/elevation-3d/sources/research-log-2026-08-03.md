@@ -1,5 +1,11 @@
 # Research Log — 2026-08-03
 
+## Final correction: single rendered image to 3D
+
+The user clarified that the intended workflow is not multi-view elevation generation, multi-view submission, or fixed-mesh texturing. Each candidate already has a PNG that visibly depicts a 3D MASS. The primary experiment must crop the isometric object view from that existing render, submit it once to an image-to-3D provider, receive one GLB, and derive all later renders and drawings from the generated GLB.
+
+The unused panels, original OBJ, camera matrices, and locked views are validation evidence. They are not separate provider inputs. Earlier Hunyuan direct-texture and Wan projection recommendations are superseded for the primary experiment.
+
 ## Initial correction
 
 The original handoff described multi-view elevation proposals. User feedback clarified that the intended workflow is one textured 3D result followed by drawing extraction.

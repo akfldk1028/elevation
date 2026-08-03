@@ -22,28 +22,27 @@ program/geometry-program.json
 | --- | --- |
 | `candidate.json` | identity, morphology, storey evidence |
 | `mass/manifest.json` | source integrity verification |
+| `render.png` | four-panel source board; crop its isometric panel as the sole generation image |
 | `mesh/indexed-mesh.json` | authoritative geometry comparison |
-| `mesh/mass.obj` | provider upload or GLB conversion |
-| `views/*.png` | source-view evidence and provider conditions |
-| `camera-poses.json` | locked browser cameras and projections |
+| `mesh/mass.obj` | validation reference; not submitted to `image_to_model` |
+| `views/*.png` | held-out view evidence; not separate generation inputs |
+| `camera-poses.json` | validation and downstream drawing cameras; not Tripo conditioning input |
 | `facade-planes.json` | semantic facade/view mapping |
 | `floor-guides.json` | floor alignment overlays and review |
 | `surface-normals.json` | face orientation and coverage checks |
 | `handoff.json` | receiving-pipeline contract |
 
-## Provider mapping for Hunyuan3D 3.1
+## Provider mapping for Tripo image-to-model
 
-| API parameter | Candidate source |
+| Stage or parameter | Candidate source |
 | --- | --- |
-| `File3D` | `mass.obj` or identity-preserving GLB |
-| `Image` | `front.png` as the primary reference |
-| `MultiViewImages[left]` | `left.png` |
-| `MultiViewImages[right]` | `right.png` |
-| `MultiViewImages[back]` | `back.png` |
-| `MultiViewImages[top]` | `top.png` |
-| optional 45-degree view | `axon.png` only after confirming orientation |
-| `EnableKeepUV` | `true` |
-| `EnablePBR` | test parameter |
-| `TextureSize` | initially `2048` |
+| crop source | top-left isometric panel of `candidate/render.png` |
+| upload `file` | cropped isometric PNG with panel label/border removed |
+| task `type` | `image_to_model` |
+| first test `texture` | `false` to isolate geometry reconstruction |
+| first test `pbr` | `false` |
+| held-out validation | opposite/top/front panels plus `mass/views/*.png` |
+| geometry reference | `mass/mesh/mass.obj` and `indexed-mesh.json` |
+| drawing cameras | `camera-poses.json` after generated-model alignment |
 
-The API labels do not replace the stored camera matrices. The matrices remain authoritative for local validation and drawing extraction.
+The provider does not consume the stored camera matrices. After generation, align the returned GLB to the source coordinate frame before applying stored cameras or comparing projections.

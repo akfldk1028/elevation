@@ -1,6 +1,8 @@
 # ADR-001: Evaluate Two Web Strategies
 
-Status: accepted for design
+Status: superseded by ADR-002
+
+This decision records earlier exploration. It is not the current implementation direction.
 
 ## Decision
 
