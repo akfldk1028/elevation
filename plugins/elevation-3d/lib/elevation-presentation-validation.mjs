@@ -246,7 +246,8 @@ export async function validateCompetitionElevation({ artifacts, sourceMesh, faca
 		|| Math.abs(dot(axes?.horizontal ?? [], axes?.vertical ?? [])) > 1e-6
 		|| Math.abs(dot(axes?.horizontal ?? [], axes?.depth ?? [])) > 1e-6
 		|| Math.abs(dot(axes?.vertical ?? [], axes?.depth ?? [])) > 1e-6
-		|| (view?.projection_axes?.vertical && Math.abs(Math.abs(dot(axes?.vertical ?? [], view.projection_axes.vertical)) - 1) > 1e-6)
+		|| (["horizontal", "vertical", "depth"].some((axis) => view?.projection_axes?.[axis]
+			&& Math.abs(dot(axes?.[axis] ?? [], view.projection_axes[axis]) - 1) > 1e-6))
 		|| Math.abs((camera?.px_per_m_x ?? 0) / (camera?.px_per_m_y ?? 1) - 1) > 0.0025;
 	add(codes, "ELEVATION_AXIS_MISMATCH", axesInvalid);
 	let bounds = artifacts.base?.content_bounds_px;
@@ -322,6 +323,7 @@ export async function validateCompetitionElevation({ artifacts, sourceMesh, faca
 				}).svg;
 				canonicalSvgMismatch = Buffer.byteLength(svg) !== Buffer.byteLength(canonicalSvg) || svg !== canonicalSvg;
 				add(codes, "DIMENSION_MISMATCH", canonicalSvgMismatch);
+				add(codes, "ANNOTATION_CANONICAL_MISMATCH", canonicalSvgMismatch);
 				add(codes, "LEVEL_GUIDE_MISMATCH", computedSvg.mismatch && authoritative.levels.some((level) => !svg.includes(`>${level.label}</text>`)));
 				add(codes, "ELEVATION_CONTENT_CLIPPED", computedSvg.overlap || computedSvg.pageViolation);
 			}

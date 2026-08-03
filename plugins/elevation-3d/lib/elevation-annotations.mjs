@@ -25,6 +25,7 @@ function text(value, x, y, attributes = "") {
 export function buildElevationAnnotations({ dimensions, camera, contentBounds, canvas = [2400, 2400], candidateId = "unknown" }) {
 	const [width, height] = canvas;
 	if (width !== 2400 || height !== 2400 || camera?.type !== "orthographic") throw new Error("annotation layout unavailable: invalid canvas or camera");
+	if (!["front", "back", "left", "right"].includes(dimensions?.view)) throw new Error("annotation layout unavailable: invalid elevation view");
 	if (contentBounds.min_x < 192 || contentBounds.max_x > width - 192 || contentBounds.min_y < PAGE_CLEARANCE || contentBounds.max_y > height - 520) {
 		throw new Error("annotation layout unavailable: content consumes reserved lane");
 	}
@@ -96,7 +97,7 @@ export function buildElevationAnnotations({ dimensions, camera, contentBounds, c
 	if (overlapsContent || overlapsAnnotations || outsidePage) throw new Error("annotation layout unavailable: collision or page clearance");
 	const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
 <style>.dimension,.overall,.level{fill:none;stroke:#2c3032;stroke-width:1.4}.overall{stroke-width:2}.level{stroke:#596166;stroke-width:1}.dimension-label,.level-label,.note,.subtitle{font-family:Arial,sans-serif;fill:#25292b;font-size:20px}.title{font-family:Arial,sans-serif;fill:#202426;font-size:34px;font-weight:600;letter-spacing:4px}.subtitle,.note{font-size:18px;letter-spacing:1px}.halo{paint-order:stroke;stroke:#fafaf7;stroke-width:7px;stroke-linejoin:round}.ground{stroke:#1f2325;stroke-width:2.4}</style>
-<g id="title">${text("FRONT ELEVATION", 120, 120, `class="title" text-anchor="start"`)}${text(`CANDIDATE ${String(candidateId).toUpperCase()} · COMPETITION WARM`, 120, 164, `class="subtitle" text-anchor="start"`)}</g>
+<g id="title">${text(`${dimensions.view.toUpperCase()} ELEVATION`, 120, 120, `class="title" text-anchor="start"`)}${text(`CANDIDATE ${String(candidateId).toUpperCase()} · COMPETITION WARM`, 120, 164, `class="subtitle" text-anchor="start"`)}</g>
 <g id="ground-datum">${line(contentBounds.min_x - 36, groundY, contentBounds.max_x + 36, groundY, "ground")}</g>
 <g id="levels">${levelLines.join("")}</g>
 <g id="floor-intervals">${intervalParts.join("")}</g>
