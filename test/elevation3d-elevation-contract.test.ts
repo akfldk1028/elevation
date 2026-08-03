@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
+import { NodeIO } from "@gltf-transform/core";
 import { sha256 } from "../plugins/elevation-3d/lib/core.mjs";
 import { deriveElevationDimensions } from "../plugins/elevation-3d/lib/elevation-dimensions.mjs";
 import { writeEnrichedGlb } from "../plugins/elevation-3d/lib/enrichment.mjs";
@@ -156,6 +157,20 @@ test("rejects a larger exact-mass GLB carrying the source identity", async () =>
 		inputs.artifact.path.replace("rotated.glb", "mismatched.glb"),
 	);
 	await assert.rejects(() => deriveElevationDimensions(inputs), /exact MASS geometry mismatch/);
+});
+
+test("rejects translated or scaled exact-mass nodes before reading local accessors", async () => {
+	for (const transform of ["translation", "scale"]) {
+		const inputs = await rotatedFixture();
+		const io = new NodeIO();
+		const document = await io.read(inputs.artifact.path);
+		const exactMass = document.getRoot().listNodes().find((node) => node.getName() === "exact-mass");
+		if (transform === "translation") exactMass.setTranslation([0.25, 0, 0]);
+		else exactMass.setScale([1.1, 1, 1]);
+		await io.write(inputs.artifact.path, document);
+		inputs.artifact.sha256 = sha256(await readFile(inputs.artifact.path));
+		await assert.rejects(() => deriveElevationDimensions(inputs), /exact MASS transform invalid/);
+	}
 });
 
 test("projects rotated exact MASS geometry with authoritative front camera axes", async () => {

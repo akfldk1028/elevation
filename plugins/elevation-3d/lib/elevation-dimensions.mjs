@@ -6,6 +6,7 @@ import { compareGeometry } from "./geometry.mjs";
 const SCHEMA_VERSION = "arr.elevation3d.dimension-manifest.v1";
 const ENVELOPE_TOLERANCE_M = 0.001;
 const IDENTITY_FIELDS = ["candidate_id", "geometry_hash", "pnu", "program_hash", "run_id"];
+const IDENTITY_MATRIX = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
 
 function dot(left, right) {
 	return left.reduce((sum, value, axis) => sum + value * right[axis], 0);
@@ -112,7 +113,11 @@ async function exactMassPositions(artifact) {
 	const document = await new NodeIO().read(artifact.path);
 	const root = document.getRoot();
 	const node = root.listNodes().find((item) => item.getName() === "exact-mass");
-	const mesh = node?.getMesh() ?? root.listMeshes().find((item) => item.getName() === "exact-mass");
+	if (!node) throw new Error("dimension source missing: exact-mass");
+	if (!Array.from(node.getWorldMatrix()).every((value, index) => value === IDENTITY_MATRIX[index])) {
+		throw new Error("exact MASS transform invalid");
+	}
+	const mesh = node.getMesh();
 	if (!mesh) throw new Error("dimension source missing: exact-mass");
 	const primitives = mesh.listPrimitives();
 	if (!primitives.length) throw new Error("dimension source missing: exact-mass.POSITION");
