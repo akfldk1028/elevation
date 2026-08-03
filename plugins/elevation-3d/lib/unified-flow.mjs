@@ -9,6 +9,7 @@ import {
 	beginVersion,
 	createUnifiedRun,
 	recordVersionFailure,
+	recordVersionSuccess,
 	selectFinal,
 } from "./run-memory.mjs";
 import { renderUnifiedDrawings } from "./unified-render.mjs";
@@ -29,6 +30,10 @@ const STAGE_FAILURE_CODES = {
 	render: "RENDER_FAILED",
 	validate: "VALIDATION_FAILED",
 };
+const CORRECTABLE_VALIDATION_CODES = new Set([
+	"DETAIL_BOUNDS_EXCEEDED",
+	"PRIMITIVE_BUDGET_EXCEEDED",
+]);
 
 export class BlockedRunError extends Error {
 	constructor(message, options = {}) {
@@ -42,21 +47,20 @@ export class BlockedRunError extends Error {
 
 function thrownFailure(error, stage) {
 	return {
-		stage: error?.stage ?? stage,
-		codes: Array.isArray(error?.codes) && error.codes.length
-			? [...error.codes]
-			: [error?.code ?? STAGE_FAILURE_CODES[stage]],
+		stage,
+		codes: [STAGE_FAILURE_CODES[stage]],
 		evidence: error?.evidence ?? { message: error instanceof Error ? error.message : String(error) },
-		retryable: error?.retryable !== false,
+		retryable: false,
 	};
 }
 
 function rejectedValidation(report) {
+	const codes = Array.isArray(report?.codes) && report.codes.length ? [...report.codes] : [STAGE_FAILURE_CODES.validate];
 	return {
 		stage: "validate",
-		codes: Array.isArray(report?.codes) && report.codes.length ? [...report.codes] : [STAGE_FAILURE_CODES.validate],
+		codes,
 		evidence: { metrics: report?.metrics ?? {}, artifacts: report?.artifacts ?? {} },
-		retryable: report?.retryable !== false,
+		retryable: codes.every((code) => CORRECTABLE_VALIDATION_CODES.has(code)),
 	};
 }
 
@@ -77,7 +81,7 @@ async function runVersion({ run, versionId, grammar, safeFallback, input, enrich
 	} catch (error) {
 		const failure = thrownFailure(error, "enrich");
 		await recordVersionFailure(run, version, failure);
-		return { version, failure };
+		return { version, failure, cause: error };
 	}
 
 	let drawings;
@@ -93,7 +97,7 @@ async function runVersion({ run, versionId, grammar, safeFallback, input, enrich
 	} catch (error) {
 		const failure = thrownFailure(error, "render");
 		await recordVersionFailure(run, version, failure);
-		return { version, failure };
+		return { version, failure, cause: error };
 	}
 
 	let report;
@@ -109,21 +113,31 @@ async function runVersion({ run, versionId, grammar, safeFallback, input, enrich
 	} catch (error) {
 		const failure = thrownFailure(error, "validate");
 		await recordVersionFailure(run, version, failure);
-		return { version, failure };
+		return { version, failure, cause: error };
 	}
 	if (!report?.accepted) {
 		const failure = rejectedValidation(report);
 		await recordVersionFailure(run, version, failure);
 		return { version, failure };
 	}
+	await recordVersionSuccess(run, version);
 	return { version, artifact, drawings, report };
 }
 
-function blockedFromFailure(failure) {
+function blockedFromFailure(failure, cause) {
 	return new BlockedRunError(
 		`Run blocked at ${failure.stage}: ${failure.codes.join(", ")}`,
-		{ stage: failure.stage },
+		{ stage: failure.stage, cause },
 	);
+}
+
+async function terminateBlocked(run, memoryRoot, failure, cause) {
+	await selectFinal(run, {
+		selected: "blocked",
+		reason: `${failure.stage}: ${failure.codes.join(", ")}`,
+	});
+	await appendRunMemory(run, memoryRoot);
+	throw blockedFromFailure(failure, cause);
 }
 
 export async function runElevation3d({
@@ -171,7 +185,7 @@ export async function runElevation3d({
 			validation: first.report,
 		};
 	}
-	if (!first.failure.retryable) throw blockedFromFailure(first.failure);
+	if (!first.failure.retryable) await terminateBlocked(run, memoryRoot, first.failure, first.cause);
 
 	const correctedGrammar = correctGrammar(grammar, first.failure.codes);
 	const second = await runVersion({
@@ -190,12 +204,14 @@ export async function runElevation3d({
 			validation: second.report,
 		};
 	}
-	if (!second.failure.retryable) throw blockedFromFailure(second.failure);
+	if (!second.failure.retryable) await terminateBlocked(run, memoryRoot, second.failure, second.cause);
 
 	const fallback = await runVersion({
 		run, versionId: "fallback", grammar: correctedGrammar, safeFallback: true, input, enrich, render, validate,
 	});
-	if (fallback.failure) throw blockedFromFailure({ ...fallback.failure, retryable: false });
+	if (fallback.failure) await terminateBlocked(
+		run, memoryRoot, { ...fallback.failure, retryable: false }, fallback.cause,
+	);
 	await selectFinal(run, { selected: "fallback", reason: "two generated versions failed; exact mass passed all gates" });
 	await appendRunMemory(run, memoryRoot);
 	return {
