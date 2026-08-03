@@ -1,0 +1,18 @@
+{
+  "candidate_id": "creative-013",
+  "version": 1,
+  "image_path": "approved-detailed-isometric-v1.png",
+  "image_sha256": "67627bc0ddabb9bbe440116e4cc0290041fd02d428cf3ee2048f868433566393",
+  "facade_grammar": {
+    "material_palette": {
+      "solid": "warm architectural concrete",
+      "transparent": "clear low-e glass",
+      "accent": "dark bronze metal"
+    },
+    "bay_width_m": 1.5,
+    "frame_depth_m": 0.18,
+    "mullion_depth_m": 0.08,
+    "glazing_recess_m": 0.12,
+    "parapet_height_m": 0.35
+  }
+}
