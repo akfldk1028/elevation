@@ -98,8 +98,13 @@ test("halves detail depths after an outward-bounds failure", () => {
 	assert.equal(corrected.mullion_depth_m, grammar.mullion_depth_m / 2);
 });
 
-test("widens bays after a primitive-budget failure", () => {
-	assert.equal(correctGrammar(grammar, ["PRIMITIVE_BUDGET_EXCEEDED"]).bay_width_m, 2.25);
+test("sets deterministic bay width after a primitive-budget failure", () => {
+	for (const bayWidth of [1, 1.5, 2.5]) {
+		assert.equal(
+			correctGrammar({ ...grammar, bay_width_m: bayWidth }, ["PRIMITIVE_BUDGET_EXCEEDED"]).bay_width_m,
+			2.25,
+		);
+	}
 });
 
 test("keeps repeated corrections within approved grammar limits", () => {
@@ -107,7 +112,7 @@ test("keeps repeated corrections within approved grammar limits", () => {
 		{ ...grammar, bay_width_m: 2.5, frame_depth_m: 0.06, mullion_depth_m: 0.04 },
 		["DETAIL_BOUNDS_EXCEEDED", "PRIMITIVE_BUDGET_EXCEEDED"],
 	);
-	assert.equal(corrected.bay_width_m, 3);
+	assert.equal(corrected.bay_width_m, 2.25);
 	assert.equal(corrected.frame_depth_m, 0.05);
 	assert.equal(corrected.mullion_depth_m, 0.03);
 });
