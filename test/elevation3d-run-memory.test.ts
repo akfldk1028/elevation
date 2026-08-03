@@ -129,6 +129,21 @@ test("rejects a forged unsafe candidate before writing candidate memory", async 
 	await assert.rejects(() => access(join(memoryRoot, "outside.jsonl")), /ENOENT/);
 });
 
+test("rejects a forged unsafe run ID before writing global or candidate memory", async () => {
+	const memoryRoot = await mkdtemp(join(tmpdir(), "elevation3d-run-id-memory-boundary-"));
+	temporaryRoots.push(memoryRoot);
+	const forgedRun = {
+		id: "../outside",
+		dir: join(memoryRoot, "run"),
+		metadata: { candidate_id: "creative-013", artifacts: [] },
+		versions: [],
+		final: { selected: "blocked", reason: "rejected" },
+	};
+	await assert.rejects(() => appendRunMemory(forgedRun, memoryRoot), /safe path segment/i);
+	await assert.rejects(() => access(join(memoryRoot, "unified-runs.jsonl")), /ENOENT/);
+	await assert.rejects(() => access(join(memoryRoot, "runs", "creative-013.jsonl")), /ENOENT/);
+});
+
 test("transitions an accepted version from started to passed", async () => {
 	const outputRoot = await mkdtemp(join(tmpdir(), "elevation3d-run-success-"));
 	temporaryRoots.push(outputRoot);

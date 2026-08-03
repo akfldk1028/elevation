@@ -201,10 +201,12 @@ function selectedOutputArtifacts(run, selectedVersion) {
 
 export async function appendRunMemory(run, memoryRoot) {
 	if (!run.final) throw new Error("A final selection is required before appending run memory");
+	const runId = assertSafePathSegment(run.id, "run_id");
+	const candidateId = assertSafePathSegment(run.metadata.candidate_id, "candidate_id");
 	const event = persistent({
 		schema_version: "arr.elevation3d.run-memory.v1",
-		run_id: run.id,
-		candidate_id: run.metadata.candidate_id,
+		run_id: runId,
+		candidate_id: candidateId,
 		artifacts: run.metadata.artifacts,
 		versions: run.versions.flatMap((version) => version.failures.map((failure) => ({
 			id: version.id,
@@ -215,12 +217,11 @@ export async function appendRunMemory(run, memoryRoot) {
 		}))),
 		final: run.final,
 	});
-	const candidateId = assertSafePathSegment(run.metadata.candidate_id, "candidate_id");
 	const selectedVersion = run.versions.find((version) => version.id === run.final.selected);
 	const candidateEvent = persistent({
 		schema_version: "arr.elevation3d.candidate-run-memory.v1",
-		run_id: run.id,
-		candidate_id: run.metadata.candidate_id,
+		run_id: runId,
+		candidate_id: candidateId,
 		selected_version: run.final.selected,
 		attempts: run.versions.filter((version) => version.id !== "fallback").length,
 		metrics: selectedVersion?.validation?.metrics ?? {},
