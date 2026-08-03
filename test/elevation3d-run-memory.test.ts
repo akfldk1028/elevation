@@ -11,6 +11,7 @@ import {
 	recordVersionFailure,
 	recordVersionSuccess,
 	recordVersionCancelled,
+	recordVersionCheckpoint,
 	selectFinal,
 } from "../plugins/elevation-3d/lib/run-memory.mjs";
 
@@ -272,6 +273,25 @@ test("persists one cancelled attempted version with a safe failure summary", asy
 	assert.deepEqual(event.versions.map((item: any) => item.status), ["cancelled"]);
 	assert.equal(JSON.stringify(event).includes("cancel-secret"), false);
 	assert.equal(JSON.stringify(event).includes("final-secret"), false);
+});
+
+test("builds terminal history from the persisted checkpoint after in-memory state is lost", async () => {
+	const outputRoot = await mkdtemp(join(tmpdir(), "elevation3d-run-checkpoint-reload-"));
+	const memoryRoot = await mkdtemp(join(tmpdir(), "elevation3d-memory-checkpoint-reload-"));
+	temporaryRoots.push(outputRoot, memoryRoot);
+	const run = await createUnifiedRun({ input, approvedDesign, outputRoot, runId: "checkpoint-reload" });
+	const version = await beginVersion(run, "v001", grammar);
+	await recordVersionCheckpoint(run, version, {
+		enrichment: { artifact: { path: join(version.dir, "enriched.glb"), sha256: "persisted-glb-sha", metrics: { bytes: 42 } } },
+	});
+	version.checkpoint = {};
+	await recordVersionFailure(run, version, { stage: "render", codes: ["RENDER_FAILED"], retryable: false });
+	await selectFinal(run, { selected: "blocked", reason: "render failed" });
+	await appendRunMemory(run, memoryRoot);
+	const event = JSON.parse(await readFile(join(memoryRoot, "unified-runs.jsonl"), "utf8"));
+	assert.deepEqual(event.versions[0].artifacts.glb, {
+		metrics: { bytes: 42 }, path: "versions/v001/enriched.glb", sha256: "persisted-glb-sha",
+	});
 });
 
 for (const scenario of [
