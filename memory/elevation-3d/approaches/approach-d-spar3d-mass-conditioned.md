@@ -15,6 +15,12 @@ Turn one detailed architectural isometric into one textured 3D object while pres
 
 SPAR3D exposes a user point-cloud path in its official demo and Python implementation. If a point cloud is supplied, it bypasses point-cloud diffusion and sends image features plus the supplied XYZ/RGB points to mesh generation. The demo samples or pads the cloud to 512 points and accepts `.ply`.
 
+## Hosted API versus self-hosting
+
+Stability AI also provides a preview SPAR3D REST endpoint at `/v2beta/3d/stable-point-aware-3d`. It returns a GLB in a few seconds and costs 4 credits per successful call. Its published request schema accepts an image and generation/remeshing parameters, but **does not accept a user point cloud**. It is therefore a fast image-only baseline, not the MASS-conditioned implementation described here.
+
+The MASS-conditioned path must use the open-source Python/ComfyUI implementation on a local or hosted GPU. This is still web-deployable: a browser uploads the image and a very small 512-point PLY to a persistent GPU service. The paper reports about 0.7 seconds of warm inference per object. Expected production latency is dominated by container/model cold start and texture/GLB transfer, not by point-cloud size.
+
 ## Recommended adapter
 
 - Sample the complete source surface rather than using OBJ vertices alone.

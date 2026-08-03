@@ -6,6 +6,8 @@
 - [SPAR3D official project](https://spar3d.github.io/)
 - [SPAR3D official implementation](https://github.com/Stability-AI/stable-point-aware-3d)
 - [SPAR3D model card and weights](https://huggingface.co/stabilityai/stable-point-aware-3d)
+- [Stability AI SPAR3D REST API](https://platform.stability.ai/docs/api-reference#tag/3D/paths/~1v2beta~13d~1stable-point-aware-3d/post)
+- [Stability AI API pricing](https://platform.stability.ai/pricing)
 - [3D Synthesis for Architectural Design, WACV 2025](https://openaccess.thecvf.com/content/WACV2025/html/Tsai_3D_Synthesis_for_Architectural_Design_WACV_2025_paper.html)
 - [TripoSR: Fast 3D Object Reconstruction from a Single Image](https://arxiv.org/abs/2403.02151)
 - [InstantMesh: Efficient 3D Mesh Generation from a Single Image](https://arxiv.org/abs/2404.07191)
