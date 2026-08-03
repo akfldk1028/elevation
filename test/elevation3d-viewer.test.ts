@@ -1,10 +1,17 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { startPreview, stopPreview } from "../plugins/elevation-3d/lib/preview.mjs";
 import { buildViewerBundle } from "../plugins/elevation-3d/lib/viewer.mjs";
+import { verifyAllViewsViewer } from "../plugins/elevation-3d/lib/results.mjs";
+import { resolveMaterialPalette } from "../plugins/elevation-3d/lib/material-palettes.mjs";
+import { resolveElevation3dAssets } from "./helpers/elevation3d-assets.ts";
+import { dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const assets = resolveElevation3dAssets({ start: dirname(fileURLToPath(import.meta.url)), datasetOverride: process.env.ELEVATION3D_DATASET_ROOT, glbOverride: process.env.ELEVATION3D_SELECTED_GLB });
 
 test("builds a standalone Three.js viewer bundle with locked cameras", async () => {
 	const root = await mkdtemp(join(tmpdir(), "elevation3d-viewer-"));
@@ -76,5 +83,30 @@ test("assigns isolated ephemeral ports and stops previews independently", async 
 	} finally {
 		await Promise.all([...new Set(ports)].map((port) => stopPreview(port)));
 		await Promise.all(roots.map((root) => rm(root, { recursive: true, force: true })));
+	}
+});
+
+test("interactive all-views viewer loads one GLB and exposes controls without reload", { timeout: 120_000 }, async () => {
+	const root = await mkdtemp(join(tmpdir(), "elevation3d-all-views-viewer-"));
+	try {
+		const palettes = Object.fromEntries(["warm", "neutral", "stone"].map((name) => [name, resolveMaterialPalette(`competition-${name}`)]));
+		const names = ["front", "back", "left", "right", "plan", "top", "axon", "opposite-axon"];
+		await buildViewerBundle({ runDir: root, config: {
+			candidate_id: "creative-013", strategies: { hunyuan: { glb: "../enriched.glb" } },
+			all_views: { selected_glb: { path: "../enriched.glb", sha256: "a".repeat(64) }, palettes, views: Object.fromEntries(names.map((name) => [name, {}])), validation: { accepted: true, codes: [] }, artifacts: [] },
+		} });
+		await copyFile(assets.selectedGlb, join(root, "enriched.glb"));
+		const verification = await verifyAllViewsViewer({ runDir: root });
+		assert.deepEqual(verification.activated_views.sort(), names.sort());
+		assert.deepEqual(verification.activated_palettes.sort(), ["neutral", "stone", "warm"]);
+		assert.equal(verification.validation_badge, "Accepted");
+		assert.match(verification.glb_download, /enriched\.glb$/);
+		assert.equal(verification.glb_load_count, 1);
+		assert.equal(verification.rotated, true); assert.equal(verification.zoomed, true);
+		assert.deepEqual(verification.console_errors, []);
+		await stat(verification.screenshots.initial);
+		await stat(verification.screenshots.interacted);
+	} finally {
+		await rm(root, { recursive: true, force: true });
 	}
 });

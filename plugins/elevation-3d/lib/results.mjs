@@ -76,6 +76,61 @@ export async function renderDrawings(runDir, strategies, {
 	}
 }
 
+export async function verifyAllViewsViewer({ runDir, outputDir = join(runDir, "browser-verification"), signal } = {}) {
+	await mkdir(outputDir, { recursive: true });
+	const consoleErrors = [];
+	let browser, page, previewPort;
+	try {
+		signal?.throwIfAborted();
+		const base = await startPreview(runDir, 0); previewPort = Number(new URL(base).port);
+		browser = await puppeteer.launch({ executablePath: await findChrome(), headless: true, args: ["--disable-gpu-sandbox", "--no-sandbox", "--use-angle=swiftshader"] });
+		page = await browser.newPage();
+		page.on("pageerror", (error) => consoleErrors.push(error.message));
+		page.on("console", (message) => { if (message.type() === "error") consoleErrors.push(`${message.location().url || "page"}: ${message.text()}`); });
+		await page.setViewport({ width: 1440, height: 1000, deviceScaleFactor: 1 });
+		await page.goto(base, { waitUntil: "networkidle0" });
+		await page.waitForFunction(() => globalThis.__ELEVATION3D_READY__ === true, { timeout: 60_000 });
+		const initial = join(outputDir, "viewer-initial.png"); await page.screenshot({ path: initial });
+		const activatedViews = [];
+		for (const name of await page.$$eval("[data-view]", (items) => items.map((item) => item.dataset.view))) {
+			signal?.throwIfAborted(); await page.click(`[data-view="${name}"]`); activatedViews.push((await page.evaluate(() => globalThis.__ELEVATION3D_VIEWER_STATE__)).view);
+		}
+		const activatedPalettes = [];
+		for (const name of ["warm", "neutral", "stone"]) {
+			await page.select("[data-palette]", name); activatedPalettes.push((await page.evaluate(() => globalThis.__ELEVATION3D_VIEWER_STATE__)).palette);
+		}
+		await page.click('[data-view="axon"]');
+		const before = await page.evaluate(() => globalThis.__ELEVATION3D_VIEWER_STATE__);
+		await page.evaluate(() => globalThis.__ELEVATION3D_TEST_CONTROLS__.rotateAndZoom());
+		const after = await page.evaluate(() => globalThis.__ELEVATION3D_VIEWER_STATE__);
+		const distance = (state) => Math.hypot(...state.camera.position.map((value, index) => value - state.camera.target[index]));
+		const interacted = join(outputDir, "viewer-interacted.png"); await page.screenshot({ path: interacted });
+		await page.click("[data-reset]");
+		const artifactUrls = await page.$$eval("[data-artifact-links] a", (items) => items.map((item) => item.href));
+		const openedArtifacts = [];
+		for (const url of artifactUrls) {
+			const artifactPage = await browser.newPage();
+			try { const response = await artifactPage.goto(url, { waitUntil: "networkidle0" }); openedArtifacts.push({ url, status: response?.status() ?? null }); }
+			finally { await artifactPage.close(); }
+		}
+		const report = {
+			schema_version: "arr.elevation3d.browser-verification.v1", page_loaded: true,
+			activated_views: activatedViews, activated_palettes: activatedPalettes,
+			validation_badge: await page.$eval("[data-validation-badge]", (item) => item.textContent),
+			glb_download: await page.$eval("[data-glb-download]", (item) => item.href), glb_load_count: after.glb_load_count,
+			rotated: JSON.stringify(after.camera.position) !== JSON.stringify(before.camera.position),
+			zoomed: Math.abs(distance(after) - distance(before)) > 1e-6,
+			opened_artifacts: openedArtifacts, console_errors: consoleErrors, screenshots: { initial, interacted },
+		};
+		const reportPath = join(outputDir, "browser-verification.json");
+		await writeFile(reportPath, JSON.stringify(report, null, 2));
+		return { ...report, path: reportPath, sha256: sha256(await readFile(reportPath)) };
+	} finally {
+		try { if (page) await page.close(); }
+		finally { try { if (browser) await browser.close(); } finally { if (previewPort) await stopPreview(previewPort); } }
+	}
+}
+
 export async function finalizeResults({ plan, state, downloader = downloadUrl, render = true }) {
 	const input = await loadCandidatePackage(plan.dataset_root, plan.candidate_id);
 	const hDir = join(plan.run_dir, "providers", "hunyuan"); const wDir = join(plan.run_dir, "textures", "wan");
