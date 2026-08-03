@@ -3,6 +3,25 @@ import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { redactSecrets } from "./core.mjs";
 
 const memoryAppendQueues = new Map();
+const DRAWING_NAMES = ["plan", "front", "back", "left", "right", "top", "axon"];
+const SAFE_PATH_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+export function assertSafePathSegment(value, label) {
+	if (typeof value !== "string" || !SAFE_PATH_SEGMENT.test(value) || value.includes("..")) {
+		throw new Error(`${label} must be a safe path segment`);
+	}
+	return value;
+}
+
+function resolveDescendant(root, ...segments) {
+	const base = resolve(root);
+	const target = resolve(base, ...segments);
+	const relativePath = relative(base, target);
+	if (!relativePath || relativePath === ".." || relativePath.startsWith(`..\\`) || relativePath.startsWith("../") || isAbsolute(relativePath)) {
+		throw new Error(`Resolved path must remain below ${base}`);
+	}
+	return target;
+}
 
 function portableRelativePath(path) {
 	const relativePath = isAbsolute(path) ? relative(process.cwd(), path) : path;
@@ -51,8 +70,9 @@ async function writeJson(path, value, options) {
 }
 
 export async function createUnifiedRun({ input, approvedDesign, outputRoot, runId }) {
-	const candidateId = input.candidate_id ?? input.candidate?.candidate_id;
-	const dir = resolve(outputRoot, candidateId, runId);
+	const candidateId = assertSafePathSegment(input.candidate_id ?? input.candidate?.candidate_id, "candidate_id");
+	assertSafePathSegment(runId, "run_id");
+	const dir = resolveDescendant(outputRoot, candidateId, runId);
 	const metadata = {
 		schema_version: "arr.elevation3d.unified-run.v1",
 		run_id: runId,
@@ -142,6 +162,43 @@ async function appendUniqueRunEvent(memoryFile, event) {
 	}
 }
 
+function runRelativePath(runDir, path, label) {
+	const absoluteRunDir = resolve(runDir);
+	const absolutePath = resolve(path);
+	const relativePath = relative(absoluteRunDir, absolutePath);
+	if (!relativePath || relativePath === ".." || relativePath.startsWith(`..\\`) || relativePath.startsWith("../") || isAbsolute(relativePath)) {
+		throw new Error(`${label} must remain within the run directory`);
+	}
+	return relativePath.replaceAll("\\", "/");
+}
+
+function selectedOutputArtifacts(run, selectedVersion) {
+	const runDir = resolve(run.dir);
+	if (!selectedVersion) {
+		return {
+			path_base: "run_dir",
+			run_dir: runDir.replaceAll("\\", "/"),
+			selected_glb: null,
+			validation_report: null,
+			drawings: {},
+		};
+	}
+	const validationArtifacts = selectedVersion.validation?.artifacts;
+	if (!validationArtifacts?.glb) throw new Error(`Selected version ${selectedVersion.id} has no GLB artifact`);
+	const drawings = Object.fromEntries(DRAWING_NAMES.map((name) => {
+		const path = validationArtifacts.drawings?.[name];
+		if (!path) throw new Error(`Selected version ${selectedVersion.id} is missing drawing ${name}`);
+		return [name, runRelativePath(runDir, path, `drawing ${name}`)];
+	}));
+	return {
+		path_base: "run_dir",
+		run_dir: runDir.replaceAll("\\", "/"),
+		selected_glb: runRelativePath(runDir, validationArtifacts.glb, "selected GLB"),
+		validation_report: runRelativePath(runDir, join(selectedVersion.dir, "validation.json"), "validation report"),
+		drawings,
+	};
+}
+
 export async function appendRunMemory(run, memoryRoot) {
 	if (!run.final) throw new Error("A final selection is required before appending run memory");
 	const event = persistent({
@@ -158,6 +215,7 @@ export async function appendRunMemory(run, memoryRoot) {
 		}))),
 		final: run.final,
 	});
+	const candidateId = assertSafePathSegment(run.metadata.candidate_id, "candidate_id");
 	const selectedVersion = run.versions.find((version) => version.id === run.final.selected);
 	const candidateEvent = persistent({
 		schema_version: "arr.elevation3d.candidate-run-memory.v1",
@@ -172,12 +230,13 @@ export async function appendRunMemory(run, memoryRoot) {
 			? "bounded facade grammar correction attempted"
 			: "none",
 		fallback: run.final.selected === "fallback",
-		artifacts: run.metadata.artifacts,
+		artifacts: selectedOutputArtifacts(run, selectedVersion),
 		final: run.final,
 	});
 	const root = resolve(memoryRoot);
+	const runsRoot = resolveDescendant(root, "runs");
 	await Promise.all([
-		appendUniqueRunEvent(join(root, "unified-runs.jsonl"), event),
-		appendUniqueRunEvent(join(root, "runs", `${run.metadata.candidate_id}.jsonl`), candidateEvent),
+		appendUniqueRunEvent(resolveDescendant(root, "unified-runs.jsonl"), event),
+		appendUniqueRunEvent(resolveDescendant(runsRoot, `${candidateId}.jsonl`), candidateEvent),
 	]);
 }

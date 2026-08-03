@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { access, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 import { register } from "../plugins/elevation-3d/index.mjs";
 
@@ -16,4 +19,24 @@ test("plugin exposes the autonomous production flow before legacy experimental t
 	]);
 	assert.equal(tools.slice(1).every((tool) => /experimental/i.test(tool.description)), true);
 	assert.match(prompts.join("\n"), /prefer elevation_3d_run/);
+});
+
+test("unified tool rejects unsafe identifiers before writing outside its output root", async () => {
+	const root = await mkdtemp(join(tmpdir(), "elevation3d-plugin-boundary-"));
+	try {
+		const tools: any[] = [];
+		await register({ config: {}, registerTool: (tool: any) => tools.push(tool), addPrompt() {}, registerMemoryLayer() {}, logger: console });
+		await assert.rejects(
+			() => tools[0].handler({
+				candidate_id: "../outside",
+				run_id: "safe-run",
+				dataset_root: join(root, "missing-dataset"),
+				output_root: join(root, "output"),
+			}),
+			/safe path segment/i,
+		);
+		await assert.rejects(() => access(join(root, "output")), /ENOENT/);
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
 });

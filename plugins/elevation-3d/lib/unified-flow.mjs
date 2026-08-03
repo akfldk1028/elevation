@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 
 import { loadCandidatePackage } from "./core.mjs";
@@ -6,6 +7,7 @@ import { validateEnrichment } from "./enrichment-validation.mjs";
 import { correctGrammar, normalizeFacadeGrammar, resolveApprovedDesign } from "./facade-grammar.mjs";
 import {
 	appendRunMemory,
+	assertSafePathSegment,
 	beginVersion,
 	createUnifiedRun,
 	recordVersionFailure,
@@ -149,9 +151,12 @@ export async function runElevation3d({
 	deps = {},
 }) {
 	const memoryRoot = resolve("memory/elevation-3d");
+	const resolvedRunId = runId ?? `${new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14)}-${randomUUID().slice(0, 8)}`;
 	let input;
 	let approvedDesign;
 	try {
+		assertSafePathSegment(candidateId, "candidate_id");
+		assertSafePathSegment(resolvedRunId, "run_id");
 		input = await loadCandidatePackage(datasetRoot, candidateId);
 		approvedDesign = await resolveApprovedDesign({ candidateId, approvedImage, memoryRoot });
 	} catch (error) {
@@ -165,7 +170,7 @@ export async function runElevation3d({
 		floorGuides: input.floor_guides,
 		facadePlanes: input.facade_planes,
 	});
-	const run = await createUnifiedRun({ input, approvedDesign, outputRoot, runId });
+	const run = await createUnifiedRun({ input, approvedDesign, outputRoot, runId: resolvedRunId });
 	const enrich = deps.enrich ?? enrichVersion;
 	const render = deps.render ?? renderUnifiedDrawings;
 	const validate = deps.validate ?? validateEnrichment;

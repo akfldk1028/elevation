@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { access, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
@@ -73,6 +73,62 @@ test("rejects a run ID collision without replacing initial metadata", async () =
 	assert.equal(await readFile(join(run.dir, "run.json"), "utf8"), initial);
 });
 
+test("rejects unsafe candidate and run path segments before creating a run", async () => {
+	const cases = [
+		{ candidateId: "../escaped-candidate", runId: "safe-run", escaped: "escaped-candidate" },
+		{ candidateId: "creative/013", runId: "safe-run", escaped: "creative" },
+		{ candidateId: "creative\\013", runId: "safe-run", escaped: "creative" },
+		{ candidateId: "C:escape", runId: "safe-run", escaped: "C:escape" },
+		{ candidateId: "", runId: "safe-run", escaped: "safe-run" },
+		{ candidateId: "creative-013", runId: "../escaped-run", escaped: "escaped-run" },
+		{ candidateId: "creative-013", runId: "run/escape", escaped: "creative-013" },
+		{ candidateId: "creative-013", runId: "run\\escape", escaped: "creative-013" },
+		{ candidateId: "creative-013", runId: "C:escape", escaped: "creative-013" },
+		{ candidateId: "creative-013", runId: "bad\u0000run", escaped: "creative-013" },
+	];
+	for (const [index, item] of cases.entries()) {
+		const root = await mkdtemp(join(tmpdir(), `elevation3d-boundary-${index}-`));
+		temporaryRoots.push(root);
+		const outputRoot = join(root, "output");
+		await assert.rejects(
+			() => createUnifiedRun({
+				input: { ...input, candidate_id: item.candidateId },
+				approvedDesign,
+				outputRoot,
+				runId: item.runId,
+			}),
+			/safe path segment/i,
+		);
+		await assert.rejects(() => access(join(root, item.escaped)), /ENOENT/);
+	}
+});
+
+test("accepts the production candidate and timestamp-style run IDs", async () => {
+	const outputRoot = await mkdtemp(join(tmpdir(), "elevation3d-safe-ids-"));
+	temporaryRoots.push(outputRoot);
+	const run = await createUnifiedRun({
+		input,
+		approvedDesign,
+		outputRoot,
+		runId: "20260803T120000-deadbeef",
+	});
+	assert.match(run.dir, /creative-013[\\/]20260803T120000-deadbeef$/);
+});
+
+test("rejects a forged unsafe candidate before writing candidate memory", async () => {
+	const memoryRoot = await mkdtemp(join(tmpdir(), "elevation3d-memory-boundary-"));
+	temporaryRoots.push(memoryRoot);
+	const forgedRun = {
+		id: "safe-run",
+		dir: join(memoryRoot, "run"),
+		metadata: { candidate_id: "../outside", artifacts: [] },
+		versions: [],
+		final: { selected: "blocked", reason: "rejected" },
+	};
+	await assert.rejects(() => appendRunMemory(forgedRun, memoryRoot), /safe path segment/i);
+	await assert.rejects(() => access(join(memoryRoot, "outside.jsonl")), /ENOENT/);
+});
+
 test("transitions an accepted version from started to passed", async () => {
 	const outputRoot = await mkdtemp(join(tmpdir(), "elevation3d-run-success-"));
 	temporaryRoots.push(outputRoot);
@@ -113,6 +169,19 @@ test("records each version failure and appends one redacted final memory event",
 		codes: ["MISSING_COMPONENT"],
 		evidence: {},
 		retryable: false,
+	});
+	const fallback = await beginVersion(run, "fallback", grammar);
+	await recordVersionSuccess(run, fallback, {
+		accepted: true,
+		codes: [],
+		metrics: {},
+		artifacts: {
+			glb: join(fallback.dir, "exact-mass.glb"),
+			drawings: Object.fromEntries(
+				["plan", "front", "back", "left", "right", "top", "axon"]
+					.map((name) => [name, join(fallback.dir, "drawings", `${name}.png`)]),
+			),
+		},
 	});
 	await selectFinal(run, { selected: "fallback", reason: "two generated versions failed" });
 	await Promise.all([appendRunMemory(run, memoryRoot), appendRunMemory(run, memoryRoot)]);
@@ -162,3 +231,54 @@ test("records each version failure and appends one redacted final memory event",
 	assert.equal(candidateEvent.fallback, true);
 	assert.deepEqual(candidateEvent.failure_codes, ["DETAIL_BOUNDS_EXCEEDED", "MISSING_COMPONENT"]);
 });
+
+for (const scenario of [
+	{ selected: "v001", failed: [], attempts: 1, correction: false, fallback: false },
+	{ selected: "v002", failed: ["v001"], attempts: 2, correction: true, fallback: false },
+	{ selected: "fallback", failed: ["v001", "v002"], attempts: 2, correction: true, fallback: true },
+] as const) {
+	test(`persists exact selected output artifacts for ${scenario.selected}`, async () => {
+		const outputRoot = await mkdtemp(join(tmpdir(), `elevation3d-${scenario.selected}-output-`));
+		const memoryRoot = await mkdtemp(join(tmpdir(), `elevation3d-${scenario.selected}-memory-`));
+		temporaryRoots.push(outputRoot, memoryRoot);
+		const run = await createUnifiedRun({ input, approvedDesign, outputRoot, runId: `selected-${scenario.selected}` });
+		for (const versionId of scenario.failed) {
+			const version = await beginVersion(run, versionId, grammar);
+			await recordVersionFailure(run, version, {
+				stage: "validate",
+				codes: [`${versionId.toUpperCase()}_FAILED`],
+				evidence: {},
+				retryable: true,
+			});
+		}
+		const selected = await beginVersion(run, scenario.selected, grammar);
+		const drawingNames = ["plan", "front", "back", "left", "right", "top", "axon"];
+		const glbName = scenario.selected === "fallback" ? "exact-mass.glb" : "enriched.glb";
+		await recordVersionSuccess(run, selected, {
+			accepted: true,
+			codes: [],
+			metrics: { selected_version: scenario.selected },
+			artifacts: {
+				glb: join(selected.dir, glbName),
+				drawings: Object.fromEntries(drawingNames.map((name) => [name, join(selected.dir, "drawings", `${name}.png`)])),
+			},
+		});
+		await selectFinal(run, { selected: scenario.selected, reason: "accepted" });
+		await appendRunMemory(run, memoryRoot);
+
+		const event = JSON.parse(await readFile(join(memoryRoot, "runs", "creative-013.jsonl"), "utf8"));
+		assert.equal(event.selected_version, scenario.selected);
+		assert.equal(event.attempts, scenario.attempts);
+		assert.equal(event.correction_applied, scenario.correction);
+		assert.equal(event.fallback, scenario.fallback);
+		assert.deepEqual(event.metrics, { selected_version: scenario.selected });
+		assert.deepEqual(event.failure_codes, scenario.failed.map((version) => `${version.toUpperCase()}_FAILED`));
+		assert.deepEqual(event.artifacts, {
+			path_base: "run_dir",
+			run_dir: run.dir.replaceAll("\\", "/"),
+			selected_glb: `versions/${scenario.selected}/${glbName}`,
+			validation_report: `versions/${scenario.selected}/validation.json`,
+			drawings: Object.fromEntries(drawingNames.map((name) => [name, `versions/${scenario.selected}/drawings/${name}.png`])),
+		});
+	});
+}
