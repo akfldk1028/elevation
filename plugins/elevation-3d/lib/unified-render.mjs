@@ -38,9 +38,11 @@ function unifiedCameras(cameras) {
 	return { ...cameras, views };
 }
 
-export async function renderUnifiedDrawings({ runDir, glbPath, sourceMesh, cameras }) {
+export async function renderUnifiedDrawings({ runDir, glbPath, sourceMesh, cameras, signal }) {
+	signal?.throwIfAborted();
 	const absoluteRunDir = resolve(runDir);
 	const selectedGlb = await placeSelectedGlb(absoluteRunDir, glbPath);
+	signal?.throwIfAborted();
 	const glb = portable(relative(join(absoluteRunDir, "viewer"), selectedGlb));
 	await buildViewerBundle({
 		runDir: absoluteRunDir,
@@ -51,7 +53,9 @@ export async function renderUnifiedDrawings({ runDir, glbPath, sourceMesh, camer
 			strategies: { hunyuan: { glb } },
 		},
 	});
-	await renderDrawings(absoluteRunDir, ["hunyuan"], { views: DRAWING_NAMES, port: 0 });
+	signal?.throwIfAborted();
+	await renderDrawings(absoluteRunDir, ["hunyuan"], { views: DRAWING_NAMES, port: 0, signal });
+	signal?.throwIfAborted();
 	const drawingDir = join(absoluteRunDir, "drawings", "hunyuan");
 	const drawings = Object.fromEntries(DRAWING_NAMES.map((name) => [name, join(drawingDir, `${name}.png`)]));
 	const configPath = join(absoluteRunDir, "viewer", "config.json");
@@ -59,6 +63,7 @@ export async function renderUnifiedDrawings({ runDir, glbPath, sourceMesh, camer
 	const configHash = sha256(await readFile(configPath));
 	const drawingEntries = {};
 	for (const [name, path] of Object.entries(drawings)) {
+		signal?.throwIfAborted();
 		const bytes = await readFile(path);
 		drawingEntries[name] = {
 			path: portable(relative(absoluteRunDir, path)), sha256: sha256(bytes),
@@ -72,5 +77,6 @@ export async function renderUnifiedDrawings({ runDir, glbPath, sourceMesh, camer
 		viewer_config: { path: "viewer/config.json", sha256: configHash },
 		drawings: drawingEntries,
 	}, null, 2));
+	signal?.throwIfAborted();
 	return drawings;
 }

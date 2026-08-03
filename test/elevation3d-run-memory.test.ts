@@ -10,6 +10,7 @@ import {
 	createUnifiedRun,
 	recordVersionFailure,
 	recordVersionSuccess,
+	recordVersionCancelled,
 	selectFinal,
 } from "../plugins/elevation-3d/lib/run-memory.mjs";
 
@@ -165,12 +166,17 @@ test("records each version failure and appends one redacted final memory event",
 	temporaryRoots.push(outputRoot, memoryRoot);
 	const run = await createUnifiedRun({ input, approvedDesign, outputRoot, runId: "run-2" });
 	const v1 = await beginVersion(run, "v001", grammar);
-	const v2 = await beginVersion(run, "v002", grammar);
+	const v2 = await beginVersion(run, "v002", { bay_width_m: 2 });
 
 	await recordVersionFailure(run, v1, {
 		stage: "validate",
 		codes: ["DETAIL_BOUNDS_EXCEEDED"],
+		reason: "Authorization: Bearer reason-secret was rejected",
+		error_class: "ValidationError",
+		error_code: "E_DETAIL",
 		evidence: {
+			message: "signed https://x.test/file?X-Amz-Signature=url-secret",
+			metrics: { invalid_pixels: 3 },
 			response: {
 				authorization: "Bearer secret",
 				credentials: { password: "password-value", cookie: "cookie-value" },
@@ -211,12 +217,12 @@ test("records each version failure and appends one redacted final memory event",
 	assert.equal(firstVersion.failure_path, "failure.json");
 	assert.equal(JSON.stringify(firstFailure).includes("secret"), false);
 	assert.deepEqual(firstFailure.evidence, {
-		response: {
-			authorization: "[REDACTED]",
-			credentials: { password: "[REDACTED]", cookie: "[REDACTED]" },
-		},
-		session: "[REDACTED]",
+		message: "signed https://x.test/file",
+		metrics: { invalid_pixels: 3 },
 	});
+	assert.equal(firstFailure.reason.includes("reason-secret"), false);
+	assert.equal(firstFailure.error_class, "ValidationError");
+	assert.equal(firstFailure.error_code, "E_DETAIL");
 
 	const final = JSON.parse(await readFile(join(run.dir, "final.json"), "utf8"));
 	assert.equal(final.schema_version, "arr.elevation3d.final-selection.v1");
@@ -226,12 +232,16 @@ test("records each version failure and appends one redacted final memory event",
 	const lines = (await readFile(memoryFile, "utf8")).trim().split("\n");
 	assert.equal(lines.length, 1);
 	const event = JSON.parse(lines[0]);
-	assert.equal(event.schema_version, "arr.elevation3d.run-memory.v1");
-	assert.deepEqual(event.versions.map((version: { id: string }) => version.id), ["v001", "v002"]);
-	assert.deepEqual(event.versions.map((version: { codes: string[] }) => version.codes), [
+	assert.equal(event.schema_version, "arr.elevation3d.run-memory.v2");
+	assert.deepEqual(event.versions.map((version: { id: string }) => version.id), ["v001", "v002", "fallback"]);
+	assert.deepEqual(event.versions.map((version: { status: string }) => version.status), ["failed", "failed", "passed"]);
+	assert.deepEqual(event.versions.slice(0, 2).map((version: any) => version.failure.codes), [
 		["DETAIL_BOUNDS_EXCEEDED"],
 		["MISSING_COMPONENT"],
 	]);
+	assert.equal(event.versions[2].validation.accepted, true);
+	assert.equal(event.versions[2].artifacts.glb.path, "versions/fallback/exact-mass.glb");
+	assert.deepEqual(event.versions[1].correction.grammar_delta, { bay_width_m: { from: 2.25, to: 2 } });
 	assert.equal(JSON.stringify(event).includes("secret"), false);
 	for (const credential of ["password-value", "cookie-value", "session-value"]) {
 		assert.equal(JSON.stringify(event).includes(credential), false);
@@ -240,11 +250,28 @@ test("records each version failure and appends one redacted final memory event",
 	const candidateLines = (await readFile(join(memoryRoot, "runs", "creative-013.jsonl"), "utf8")).trim().split("\n");
 	assert.equal(candidateLines.length, 1);
 	const candidateEvent = JSON.parse(candidateLines[0]);
+	assert.equal(candidateEvent.schema_version, "arr.elevation3d.candidate-run-memory.v2");
+	assert.deepEqual(candidateEvent.versions, event.versions);
 	assert.equal(candidateEvent.selected_version, "fallback");
 	assert.equal(candidateEvent.attempts, 2);
 	assert.equal(candidateEvent.correction_applied, true);
 	assert.equal(candidateEvent.fallback, true);
 	assert.deepEqual(candidateEvent.failure_codes, ["DETAIL_BOUNDS_EXCEEDED", "MISSING_COMPONENT"]);
+});
+
+test("persists one cancelled attempted version with a safe failure summary", async () => {
+	const outputRoot = await mkdtemp(join(tmpdir(), "elevation3d-run-cancelled-"));
+	const memoryRoot = await mkdtemp(join(tmpdir(), "elevation3d-memory-cancelled-"));
+	temporaryRoots.push(outputRoot, memoryRoot);
+	const run = await createUnifiedRun({ input, approvedDesign, outputRoot, runId: "run-cancelled" });
+	const version = await beginVersion(run, "v001", grammar);
+	await recordVersionCancelled(run, version, { stage: "render", reason: "Bearer cancel-secret" });
+	await selectFinal(run, { selected: "cancelled", reason: "Bearer final-secret" });
+	await appendRunMemory(run, memoryRoot);
+	const event = JSON.parse(await readFile(join(memoryRoot, "unified-runs.jsonl"), "utf8"));
+	assert.deepEqual(event.versions.map((item: any) => item.status), ["cancelled"]);
+	assert.equal(JSON.stringify(event).includes("cancel-secret"), false);
+	assert.equal(JSON.stringify(event).includes("final-secret"), false);
 });
 
 for (const scenario of [
@@ -275,6 +302,7 @@ for (const scenario of [
 			metrics: { selected_version: scenario.selected },
 			artifacts: {
 				glb: join(selected.dir, glbName),
+				glb_sha256: `${scenario.selected}-glb-sha256`,
 				drawings: Object.fromEntries(drawingNames.map((name) => {
 					const path = join(selected.dir, "drawings", `${name}.png`);
 					return [name, scenario.selected === "v001" ? { path, sha256: `${name}-sha256`, width: 2, height: 3 } : path];
@@ -291,6 +319,10 @@ for (const scenario of [
 		assert.equal(event.fallback, scenario.fallback);
 		assert.deepEqual(event.metrics, { selected_version: scenario.selected });
 		assert.deepEqual(event.failure_codes, scenario.failed.map((version) => `${version.toUpperCase()}_FAILED`));
+		const selectedHistory = event.versions.find((version: any) => version.id === scenario.selected);
+		assert.equal(selectedHistory.status, "passed");
+		assert.equal(selectedHistory.artifacts.glb.sha256, `${scenario.selected}-glb-sha256`);
+		assert.match(selectedHistory.artifacts.validation_report.sha256, /^[a-f0-9]{64}$/);
 		assert.deepEqual(event.artifacts, {
 			path_base: "run_dir",
 			run_dir: run.dir.replaceAll("\\", "/"),

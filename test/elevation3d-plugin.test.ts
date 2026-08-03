@@ -40,3 +40,13 @@ test("unified tool rejects unsafe identifiers before writing outside its output 
 		await rm(root, { recursive: true, force: true });
 	}
 });
+
+test("unified tool forwards its AbortSignal to the production flow", async () => {
+	const tools: any[] = [];
+	await register({ config: {}, registerTool: (tool: any) => tools.push(tool), addPrompt() {}, registerMemoryLayer() {}, logger: console });
+	const controller = new AbortController();
+	controller.abort(new DOMException("cancel tool", "AbortError"));
+	await assert.rejects(() => tools[0].handler({ candidate_id: "../would-fail-first-without-signal" }, controller.signal), {
+		name: "AbortError",
+	});
+});

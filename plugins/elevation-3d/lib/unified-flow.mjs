@@ -12,6 +12,7 @@ import {
 	createUnifiedRun,
 	recordVersionFailure,
 	recordVersionSuccess,
+	recordVersionCancelled,
 	selectFinal,
 } from "./run-memory.mjs";
 import { renderUnifiedDrawings } from "./unified-render.mjs";
@@ -139,6 +140,9 @@ function thrownFailure(error, stage) {
 	return {
 		stage,
 		codes: [generatedFailure ? error.code : STAGE_FAILURE_CODES[stage]],
+		reason: error instanceof Error ? error.message : String(error),
+		error_class: error?.name ?? null,
+		error_code: generatedFailure ? error.code : error?.code ?? null,
 		evidence: error?.evidence ?? { message: error instanceof Error ? error.message : String(error) },
 		retryable: generatedFailure,
 	};
@@ -149,6 +153,9 @@ function rejectedValidation(report) {
 	return {
 		stage: "validate",
 		codes,
+		reason: `validation rejected: ${codes.join(", ")}`,
+		error_class: "ValidationRejection",
+		error_code: codes[0],
 		evidence: { metrics: report?.metrics ?? {}, artifacts: report?.artifacts ?? {} },
 		retryable: codes.every((code) => RETRYABLE_VALIDATION_CODES.has(code)),
 	};
@@ -164,10 +171,21 @@ function versionFailure(failure, safeFallback) {
 	return safeFallback ? { ...failure, retryable: false } : failure;
 }
 
-async function runVersion({ run, versionId, grammar, safeFallback, input, enrich, render, validate }) {
+function isAbort(error, signal) {
+	return signal?.aborted || error?.name === "AbortError";
+}
+
+function throwIfAborted(signal) {
+	signal?.throwIfAborted();
+}
+
+async function runVersion({ run, versionId, grammar, safeFallback, input, enrich, render, validate, signal }) {
+	throwIfAborted(signal);
 	const version = await beginVersion(run, versionId, grammar);
+	throwIfAborted(signal);
 	let artifact;
 	try {
+		version.active_stage = "enrich";
 		artifact = await enrich({
 			sourceMesh: input.mesh,
 			floorGuides: input.floor_guides,
@@ -177,8 +195,11 @@ async function runVersion({ run, versionId, grammar, safeFallback, input, enrich
 			outputPath: resolve(version.dir, safeFallback ? "exact-mass.glb" : "enriched.glb"),
 			versionId,
 			runDir: version.dir,
+			signal,
 		});
+		throwIfAborted(signal);
 	} catch (error) {
+		if (isAbort(error, signal)) throw error;
 		const failure = versionFailure(thrownFailure(error, "enrich"), safeFallback);
 		await recordVersionFailure(run, version, failure);
 		return { version, failure, cause: error?.cause ?? error };
@@ -186,6 +207,7 @@ async function runVersion({ run, versionId, grammar, safeFallback, input, enrich
 
 	let drawings;
 	try {
+		version.active_stage = "render";
 		drawings = await render({
 			runDir: version.dir,
 			glbPath: artifact.path,
@@ -193,8 +215,11 @@ async function runVersion({ run, versionId, grammar, safeFallback, input, enrich
 			cameras: input.cameras,
 			versionId,
 			safeFallback,
+			signal,
 		});
+		throwIfAborted(signal);
 	} catch (error) {
+		if (isAbort(error, signal)) throw error;
 		const failure = versionFailure(thrownFailure(error, "render"), safeFallback);
 		await recordVersionFailure(run, version, failure);
 		return { version, failure, cause: error?.cause ?? error };
@@ -202,6 +227,7 @@ async function runVersion({ run, versionId, grammar, safeFallback, input, enrich
 
 	let report;
 	try {
+		version.active_stage = "validate";
 		report = await validate({
 			sourceMesh: input.mesh,
 			artifact,
@@ -209,8 +235,11 @@ async function runVersion({ run, versionId, grammar, safeFallback, input, enrich
 			requiredDrawings: drawings,
 			versionId,
 			safeFallback,
+			signal,
 		});
+		throwIfAborted(signal);
 	} catch (error) {
+		if (isAbort(error, signal)) throw error;
 		const failure = versionFailure(thrownFailure(error, "validate"), safeFallback);
 		await recordVersionFailure(run, version, failure);
 		return { version, failure, cause: error?.cause ?? error };
@@ -221,6 +250,7 @@ async function runVersion({ run, versionId, grammar, safeFallback, input, enrich
 		return { version, failure };
 	}
 	await recordVersionSuccess(run, version, report);
+	version.active_stage = null;
 	return { version, artifact, drawings, report };
 }
 
@@ -240,14 +270,27 @@ async function terminateBlocked(run, memoryRoot, failure, cause) {
 	throw blockedFromFailure(failure, cause);
 }
 
+async function terminateCancelled(run, memoryRoot, error) {
+	const active = run.versions.findLast((version) => version.metadata.status === "started");
+	if (active) await recordVersionCancelled(run, active, {
+		stage: active.active_stage ?? "unknown",
+		reason: error instanceof Error ? error.message : "operation cancelled",
+	});
+	await selectFinal(run, { selected: "cancelled", reason: "operation cancelled" });
+	await appendRunMemory(run, memoryRoot);
+	throw error;
+}
+
 export async function runElevation3d({
 	candidateId,
 	datasetRoot,
 	outputRoot,
 	approvedImage,
 	runId,
+	signal,
 	deps = {},
 }) {
+	throwIfAborted(signal);
 	const memoryRoot = resolve("memory/elevation-3d");
 	const resolvedRunId = runId ?? `${new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14)}-${randomUUID().slice(0, 8)}`;
 	let input;
@@ -258,7 +301,9 @@ export async function runElevation3d({
 		input = await loadCandidatePackage(datasetRoot, candidateId);
 		assertTrustedCandidateInput(input);
 		approvedDesign = await resolveApprovedDesign({ candidateId, approvedImage, memoryRoot });
+		throwIfAborted(signal);
 	} catch (error) {
+		if (isAbort(error, signal)) throw error;
 		throw new BlockedRunError(error instanceof Error ? error.message : String(error), {
 			cause: error,
 			stage: "input",
@@ -273,8 +318,9 @@ export async function runElevation3d({
 	const enrich = deps.enrich ?? enrichVersion;
 	const render = deps.render ?? renderVersion;
 	const validate = deps.validate ?? validateVersion;
+	try {
 	const first = await runVersion({
-		run, versionId: "v001", grammar, safeFallback: false, input, enrich, render, validate,
+		run, versionId: "v001", grammar, safeFallback: false, input, enrich, render, validate, signal,
 	});
 	if (!first.failure) {
 		await selectFinal(run, { selected: first.version.id, reason: "enrichment and all gates passed" });
@@ -293,7 +339,7 @@ export async function runElevation3d({
 
 	const correctedGrammar = correctGrammar(grammar, first.failure.codes);
 	const second = await runVersion({
-		run, versionId: "v002", grammar: correctedGrammar, safeFallback: false, input, enrich, render, validate,
+		run, versionId: "v002", grammar: correctedGrammar, safeFallback: false, input, enrich, render, validate, signal,
 	});
 	if (!second.failure) {
 		await selectFinal(run, { selected: second.version.id, reason: "bounded correction passed all gates" });
@@ -311,7 +357,7 @@ export async function runElevation3d({
 	if (!second.failure.retryable) await terminateBlocked(run, memoryRoot, second.failure, second.cause);
 
 	const fallback = await runVersion({
-		run, versionId: "fallback", grammar: correctedGrammar, safeFallback: true, input, enrich, render, validate,
+		run, versionId: "fallback", grammar: correctedGrammar, safeFallback: true, input, enrich, render, validate, signal,
 	});
 	if (fallback.failure) await terminateBlocked(
 		run, memoryRoot, { ...fallback.failure, retryable: false }, fallback.cause,
@@ -327,4 +373,8 @@ export async function runElevation3d({
 		drawings: fallback.drawings,
 		validation: fallback.report,
 	};
+	} catch (error) {
+		if (isAbort(error, signal)) await terminateCancelled(run, memoryRoot, signal?.reason ?? error);
+		throw error;
+	}
 }
