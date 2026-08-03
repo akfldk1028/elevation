@@ -407,13 +407,19 @@ function normalizedProjectedBounds(bounds) {
 
 function horizontalTopAxes(axes) {
 	const valid = (axis) => Array.isArray(axis) && axis.length === 3 && axis.every((value) => typeof value === "number" && Number.isFinite(value));
-	return valid(axes?.horizontal) && valid(axes?.vertical) && valid(axes?.depth)
-		&& Math.abs(Math.abs(axes.depth[2]) - 1) <= 0.001
-		&& Math.abs(axes.horizontal[2]) <= 0.001
-		&& Math.abs(axes.vertical[2]) <= 0.001
-		&& Math.abs(dot(axes.horizontal, axes.vertical)) <= 0.001
-		&& Math.abs(dot(axes.horizontal, axes.depth)) <= 0.001
-		&& Math.abs(dot(axes.vertical, axes.depth)) <= 0.001;
+	if (!valid(axes?.horizontal) || !valid(axes?.vertical) || !valid(axes?.depth)) return false;
+	const [horizontal, vertical, depth] = [axes.horizontal, axes.vertical, axes.depth];
+	const determinant = horizontal[0] * (vertical[1] * depth[2] - vertical[2] * depth[1])
+		- horizontal[1] * (vertical[0] * depth[2] - vertical[2] * depth[0])
+		+ horizontal[2] * (vertical[0] * depth[1] - vertical[1] * depth[0]);
+	return [horizontal, vertical, depth].every((axis) => Math.abs(length(axis) - 1) <= 1e-6)
+		&& Math.abs(dot(horizontal, vertical)) <= 1e-6
+		&& Math.abs(dot(horizontal, depth)) <= 1e-6
+		&& Math.abs(dot(vertical, depth)) <= 1e-6
+		&& Math.abs(determinant - 1) <= 1e-6
+		&& Math.abs(Math.abs(depth[2]) - 1) <= 1e-6
+		&& Math.abs(horizontal[2]) <= 1e-6
+		&& Math.abs(vertical[2]) <= 1e-6;
 }
 
 export async function validateCompetitionPlanTopArtifact({ artifact, sourceMesh, camera, selectedGlbPath, mode, cutElevationM }) {
