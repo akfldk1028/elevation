@@ -64,7 +64,14 @@ test("uses equal bay spacing without exceeding facade extents and clamps detail 
 	const narrowGrammar = { ...grammar, bay_width_m: 3, frame_depth_m: 9, mullion_depth_m: 9 };
 	const scene = buildEnrichedScene({ mesh, floorGuides, facadePlanes, grammar: narrowGrammar, safeFallback: false });
 	const frontMullions = scene.details.filter((detail) => detail.kind === "mullion" && detail.view === "front");
-	assert.deepEqual(frontMullions.map((detail) => detail.offset_m), [0, 8 / 3, 16 / 3, 8]);
+	assert.deepEqual(frontMullions.map((detail) => {
+		const horizontal = detail.positions.map((point) => point[0] - facadePlanes.facade_planes[0].origin[0]);
+		return Number(((Math.min(...horizontal) + Math.max(...horizontal)) / 2).toFixed(12));
+	}), [0, Number((8 / 3).toFixed(12)), Number((16 / 3).toFixed(12)), 8]);
+	assert.deepEqual(frontMullions.map((detail) => {
+		const horizontal = detail.positions.map((point) => point[0] - facadePlanes.facade_planes[0].origin[0]);
+		return Number((Math.max(...horizontal) - Math.min(...horizontal)).toFixed(12));
+	}), [0.04, 0.08, 0.08, 0.04]);
 	assert.equal(frontMullions.every((detail) => detail.depth_m === 0.12), true);
 	assert.equal(scene.details.filter((detail) => detail.kind === "floor-band").every((detail) => detail.depth_m === 0.25), true);
 });
@@ -136,4 +143,29 @@ test("splits facade details across disconnected source components intersecting t
 		middleBands.map((detail) => [Math.min(...detail.positions.map((point) => point[0])), Math.max(...detail.positions.map((point) => point[0]))]),
 		[[-4, -2], [2, 4]],
 	);
+});
+
+test("adds mullion coverage inside every intersecting component span between global bay offsets", () => {
+	const narrowComponents = {
+		vertices: [
+			[-2.8, -2, 0], [-2.2, -2, 0], [-2.2, -2, 6.6], [-2.8, -2, 6.6],
+			[0.2, -2, 0], [0.8, -2, 0], [0.8, -2, 6.6], [0.2, -2, 6.6],
+		],
+		triangles: [[0, 1, 2], [0, 2, 3], [4, 5, 6], [4, 6, 7]],
+	};
+	const scene = buildEnrichedScene({
+		mesh: narrowComponents,
+		floorGuides,
+		facadePlanes: { facade_planes: [facadePlanes.facade_planes[0]] },
+		grammar,
+		safeFallback: false,
+	});
+	const centers = scene.details
+		.filter((detail) => detail.kind === "mullion" && detail.view === "front")
+		.map((detail) => {
+			const offsets = detail.positions.map((point) => point[0] - facadePlanes.facade_planes[0].origin[0]);
+			return (Math.min(...offsets) + Math.max(...offsets)) / 2;
+		});
+	assert.equal(centers.some((center) => center >= 1.2 && center <= 1.8), true);
+	assert.equal(centers.some((center) => center >= 4.2 && center <= 4.8), true);
 });
