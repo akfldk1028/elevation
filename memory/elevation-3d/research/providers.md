@@ -1,8 +1,10 @@
 # Provider Review
 
-## Tripo image-to-model — current primary
+## Tripo image-to-model — concept-feasibility candidate
 
-Best operational match for the corrected goal. Submit one cropped isometric render and receive one reconstructed GLB. It is web-native and requires no local model installation. It infers new geometry, so exact source topology preservation is neither expected nor required; the result must instead pass MASS-identity and held-out-view checks.
+Best operational match for testing the professor's one-render shortcut. Submit one cropped isometric render and receive one reconstructed GLB. It is web-native and requires no local model installation. It infers new geometry, so exact source topology preservation is neither expected nor required; the result must instead pass MASS-identity and held-out-view checks.
+
+The documented `image_to_model` request accepts the image and generic generation controls, but not the dataset's camera matrices, geometry program, or source OBJ as simultaneous geometric conditions. It is therefore not a direct implementation of “PNG plus matrices plus MASS constraints in one request.”
 
 Do not use `texture_model` for this experiment. Do not use `multiview_to_model` unless the single-image experiment fails and a later decision explicitly authorizes a fallback.
 
