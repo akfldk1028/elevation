@@ -32,6 +32,8 @@ Tripo image-to-model plus source registration remains the API fallback. The curr
 
 - Current architecture correction: MASS-conditioned reconstruction recorded on 2026-08-03.
 - SPAR3D weights: not downloaded; gated Hugging Face access is required.
+- Official Stability SPAR3D API: fast image-only baseline (4 credits), but it cannot receive the source MASS point cloud.
+- MASS-conditioned SPAR3D remains web-deployable through a persistent self-hosted GPU API; avoid scale-to-zero cold starts.
 - Tripo credential: configured in ignored local `.env`.
 - Tripo API balance at last check: 0 credits.
 - Paid generation calls: none submitted.

@@ -1,5 +1,14 @@
 # Provider Review
 
+## Stability AI SPAR3D API
+
+- Official preview endpoint: `POST /v2beta/3d/stable-point-aware-3d`.
+- Input: one image plus texture resolution, foreground ratio, remesh/target count, guidance, and seed controls.
+- Output: binary GLB.
+- Published price: 4 credits per successful generation; 1 credit is currently $0.01.
+- Published latency description: a few seconds; the paper reports 0.7 seconds of model inference.
+- Critical limitation: the hosted request schema has no external point-cloud field. Source-MASS conditioning is available only in the open-source/self-hosted implementation.
+
 ## Tripo image-to-model — concept-feasibility candidate
 
 Best operational match for testing the professor's one-render shortcut. Submit one cropped isometric render and receive one reconstructed GLB. It is web-native and requires no local model installation. It infers new geometry, so exact source topology preservation is neither expected nor required; the result must instead pass MASS-identity and held-out-view checks.
