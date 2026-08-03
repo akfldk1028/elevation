@@ -57,6 +57,10 @@ test("packages one inspectable GLB and eight accepted views", { timeout: 600_000
 	assert.equal(run.manifest.viewer.path, "viewer/index.html");
 	assert.deepEqual(run.manifest.palette, { preset: "competition-warm", sha256: resolveMaterialPalette("competition-warm").sha256 });
 	assert.deepEqual(Object.keys(run.manifest.verified_evidence.views).sort(), Object.keys(run.views).sort());
+	const viewerConfig = JSON.parse(await readFile(join(runDir, "viewer", "config.json"), "utf8"));
+	assert.deepEqual(Object.keys(viewerConfig.cameras.views).sort(), Object.keys(run.views).sort());
+	assert.equal(viewerConfig.cameras.views.plan.cut.elevation_m, 1.2);
+	assert.equal(viewerConfig.cameras.views.top.cut.enabled, false);
 	for (const view of Object.values(run.views)) {
 		assert.deepEqual(await sharp(view.path).metadata().then(({ width, height }) => [width, height]), [2400, 2400]);
 		assert.equal(view.selected_glb_sha256, run.manifest.selected_glb.sha256);
@@ -70,11 +74,23 @@ test("rejects cross-view substitution, duplicates, and invalid viewer geometry",
 		selected_glb_sha256: "b".repeat(64), palette: { preset: "competition-warm", sha256: "c".repeat(64) }, validation: { accepted: true, codes: [] },
 		camera: name === "axon" ? { depth: [1, 0, 0] } : name === "opposite-axon" ? { depth: [-1, 0, 0] } : {},
 	}]));
+	const cameraViews = {
+		front: { type: "orthographic", projection_axes: { horizontal: [1, 0, 0], vertical: [0, 0, 1], depth: [0, -1, 0] }, cut: { enabled: false, elevation_m: null } },
+		back: { type: "orthographic", projection_axes: { horizontal: [-1, 0, 0], vertical: [0, 0, 1], depth: [0, 1, 0] }, cut: { enabled: false, elevation_m: null } },
+		left: { type: "orthographic", projection_axes: { horizontal: [0, -1, 0], vertical: [0, 0, 1], depth: [-1, 0, 0] }, cut: { enabled: false, elevation_m: null } },
+		right: { type: "orthographic", projection_axes: { horizontal: [0, 1, 0], vertical: [0, 0, 1], depth: [1, 0, 0] }, cut: { enabled: false, elevation_m: null } },
+		plan: { type: "orthographic", projection_axes: { horizontal: [1, 0, 0], vertical: [0, 1, 0], depth: [0, 0, 1] }, cut: { enabled: true, elevation_m: 1.2 } },
+		top: { type: "orthographic", projection_axes: { horizontal: [1, 0, 0], vertical: [0, 1, 0], depth: [0, 0, 1] }, cut: { enabled: false, elevation_m: null } },
+		axon: { type: "perspective", depth: [1, 0, 0] },
+		"opposite-axon": { type: "perspective", depth: [-1, 0, 0] },
+	};
+	const controlEvidence = Object.fromEntries(["orbit", "pan", "zoom", "reset", "fullscreen", "view-buttons", "palette-selector", "glb-download"].map((name) => [name, true]));
 	const valid = { views, selectedGlbSha256: "b".repeat(64), palette: { preset: "competition-warm", sha256: "c".repeat(64) }, viewer: {
-		controls: ["orbit", "pan", "zoom", "reset", "view-buttons", "palette-selector", "glb-download"],
-		config: { strategies: { hunyuan: { glb: "../enriched.glb" } }, all_views: { selected_glb: { path: "../enriched.glb", sha256: "b".repeat(64) } } },
+		evidence: { schema_version: "arr.elevation3d.viewer-evidence.v1", html: { sha256: "h" }, app: { sha256: "a" }, config: { sha256: "c" }, controls: controlEvidence },
+		config: { strategies: { hunyuan: { glb: "../enriched.glb" } }, cameras: { views: cameraViews }, all_views: { selected_glb: { path: "../enriched.glb", sha256: "b".repeat(64) } } },
 	} };
-	assert.equal(validateAllViewsRun(valid).accepted, true);
+	const validReport = validateAllViewsRun(valid);
+	assert.equal(validReport.accepted, true, validReport.codes.join(", "));
 	for (const mutate of [
 		(value) => { delete value.views.back; },
 		(value) => { value.views.right.sha256 = value.views.left.sha256; },
@@ -84,7 +100,9 @@ test("rejects cross-view substitution, duplicates, and invalid viewer geometry",
 		(value) => { value.views.top.sha256 = value.views.plan.sha256; },
 		(value) => { value.views["opposite-axon"].camera.depth = [1, 0, 0]; },
 		(value) => { value.views.front.validation.accepted = false; },
-		(value) => { value.viewer.controls.pop(); },
+		(value) => { delete value.viewer.evidence; value.viewer.controls = Object.keys(controlEvidence); },
+		(value) => { value.viewer.evidence.controls.fullscreen = false; },
+		(value) => { value.viewer.config.cameras.views = {}; },
 		(value) => { value.viewer.config.mesh = { vertices: [] }; },
 		(value) => { value.viewer.config.strategies.hunyuan.glb = "../alternate.glb"; },
 	]) {

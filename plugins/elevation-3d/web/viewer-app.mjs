@@ -60,36 +60,57 @@ function renderInteractiveAllViews(root) {
 	const bounds = new THREE.Box3().setFromObject(root);
 	const center = bounds.getCenter(new THREE.Vector3());
 	const radius = Math.max(bounds.getSize(new THREE.Vector3()).length() * 0.75, 1);
-	const camera = new THREE.PerspectiveCamera(32, innerWidth / innerHeight, radius / 1000, radius * 100);
-	const controls = new OrbitControls(camera, canvas);
-	controls.enableDamping = true;
-	controls.enablePan = true;
-	controls.enableZoom = true;
-	controls.target.copy(center);
-	const directions = {
-		front: [0, -1, 0], back: [0, 1, 0], left: [-1, 0, 0], right: [1, 0, 0],
-		plan: [0, 0, 1], top: [0.001, 0.001, 1], axon: [1, -1, 0.95], "opposite-axon": [-1, 1, 0.95],
-	};
+	let camera, controls;
 	const materialRecords = [];
 	root.traverse((object) => {
 		if (!object.isMesh) return;
 		const materials = Array.isArray(object.material) ? object.material : [object.material];
 		materialRecords.push({ object, roles: materials.map(semanticRole), array: Array.isArray(object.material) });
 	});
-	let currentView = "axon", currentPalette = "warm", glbLoadCount = 1;
+	let currentView = "axon", currentPalette = "warm", currentClipping = { enabled: false, elevation_m: null, plane_world: null }, fullscreenRequests = 0;
+	const glbLoadCount = 1;
 	function state() {
 		globalThis.__ELEVATION3D_VIEWER_STATE__ = {
 			view: currentView, palette: currentPalette, selected_glb_sha256: allViews.selected_glb.sha256,
-			glb_load_count: glbLoadCount, camera: { position: camera.position.toArray(), target: controls.target.toArray(), zoom: camera.zoom },
+			glb_load_count: glbLoadCount, fullscreen_supported: typeof document.documentElement.requestFullscreen === "function",
+			fullscreen_active: Boolean(document.fullscreenElement), fullscreen_requests: fullscreenRequests,
+			camera: { type: camera?.isOrthographicCamera ? "orthographic" : "perspective", position: camera?.position.toArray(), target: controls?.target.toArray(), zoom: camera?.zoom, projection_axes: config.cameras.views[currentView]?.projection_axes, depth: config.cameras.views[currentView]?.depth },
+			clipping: currentClipping,
 		};
 		document.querySelector("[data-current-state]").textContent = `view=${currentView} · palette=${currentPalette} · sha256=${allViews.selected_glb.sha256}`;
 	}
+	function createPresetCamera(name) {
+		const preset = config.cameras.views[name];
+		if (preset.type === "orthographic") {
+			const frustum = preset.frustum;
+			const result = new THREE.OrthographicCamera(frustum.left, frustum.right, frustum.top, frustum.bottom, frustum.near, frustum.far);
+			const depth = new THREE.Vector3(...preset.projection_axes.depth).normalize();
+			result.position.copy(center).addScaledVector(depth, (name === "plan" || name === "top" ? 1 : -1) * radius * 4);
+			result.up.set(...preset.projection_axes.vertical); result.lookAt(center); result.updateProjectionMatrix();
+			return result;
+		}
+		if (preset.type === "perspective") {
+			const result = new THREE.PerspectiveCamera(preset.fov_degrees, innerWidth / innerHeight, preset.near, preset.far);
+			result.position.set(...preset.position); result.up.set(...preset.up); result.lookAt(new THREE.Vector3(...preset.target)); result.updateProjectionMatrix();
+			return result;
+		}
+		throw new Error(`unsupported all-views camera preset: ${name}`);
+	}
+	function applyClipping(name) {
+		const cut = config.cameras.views[name].cut ?? { enabled: false, elevation_m: null, plane_world: null };
+		currentClipping = cut;
+		renderer.localClippingEnabled = cut.enabled === true;
+		const planes = cut.enabled ? [new THREE.Plane(new THREE.Vector3(0, 0, -1), cut.elevation_m)] : [];
+		for (const record of materialRecords) {
+			const materials = Array.isArray(record.object.material) ? record.object.material : [record.object.material];
+			for (const material of materials) { material.clippingPlanes = planes; material.needsUpdate = true; }
+		}
+	}
 	function activateView(name) {
-		const direction = new THREE.Vector3(...directions[name]).normalize();
-		camera.position.copy(center).addScaledVector(direction, radius * 2.35);
-		camera.up.set(0, 0, 1);
-		if (Math.abs(direction.z) > 0.999) camera.up.set(0, 1, 0);
-		camera.lookAt(center); controls.target.copy(center); controls.update(); currentView = name;
+		controls?.dispose(); camera = createPresetCamera(name); controls = new OrbitControls(camera, canvas);
+		controls.enableDamping = true; controls.enablePan = true; controls.enableZoom = true;
+		controls.target.copy(config.cameras.views[name].target ? new THREE.Vector3(...config.cameras.views[name].target) : center);
+		controls.addEventListener("change", state); controls.update(); currentView = name; applyClipping(name);
 		document.querySelectorAll("[data-view]").forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.view === name)));
 		state();
 	}
@@ -103,21 +124,27 @@ function renderInteractiveAllViews(root) {
 			});
 			record.object.material = record.array ? replacements : replacements[0];
 		}
-		currentPalette = name; state();
+		currentPalette = name; applyClipping(currentView); state();
 	}
 	const buttons = document.querySelector("[data-view-buttons]");
-	for (const name of Object.keys(directions)) {
+	for (const name of Object.keys(config.cameras.views)) {
 		const button = document.createElement("button"); button.type = "button"; button.dataset.view = name; button.textContent = name; button.addEventListener("click", () => activateView(name)); buttons.append(button);
 	}
 	document.querySelector("[data-palette]").addEventListener("change", (event) => applyPalette(event.target.value));
 	document.querySelector("[data-reset]").addEventListener("click", () => activateView(currentView));
+	async function toggleFullscreen() {
+		fullscreenRequests++; state();
+		try { if (document.fullscreenElement) await document.exitFullscreen(); else await document.documentElement.requestFullscreen(); }
+		catch {} finally { state(); }
+	}
+	document.querySelector("[data-fullscreen]").addEventListener("click", toggleFullscreen);
+	document.addEventListener("fullscreenchange", state);
 	const download = document.querySelector("[data-glb-download]"); download.href = allViews.selected_glb.path;
 	const badge = document.querySelector("[data-validation-badge]"); badge.textContent = allViews.validation.accepted ? "Accepted" : "Rejected"; badge.classList.toggle("rejected", !allViews.validation.accepted);
 	const links = document.querySelector("[data-artifact-links]");
 	for (const artifact of allViews.artifacts ?? []) { const link = document.createElement("a"); link.href = artifact.path; link.textContent = artifact.label; link.target = "_blank"; links.append(link); }
-	controls.addEventListener("change", state);
-	addEventListener("resize", () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight, false); });
-	globalThis.__ELEVATION3D_TEST_CONTROLS__ = { rotateAndZoom() { controls.rotateLeft(0.25); controls.dollyIn(1.2); controls.update(); state(); }, reset() { activateView(currentView); } };
+	addEventListener("resize", () => { if (camera.isPerspectiveCamera) camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight, false); });
+	globalThis.__ELEVATION3D_TEST_CONTROLS__ = { rotateAndZoom() { controls.rotateLeft(0.25); controls.dollyIn(1.2); controls.update(); state(); }, reset() { activateView(currentView); }, toggleFullscreen };
 	applyPalette("warm"); activateView("axon");
 	renderer.setAnimationLoop(() => { controls.update(); renderer.render(scene, camera); });
 }

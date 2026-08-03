@@ -9,7 +9,7 @@ import { renderCompetitionElevations } from "./multi-elevation.mjs";
 import { buildViewerBundle } from "./viewer.mjs";
 
 const VIEW_NAMES = ["front", "back", "left", "right", "plan", "top", "axon", "opposite-axon"];
-const REQUIRED_CONTROLS = ["orbit", "pan", "zoom", "reset", "view-buttons", "palette-selector", "glb-download"];
+const REQUIRED_CONTROLS = ["orbit", "pan", "zoom", "reset", "fullscreen", "view-buttons", "palette-selector", "glb-download"];
 
 function portable(path) { return path.replaceAll("\\", "/"); }
 function dot(left, right) { return left.reduce((sum, value, index) => sum + value * right[index], 0); }
@@ -30,10 +30,40 @@ export function validateAllViewsRun({ views, selectedGlbSha256, palette, palette
 	if (views?.plan?.sha256 === views?.top?.sha256) codes.push("PLAN_TOP_PIXELS_IDENTICAL");
 	const axonDepth = views?.axon?.camera?.depth, oppositeDepth = views?.["opposite-axon"]?.camera?.depth;
 	if (!Array.isArray(axonDepth) || !Array.isArray(oppositeDepth) || dot(axonDepth, oppositeDepth) >= -0.8) codes.push("AXON_OPPOSITION_INVALID");
-	if (REQUIRED_CONTROLS.some((control) => !viewer?.controls?.includes(control))) codes.push("VIEWER_CONTROLS_MISSING");
+	const evidence = viewer?.evidence;
+	if (evidence?.schema_version !== "arr.elevation3d.viewer-evidence.v1" || !evidence.html?.sha256 || !evidence.app?.sha256 || !evidence.config?.sha256
+		|| REQUIRED_CONTROLS.some((control) => evidence.controls?.[control] !== true)) codes.push("VIEWER_CONTROLS_MISSING");
 	const config = viewer?.config;
 	if (config?.mesh != null || config?.strategies?.hunyuan?.glb !== "../enriched.glb" || config?.all_views?.selected_glb?.path !== "../enriched.glb" || config?.all_views?.selected_glb?.sha256 !== selectedGlbSha256) codes.push("VIEWER_ALTERNATE_GEOMETRY");
+	const cameraViews = config?.cameras?.views ?? {};
+	if (Object.keys(cameraViews).sort().join("|") !== [...VIEW_NAMES].sort().join("|")
+		|| ["front", "back", "left", "right", "plan", "top"].some((name) => cameraViews[name]?.type !== "orthographic" || !cameraViews[name]?.projection_axes)
+		|| ["axon", "opposite-axon"].some((name) => cameraViews[name]?.type !== "perspective" || !Array.isArray(cameraViews[name]?.depth))
+		|| cameraViews.plan?.cut?.enabled !== true || cameraViews.plan?.cut?.elevation_m !== 1.2 || cameraViews.top?.cut?.enabled !== false
+		|| JSON.stringify(cameraViews.front?.projection_axes) === JSON.stringify(cameraViews.back?.projection_axes)
+		|| JSON.stringify(cameraViews.left?.projection_axes) === JSON.stringify(cameraViews.right?.projection_axes)
+		|| dot(cameraViews.axon?.depth ?? [], cameraViews["opposite-axon"]?.depth ?? []) >= -0.8) codes.push("VIEWER_CAMERAS_INVALID");
 	return { schema_version: "arr.elevation3d.all-views-validation.v1", accepted: codes.length === 0, codes };
+}
+
+export async function inspectBuiltViewer({ runDir }) {
+	const root = resolve(runDir);
+	const paths = { html: join(root, "viewer", "index.html"), app: join(root, "viewer", "app.js"), config: join(root, "viewer", "config.json") };
+	const [htmlBytes, appBytes, configBytes] = await Promise.all([readFile(paths.html), readFile(paths.app), readFile(paths.config)]);
+	const html = htmlBytes.toString("utf8"), app = appBytes.toString("utf8"), config = JSON.parse(configBytes.toString("utf8"));
+	return {
+		schema_version: "arr.elevation3d.viewer-evidence.v1",
+		html: { path: "viewer/index.html", sha256: sha256(htmlBytes) }, app: { path: "viewer/app.js", sha256: sha256(appBytes) }, config: { path: "viewer/config.json", sha256: sha256(configBytes) },
+		controls: {
+			orbit: app.includes("rotateAndZoom"), pan: app.includes("enablePan"), zoom: app.includes("enableZoom"),
+			reset: html.includes("data-reset") && app.includes("[data-reset]"),
+			fullscreen: html.includes("data-fullscreen") && app.includes("requestFullscreen") && app.includes("exitFullscreen") && app.includes("fullscreenchange"),
+			"view-buttons": html.includes("data-view-buttons") && app.includes("[data-view-buttons]"),
+			"palette-selector": html.includes("data-palette") && app.includes("[data-palette]"),
+			"glb-download": html.includes("data-glb-download") && app.includes("[data-glb-download]"),
+		},
+		config_value: config,
+	};
 }
 
 function viewRecord(runDir, artifact) {
@@ -45,6 +75,13 @@ function viewRecord(runDir, artifact) {
 		manifest: artifact.manifest_record ? { path: portable(relative(runDir, artifact.manifest_record.path)), sha256: artifact.manifest_record.sha256 } : undefined,
 		validation_report: artifact.validation_report ? { path: portable(relative(runDir, artifact.validation_report.path)), sha256: artifact.validation_report.sha256 } : undefined,
 	};
+}
+
+function cameraPreset(name, artifact) {
+	const camera = structuredClone(artifact.manifest.camera);
+	if (["plan", "top"].includes(name)) camera.cut = structuredClone(artifact.manifest.cut);
+	else camera.cut = { enabled: false, elevation_m: null, plane_world: null };
+	return camera;
 }
 
 function sameRecord(actual, expected) {
@@ -145,11 +182,11 @@ export async function renderAllViews(inputs) {
 	}
 	const { artifacts } = verified;
 	const views = Object.fromEntries(VIEW_NAMES.map((name) => [name, viewRecord(root, artifacts[name])]));
+	const cameraViews = Object.fromEntries(VIEW_NAMES.map((name) => [name, cameraPreset(name, artifacts[name])]));
 	const palettes = Object.fromEntries(["warm", "neutral", "stone"].map((name) => [name, resolveMaterialPalette(`competition-${name}`)]));
-	const controls = [...REQUIRED_CONTROLS];
 	const config = {
 		schema_version: "arr.elevation3d.all-views-viewer.v1", candidate_id: inputs.candidateId,
-		strategies: { hunyuan: { glb: "../enriched.glb" } }, cameras: { views: {} },
+		strategies: { hunyuan: { glb: "../enriched.glb" } }, cameras: { views: cameraViews },
 		all_views: {
 			selected_glb: { path: "../enriched.glb", sha256: selectedGlbSha256 }, palettes, views,
 			selected_palette: verified.palette,
@@ -157,10 +194,14 @@ export async function renderAllViews(inputs) {
 			artifacts: VIEW_NAMES.map((name) => ({ label: `${name} PNG`, path: `../${views[name].path}` })),
 		},
 	};
-	const validation = validateAllViewsRun({ views, selectedGlbSha256, palette: verified.palette, viewer: { controls, config } });
-	config.all_views.validation = validation;
 	await buildViewerBundle({ runDir: root, config });
 	const configPath = join(root, "viewer", "config.json");
+	const preliminaryEvidence = await inspectBuiltViewer({ runDir: root });
+	const preliminaryValidation = validateAllViewsRun({ views, selectedGlbSha256, palette: verified.palette, viewer: { evidence: preliminaryEvidence, config: preliminaryEvidence.config_value } });
+	config.all_views.validation = preliminaryValidation;
+	await writeFile(configPath, JSON.stringify(config, null, 2));
+	const viewerEvidence = await inspectBuiltViewer({ runDir: root });
+	const validation = validateAllViewsRun({ views, selectedGlbSha256, palette: verified.palette, viewer: { evidence: viewerEvidence, config: viewerEvidence.config_value } });
 	const validationPath = join(root, "validation.json");
 	await writeFile(validationPath, JSON.stringify(validation, null, 2));
 	const manifest = {
@@ -169,7 +210,7 @@ export async function renderAllViews(inputs) {
 		palette: verified.palette,
 		palette_sha256: verified.palette.sha256,
 		views,
-		verified_evidence: verified.verified_evidence,
+		verified_evidence: { ...verified.verified_evidence, viewer: viewerEvidence },
 		viewer: { path: "viewer/index.html", config_sha256: sha256(await readFile(configPath)) },
 		validation: { accepted: validation.accepted, codes: validation.codes },
 	};
