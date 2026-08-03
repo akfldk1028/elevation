@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, unlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -46,11 +47,13 @@ test("renders four accepted elevations from one selected GLB", { timeout: 600_00
 	assert.deepEqual(Object.keys(result.views).sort(), ["back", "front", "left", "right"]);
 	assert.equal(new Set(Object.values(result.views).map((view) => view.selected_glb_sha256)).size, 1);
 	assert.equal(new Set(Object.values(result.views).map((view) => view.camera.px_per_m_x)).size, 1);
+	assert.deepEqual(result.palette, { preset: "competition-warm", sha256: resolveMaterialPalette("competition-warm").sha256 });
 	for (const [name, view] of Object.entries(result.views)) {
 		assert.equal(view.validation.accepted, true, `${name}: ${view.validation.codes.join(", ")}`);
 		assert.deepEqual(await sharp(view.final_png.path).metadata().then(({ width, height }) => [width, height]), [2400, 2400]);
 		assert.deepEqual([view.width, view.height], [2400, 2400]);
 		assert.equal(view.camera.type, "orthographic");
+		assert.deepEqual(view.palette, result.palette);
 		assert.deepEqual(view.displayed_dimensions.levels, [0, 3300, 6600, 9900]);
 		for (const record of [view.final_png, view.presentation_base_png, view.annotations_svg, view.dimensions_json, view.base_manifest, view.render_manifest, view.validation_report, ...Object.values(view.diagnostics)]) {
 			assert.equal(sha256(await readFile(record.path)), record.sha256, `${name}: ${record.path}`);
@@ -58,42 +61,62 @@ test("renders four accepted elevations from one selected GLB", { timeout: 600_00
 	}
 });
 
-test("rejects a right elevation produced from a different selected GLB", () => {
-	const view = (hash: string) => ({
+async function verifiedViews() {
+	const root = await mkdtemp(join(tmpdir(), "elevation3d-cross-view-"));
+	const diagnostics = {};
+	for (const name of ["front", "back", "left", "right"]) {
+		diagnostics[name] = {};
+		for (const diagnostic of ["material_id", "depth", "normal"]) {
+			const path = join(root, `${name}-${diagnostic}.png`);
+			await writeFile(path, Buffer.from(`${name}:${diagnostic}:persisted-pixels`));
+			diagnostics[name][diagnostic] = { path, sha256: sha256(await readFile(path)) };
+		}
+	}
+	const palette = { preset: "competition-warm", sha256: "palette-warm-sha256" };
+	const view = (name: string, hash = "selected") => ({
 		selected_glb_sha256: hash,
+		palette,
 		width: 2400,
 		height: 2400,
 		validation: { accepted: true, codes: [], metrics: { canonical_svg_mismatch: false } },
 		displayed_dimensions: { levels: [0, 3300, 6600, 9900] },
 		base: { clipping: { applied: false } },
-		diagnostics: {},
+		diagnostics: diagnostics[name],
 	});
-	assert.throws(() => buildMultiElevationManifest({
-		front: view("selected"),
-		back: view("selected"),
-		left: view("selected"),
-		right: view("substituted"),
-	}), /one selected GLB SHA-256/);
+	return { root, views: Object.fromEntries(["front", "back", "left", "right"].map((name) => [name, view(name)])) };
+}
+
+test("rejects a right elevation produced from a different selected GLB", async () => {
+	const fixture = await verifiedViews();
+	try {
+		fixture.views.right.selected_glb_sha256 = "substituted";
+		await assert.rejects(() => buildMultiElevationManifest(fixture.views), /one selected GLB SHA-256/);
+	} finally { await rm(fixture.root, { recursive: true, force: true }); }
 });
 
-test("rejects incomplete cross-view levels and diagnostics", () => {
-	const validView = {
-		selected_glb_sha256: "selected",
-		width: 2400,
-		height: 2400,
-		validation: { accepted: true, codes: [], metrics: { canonical_svg_mismatch: false } },
-		displayed_dimensions: { levels: [0, 3300, 6600, 9900] },
-		base: { clipping: { applied: false } },
-		diagnostics: {
-			material_id: { path: "material.png", sha256: "material" },
-			depth: { path: "depth.png", sha256: "depth" },
-			normal: { path: "normal.png", sha256: "normal" },
-		},
-	};
-	const views = Object.fromEntries(["front", "back", "left", "right"].map((name) => [name, structuredClone(validView)]));
-	views.left.displayed_dimensions.levels.pop();
-	assert.throws(() => buildMultiElevationManifest(views), /same four levels/);
-	views.left = structuredClone(validView);
-	delete views.right.diagnostics.normal;
-	assert.throws(() => buildMultiElevationManifest(views), /right normal diagnostic hash is not resolvable/);
+test("rejects incomplete cross-view levels and missing persisted diagnostics", async () => {
+	const fixture = await verifiedViews();
+	try {
+		fixture.views.left.displayed_dimensions.levels.pop();
+		await assert.rejects(() => buildMultiElevationManifest(fixture.views), /same four levels/);
+		fixture.views.left.displayed_dimensions.levels = [0, 3300, 6600, 9900];
+		await unlink(fixture.views.right.diagnostics.normal.path);
+		await assert.rejects(() => buildMultiElevationManifest(fixture.views), /right normal diagnostic file is not resolvable/);
+	} finally { await rm(fixture.root, { recursive: true, force: true }); }
+});
+
+test("rejects hash-tampered persisted diagnostics", async () => {
+	const fixture = await verifiedViews();
+	try {
+		await writeFile(fixture.views.back.diagnostics.depth.path, Buffer.from("tampered persisted pixels"));
+		await assert.rejects(() => buildMultiElevationManifest(fixture.views), /back depth diagnostic SHA-256 does not match/);
+	} finally { await rm(fixture.root, { recursive: true, force: true }); }
+});
+
+test("rejects mixed resolved palettes", async () => {
+	const fixture = await verifiedViews();
+	try {
+		fixture.views.right.palette = { preset: "competition-neutral", sha256: "palette-neutral-sha256" };
+		await assert.rejects(() => buildMultiElevationManifest(fixture.views), /one resolved palette SHA-256/);
+	} finally { await rm(fixture.root, { recursive: true, force: true }); }
 });
