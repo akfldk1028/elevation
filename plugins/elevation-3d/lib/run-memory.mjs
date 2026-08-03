@@ -69,6 +69,10 @@ async function writeJson(path, value, options) {
 	await writeFile(path, `${JSON.stringify(persistent(value), null, 2)}\n`, options);
 }
 
+async function readJsonFile(path) {
+	return JSON.parse(await readFile(path, "utf8"));
+}
+
 export async function createUnifiedRun({ input, approvedDesign, outputRoot, runId }) {
 	const candidateId = assertSafePathSegment(input.candidate_id ?? input.candidate?.candidate_id, "candidate_id");
 	assertSafePathSegment(runId, "run_id");
@@ -101,9 +105,24 @@ export async function beginVersion(run, versionId, grammar) {
 	const grammarDelta = Object.fromEntries([...new Set([...Object.keys(previousGrammar), ...Object.keys(grammar)])]
 		.filter((key) => previousGrammar[key] !== grammar[key])
 		.map((key) => [key, { from: previousGrammar[key] ?? null, to: grammar[key] ?? null }]));
-	const version = { id: versionId, dir, metadata, failures: [], grammar: persistent(grammar), grammar_delta: grammarDelta };
+	const version = { id: versionId, dir, metadata, failures: [], grammar: persistent(grammar), grammar_delta: grammarDelta, checkpoint: {} };
 	run.versions.push(version);
 	return version;
+}
+
+export async function recordVersionCheckpoint(run, version, patch) {
+	if (!run.versions.includes(version)) throw new Error(`Version ${version.id} does not belong to run ${run.id}`);
+	version.checkpoint = persistent({ ...version.checkpoint, ...patch });
+	if (patch.validation) await writeJson(join(version.dir, "validation.json"), patch.validation);
+	await writeJson(join(version.dir, "checkpoint.json"), {
+		schema_version: "arr.elevation3d.version-checkpoint.v1",
+		version_id: version.id,
+		...version.checkpoint,
+	});
+	if (!version.metadata.checkpoint_path) {
+		version.metadata = { ...version.metadata, checkpoint_path: "checkpoint.json" };
+		await writeJson(join(version.dir, "version.json"), version.metadata);
+	}
 }
 
 export async function recordVersionFailure(run, version, failure) {
@@ -146,7 +165,7 @@ export async function recordVersionSuccess(run, version, validation) {
 	if (version.metadata.status !== "started") {
 		throw new Error(`Version ${version.id} cannot pass from status ${version.metadata.status}`);
 	}
-	await writeJson(join(version.dir, "validation.json"), validation);
+	await recordVersionCheckpoint(run, version, { validation });
 	version.metadata = { ...version.metadata, status: "passed", validation_path: "validation.json" };
 	version.validation = persistent(validation);
 	await writeJson(join(version.dir, "version.json"), version.metadata);
@@ -226,7 +245,11 @@ function selectedOutputArtifacts(run, selectedVersion) {
 function artifactEntry(run, value, sha256, label) {
 	const path = typeof value === "string" ? value : value?.path;
 	if (!path) return null;
-	return { path: runRelativePath(run.dir, path, label), sha256: sha256 ?? value?.sha256 ?? null };
+	return {
+		...(typeof value === "object" && value?.metrics ? { metrics: value.metrics } : {}),
+		path: runRelativePath(run.dir, path, label),
+		sha256: sha256 ?? value?.sha256 ?? null,
+	};
 }
 
 function correctionSummary(version) {
@@ -239,9 +262,31 @@ function correctionSummary(version) {
 async function versionHistory(run) {
 	return Promise.all(run.versions.map(async (version, index) => {
 		const failure = version.failures.at(-1);
-		const artifacts = version.validation?.artifacts ?? {};
+		let checkpoint = version.checkpoint ?? {};
+		try { checkpoint = await readJsonFile(join(version.dir, "checkpoint.json")); }
+		catch (error) { if (error.code !== "ENOENT") throw error; }
+		const validation = checkpoint.validation ?? version.validation;
+		const validationArtifacts = validation?.artifacts ?? {};
+		const checkpointGlb = checkpoint.enrichment?.artifact ?? null;
+		const validationGlbPath = typeof validationArtifacts.glb === "string"
+			? validationArtifacts.glb : validationArtifacts.glb?.path;
+		const glb = validationGlbPath ? {
+			...checkpointGlb,
+			...(typeof validationArtifacts.glb === "object" ? validationArtifacts.glb : {}),
+			path: validationGlbPath,
+			sha256: validationArtifacts.glb_sha256 ?? validationArtifacts.glb?.sha256 ?? checkpointGlb?.sha256,
+		} : checkpointGlb;
+		const artifacts = {
+			glb,
+			glb_sha256: glb?.sha256,
+			drawings: Object.keys(validationArtifacts.drawings ?? {}).length
+				? validationArtifacts.drawings
+				: checkpoint.render?.drawings ?? {},
+			provenance: validationArtifacts.provenance ?? checkpoint.render?.provenance,
+			provenance_sha256: validationArtifacts.provenance_sha256 ?? checkpoint.render?.provenance?.sha256,
+		};
 		const validationPath = join(version.dir, "validation.json");
-		const validationSha = version.validation ? sha256(await readFile(validationPath)) : null;
+		const validationSha = validation ? sha256(await readFile(validationPath)) : null;
 		return persistent({
 			id: version.id,
 			status: version.metadata.status,
@@ -251,14 +296,15 @@ async function versionHistory(run) {
 					name,
 					artifactEntry(run, entry, entry?.sha256, `${version.id} drawing ${name}`),
 				])),
-				validation_report: version.validation
+				provenance: artifactEntry(run, artifacts.provenance, artifacts.provenance_sha256, `${version.id} provenance`),
+				validation_report: validation
 					? { path: runRelativePath(run.dir, validationPath, `${version.id} validation`), sha256: validationSha }
 					: null,
 			},
-			validation: version.validation ? {
-				accepted: version.validation.accepted,
-				codes: version.validation.codes ?? [],
-				metrics: version.validation.metrics ?? {},
+			validation: validation ? {
+				accepted: validation.accepted,
+				codes: validation.codes ?? [],
+				metrics: validation.metrics ?? {},
 			} : null,
 			failure: failure ? {
 				reason: failure.reason,

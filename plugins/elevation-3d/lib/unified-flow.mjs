@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { resolve } from "node:path";
+import { readFile } from "node:fs/promises";
+import { join, resolve } from "node:path";
 
-import { loadCandidatePackage } from "./core.mjs";
+import { loadCandidatePackage, sha256 } from "./core.mjs";
 import { buildEnrichedScene, writeEnrichedGlb } from "./enrichment.mjs";
 import { validateEnrichment } from "./enrichment-validation.mjs";
 import { correctGrammar, normalizeFacadeGrammar, resolveApprovedDesign } from "./facade-grammar.mjs";
@@ -13,6 +14,7 @@ import {
 	recordVersionFailure,
 	recordVersionSuccess,
 	recordVersionCancelled,
+	recordVersionCheckpoint,
 	selectFinal,
 } from "./run-memory.mjs";
 import { renderUnifiedDrawings } from "./unified-render.mjs";
@@ -179,6 +181,24 @@ function throwIfAborted(signal) {
 	signal?.throwIfAborted();
 }
 
+async function hashedArtifact(path) {
+	if (typeof path !== "string" || !path) return null;
+	try { return { path, sha256: sha256(await readFile(path)) }; }
+	catch { return null; }
+}
+
+async function renderCheckpoint(version, drawings) {
+	const entries = (await Promise.all(Object.entries(drawings ?? {}).map(async ([name, value]) => {
+		const path = typeof value === "string" ? value : value?.path;
+		const artifact = await hashedArtifact(path);
+		return artifact ? [name, { ...artifact, ...(typeof value === "object" ? value : {}) }] : null;
+	}))).filter(Boolean);
+	return {
+		drawings: Object.fromEntries(entries),
+		provenance: await hashedArtifact(join(version.dir, "drawing-provenance.json")),
+	};
+}
+
 async function runVersion({ run, versionId, grammar, safeFallback, input, enrich, render, validate, signal }) {
 	throwIfAborted(signal);
 	const version = await beginVersion(run, versionId, grammar);
@@ -197,6 +217,9 @@ async function runVersion({ run, versionId, grammar, safeFallback, input, enrich
 			runDir: version.dir,
 			signal,
 		});
+		await recordVersionCheckpoint(run, version, { enrichment: {
+			artifact: { path: artifact.path, sha256: artifact.sha256, metrics: artifact.metrics ?? {} },
+		} });
 		throwIfAborted(signal);
 	} catch (error) {
 		if (isAbort(error, signal)) throw error;
@@ -217,6 +240,7 @@ async function runVersion({ run, versionId, grammar, safeFallback, input, enrich
 			safeFallback,
 			signal,
 		});
+		await recordVersionCheckpoint(run, version, { render: await renderCheckpoint(version, drawings) });
 		throwIfAborted(signal);
 	} catch (error) {
 		if (isAbort(error, signal)) throw error;
@@ -237,6 +261,7 @@ async function runVersion({ run, versionId, grammar, safeFallback, input, enrich
 			safeFallback,
 			signal,
 		});
+		await recordVersionCheckpoint(run, version, { validation: report });
 		throwIfAborted(signal);
 	} catch (error) {
 		if (isAbort(error, signal)) throw error;

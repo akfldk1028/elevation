@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, relative } from "node:path";
+import { dirname, join, relative } from "node:path";
 import { afterEach, test } from "node:test";
 import { NodeIO } from "@gltf-transform/core";
 import sharp from "sharp";
@@ -233,6 +233,48 @@ function realFileDeps(defects: Record<string, "missing-glb" | "corrupt-glb" | "m
 
 async function readJson(path: string) {
 	return JSON.parse(await readFile(path, "utf8"));
+}
+
+async function checkpointDeps(sourceMesh: Awaited<ReturnType<typeof fixture>>["mesh"], options: {
+	rejectValidation?: boolean;
+	renderError?: boolean;
+	abortAfterRender?: AbortController;
+} = {}) {
+	return {
+		enrich: async ({ outputPath }: any) => {
+			const bytes = Buffer.from("checkpoint-glb");
+			await writeFile(outputPath, bytes);
+			return {
+				path: outputPath,
+				sha256: sha256(bytes),
+				metrics: { bytes: bytes.length },
+				base_primitive: { positions: sourceMesh.vertices, indices: sourceMesh.triangles },
+				bounds: { min: [-2, -1, 0], max: [2, 1, 3] },
+			};
+		},
+		render: async (args: any) => {
+			if (options.renderError) throw new Error("renderer stopped after GLB");
+			const drawings = await renderRealFiles(args);
+			options.abortAfterRender?.abort(new DOMException("stop after render", "AbortError"));
+			return drawings;
+		},
+		validate: async ({ artifact, requiredDrawings }: any) => {
+			const provenance = await readJson(join(dirname(artifact.path), "drawing-provenance.json"));
+			return {
+				accepted: !options.rejectValidation,
+				codes: options.rejectValidation ? ["POLICY_REJECTED"] : [],
+				metrics: { inspected: true },
+				artifacts: {
+					glb: artifact.path,
+					glb_sha256: artifact.sha256,
+					drawings: Object.fromEntries(Object.entries(provenance.drawings).map(([name, entry]: any) => [name, {
+						...entry, path: requiredDrawings[name],
+					}])),
+					provenance: join(dirname(artifact.path), "drawing-provenance.json"),
+				},
+			};
+		},
+	};
 }
 
 test("selects v001 when enrichment and all gates pass", async () => {
@@ -767,4 +809,75 @@ test("abort during render persists one cancelled v001 and never retries", async 
 	await assert.rejects(() => access(join(runDir, "versions", "v002")), /ENOENT/);
 	const event = JSON.parse(await readFile(join(input.root, "memory", "elevation-3d", "unified-runs.jsonl"), "utf8"));
 	assert.deepEqual(event.versions.map((version: any) => [version.id, version.status]), [["v001", "cancelled"]]);
+});
+
+test("validation rejection retains GLB, drawings, provenance, and rejected report", async () => {
+	const input = await fixture();
+	process.chdir(input.root);
+	const deps = await checkpointDeps(input.mesh, { rejectValidation: true });
+	await assert.rejects(() => runElevation3d({
+		candidateId: input.candidateId,
+		datasetRoot: input.datasetRoot,
+		outputRoot: input.outputRoot,
+		runId: "checkpoint-rejected",
+		deps,
+	}), /POLICY_REJECTED/);
+	const event = JSON.parse(await readFile(join(input.root, "memory", "elevation-3d", "unified-runs.jsonl"), "utf8"));
+	const history = event.versions[0];
+	assert.equal(history.status, "failed");
+	assert.match(history.artifacts.glb.path, /^versions\/v001\/enriched\.glb$/);
+	assert.match(history.artifacts.glb.sha256, /^[a-f0-9]{64}$/);
+	assert.deepEqual(history.artifacts.glb.metrics, { bytes: 14 });
+	assert.equal(Object.keys(history.artifacts.drawings).length, 7);
+	assert.equal(Object.values(history.artifacts.drawings).every((drawing: any) => /^[a-f0-9]{64}$/.test(drawing.sha256)), true);
+	assert.match(history.artifacts.provenance.path, /^versions\/v001\/drawing-provenance\.json$/);
+	assert.match(history.artifacts.provenance.sha256, /^[a-f0-9]{64}$/);
+	assert.equal(history.validation.accepted, false);
+	assert.deepEqual(history.validation.codes, ["POLICY_REJECTED"]);
+	assert.deepEqual(history.validation.metrics, { inspected: true });
+	assert.match(history.artifacts.validation_report.sha256, /^[a-f0-9]{64}$/);
+});
+
+test("render failure retains the completed enrichment checkpoint", async () => {
+	const input = await fixture();
+	process.chdir(input.root);
+	const deps = await checkpointDeps(input.mesh, { renderError: true });
+	await assert.rejects(() => runElevation3d({
+		candidateId: input.candidateId,
+		datasetRoot: input.datasetRoot,
+		outputRoot: input.outputRoot,
+		runId: "checkpoint-render-failure",
+		deps,
+	}), { code: "RUN_BLOCKED" });
+	const event = JSON.parse(await readFile(join(input.root, "memory", "elevation-3d", "unified-runs.jsonl"), "utf8"));
+	assert.equal(event.versions[0].failure.stage, "render");
+	assert.match(event.versions[0].artifacts.glb.path, /^versions\/v001\/enriched\.glb$/);
+	assert.match(event.versions[0].artifacts.glb.sha256, /^[a-f0-9]{64}$/);
+	assert.deepEqual(event.versions[0].artifacts.glb.metrics, { bytes: 14 });
+	assert.deepEqual(event.versions[0].artifacts.drawings, {});
+});
+
+test("abort after enrichment retains GLB and abort after rendering also retains drawing evidence", async () => {
+	for (const stage of ["enrich", "render"] as const) {
+		const input = await fixture();
+		process.chdir(input.root);
+		const controller = new AbortController();
+		const deps: any = await checkpointDeps(input.mesh, stage === "render" ? { abortAfterRender: controller } : {});
+		if (stage === "enrich") deps.render = async () => {
+			controller.abort(new DOMException("stop after enrich", "AbortError"));
+			controller.signal.throwIfAborted();
+		};
+		await assert.rejects(() => runElevation3d({
+			candidateId: input.candidateId,
+			datasetRoot: input.datasetRoot,
+			outputRoot: input.outputRoot,
+			runId: `checkpoint-abort-${stage}`,
+			signal: controller.signal,
+			deps,
+		}), { name: "AbortError" });
+		const event = JSON.parse(await readFile(join(input.root, "memory", "elevation-3d", "unified-runs.jsonl"), "utf8"));
+		assert.match(event.versions[0].artifacts.glb.sha256, /^[a-f0-9]{64}$/);
+		assert.equal(Object.keys(event.versions[0].artifacts.drawings).length, stage === "render" ? 7 : 0);
+		assert.equal(event.versions[0].status, "cancelled");
+	}
 });
