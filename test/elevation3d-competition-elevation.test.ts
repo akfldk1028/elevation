@@ -147,7 +147,7 @@ test("competition render cancellation closes page, browser, and preview", { time
 	assert.deepEqual(calls, ["newPage", "viewport", "goto", "wait", "page.close", "browser.close", "preview.stop"]);
 });
 
-test("rejects alternate views before starting the renderer", async () => {
+test("rejects a dimension manifest for a different named elevation before starting the renderer", async () => {
 	const inputs = await creative013Inputs();
 	await assert.rejects(() => renderCompetitionElevationBase({
 		runDir: "unused",
@@ -157,5 +157,5 @@ test("rejects alternate views before starting the renderer", async () => {
 		palette: resolveMaterialPalette("competition-warm"),
 		dimensions: inputs.dimensions,
 		view: "right",
-	}), /front view required/);
+	}), /right dimension manifest required/);
 });
