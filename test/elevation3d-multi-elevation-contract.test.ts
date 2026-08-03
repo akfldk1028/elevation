@@ -106,6 +106,55 @@ test("validation rejects camera axes substituted from another named elevation", 
 	assert.ok(report.codes.includes("ELEVATION_AXIS_MISMATCH"));
 });
 
+test("validation rejects a dimension manifest from the wrong symmetric elevation", async () => {
+	const inputs = await realInputs();
+	const backView = { name: "back", identity: inputs.cameras.identity, ...inputs.cameras.views.back };
+	const frontDimensions = await deriveElevationDimensions({
+		...inputs,
+		view: { name: "front", identity: inputs.cameras.identity, ...inputs.cameras.views.front },
+	});
+	const base = annotationBase(backView);
+	const report = await validateCompetitionElevation({
+		artifacts: {
+			base: { width: 2400, height: 2400, camera: base.camera, content_bounds_px: base.contentBounds, selected_glb_sha256: inputs.artifact.sha256 },
+			dimensions: frontDimensions,
+		},
+		sourceMesh: inputs.sourceMesh,
+		facadePlanes: inputs.facadePlanes,
+		floorGuides: inputs.floorGuides,
+		view: backView,
+		selectedGlbPath,
+	});
+	assert.ok(report.codes.includes("DIMENSION_MISMATCH"));
+});
+
+test("validation rejects non-finite or non-numeric camera axis components", async () => {
+	const inputs = await realInputs();
+	const view = { name: "front", identity: inputs.cameras.identity, ...inputs.cameras.views.front };
+	const dimensions = await deriveElevationDimensions({ ...inputs, view });
+	const base = annotationBase(view);
+	for (const horizontal of [[Number.NaN, 0, 0], [1, null, null], ["1", 0, 0]]) {
+		const report = await validateCompetitionElevation({
+			artifacts: {
+				base: {
+					width: 2400,
+					height: 2400,
+					camera: { ...base.camera, projection_axes: { ...base.camera.projection_axes, horizontal } },
+					content_bounds_px: base.contentBounds,
+					selected_glb_sha256: inputs.artifact.sha256,
+				},
+				dimensions,
+			},
+			sourceMesh: inputs.sourceMesh,
+			facadePlanes: inputs.facadePlanes,
+			floorGuides: inputs.floorGuides,
+			view,
+			selectedGlbPath,
+		});
+		assert.ok(report.codes.includes("ELEVATION_AXIS_MISMATCH"), `axis accepted: ${JSON.stringify(horizontal)}`);
+	}
+});
+
 test("all named elevations build collision-free canonical SVG with the correct title and width", async () => {
 	const inputs = await realInputs();
 	for (const name of elevationNames) {

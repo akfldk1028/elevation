@@ -24,6 +24,24 @@ function dimensionValues(manifest) {
 	};
 }
 
+function dimensionContract(manifest) {
+	if (!manifest || typeof manifest !== "object") return manifest;
+	return {
+		schema_version: manifest.schema_version,
+		view: manifest.view,
+		selected_glb_sha256: manifest.selected_glb_sha256,
+		geometry_hash: manifest.geometry_hash,
+		projected_bounds_m: manifest.projected_bounds_m,
+		overall_width: manifest.overall_width,
+		overall_height: manifest.overall_height,
+		levels: manifest.levels,
+		floor_intervals: manifest.floor_intervals,
+		facade_extent: manifest.facade_extent,
+		scale_bar: manifest.scale_bar,
+		tolerance_mm: manifest.tolerance_mm,
+	};
+}
+
 function sameJson(left, right) {
 	return stableJson(left) === stableJson(right);
 }
@@ -234,14 +252,16 @@ export async function validateCompetitionElevation({ artifacts, sourceMesh, faca
 		add(codes, "DIMENSION_SOURCE_MISSING", true);
 	}
 	if (authoritative) {
-		add(codes, "DIMENSION_MISMATCH", !sameJson(dimensionValues(authoritative), dimensionValues(artifacts.dimensions)));
+		add(codes, "DIMENSION_MISMATCH", !sameJson(dimensionContract(authoritative), dimensionContract(artifacts.dimensions)));
 		add(codes, "LEVEL_GUIDE_MISMATCH", !sameJson(authoritative.levels.map((item) => item.display_mm), artifacts.dimensions?.levels?.map((item) => item.display_mm))
 			|| !sameJson(authoritative.floor_intervals.map((item) => item.display_mm), artifacts.dimensions?.floor_intervals?.map((item) => item.display_mm)));
 	}
 	const camera = artifacts.base?.camera;
 	add(codes, "ELEVATION_CAMERA_NOT_ORTHOGRAPHIC", camera?.type !== "orthographic");
 	const axes = camera?.projection_axes;
-	const axesInvalid = !axes || [axes.horizontal, axes.vertical, axes.depth].some((axis) => !Array.isArray(axis) || axis.length !== 3)
+	const validAxis = (axis) => Array.isArray(axis) && axis.length === 3
+		&& axis.every((component) => typeof component === "number" && Number.isFinite(component));
+	const axesInvalid = !axes || [axes.horizontal, axes.vertical, axes.depth].some((axis) => !validAxis(axis))
 		|| [axes?.horizontal ?? [], axes?.vertical ?? [], axes?.depth ?? []].some((axis) => Math.abs(length(axis) - 1) > 1e-6)
 		|| Math.abs(dot(axes?.horizontal ?? [], axes?.vertical ?? [])) > 1e-6
 		|| Math.abs(dot(axes?.horizontal ?? [], axes?.depth ?? [])) > 1e-6
@@ -304,8 +324,8 @@ export async function validateCompetitionElevation({ artifacts, sourceMesh, faca
 	if (artifacts.dimensions_json?.path) {
 		try {
 			const persisted = JSON.parse(await readFile(artifacts.dimensions_json.path, "utf8"));
-			add(codes, "DIMENSION_MISMATCH", !sameJson(dimensionValues(persisted), dimensionValues(artifacts.dimensions))
-				|| (authoritative && !sameJson(dimensionValues(persisted), dimensionValues(authoritative))));
+			add(codes, "DIMENSION_MISMATCH", !sameJson(dimensionContract(persisted), dimensionContract(artifacts.dimensions))
+				|| (authoritative && !sameJson(dimensionContract(persisted), dimensionContract(authoritative))));
 		} catch { add(codes, "DIMENSION_SOURCE_MISSING", true); }
 	}
 	if (artifacts.annotations_svg?.path) {
