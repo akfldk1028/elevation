@@ -4,13 +4,37 @@ import { sha256, stableJson } from "./core.mjs";
 
 const SCHEMA_VERSION = "arr.elevation3d.dimension-manifest.v1";
 const ENVELOPE_TOLERANCE_M = 0.001;
-const FRONT_AXES = {
-	horizontal: [1, 0, 0],
-	vertical: [0, 0, 1],
-};
+const IDENTITY_FIELDS = ["candidate_id", "geometry_hash", "pnu", "program_hash", "run_id"];
 
 function dot(left, right) {
 	return left.reduce((sum, value, axis) => sum + value * right[axis], 0);
+}
+
+function vectorLength(vector) {
+	return Math.sqrt(dot(vector, vector));
+}
+
+function projectionView(view) {
+	if (!view || typeof view !== "object" || view.name !== "front") throw new Error("dimension source missing: front camera");
+	const horizontal = view.projection_axes?.horizontal;
+	const vertical = view.projection_axes?.vertical;
+	for (const [name, vector] of [["horizontal", horizontal], ["vertical", vertical]]) {
+		if (!Array.isArray(vector) || vector.length !== 3 || !vector.every(Number.isFinite) || Math.abs(vectorLength(vector) - 1) > 1e-6) {
+			throw new Error(`dimension source invalid: front camera ${name} axis`);
+		}
+	}
+	if (Math.abs(dot(horizontal, vertical)) > 1e-6) throw new Error("dimension source invalid: front camera axes");
+	return { name: view.name, identity: view.identity, axes: { horizontal: [...horizontal], vertical: [...vertical] } };
+}
+
+function assertBoundIdentity(sourceIdentity, targetIdentity, label) {
+	if (!sourceIdentity?.geometry_hash) throw new Error("dimension source identity missing: sourceMesh.geometry_hash");
+	if (!targetIdentity || typeof targetIdentity !== "object") throw new Error(`dimension source identity missing: ${label}`);
+	for (const field of IDENTITY_FIELDS) {
+		if (sourceIdentity[field] !== undefined && targetIdentity[field] !== sourceIdentity[field]) {
+			throw new Error(`dimension source identity mismatch: ${label}.${field}`);
+		}
+	}
 }
 
 function displayMillimetres(valueM) {
@@ -102,10 +126,14 @@ async function exactMassPositions(artifact) {
 }
 
 export async function deriveElevationDimensions({ sourceMesh, artifact, facadePlanes, floorGuides, view }) {
-	if (view !== "front") throw new Error(`dimension view unsupported: ${view}`);
+	const projection = projectionView(view);
+	assertBoundIdentity(sourceMesh?.identity, projection.identity, "view");
+	assertBoundIdentity(sourceMesh.identity, floorGuides?.identity, "floorGuides");
+	assertBoundIdentity(sourceMesh.identity, facadePlanes?.identity, "facadePlanes");
+	const axes = projection.axes;
 	const { actualSha256, positions } = await exactMassPositions(artifact);
-	const horizontalValues = positions.map((point) => dot(point, FRONT_AXES.horizontal));
-	const verticalValues = positions.map((point) => dot(point, FRONT_AXES.vertical));
+	const horizontalValues = positions.map((point) => dot(point, axes.horizontal));
+	const verticalValues = positions.map((point) => dot(point, axes.vertical));
 	const minimumHorizontal = Math.min(...horizontalValues);
 	const maximumHorizontal = Math.max(...horizontalValues);
 	const minimumVertical = Math.min(...verticalValues);
@@ -114,19 +142,27 @@ export async function deriveElevationDimensions({ sourceMesh, artifact, facadePl
 		throw new Error("dimension source missing: exact-mass.POSITION");
 	}
 
-	const guides = sortedGuideRecords(floorGuides);
-	assertInsideEnvelope(guides.map(({ value }) => value), minimumVertical, maximumVertical);
 	const { plane, index: planeIndex } = frontFacade(facadePlanes);
-	if (!Array.isArray(plane.origin) || !Array.isArray(plane.normal) || !Array.isArray(plane.extent_m) || plane.extent_m.length !== 2) {
+	const validVector = (value) => Array.isArray(value) && value.length === 3 && value.every(Number.isFinite);
+	const validExtent = Array.isArray(plane.extent_m) && plane.extent_m.length === 2
+		&& plane.extent_m.every((value) => Number.isFinite(value) && value > 0);
+	if (!validVector(plane.origin) || !validVector(plane.normal) || Math.abs(vectorLength(plane.normal) - 1) > 1e-6 || !validExtent) {
 		throw new Error("dimension source invalid: facade_planes.facade_planes");
 	}
 	const tangent = [-plane.normal[1], plane.normal[0], 0];
-	const horizontalStart = dot(plane.origin, FRONT_AXES.horizontal);
-	const horizontalEnd = dot(plane.origin.map((value, axis) => value + tangent[axis] * plane.extent_m[0]), FRONT_AXES.horizontal);
-	const verticalStart = dot(plane.origin, FRONT_AXES.vertical);
-	const verticalEnd = verticalStart + Number(plane.extent_m[1]);
+	const horizontalStart = dot(plane.origin, axes.horizontal);
+	const horizontalEndPoint = plane.origin.map((value, axis) => value + tangent[axis] * plane.extent_m[0]);
+	const verticalEndPoint = plane.origin.map((value, axis) => value + (axis === 2 ? Number(plane.extent_m[1]) : 0));
+	const horizontalEnd = dot(horizontalEndPoint, axes.horizontal);
+	const verticalStart = dot(plane.origin, axes.vertical);
+	const verticalEnd = dot(verticalEndPoint, axes.vertical);
 	assertInsideEnvelope([horizontalStart, horizontalEnd], minimumHorizontal, maximumHorizontal);
 	assertInsideEnvelope([verticalStart, verticalEnd], minimumVertical, maximumVertical);
+	const guides = sortedGuideRecords(floorGuides).map((record) => ({
+		...record,
+		projected: dot([plane.origin[0], plane.origin[1], record.value], axes.vertical),
+	}));
+	assertInsideEnvelope(guides.map(({ projected }) => projected), minimumVertical, maximumVertical);
 
 	const projectedBounds = [
 		[minimumHorizontal, minimumVertical],
@@ -134,9 +170,9 @@ export async function deriveElevationDimensions({ sourceMesh, artifact, facadePl
 	];
 	const overallWidth = maximumHorizontal - minimumHorizontal;
 	const overallHeight = maximumVertical - minimumVertical;
-	const levels = guides.map(({ value, index }) => ({
+	const levels = guides.map(({ value, index, projected }) => ({
 		id: `level-${displayMillimetres(value)}`,
-		...dimension(value, floorGuideSource(index), [[minimumHorizontal, value], [maximumHorizontal, value]]),
+		...dimension(value, floorGuideSource(index), [[minimumHorizontal, projected], [maximumHorizontal, projected]]),
 		label: `EL. ${value < 0 ? "-" : "+"}${Math.abs(canonicalMetres(value)).toFixed(3)}`,
 	}));
 	const floorIntervals = guides.slice(1).map(({ value }, intervalIndex) => {
@@ -147,20 +183,20 @@ export async function deriveElevationDimensions({ sourceMesh, artifact, facadePl
 				kind: "authored_floor_guide_interval",
 				field: "floor_guides.floor_guides_m",
 				indices: [previous.index, guides[intervalIndex + 1].index],
-			}, [[minimumHorizontal, previous.value], [minimumHorizontal, value]]),
+			}, [[minimumHorizontal, previous.projected], [minimumHorizontal, guides[intervalIndex + 1].projected]]),
 		};
 	});
 	const scaleBarM = chooseScaleBar(overallWidth);
 
 	return {
 		schema_version: SCHEMA_VERSION,
-		view,
+		view: projection.name,
 		selected_glb_sha256: actualSha256,
 		geometry_hash: geometryHash(sourceMesh),
 		projected_bounds_m: {
 			min: projectedBounds[0],
 			max: projectedBounds[1],
-			source: exactMassSource({ projection_axes: FRONT_AXES }),
+			source: exactMassSource({ projection_axes: axes }),
 		},
 		overall_width: dimension(overallWidth, exactMassSource({ projection_axis: "horizontal" }), [[minimumHorizontal, minimumVertical], [maximumHorizontal, minimumVertical]]),
 		overall_height: dimension(overallHeight, exactMassSource({ projection_axis: "vertical" }), [[maximumHorizontal, minimumVertical], [maximumHorizontal, maximumVertical]]),
