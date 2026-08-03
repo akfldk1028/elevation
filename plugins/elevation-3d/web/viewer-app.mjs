@@ -97,6 +97,7 @@ function loadedProjectedBounds(root, axes) {
 	const point = new THREE.Vector3();
 	root.traverse((object) => {
 		if (!object.isMesh) return;
+		if (!object.geometry.getAttribute("normal")) object.geometry.computeVertexNormals();
 		const position = object.geometry.getAttribute("position");
 		if (!position) return;
 		for (let index = 0; index < position.count; index++) {
@@ -176,7 +177,16 @@ function competitionMaterials(root, palette) {
 			polygonOffsetUnits: polygonOffsetFactor,
 		}));
 		const ids = roles.map((role) => new THREE.MeshBasicMaterial({ color: roleColors[role], side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor, polygonOffsetUnits: polygonOffsetFactor }));
-		meshes.push({ object, originals, roles, fills, ids });
+		const normals = roles.map(() => new THREE.MeshNormalMaterial({ side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor, polygonOffsetUnits: polygonOffsetFactor }));
+		const depths = roles.map(() => new THREE.ShaderMaterial({
+			side: THREE.DoubleSide,
+			polygonOffset: true,
+			polygonOffsetFactor,
+			polygonOffsetUnits: polygonOffsetFactor,
+			vertexShader: `void main(){gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}`,
+			fragmentShader: `void main(){float d=gl_FragCoord.z;vec3 packed=fract(d*vec3(1.,255.,65025.));packed-=packed.yzz*vec3(1./255.,1./255.,0.);gl_FragColor=vec4(packed,1.);}`,
+		}));
+		meshes.push({ object, originals, roles, fills, ids, normals, depths });
 		object.material = Array.isArray(object.material) ? fills : fills[0];
 	});
 	return { meshes, counts };
@@ -190,16 +200,6 @@ function renderCompetition(root, view) {
 	const settings = config.competition_elevation;
 	const fitted = createCompetitionCamera(root, view, outputSize, settings.margin_ratio);
 	const semantic = competitionMaterials(root, settings.palette);
-	const exactBounds = settings.projected_bounds_m;
-	const span = fitted.manifest.frustum.right - fitted.manifest.frustum.left;
-	const centerH = fitted.manifest.center_m[0];
-	const centerV = fitted.manifest.center_m[1];
-	const clipUv = new THREE.Vector4(
-		0.5 + (exactBounds.min[0] - centerH) / span,
-		0.5 + (exactBounds.min[1] - centerV) / span,
-		0.5 + (exactBounds.max[0] - centerH) / span,
-		0.5 + (exactBounds.max[1] - centerV) / span,
-	);
 	const renderTarget = new THREE.WebGLRenderTarget(outputSize, outputSize, {
 		minFilter: THREE.LinearFilter,
 		magFilter: THREE.LinearFilter,
@@ -212,30 +212,26 @@ function renderCompetition(root, view) {
 	const postMaterial = new THREE.ShaderMaterial({
 		depthTest: false,
 		depthWrite: false,
-		uniforms: { tColor: { value: renderTarget.texture }, tDepth: { value: renderTarget.depthTexture }, texel: { value: new THREE.Vector2(1 / outputSize, 1 / outputSize) }, clipUv: { value: clipUv } },
+		uniforms: { tColor: { value: renderTarget.texture }, tDepth: { value: renderTarget.depthTexture }, texel: { value: new THREE.Vector2(1 / outputSize, 1 / outputSize) } },
 		vertexShader: `varying vec2 vUv; void main(){vUv=uv;gl_Position=vec4(position.xy,0.,1.);}`,
-		fragmentShader: `uniform sampler2D tColor; uniform sampler2D tDepth; uniform vec2 texel; uniform vec4 clipUv; varying vec2 vUv;
+		fragmentShader: `uniform sampler2D tColor; uniform sampler2D tDepth; uniform vec2 texel; varying vec2 vUv;
 			void main(){vec3 c=texture2D(tColor,vUv).rgb; float d=texture2D(tDepth,vUv).r;
-			if(vUv.x<clipUv.x||vUv.x>clipUv.z||vUv.y<clipUv.y||vUv.y>clipUv.w){gl_FragColor=vec4(texture2D(tColor,vec2(0.)).rgb,1.);return;}
 			float e=0.; e=max(e,abs(d-texture2D(tDepth,vUv+vec2(texel.x,0.)).r)); e=max(e,abs(d-texture2D(tDepth,vUv-vec2(texel.x,0.)).r));
 			e=max(e,abs(d-texture2D(tDepth,vUv+vec2(0.,texel.y)).r)); e=max(e,abs(d-texture2D(tDepth,vUv-vec2(0.,texel.y)).r));
 			float line=smoothstep(0.00500,0.02000,e); gl_FragColor=vec4(mix(c,vec3(0.16,0.15,0.14),line*0.72),1.);}`,
 	});
 	postScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), postMaterial));
-	const normalMaterial = new THREE.MeshNormalMaterial({ side: THREE.DoubleSide });
-	const depthMaterial = new THREE.MeshDepthMaterial({ side: THREE.DoubleSide, depthPacking: THREE.BasicDepthPacking });
-
 	function renderMode(mode) {
-		scene.overrideMaterial = null;
+		renderer.outputColorSpace = mode === "base" ? THREE.SRGBColorSpace : THREE.LinearSRGBColorSpace;
 		if (mode === "material-id") {
 			applyMaterials(semantic.meshes, "ids");
 			renderer.setRenderTarget(null); renderer.setClearColor(0x000000, 1); renderer.render(scene, fitted.camera);
 		} else if (mode === "normal") {
-			applyMaterials(semantic.meshes, "fills"); scene.overrideMaterial = normalMaterial;
-			renderer.setRenderTarget(null); renderer.setClearColor(0x000000, 1); renderer.render(scene, fitted.camera); scene.overrideMaterial = null;
+			applyMaterials(semantic.meshes, "normals");
+			renderer.setRenderTarget(null); renderer.setClearColor(0x000000, 1); renderer.render(scene, fitted.camera);
 		} else if (mode === "depth") {
-			applyMaterials(semantic.meshes, "fills"); scene.overrideMaterial = depthMaterial;
-			renderer.setRenderTarget(null); renderer.setClearColor(0xffffff, 1); renderer.render(scene, fitted.camera); scene.overrideMaterial = null;
+			applyMaterials(semantic.meshes, "depths");
+			renderer.setRenderTarget(null); renderer.setClearColor(0xffffff, 1); renderer.render(scene, fitted.camera);
 		} else {
 			applyMaterials(semantic.meshes, "fills"); renderer.setClearColor(settings.background, 1);
 			renderer.setRenderTarget(renderTarget); renderer.clear(); renderer.render(scene, fitted.camera);
@@ -252,11 +248,12 @@ function renderCompetition(root, view) {
 	const maxY = Math.round((outputSize + heightPx) / 2) - 1;
 	globalThis.__ELEVATION3D_ARTIFACT__ = {
 		camera: fitted.manifest,
+		depth_encoding: { type: "orthographic-linear-rgb24", near_m: fitted.camera.near, far_m: fitted.camera.far },
 		projected_bounds_m: { min: [fitted.bounds.minH, fitted.bounds.minV], max: [fitted.bounds.maxH, fitted.bounds.maxV] },
 		annotation_lanes: {
-			level: { min_x: maxX + 48, max_x: outputSize - 48 },
-			overall_height: { min_x: maxX + 72, max_x: outputSize - 48 },
-			overall_width: { min_y: maxY + 72, max_y: outputSize - 48 },
+			level: { min_x: maxX + 49, max_x: outputSize - 48 },
+			overall_height: { min_x: maxX + 73, max_x: outputSize - 48 },
+			overall_width: { min_y: maxY + 73, max_y: outputSize - 48 },
 		},
 		material_roles: Object.keys(semantic.counts),
 		role_pixel_counts: semantic.counts,
