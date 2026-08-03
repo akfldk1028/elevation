@@ -211,14 +211,16 @@ function indexArray(indices) {
 	return maximum <= 65535 ? new Uint16Array(flat) : new Uint32Array(flat);
 }
 
-function addPrimitive(document, buffer, mesh, name, geometry, material) {
+function addPrimitive(document, buffer, mesh, name, geometry, material, extras) {
 	const positions = document.createAccessor(`${name}-positions`, buffer)
 		.setType("VEC3")
 		.setArray(new Float32Array(geometry.positions.flat()));
 	const indices = document.createAccessor(`${name}-indices`, buffer)
 		.setType("SCALAR")
 		.setArray(indexArray(geometry.indices));
-	mesh.addPrimitive(document.createPrimitive().setAttribute("POSITION", positions).setIndices(indices).setMaterial(material));
+	const primitive = document.createPrimitive().setAttribute("POSITION", positions).setIndices(indices).setMaterial(material);
+	if (extras) primitive.setExtras(extras);
+	mesh.addPrimitive(primitive);
 }
 
 function geometryBounds(scene) {
@@ -246,9 +248,10 @@ export async function writeEnrichedGlb(scene, outputPath) {
 
 	if (scene.details.length) {
 		const detailMesh = document.createMesh("facade-details");
-		scene.details.forEach((detail, index) => addPrimitive(
-			document, buffer, detailMesh, `detail-${index}`, detail, materials[detail.material],
-		));
+		scene.details.forEach((detail, index) => {
+			const { positions, indices, ...extras } = detail;
+			addPrimitive(document, buffer, detailMesh, `detail-${index}`, detail, materials[detail.material], extras);
+		});
 		gltfScene.addChild(document.createNode("facade-details").setMesh(detailMesh));
 	}
 
