@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join, relative, resolve } from "node:path";
 import { promisify } from "node:util";
 import { afterEach, test } from "node:test";
 
@@ -37,6 +37,27 @@ function legacyCandidate(candidate: string, runDir: string) {
 
 async function jsonl(path: string, values: unknown[]) {
 	await writeFile(path, `${values.map(JSON.stringify).join("\n")}\n`);
+}
+
+async function snapshotFiles(root: string) {
+	const snapshot = new Map<string, Buffer>();
+	async function walk(directory: string) {
+		for (const entry of await readdir(directory, { withFileTypes: true })) {
+			const path = join(directory, entry.name);
+			if (entry.isDirectory()) await walk(path);
+			else snapshot.set(relative(root, path), await readFile(path));
+		}
+	}
+	await walk(root);
+	return snapshot;
+}
+
+async function assertRejectedWithoutWrites(root: string, memoryRoot: string) {
+	const before = await snapshotFiles(root);
+	await assert.rejects(() => execute(process.execPath, [script], {
+		env: { ...process.env, ELEVATION3D_MEMORY_ROOT: memoryRoot },
+	}));
+	assert.deepEqual(await snapshotFiles(root), before);
 }
 
 test("migration discovers candidates, repairs an interrupted mixed-state run, and reruns byte-identically", async () => {
@@ -125,4 +146,43 @@ test("migration rejects unsafe or mismatched discovered candidate file associati
 		}));
 		assert.deepEqual(await readFile(candidatePath), before);
 	}
+});
+
+test("migration rejects duplicate global run IDs without writing any file", async () => {
+	const root = await mkdtemp(join(tmpdir(), "elevation3d-memory-duplicate-global-"));
+	roots.push(root);
+	const memoryRoot = join(root, "memory", "elevation-3d");
+	await mkdir(join(memoryRoot, "runs"), { recursive: true });
+	await writeFile(join(root, "outside-sentinel"), "must remain unchanged\n");
+	await jsonl(join(memoryRoot, "unified-runs.jsonl"), [legacyGlobal("alpha"), legacyGlobal("alpha")]);
+
+	await assertRejectedWithoutWrites(root, memoryRoot);
+});
+
+test("migration rejects a run ID found in two candidate files without writing any file", async () => {
+	const root = await mkdtemp(join(tmpdir(), "elevation3d-memory-duplicate-candidates-"));
+	roots.push(root);
+	const memoryRoot = join(root, "memory", "elevation-3d");
+	const runsRoot = join(memoryRoot, "runs");
+	await mkdir(runsRoot, { recursive: true });
+	await writeFile(join(root, "outside-sentinel"), "must remain unchanged\n");
+	await jsonl(join(runsRoot, "alpha.jsonl"), [legacyCandidate("alpha", join(root, "alpha-results"))]);
+	await jsonl(join(runsRoot, "beta.jsonl"), [{
+		...legacyCandidate("beta", join(root, "beta-results")), run_id: "alpha-run",
+	}]);
+
+	await assertRejectedWithoutWrites(root, memoryRoot);
+});
+
+test("migration rejects a duplicate run ID within one candidate file without writing any file", async () => {
+	const root = await mkdtemp(join(tmpdir(), "elevation3d-memory-duplicate-candidate-row-"));
+	roots.push(root);
+	const memoryRoot = join(root, "memory", "elevation-3d");
+	const runsRoot = join(memoryRoot, "runs");
+	await mkdir(runsRoot, { recursive: true });
+	await writeFile(join(root, "outside-sentinel"), "must remain unchanged\n");
+	const duplicate = legacyCandidate("alpha", join(root, "alpha-results"));
+	await jsonl(join(runsRoot, "alpha.jsonl"), [duplicate, duplicate]);
+
+	await assertRejectedWithoutWrites(root, memoryRoot);
 });

@@ -28,6 +28,47 @@ function resolveDescendant(root, ...segments) {
 	return assertDescendant(root, resolve(root, ...segments), "migration path");
 }
 
+function captureValidationError(issues, validate) {
+	try { validate(); }
+	catch (error) { issues.push(error.message); }
+}
+
+function preflightAssociations(globals, candidateSources) {
+	const issues = [];
+	for (const [index, event] of globals.entries()) {
+		captureValidationError(issues, () => assertSafePathSegment(event.run_id, `global run_id at row ${index + 1}`));
+		captureValidationError(issues, () => assertSafePathSegment(event.candidate_id, `global candidate_id for ${event.run_id}`));
+		if (globals.slice(0, index).some((prior) => prior.run_id === event.run_id)) {
+			issues.push(`duplicate global run_id ${event.run_id}`);
+		}
+	}
+
+	for (const { stem } of candidateSources) {
+		captureValidationError(issues, () => assertSafePathSegment(stem, "candidate file stem"));
+	}
+	const candidateRows = candidateSources.flatMap(({ path, stem, events }) => events.map((event, index) => ({
+		path, stem, event, row: index + 1,
+	})));
+	for (const [index, record] of candidateRows.entries()) {
+		const { path, stem, event, row } = record;
+		captureValidationError(issues, () => assertSafePathSegment(event.run_id, `run_id at ${basename(path)}:${row}`));
+		captureValidationError(issues, () => assertSafePathSegment(event.candidate_id, `candidate_id in ${basename(path)}`));
+		if (event.candidate_id !== stem) issues.push(`candidate_id ${event.candidate_id} does not match candidate file stem ${stem}`);
+		if (candidateRows.slice(0, index).some((prior) => prior.event.run_id === event.run_id)) {
+			issues.push(`duplicate candidate run_id ${event.run_id}`);
+		}
+	}
+
+	for (const globalEvent of globals) {
+		for (const { event: candidateEvent } of candidateRows) {
+			if (globalEvent.run_id === candidateEvent.run_id && globalEvent.candidate_id !== candidateEvent.candidate_id) {
+				issues.push(`run ${globalEvent.run_id} has conflicting candidate_id values`);
+			}
+		}
+	}
+	if (issues.length) throw new Error(`Migration association preflight failed:\n- ${issues.join("\n- ")}`);
+}
+
 async function parseLines(path, optional = false) {
 	try {
 		const text = await readFile(path, "utf8");
@@ -138,24 +179,27 @@ function asCandidate(event, globalEvent, versions) {
 	return { ...source, schema_version: "arr.elevation3d.candidate-run-memory.v2", versions };
 }
 
-await mkdir(runsRoot, { recursive: true });
-const candidateFiles = (await readdir(runsRoot, { withFileTypes: true }))
-	.filter((entry) => entry.isFile() && entry.name.endsWith(".jsonl"))
-	.map((entry) => join(runsRoot, entry.name))
-	.sort();
+let candidateFiles = [];
+try {
+	candidateFiles = (await readdir(runsRoot, { withFileTypes: true }))
+		.filter((entry) => entry.isFile() && entry.name.endsWith(".jsonl"))
+		.map((entry) => join(runsRoot, entry.name))
+		.sort();
+} catch (error) {
+	if (error.code !== "ENOENT") throw error;
+}
 const globals = await parseLines(globalPath, true);
-for (const event of globals) assertSafePathSegment(event.candidate_id, `global candidate_id for ${event.run_id}`);
-const candidatesByFile = new Map();
+const candidateSources = [];
 for (const discoveredPath of candidateFiles) {
 	const path = assertDescendant(runsRoot, discoveredPath, "discovered candidate file");
-	const stem = assertSafePathSegment(basename(path, ".jsonl"), "candidate file stem");
+	const stem = basename(path, ".jsonl");
 	const events = await parseLines(path);
-	for (const event of events) {
-		const candidateId = assertSafePathSegment(event.candidate_id, `candidate_id in ${basename(path)}`);
-		if (candidateId !== stem) throw new Error(`candidate_id ${candidateId} does not match candidate file stem ${stem}`);
-	}
-	candidatesByFile.set(path, events);
+	candidateSources.push({ path, stem, events });
 }
+preflightAssociations(globals, candidateSources);
+
+await mkdir(runsRoot, { recursive: true });
+const candidatesByFile = new Map(candidateSources.map(({ path, events }) => [path, events]));
 const globalByRun = new Map(globals.map((event) => [event.run_id, event]));
 const candidateByRun = new Map([...candidatesByFile].flatMap(([path, events]) => events.map((event) => [event.run_id, { path, event }])));
 const runIds = [...new Set([...globalByRun.keys(), ...candidateByRun.keys()])];
