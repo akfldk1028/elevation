@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import sharp from "sharp";
-import { renderCompetitionAxons } from "../plugins/elevation-3d/lib/competition-axon.mjs";
+import { measureCompetitionAxonPixels, renderCompetitionAxons, validateCompetitionAxonManifest } from "../plugins/elevation-3d/lib/competition-axon.mjs";
 import { sha256 } from "../plugins/elevation-3d/lib/core.mjs";
 import { resolveMaterialPalette } from "../plugins/elevation-3d/lib/material-palettes.mjs";
 import { resolveElevation3dAssets } from "./helpers/elevation3d-assets.ts";
@@ -22,6 +22,31 @@ const cameras = {
 
 function dot(left: number[], right: number[]) {
 	return left.reduce((sum, value, index) => sum + value * right[index], 0);
+}
+
+const roleIds = { concrete: [255, 0, 0], glass: [0, 255, 0], bronze: [0, 0, 255], opaque: [255, 255, 0] };
+
+function syntheticPixels({ width = 100, height = 100, bounds = { min_x: 15, min_y: 15, max_x: 84, max_y: 84 }, colors = {} } = {}) {
+	const base = Buffer.alloc(width * height * 3, 250), materialId = Buffer.alloc(width * height * 3);
+	const roles = Object.keys(roleIds);
+	for (let y = bounds.min_y; y <= bounds.max_y; y++) for (let x = bounds.min_x; x <= bounds.max_x; x++) {
+		const role = roles[Math.min(roles.length - 1, Math.floor((x - bounds.min_x) / Math.max(1, bounds.max_x - bounds.min_x + 1) * roles.length))];
+		const offset = (y * width + x) * 3;
+		const rgb = colors[role] ?? [128, 128, 128];
+		for (let channel = 0; channel < 3; channel++) { base[offset + channel] = rgb[channel]; materialId[offset + channel] = roleIds[role][channel]; }
+	}
+	return { base, materialId, width, height };
+}
+
+function syntheticManifest(measured, width: number, height: number) {
+	return {
+		width, height,
+		camera: { type: "perspective", margin_ratio: 0.15 },
+		clipping: { clipped: false }, context: { intersects_building: false, authoritative: false },
+		material_roles: measured.material_roles,
+		material_color_separation: measured.material_color_separation,
+		building_content: measured.building_content,
+	};
 }
 
 test("renders opposing presentation cameras from one GLB", { timeout: 180_000 }, async () => {
@@ -44,7 +69,13 @@ test("renders opposing presentation cameras from one GLB", { timeout: 180_000 },
 		assert.equal(view.validation.accepted, true, `${name}: ${view.validation.codes.join(", ")}`);
 		assert.equal(view.camera.type, "perspective");
 		assert.ok(view.camera.fov_degrees >= 28 && view.camera.fov_degrees <= 36);
-		assert.ok(view.camera.margin_ratio >= 0.12 && view.camera.margin_ratio <= 0.18);
+		assert.equal(view.building_content.source, "material-id-role-union");
+		assert.equal(view.building_content.touches_frame, false);
+		assert.ok(Object.values(view.building_content.margin_ratios).every((margin) => margin >= 0.12));
+		assert.ok(view.building_content.relevant_margin_ratio <= 0.21);
+		assert.ok(view.building_content.maximum_margin_ratio <= 0.35);
+		assert.equal(Object.keys(view.manifest.material_color_separation.pairwise_distances).length, 6);
+		assert.ok(view.manifest.material_color_separation.minimum_pairwise_distance >= view.manifest.material_color_separation.threshold);
 		assert.equal(view.clipping.clipped, false);
 		assert.equal(view.context.intersects_building, false);
 		assert.equal(view.context.authoritative, false);
@@ -58,6 +89,7 @@ test("renders opposing presentation cameras from one GLB", { timeout: 180_000 },
 			assert.equal(record.opacity, palette.roles[role].opacity);
 			assert.equal(record.texture_intensity, palette.roles[role].texture_intensity);
 			assert.equal(record.normal_intensity, palette.roles[role].normal_intensity);
+			assert.equal(record.color_statistic, "10%-trimmed-mean-srgb8");
 			assert.ok(record.visible_pixels > 0, `${name} ${role} collapsed`);
 			assert.ok(record.mean_luminance > 20, `${name} ${role} rendered black`);
 			assert.ok(record.color_distance_to_black > 30, `${name} ${role} lost its PBR color`);
@@ -78,4 +110,23 @@ test("rejects paired camera bearings that are not sufficiently opposed", async (
 		cameras: { axon: cameras.axon, "opposite-axon": { ...cameras.axon, name: "opposite-axon" } },
 		candidateId: "creative-013",
 	}), /camera opposition must be below -0\.8/);
+});
+
+test("rejects nonblack material-role color collapse despite intact material IDs", () => {
+	const pixels = syntheticPixels();
+	const measured = measureCompetitionAxonPixels(pixels);
+	const report = validateCompetitionAxonManifest(syntheticManifest(measured, pixels.width, pixels.height));
+	assert.equal(measured.material_roles.concrete.mean_luminance, 128);
+	assert.ok(Object.values(measured.material_roles).every((role) => role.visible_pixels > 0));
+	assert.ok(report.codes.includes("MATERIAL_ROLE_COLLAPSE"));
+});
+
+test("rejects a tiny building fit from actual material-ID bounds", () => {
+	const pixels = syntheticPixels({
+		bounds: { min_x: 40, min_y: 40, max_x: 59, max_y: 59 },
+		colors: { concrete: [210, 200, 185], glass: [155, 185, 195], bronze: [90, 60, 40], opaque: [60, 65, 70] },
+	});
+	const measured = measureCompetitionAxonPixels(pixels);
+	const report = validateCompetitionAxonManifest(syntheticManifest(measured, pixels.width, pixels.height));
+	assert.ok(report.codes.includes("WHITE_SPACE_INVALID"));
 });

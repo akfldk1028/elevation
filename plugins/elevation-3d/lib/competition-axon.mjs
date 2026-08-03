@@ -10,6 +10,8 @@ import { buildViewerBundle } from "./viewer.mjs";
 const OUTPUT_SIZE = 2400;
 const VIEW_NAMES = ["axon", "opposite-axon"];
 const ROLE_NAMES = ["concrete", "glass", "bronze", "opaque"];
+const MIN_ROLE_COLOR_DISTANCE = 12;
+const BUILDING_MARGIN_LIMITS = { minimum: 0.12, relevant_maximum: 0.21, letterbox_maximum: 0.35 };
 
 function finiteVector(value) {
 	return Array.isArray(value) && value.length === 3 && value.every((item) => Number.isFinite(item));
@@ -76,37 +78,102 @@ function decodedImageMetrics(raw, width, height) {
 	};
 }
 
+function roleAt(materialId, offset) {
+	const [red, green, blue] = [materialId[offset], materialId[offset + 1], materialId[offset + 2]];
+	return red > 200 && green < 80 && blue < 80 ? "concrete"
+		: green > 200 && red < 80 && blue < 80 ? "glass"
+			: blue > 200 && red < 80 && green < 80 ? "bronze"
+				: red > 180 && green > 180 && blue < 80 ? "opaque" : null;
+}
+
+function trimmedChannelMean(histogram, count, trimRatio = 0.1) {
+	let lowTrim = Math.floor(count * trimRatio), highTrim = lowTrim, retained = 0, sum = 0;
+	for (let value = 0; value < histogram.length; value++) {
+		let occurrences = histogram[value];
+		const removed = Math.min(lowTrim, occurrences); lowTrim -= removed; occurrences -= removed;
+		if (occurrences > 0) { retained += occurrences; sum += occurrences * value; }
+	}
+	for (let value = histogram.length - 1; value >= 0 && highTrim > 0; value--) {
+		const removed = Math.min(highTrim, histogram[value]); highTrim -= removed; retained -= removed; sum -= removed * value;
+	}
+	return retained > 0 ? sum / retained : 0;
+}
+
 function rolePixelMetrics(base, materialId, width, height) {
-	const metrics = Object.fromEntries(ROLE_NAMES.map((role) => [role, { visible_pixels: 0, rgb_sum: [0, 0, 0] }]));
+	const metrics = Object.fromEntries(ROLE_NAMES.map((role) => [role, { visible_pixels: 0, histograms: Array.from({ length: 3 }, () => new Uint32Array(256)) }]));
 	for (let offset = 0; offset < width * height * 3; offset += 3) {
-		const [red, green, blue] = [materialId[offset], materialId[offset + 1], materialId[offset + 2]];
-		const role = red > 200 && green < 80 && blue < 80 ? "concrete"
-			: green > 200 && red < 80 && blue < 80 ? "glass"
-				: blue > 200 && red < 80 && green < 80 ? "bronze"
-					: red > 180 && green > 180 && blue < 80 ? "opaque" : null;
+		const role = roleAt(materialId, offset);
 		if (!role) continue;
 		metrics[role].visible_pixels++;
-		for (let channel = 0; channel < 3; channel++) metrics[role].rgb_sum[channel] += base[offset + channel];
+		for (let channel = 0; channel < 3; channel++) metrics[role].histograms[channel][base[offset + channel]]++;
 	}
 	return Object.fromEntries(ROLE_NAMES.map((role) => {
-		const record = metrics[role], divisor = Math.max(record.visible_pixels, 1);
-		const meanRgb = record.rgb_sum.map((value) => value / divisor);
+		const record = metrics[role];
+		const meanRgb = record.histograms.map((histogram) => trimmedChannelMean(histogram, record.visible_pixels));
 		return [role, {
-			visible_pixels: record.visible_pixels, mean_rgb: meanRgb,
+			visible_pixels: record.visible_pixels, color_statistic: "10%-trimmed-mean-srgb8", trimmed_mean_rgb: meanRgb, mean_rgb: meanRgb,
 			mean_luminance: 0.2126 * meanRgb[0] + 0.7152 * meanRgb[1] + 0.0722 * meanRgb[2],
 			color_distance_to_black: Math.hypot(...meanRgb),
 		}];
 	}));
 }
 
-function validateView(manifest) {
+function colorSeparation(materialRoles) {
+	const pairs = {};
+	for (let leftIndex = 0; leftIndex < ROLE_NAMES.length; leftIndex++) for (let rightIndex = leftIndex + 1; rightIndex < ROLE_NAMES.length; rightIndex++) {
+		const left = ROLE_NAMES[leftIndex], right = ROLE_NAMES[rightIndex];
+		pairs[`${left}__${right}`] = Math.hypot(...materialRoles[left].trimmed_mean_rgb.map((value, channel) => value - materialRoles[right].trimmed_mean_rgb[channel]));
+	}
+	return {
+		color_space: "srgb8-euclidean", statistic: "10%-trimmed-mean", threshold: MIN_ROLE_COLOR_DISTANCE,
+		pairwise_distances: pairs, minimum_pairwise_distance: Math.min(...Object.values(pairs)),
+	};
+}
+
+function buildingContentMetrics(materialId, width, height) {
+	let minX = width, minY = height, maxX = -1, maxY = -1, pixels = 0;
+	for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+		const offset = (y * width + x) * 3;
+		if (!roleAt(materialId, offset)) continue;
+		minX = Math.min(minX, x); minY = Math.min(minY, y); maxX = Math.max(maxX, x); maxY = Math.max(maxY, y); pixels++;
+	}
+	if (maxX < 0) throw new Error("competition axon material-ID contains no building pixels");
+	const marginPixels = { left: minX, right: width - 1 - maxX, top: minY, bottom: height - 1 - maxY };
+	const marginRatios = Object.fromEntries(Object.entries(marginPixels).map(([side, value]) => [side, value / (side === "left" || side === "right" ? width : height)]));
+	return {
+		source: "material-id-role-union", bounds_px: { min_x: minX, min_y: minY, max_x: maxX, max_y: maxY },
+		building_pixels: pixels, margin_pixels: marginPixels, margin_ratios: marginRatios,
+		relevant_margin_ratio: Math.min(...Object.values(marginRatios)), maximum_margin_ratio: Math.max(...Object.values(marginRatios)),
+		fit_tolerance: { ...BUILDING_MARGIN_LIMITS },
+		touches_frame: minX <= 0 || minY <= 0 || maxX >= width - 1 || maxY >= height - 1,
+	};
+}
+
+export function measureCompetitionAxonPixels({ base, materialId, width, height }) {
+	if (!(base instanceof Uint8Array) || !(materialId instanceof Uint8Array) || base.length !== width * height * 3 || materialId.length !== base.length) {
+		throw new Error("competition axon RGB pixel buffers invalid");
+	}
+	const materialRoles = rolePixelMetrics(base, materialId, width, height);
+	return {
+		material_roles: materialRoles,
+		material_color_separation: colorSeparation(materialRoles),
+		building_content: buildingContentMetrics(materialId, width, height),
+	};
+}
+
+export function validateCompetitionAxonManifest(manifest) {
 	const codes = [];
 	if (manifest.width !== OUTPUT_SIZE || manifest.height !== OUTPUT_SIZE) codes.push("OUTPUT_SIZE_INVALID");
 	if (manifest.camera.type !== "perspective") codes.push("CAMERA_PROJECTION_INVALID");
-	if (manifest.camera.margin_ratio < 0.12 || manifest.camera.margin_ratio > 0.18) codes.push("WHITE_SPACE_INVALID");
+	const margins = Object.values(manifest.building_content?.margin_ratios ?? {});
+	if (margins.length !== 4 || margins.some((value) => !Number.isFinite(value) || value < BUILDING_MARGIN_LIMITS.minimum)
+		|| manifest.building_content.relevant_margin_ratio > BUILDING_MARGIN_LIMITS.relevant_maximum
+		|| manifest.building_content.maximum_margin_ratio > BUILDING_MARGIN_LIMITS.letterbox_maximum
+		|| manifest.building_content.touches_frame) codes.push("WHITE_SPACE_INVALID");
 	if (manifest.clipping.clipped) codes.push("GLB_CLIPPED");
 	if (manifest.context.intersects_building || manifest.context.authoritative) codes.push("CONTEXT_INTERSECTION");
 	if (ROLE_NAMES.some((role) => !(manifest.material_roles[role]?.visible_pixels > 0))) codes.push("MATERIAL_ROLE_COLLAPSE");
+	if (!(manifest.material_color_separation?.minimum_pairwise_distance >= MIN_ROLE_COLOR_DISTANCE)) codes.push("MATERIAL_ROLE_COLLAPSE");
 	if (ROLE_NAMES.some((role) => manifest.material_roles[role]?.visible_pixels > 0 && manifest.material_roles[role].mean_luminance <= 20)) codes.push("PBR_COLOR_INVALID");
 	return { schema_version: "arr.elevation3d.competition-axon-validation.v1", accepted: codes.length === 0, codes };
 }
@@ -165,8 +232,8 @@ async function renderView({ runDir, glbPath, palette, cameras, candidateId, view
 		if (decoded.info.width !== OUTPUT_SIZE || decoded.info.height !== OUTPUT_SIZE) throw new Error("competition axon PNG size invalid");
 		const browserArtifact = await page.evaluate(() => globalThis.__ELEVATION3D_ARTIFACT__);
 		const imageMetrics = decodedImageMetrics(decoded.data, decoded.info.width, decoded.info.height);
-		const roleMetrics = rolePixelMetrics(decoded.data, decodedMaterial.data, decodedMaterial.info.width, decodedMaterial.info.height);
-		const materialRoles = Object.fromEntries(ROLE_NAMES.map((role) => [role, { ...palette.roles[role], geometry_vertices: browserArtifact.material_roles[role].geometry_vertices, ...roleMetrics[role] }]));
+		const pixelEvidence = measureCompetitionAxonPixels({ base: decoded.data, materialId: decodedMaterial.data, width: decodedMaterial.info.width, height: decodedMaterial.info.height });
+		const materialRoles = Object.fromEntries(ROLE_NAMES.map((role) => [role, { ...palette.roles[role], geometry_vertices: browserArtifact.material_roles[role].geometry_vertices, ...pixelEvidence.material_roles[role] }]));
 		const manifest = {
 			schema_version: "arr.elevation3d.competition-axon.v1", view, candidate_id: candidateId,
 			selected_glb: { path: resolve(glbPath), sha256: selectedGlbSha256 }, selected_glb_sha256: selectedGlbSha256,
@@ -174,17 +241,18 @@ async function renderView({ runDir, glbPath, palette, cameras, candidateId, view
 			width: decoded.info.width, height: decoded.info.height, camera: browserArtifact.camera,
 			loaded_bounds: browserArtifact.loaded_bounds, content_bounds_px: imageMetrics.content_bounds_px,
 			decoded_image_metrics: imageMetrics, clipping: browserArtifact.clipping, lights: browserArtifact.lights,
-			context: browserArtifact.context, material_roles: materialRoles,
+			context: browserArtifact.context, material_roles: materialRoles, material_color_separation: pixelEvidence.material_color_separation,
+			building_content: pixelEvidence.building_content,
 			diagnostics: { material_id: { path: materialPath, sha256: sha256(materialBytes) } },
 		};
-		const validation = validateView(manifest);
+		const validation = validateCompetitionAxonManifest(manifest);
 		const manifestPath = join(root, `${view}-manifest.json`), validationPath = join(root, `${view}-validation.json`);
 		await writeFile(manifestPath, JSON.stringify(manifest, null, 2));
 		await writeFile(validationPath, JSON.stringify(validation, null, 2));
 		return {
 			path, sha256: sha256(bytes), width: manifest.width, height: manifest.height,
 			selected_glb_sha256: selectedGlbSha256, camera: manifest.camera, loaded_bounds: manifest.loaded_bounds,
-			content_bounds_px: manifest.content_bounds_px, decoded_image_metrics: imageMetrics, clipping: manifest.clipping,
+			content_bounds_px: manifest.content_bounds_px, building_content: manifest.building_content, decoded_image_metrics: imageMetrics, clipping: manifest.clipping,
 			lights: manifest.lights, context: manifest.context, material_roles: materialRoles, diagnostics: manifest.diagnostics,
 			manifest, validation,
 			manifest_record: { path: manifestPath, sha256: sha256(await readFile(manifestPath)) },
