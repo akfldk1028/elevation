@@ -262,3 +262,24 @@ test("uses attached component triangles to cover a floor guide when facing trian
 	const scene = buildEnrichedScene({ mesh: recessedGround, floorGuides: guides, facadePlanes: planes, grammar, safeFallback: false });
 	assert.equal(scene.details.some((detail) => detail.kind === "floor-band" && detail.view === "front" && detail.elevation_m === 0), true);
 });
+
+test("clips every detail to the authored facade tangent and elevation rectangle", () => {
+	const wideTriangle = {
+		vertices: [[-10, -1, 0], [10, -1, 0], [-10, -1, 10]],
+		triangles: [[0, 1, 2]],
+	};
+	const planes = { facade_planes: [{ view: "front", origin: [-1, -1, 0], normal: [0, -1, 0], extent_m: [2, 3] }] };
+	const scene = buildEnrichedScene({
+		mesh: wideTriangle,
+		floorGuides: { floor_guides_m: [0, 1.5, 3] },
+		facadePlanes: planes,
+		grammar,
+		safeFallback: false,
+	});
+	assert.equal(scene.details.some((detail) => detail.kind === "floor-band"), true);
+	assert.equal(scene.details.some((detail) => detail.kind === "parapet"), true);
+	for (const detail of scene.details) for (const point of detail.positions) {
+		assert.equal(point[0] >= -1 - 1e-10 && point[0] <= 1 + 1e-10, true);
+		assert.equal(point[2] >= -1e-10 && point[2] <= 3 + 1e-10, true);
+	}
+});

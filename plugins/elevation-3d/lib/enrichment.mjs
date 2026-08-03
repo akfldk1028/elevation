@@ -98,6 +98,14 @@ function clipRange(polygon, scalar, minimum, maximum) {
 	return clipHalfSpace(clipHalfSpace(polygon, scalar, minimum, true), scalar, maximum, false);
 }
 
+function clipToFacadeRectangle(polygon, plane) {
+	const [width, height] = plane.extent_m;
+	const tangent = [-plane.normal[1], plane.normal[0], 0];
+	const tangentOffset = (point) => dot(subtract(point, plane.origin), tangent);
+	const elevation = (point) => point[2] - plane.origin[2];
+	return clipRange(clipRange(polygon, tangentOffset, 0, width), elevation, 0, height);
+}
+
 function polygonAreaMagnitude(polygon) {
 	if (polygon.length < 3) return 0;
 	let sum = [0, 0, 0];
@@ -185,6 +193,7 @@ function facadeDetails(mesh, floorGuides, facadePlanes, grammar) {
 		const tangent = [-plane.normal[1], plane.normal[0], 0];
 		const offset = (point) => dot(subtract(point, plane.origin), tangent);
 		const elevation = (point) => point[2] - plane.origin[2];
+		const facadePolygon = (triangle) => clipToFacadeRectangle(triangle.vertices, plane);
 		const bayCount = Math.max(1, Math.round(width / grammar.bay_width_m));
 		const spacing = width / bayCount;
 		const mullionWidth = Math.min(0.08, spacing);
@@ -197,11 +206,11 @@ function facadeDetails(mesh, floorGuides, facadePlanes, grammar) {
 				const maximum = Math.min(height, localElevation + 0.06);
 				let bandAdded = false;
 				for (const triangle of triangles) bandAdded = addClippedDetail(
-					details, triangle, plane, clipRange(triangle.vertices, elevation, minimum, maximum), frameDepth,
+					details, triangle, plane, clipRange(facadePolygon(triangle), elevation, minimum, maximum), frameDepth,
 					{ kind: "floor-band", elevation_m: authoredElevation, material: "concrete", component_id: component.id },
 				) || bandAdded;
 				if (!bandAdded) for (const triangle of extentTriangles(component, plane)) addClippedDetail(
-					details, triangle, plane, clipRange(triangle.vertices, elevation, minimum, maximum), frameDepth,
+					details, triangle, plane, clipRange(facadePolygon(triangle), elevation, minimum, maximum), frameDepth,
 					{ kind: "floor-band", elevation_m: authoredElevation, material: "concrete", component_id: component.id },
 				);
 			}
@@ -212,7 +221,7 @@ function facadeDetails(mesh, floorGuides, facadePlanes, grammar) {
 				const minimum = Math.max(0, nominalOffset - mullionWidth / 2);
 				const maximum = Math.min(width, nominalOffset + mullionWidth / 2);
 				for (const triangle of triangles) componentHasMullion = addClippedDetail(
-					details, triangle, plane, clipRange(triangle.vertices, offset, minimum, maximum), mullionDepth,
+					details, triangle, plane, clipRange(facadePolygon(triangle), offset, minimum, maximum), mullionDepth,
 					{ kind: "mullion", offset_m: nominalOffset, material: "bronze", component_id: component.id },
 				) || componentHasMullion;
 			}
@@ -221,7 +230,7 @@ function facadeDetails(mesh, floorGuides, facadePlanes, grammar) {
 				const localOffset = Math.max(0, Math.min(width, offset(triangle.center)));
 				addClippedDetail(
 					details, triangle, plane,
-					clipRange(triangle.vertices, offset, localOffset - mullionWidth / 2, localOffset + mullionWidth / 2),
+					clipRange(facadePolygon(triangle), offset, localOffset - mullionWidth / 2, localOffset + mullionWidth / 2),
 					mullionDepth,
 					{ kind: "mullion", offset_m: localOffset, material: "bronze", component_id: component.id },
 				);
@@ -238,7 +247,7 @@ function facadeDetails(mesh, floorGuides, facadePlanes, grammar) {
 					const bayMinimum = spacing * bay + mullionWidth / 2;
 					const bayMaximum = spacing * (bay + 1) - mullionWidth / 2;
 					for (const triangle of triangles) {
-						const bayPolygon = clipRange(triangle.vertices, offset, bayMinimum, bayMaximum);
+						const bayPolygon = clipRange(facadePolygon(triangle), offset, bayMinimum, bayMaximum);
 						addClippedDetail(details, triangle, plane, clipRange(bayPolygon, (point) => point[2], opaqueMinimum, opaqueMaximum), frameDepth, {
 							kind: "opaque-panel", floor_m: floorElevation, bay, material: "opaque", component_id: component.id,
 						});
@@ -251,7 +260,7 @@ function facadeDetails(mesh, floorGuides, facadePlanes, grammar) {
 
 			if (parapetHeight > 0) for (const triangle of triangles) addClippedDetail(
 				details, triangle, plane,
-				clipRange(triangle.vertices, elevation, Math.max(0, height - parapetHeight), height),
+				clipRange(facadePolygon(triangle), elevation, Math.max(0, height - parapetHeight), height),
 				frameDepth,
 				{ kind: "parapet", material: "concrete", component_id: component.id, parapet_height_m: parapetHeight },
 			);
