@@ -24,6 +24,7 @@
 
 - Research index: `memory/elevation-3d/README.md`
 - Goal: crop one existing isometric MASS render, reconstruct one actual 3D GLB from that single image, then derive all renders and drawings from the generated 3D object.
-- Current decision: Tripo `image_to_model` is the first experiment. Separate elevation generation, multi-view submission, and fixed-mesh texturing are not the primary workflow.
+- Current decision: Tripo `image_to_model` is a one-call concept-feasibility benchmark, not yet the production architecture. Reconstructing the current plain MASS render is lossy and redundant because the exact OBJ already exists.
+- The professor's shortcut is considered valid only when the single source image contains new architectural design information and approximate unseen geometry is acceptable.
 - The original OBJ, held-out views, and camera matrices validate the reconstructed model; they are not separate provider inputs.
 - Tripo credentials are configured locally, but the API balance was 0 credits at the last check and no paid generation has been submitted.

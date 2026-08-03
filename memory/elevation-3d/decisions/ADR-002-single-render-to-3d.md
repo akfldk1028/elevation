@@ -1,6 +1,6 @@
 # ADR-002: Reconstruct One 3D Object from One Existing Isometric Render
 
-Status: accepted, supersedes ADR-001 for the primary experiment
+Status: accepted only as a bounded feasibility experiment; not accepted as the production architecture
 
 Date: 2026-08-03
 
@@ -29,3 +29,9 @@ The isometric render already communicates the candidate as one coherent 3D objec
 - The output must preserve recognizable MASS identity across held-out views.
 - A four-panel contact sheet must not be submitted directly because it may be interpreted as multiple objects.
 - If the single-image result cannot recover hidden concavity or curvature, a later ADR may authorize a multi-view fallback.
+
+## Validity review
+
+The source dataset already contains an exact OBJ. Its current brown render contains no additional facade or geometric design information. Reconstructing that render cannot improve geometric truth and will generally discard scale, hidden surfaces, and topology.
+
+The experiment is still useful as a benchmark for the professor's shortcut, but a successful-looking GLB proves only concept-render suitability. It does not prove suitability for measured architectural drawings. The approach becomes materially useful only after the source image contains new architectural design information that is not already present in the OBJ.

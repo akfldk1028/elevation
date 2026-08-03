@@ -3,6 +3,9 @@
 ## Primary papers and projects
 
 - [3D Synthesis for Architectural Design, WACV 2025](https://openaccess.thecvf.com/content/WACV2025/html/Tsai_3D_Synthesis_for_Architectural_Design_WACV_2025_paper.html)
+- [TripoSR: Fast 3D Object Reconstruction from a Single Image](https://arxiv.org/abs/2403.02151)
+- [InstantMesh: Efficient 3D Mesh Generation from a Single Image](https://arxiv.org/abs/2404.07191)
+- [Shape-Pose Ambiguity in Learning 3D Reconstruction from Images](https://ojs.aaai.org/index.php/AAAI/article/view/16405)
 - [MVPainter: Accurate and Detailed 3D Texture Generation via Multi-View Diffusion with Geometric Control](https://arxiv.org/abs/2505.12635)
 - [MVPaint: Synchronized Multi-View Diffusion for Painting Anything 3D](https://github.com/3DTopia/MVPaint)
 - [Paint3D: Paint Anything 3D with Lighting-Less Texture Diffusion Models](https://github.com/OpenTexture/Paint3D)

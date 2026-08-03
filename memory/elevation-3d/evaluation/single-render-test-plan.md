@@ -1,5 +1,11 @@
 # Single Render to 3D Test Plan
 
+Status: bounded concept-feasibility benchmark. Passing this test does not authorize technical drawing use.
+
+## Hypothesis
+
+A single isometric render may be sufficient to generate a visually recognizable concept GLB faster than building facade views independently. It is not expected to reproduce measured hidden geometry.
+
 ## First candidate
 
 Use `creative-013`, matching the user-provided example. Its curved bridge form, separated lower block, and held-out top/front views make reconstruction errors easy to detect.
@@ -43,3 +49,10 @@ Use `creative-013`, matching the user-provided example. Its curved bridge form, 
 - no manual mesh remodeling is required for the proof of concept.
 
 Exact vertex count, face count, and topology identity are recorded but are not pass criteria.
+
+## Interpretation
+
+- Pass: the method may be used for concept visualization and presentation-view generation.
+- Near pass: test one detailed architectural render before rejecting the method.
+- Fail: do not add more seeds automatically; return to the exact source OBJ workflow.
+- Never infer: a visually convincing pass does not make dimensions, floor plates, elevations, or sections technically authoritative.
