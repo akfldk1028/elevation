@@ -17,3 +17,12 @@
 
 ## Files Created
 - `flappy_bird_webcam.html` (13.5KB) - Flappy Bird game with webcam integration
+
+## Active Research
+
+### Geometry-Locked Architectural 3D Texturing
+
+- Research index: `memory/elevation-3d/README.md`
+- Goal: texture an immutable architectural MASS from locked mesh and multi-view evidence, then derive renders and drawings from the textured 3D result.
+- Current decision: evaluate two web-deployable approaches before choosing an implementation.
+- No paid provider calls are authorized by this memory entry.
