@@ -399,3 +399,110 @@ export async function validateCompetitionElevation({ artifacts, sourceMesh, faca
 		},
 	};
 }
+
+function normalizedProjectedBounds(bounds) {
+	if (Array.isArray(bounds) && bounds.length === 2) return { min: bounds[0], max: bounds[1] };
+	return bounds;
+}
+
+function horizontalTopAxes(axes) {
+	const valid = (axis) => Array.isArray(axis) && axis.length === 3 && axis.every((value) => typeof value === "number" && Number.isFinite(value));
+	return valid(axes?.horizontal) && valid(axes?.vertical) && valid(axes?.depth)
+		&& Math.abs(Math.abs(axes.depth[2]) - 1) <= 0.001
+		&& Math.abs(axes.horizontal[2]) <= 0.001
+		&& Math.abs(axes.vertical[2]) <= 0.001
+		&& Math.abs(dot(axes.horizontal, axes.vertical)) <= 0.001
+		&& Math.abs(dot(axes.horizontal, axes.depth)) <= 0.001
+		&& Math.abs(dot(axes.vertical, axes.depth)) <= 0.001;
+}
+
+export async function validateCompetitionPlanTopArtifact({ artifact, sourceMesh, camera, selectedGlbPath, mode, cutElevationM }) {
+	const codes = [];
+	let rasterDiagnostics = null;
+	const manifest = artifact?.manifest;
+	const selectedBytes = await readFile(selectedGlbPath).catch(() => undefined);
+	const selectedHash = selectedBytes ? sha256(selectedBytes) : null;
+	add(codes, "PLAN_TOP_MODE_INVALID", !["plan", "top"].includes(mode) || manifest?.mode !== mode);
+	add(codes, "PLAN_TOP_PNG_INVALID", artifact?.width !== 2400 || artifact?.height !== 2400 || !await validRecord({ path: artifact?.path, sha256: artifact?.sha256 }));
+	if (artifact?.path) {
+		try {
+			const metadata = await sharp(artifact.path).metadata();
+			add(codes, "PLAN_TOP_PNG_INVALID", metadata.width !== 2400 || metadata.height !== 2400);
+		} catch { add(codes, "PLAN_TOP_PNG_INVALID", true); }
+	}
+	add(codes, "PLAN_TOP_SELECTED_GLB_INVALID", !selectedHash || manifest?.selected_glb?.sha256 !== selectedHash || manifest?.selected_glb?.path !== selectedGlbPath);
+	add(codes, "PLAN_TOP_GEOMETRY_MISMATCH", manifest?.geometry_hash !== sourceMesh?.identity?.geometry_hash);
+	add(codes, "PLAN_TOP_CAMERA_INVALID", manifest?.camera?.type !== "orthographic" || !horizontalTopAxes(manifest?.camera?.projection_axes)
+		|| !sameJson(manifest?.camera?.projection_axes, camera?.projection_axes));
+	const scaleX = manifest?.camera?.px_per_m_x, scaleY = manifest?.camera?.px_per_m_y;
+	add(codes, "PLAN_TOP_SCALE_INVALID", !Number.isFinite(scaleX) || !Number.isFinite(scaleY) || Math.abs(scaleX - scaleY) / Math.max(scaleX ?? 0, 1) > 0.0025);
+	const expectedBounds = normalizedProjectedBounds(camera?.projected_bounds_m);
+	add(codes, "PLAN_TOP_EXACT_MASS_OUTLINE_INVALID", !sameJson(manifest?.exact_mass_projected_bounds_m, expectedBounds));
+	const content = manifest?.content_bounds_px;
+	add(codes, "PLAN_TOP_OUTLINE_CLIPPED", !content || content.min_x < 0 || content.min_y < 0 || content.max_x >= 2400 || content.max_y >= 2400
+		|| content.min_x > 360 || content.max_x < 2039 || content.min_y > 720 || content.max_y < 1679);
+	if (mode === "plan") {
+		add(codes, "PLAN_CUT_PROVENANCE_INVALID", !Number.isFinite(cutElevationM) || manifest?.cut?.enabled !== true
+			|| manifest.cut.elevation_m !== cutElevationM || !sameJson(manifest.cut.plane_world, [0, 0, 1, -cutElevationM])
+			|| manifest?.cut_line?.segment_count <= 0 || manifest?.cut_line?.source !== "selected-glb-triangle-plane-intersections"
+			|| manifest?.overhead_context?.enabled !== true || manifest?.overhead_context?.source !== "selected-glb-uncut-projection");
+	} else add(codes, "TOP_UNCUT_PROVENANCE_INVALID", manifest?.cut?.enabled !== false || manifest?.cut?.elevation_m !== null
+		|| manifest?.cut?.plane_world !== null || manifest?.cut_line?.segment_count !== 0 || manifest?.overhead_context?.enabled !== false);
+	add(codes, "PLAN_TOP_LEVEL_ANNOTATION_LEAKAGE", manifest?.annotations?.enabled !== false || manifest?.annotations?.level_labels?.length !== 0);
+	for (const name of ["material_id", "depth", "normal"]) {
+		const record = artifact?.diagnostics?.[name];
+		add(codes, "PLAN_TOP_DIAGNOSTIC_INVALID", !await validRecord(record));
+		if (record?.path) {
+			try {
+				const metadata = await sharp(record.path).metadata();
+				add(codes, "PLAN_TOP_DIAGNOSTIC_INVALID", metadata.width !== 2400 || metadata.height !== 2400);
+			} catch { add(codes, "PLAN_TOP_DIAGNOSTIC_INVALID", true); }
+		}
+	}
+	if (artifact?.path && artifact?.diagnostics?.material_id?.path && artifact?.diagnostics?.depth?.path && artifact?.diagnostics?.normal?.path) {
+		try {
+			const [baseImage, materialImage, depthImage, normalImage] = await Promise.all([
+				decodedRgb(artifact.path), decodedRgb(artifact.diagnostics.material_id.path), decodedRgb(artifact.diagnostics.depth.path), decodedRgb(artifact.diagnostics.normal.path),
+			]);
+			const measured = rasterMetrics(baseImage.data, baseImage.info.width, baseImage.info.height);
+			const seams = persistedSeamMetrics(baseImage.data, materialImage.data, depthImage.data, normalImage.data,
+				baseImage.info.width, baseImage.info.height, measured.bounds, manifest.camera.frustum.near, manifest.camera.frustum.far);
+			rasterDiagnostics = {
+				total_edge_density: measured.total_edge_density,
+				strong_edge_density: measured.strong_edge_density,
+				same_material_seam_fraction: seams.fraction,
+				seam_segments: { connected_at_least_12px: seams.connected_at_least_12px },
+			};
+			add(codes, "PLAN_TOP_LINE_DENSITY_EXCEEDED", measured.total_edge_density > 0.035 || measured.strong_edge_density > 0.015);
+			add(codes, "TRIANGULATION_VISIBLE", seams.fraction > 0.001 || seams.connected_at_least_12px > 0);
+		} catch { add(codes, "PLAN_TOP_DIAGNOSTIC_INVALID", true); }
+	}
+	add(codes, "PLAN_TOP_MANIFEST_INVALID", !await validRecord(artifact?.manifest_record));
+	return {
+		schema_version: "arr.elevation3d.plan-top-validation.v1",
+		accepted: codes.length === 0,
+		codes,
+		metrics: { content_bounds_px: content ?? null, selected_glb_sha256: selectedHash, equal_scale: scaleX === scaleY, ...rasterDiagnostics },
+	};
+}
+
+export async function validateCompetitionPlanTopPair({ plan, top, sourceMesh, camera, selectedGlbPath }) {
+	const codes = [];
+	const selectedBytes = await readFile(selectedGlbPath).catch(() => undefined);
+	const selectedHash = selectedBytes ? sha256(selectedBytes) : null;
+	add(codes, "PLAN_TOP_SELECTED_GLB_INVALID", !selectedHash || plan?.manifest?.selected_glb?.sha256 !== selectedHash || top?.manifest?.selected_glb?.sha256 !== selectedHash);
+	add(codes, "PLAN_TOP_GEOMETRY_MISMATCH", plan?.manifest?.geometry_hash !== sourceMesh?.identity?.geometry_hash || top?.manifest?.geometry_hash !== sourceMesh?.identity?.geometry_hash);
+	add(codes, "PLAN_TOP_CAMERA_INVALID", !horizontalTopAxes(plan?.manifest?.camera?.projection_axes) || !horizontalTopAxes(top?.manifest?.camera?.projection_axes)
+		|| !sameJson(plan?.manifest?.camera?.projection_axes, camera?.projection_axes) || !sameJson(top?.manifest?.camera?.projection_axes, camera?.projection_axes));
+	add(codes, "PLAN_TOP_SCALE_INVALID", plan?.manifest?.camera?.px_per_m_x !== plan?.manifest?.camera?.px_per_m_y
+		|| top?.manifest?.camera?.px_per_m_x !== top?.manifest?.camera?.px_per_m_y
+		|| plan?.manifest?.camera?.px_per_m_x !== top?.manifest?.camera?.px_per_m_x);
+	add(codes, "PLAN_CUT_PROVENANCE_INVALID", plan?.manifest?.mode !== "plan" || plan?.manifest?.cut?.enabled !== true || plan?.manifest?.cut?.elevation_m == null);
+	add(codes, "TOP_UNCUT_PROVENANCE_INVALID", top?.manifest?.mode !== "top" || top?.manifest?.cut?.enabled !== false || top?.manifest?.cut?.elevation_m !== null || top?.manifest?.cut?.plane_world !== null);
+	add(codes, "PLAN_TOP_PIXELS_IDENTICAL", plan?.sha256 === top?.sha256);
+	add(codes, "PLAN_TOP_LEVEL_ANNOTATION_LEAKAGE", [plan, top].some((artifact) => artifact?.manifest?.annotations?.enabled !== false || artifact?.manifest?.annotations?.level_labels?.length !== 0));
+	add(codes, "PLAN_TOP_EXACT_MASS_OUTLINE_INVALID", !sameJson(plan?.manifest?.exact_mass_projected_bounds_m, normalizedProjectedBounds(camera?.projected_bounds_m))
+		|| !sameJson(top?.manifest?.exact_mass_projected_bounds_m, normalizedProjectedBounds(camera?.projected_bounds_m)));
+	add(codes, "PLAN_TOP_PNG_INVALID", [plan, top].some((artifact) => artifact?.width !== 2400 || artifact?.height !== 2400));
+	return { schema_version: "arr.elevation3d.plan-top-pair-validation.v1", accepted: codes.length === 0, codes };
+}
