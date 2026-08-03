@@ -15,6 +15,11 @@
 
 ## Provider documentation
 
+- [Tripo image-to-model API](https://platform.tripo3d.ai/docs/generation)
+- [Tripo upload API](https://platform.tripo3d.ai/docs/upload)
+- [Tripo task and result API](https://platform.tripo3d.ai/docs/task)
+- [Tripo billing](https://platform.tripo3d.ai/docs/billing)
+
 - [Tencent Hunyuan3D SubmitTextureTo3DJob](https://cloud.tencent.com/document/api/1804/126292)
 - [Tencent Hunyuan3D billing](https://cloud.tencent.com/document/product/1804/123461)
 - [Tencent Hunyuan3D product overview](https://cloud.tencent.com/document/product/1804/120696)

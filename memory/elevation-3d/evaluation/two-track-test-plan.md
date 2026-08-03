@@ -1,5 +1,7 @@
 # Two-Track Test Plan
 
+Status: superseded by `single-render-test-plan.md` and ADR-002. Retained only as research history.
+
 ## Candidate
 
 Start with `creative-004` because its asymmetric enclosure makes directional errors visible. Do not batch all three candidates.
