@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { NodeIO } from "@gltf-transform/core";
+import sharp from "sharp";
 import { sha256 } from "../plugins/elevation-3d/lib/core.mjs";
 import { buildEnrichedScene, writeEnrichedGlb } from "../plugins/elevation-3d/lib/enrichment.mjs";
 import { validateEnrichment } from "../plugins/elevation-3d/lib/enrichment-validation.mjs";
@@ -31,7 +32,7 @@ const floorGuides = { floor_guides_m: [0, 3] };
 const facadePlanes = { facade_planes: [{ view: "front", origin: [-2, -1, 0], normal: [0, -1, 0], extent_m: [4, 3] }] };
 const drawingNames = ["plan", "front", "back", "left", "right", "top", "axon"];
 
-function png(width = 2, height = 3) {
+function pngStub(width = 2, height = 3) {
 	const bytes = Buffer.alloc(24);
 	Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).copy(bytes);
 	bytes.writeUInt32BE(13, 8);
@@ -41,20 +42,25 @@ function png(width = 2, height = 3) {
 	return bytes;
 }
 
-async function fixture({ fallback = false, mesh = sourceMesh } = {}) {
+async function validPng(width = 2, height = 3) {
+	return sharp({ create: { width, height, channels: 4, background: { r: 40, g: 80, b: 120, alpha: 1 } } }).png().toBuffer();
+}
+
+async function fixture({ fallback = false, mesh = sourceMesh, sceneGrammar = grammar, guides = floorGuides, planes = facadePlanes } = {}) {
 	const root = await mkdtemp(join(tmpdir(), "elevation3d-validation-"));
 	temporaryRoots.push(root);
 	const artifact = await writeEnrichedGlb(buildEnrichedScene({
-		mesh, floorGuides, facadePlanes, grammar, safeFallback: fallback,
+		mesh, floorGuides: guides, facadePlanes: planes, grammar: sceneGrammar, safeFallback: fallback,
 	}), join(root, fallback ? "exact-mass.glb" : "enriched.glb"));
 	await mkdir(join(root, "viewer"), { recursive: true });
 	await mkdir(join(root, "drawings", "hunyuan"), { recursive: true });
 	const configPath = join(root, "viewer", "config.json");
 	await writeFile(configPath, JSON.stringify({ strategies: { hunyuan: { glb: `../${fallback ? "exact-mass.glb" : "enriched.glb"}` } } }));
 	const drawings: Record<string, string> = {};
+	const drawingBytes = await validPng();
 	for (const name of drawingNames) {
 		drawings[name] = join(root, "drawings", "hunyuan", `${name}.png`);
-		await writeFile(drawings[name], png());
+		await writeFile(drawings[name], drawingBytes);
 	}
 	await writeProvenance(root, artifact.path, drawings, configPath);
 	return { root, artifact, drawings, configPath };
@@ -167,10 +173,82 @@ test("rejects invalid drawings and missing or mismatched provenance", async () =
 	const missing = await validateEnrichment({ sourceMesh, artifact: f.artifact, grammar, requiredDrawings: f.drawings, safeFallback: true });
 	assert.ok(missing.codes.includes("DRAWING_INVALID"));
 	assert.ok(missing.codes.includes("DRAWING_PROVENANCE_MISSING"));
-	await writeFile(f.drawings.front, png());
+	await writeFile(f.drawings.front, await validPng());
 	await writeProvenance(f.root, f.artifact.path, f.drawings, f.configPath, { selected_glb: { path: f.artifact.path, sha256: "f".repeat(64) } });
 	const mismatch = await validateEnrichment({ sourceMesh, artifact: f.artifact, grammar, requiredDrawings: f.drawings, safeFallback: true });
 	assert.ok(mismatch.codes.includes("DRAWING_PROVENANCE_MISMATCH"));
+});
+
+test("rejects a PNG with only a valid signature and IHDR stub", async () => {
+	const f = await fixture({ fallback: true });
+	await writeFile(f.drawings.front, pngStub());
+	await writeProvenance(f.root, f.artifact.path, f.drawings, f.configPath);
+	const report = await validateEnrichment({ sourceMesh, artifact: f.artifact, grammar, requiredDrawings: f.drawings, safeFallback: true });
+	assert.ok(report.codes.includes("DRAWING_INVALID"));
+	assert.equal(report.accepted, false);
+});
+
+test("rejects configured and provenance GLB paths that are not the artifact file", async () => {
+	const f = await fixture({ fallback: true });
+	const otherGlb = join(f.root, "other.glb");
+	await writeFile(otherGlb, "plain text masquerading as selected geometry");
+	await writeFile(f.configPath, JSON.stringify({ strategies: { hunyuan: { glb: "../other.glb" } } }));
+	await writeProvenance(f.root, f.artifact.path, f.drawings, f.configPath, {
+		selected_glb: { path: otherGlb, sha256: f.artifact.sha256 },
+	});
+	const report = await validateEnrichment({ sourceMesh, artifact: f.artifact, grammar, requiredDrawings: f.drawings, safeFallback: true });
+	assert.ok(report.codes.includes("DRAWING_PROVENANCE_MISMATCH"));
+	assert.equal(report.accepted, false);
+});
+
+test("rejects floor-band vertices moved away from their declared elevation", async () => {
+	const f = await fixture();
+	const io = new NodeIO();
+	const document = await io.read(f.artifact.path);
+	const primitive = document.getRoot().listNodes().find((node) => node.getName() === "facade-details")!.getMesh()!.listPrimitives()
+		.find((item) => item.getExtras().kind === "floor-band" && item.getExtras().elevation_m === 0)!;
+	const positions = primitive.getAttribute("POSITION")!;
+	for (let index = 0; index < positions.getCount(); index++) {
+		const point = positions.getElement(index, [0, 0, 0]);
+		point[2] += 0.1;
+		positions.setElement(index, point);
+	}
+	await io.write(f.artifact.path, document);
+	await refreshArtifact(f);
+	const report = await validateEnrichment({ sourceMesh, artifact: f.artifact, grammar, requiredDrawings: f.drawings });
+	assert.ok(report.codes.includes("FLOOR_GUIDE_COVERAGE_MISSING"));
+	assert.equal(report.accepted, false);
+});
+
+test("rejects one detail primitive bridging two detached source components", async () => {
+	const disconnected = {
+		vertices: [
+			[-4,-1,0],[-2,-1,0],[-2,1,0],[-4,1,0],[-4,-1,3],[-2,-1,3],[-2,1,3],[-4,1,3],
+			[2,-1,0],[4,-1,0],[4,1,0],[2,1,0],[2,-1,3],[4,-1,3],[4,1,3],[2,1,3],
+		],
+		triangles: [
+			[0,2,1],[0,3,2],[4,5,6],[4,6,7],[0,1,5],[0,5,4],[1,2,6],[1,6,5],[2,3,7],[2,7,6],[3,0,4],[3,4,7],
+			[8,10,9],[8,11,10],[12,13,14],[12,14,15],[8,9,13],[8,13,12],[9,10,14],[9,14,13],[10,11,15],[10,15,14],[11,8,12],[11,12,15],
+		],
+	};
+	const disconnectedGrammar = { ...grammar, facade_lengths_m: { front: 8 } };
+	const planes = { facade_planes: [{ view: "front", origin: [-4, -1, 0], normal: [0, -1, 0], extent_m: [8, 3] }] };
+	const f = await fixture({ mesh: disconnected, sceneGrammar: disconnectedGrammar, planes });
+	const io = new NodeIO();
+	const document = await io.read(f.artifact.path);
+	const primitive = document.getRoot().listNodes().find((node) => node.getName() === "facade-details")!.getMesh()!.listPrimitives()
+		.find((item) => item.getExtras().kind === "floor-band" && item.getExtras().elevation_m === 0)!;
+	const positions = primitive.getAttribute("POSITION")!;
+	for (let index = 0; index < positions.getCount(); index++) {
+		const point = positions.getElement(index, [0, 0, 0]);
+		if (point[0] > -3) point[0] = 4;
+		positions.setElement(index, point);
+	}
+	await io.write(f.artifact.path, document);
+	await refreshArtifact(f);
+	const report = await validateEnrichment({ sourceMesh: disconnected, artifact: f.artifact, grammar: disconnectedGrammar, requiredDrawings: f.drawings });
+	assert.ok(report.codes.includes("DETAIL_COMPONENT_BRIDGE"));
+	assert.equal(report.accepted, false);
 });
 
 test("renders provenance binding seven real drawings to one GLB and viewer config", async () => {
