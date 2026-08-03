@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
@@ -110,7 +110,12 @@ function acceptedDeps(sourceMesh: Awaited<ReturnType<typeof fixture>>["mesh"]) {
 		render: async ({ runDir }: { runDir: string }) => Object.fromEntries(
 			["plan", "front", "back", "left", "right", "top", "axon"].map((name) => [name, join(runDir, `${name}.png`)]),
 		),
-		validate: async () => ({ accepted: true, codes: [], metrics: {}, artifacts: {} }),
+		validate: async ({ artifact, requiredDrawings }: any) => ({
+			accepted: true,
+			codes: [],
+			metrics: {},
+			artifacts: { glb: artifact.path, drawings: requiredDrawings },
+		}),
 	};
 }
 
@@ -139,10 +144,15 @@ function validationDeps(
 		render: async ({ runDir }: { runDir: string }) => Object.fromEntries(
 			["plan", "front", "back", "left", "right", "top", "axon"].map((name) => [name, join(runDir, `${name}.png`)]),
 		),
-		validate: async ({ versionId }: { versionId: string }) => {
+		validate: async ({ versionId, artifact, requiredDrawings }: any) => {
 			validateCalls.push(versionId);
 			const codes = failures[versionId] ?? [];
-			return { accepted: codes.length === 0, codes, metrics: { version_id: versionId }, artifacts: {} };
+			return {
+				accepted: codes.length === 0,
+				codes,
+				metrics: { version_id: versionId },
+				artifacts: { glb: artifact.path, drawings: requiredDrawings },
+			};
 		},
 	};
 }
@@ -167,12 +177,13 @@ test("selects v001 when enrichment and all gates pass", async () => {
 	assert.equal(result.fallback, false);
 	assert.equal((await readJson(join(result.run_dir, "final.json"))).selected, "v001");
 	assert.equal((await readJson(join(result.run_dir, "versions", "v001", "version.json"))).status, "passed");
-	assert.deepEqual(await readJson(join(result.run_dir, "versions", "v001", "validation.json")), {
-		accepted: true,
-		codes: [],
-		metrics: {},
-		artifacts: {},
-	});
+	const persistedValidation = await readJson(join(result.run_dir, "versions", "v001", "validation.json"));
+	assert.equal(persistedValidation.accepted, true);
+	assert.deepEqual(persistedValidation.codes, []);
+	assert.match(persistedValidation.artifacts.glb, /versions[\\/]v001[\\/]enriched\.glb$/);
+	assert.deepEqual(Object.keys(persistedValidation.artifacts.drawings).sort(), [
+		"axon", "back", "front", "left", "plan", "right", "top",
+	]);
 });
 
 test("applies exactly one bounded correction and selects v002", async () => {
@@ -354,4 +365,24 @@ test("blocks an untrusted approved-image hash without attempting or falling back
 	);
 	assert.deepEqual(deps.enrichCalls, []);
 	await assert.rejects(() => readFile(join(input.root, "memory", "elevation-3d", "unified-runs.jsonl")), /ENOENT/);
+});
+
+test("rejects unsafe agent identifiers before dataset access or output writes", async () => {
+	const root = await mkdtemp(join(tmpdir(), "elevation3d-unsafe-agent-id-"));
+	temporaryRoots.push(root);
+	const outputRoot = join(root, "output");
+	for (const identifiers of [
+		{ candidateId: "../outside", runId: "safe-run" },
+		{ candidateId: "creative-013", runId: "../outside" },
+	]) {
+		await assert.rejects(
+			() => runElevation3d({
+				...identifiers,
+				datasetRoot: join(root, "missing-dataset"),
+				outputRoot,
+			}),
+			/safe path segment/i,
+		);
+	}
+	await assert.rejects(() => access(outputRoot), /ENOENT/);
 });

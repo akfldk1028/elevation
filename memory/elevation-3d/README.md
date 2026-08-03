@@ -55,4 +55,4 @@ For reusable appearance generation and future material/facade variants, also rea
 - Drawings: all seven outputs are under `D:/Data/50_ELE/elevation-3d-e2e-results/creative-013/task6-e2e-20260803-001/versions/v001/drawings/hunyuan` (`plan`, `front`, `back`, `left`, `right`, `top`, `axon`).
 - Final/report: `D:/Data/50_ELE/elevation-3d-e2e-results/creative-013/task6-e2e-20260803-001/final.json` and `D:/Data/50_ELE/elevation-3d-e2e-results/creative-013/task6-e2e-20260803-001/versions/v001/validation.json`.
 - Provider impact: zero provider calls. The autonomous path is local-only, so no paid-provider balance query or mutation was performed.
-- Durable event: `runs/creative-013.jsonl` contains the single redacted outcome, including metrics, empty failure codes, correction state, fallback state, and exact artifact locations.
+- Durable event: `runs/creative-013.jsonl` contains the single redacted outcome, including metrics, empty failure codes, correction state, fallback state, and exact artifact locations. Its `run_dir` is an explicit portable absolute base; selected GLB, validation report, and all seven drawing paths are stable paths relative to that base.
