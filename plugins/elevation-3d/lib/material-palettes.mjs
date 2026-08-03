@@ -2,6 +2,8 @@ import { sha256, stableJson } from "./core.mjs";
 
 const SCHEMA_VERSION = "arr.elevation3d.material-palette.v1";
 const ROLE_NAMES = ["concrete", "glass", "bronze", "opaque"];
+const ROLE_FIELDS = ["elevation_fill", "axon_pbr", "opacity", "roughness", "metalness", "line_contrast", "texture_intensity", "normal_intensity"];
+const UNIT_INTERVAL_FIELDS = ["roughness", "metalness", "line_contrast", "texture_intensity", "normal_intensity"];
 
 function deepFreeze(value) {
 	if (!value || typeof value !== "object" || Object.isFrozen(value)) return value;
@@ -34,7 +36,20 @@ const PRESETS = deepFreeze({
 function resolveRequest(presetOrOverrides) {
 	if (typeof presetOrOverrides === "string") return { preset: presetOrOverrides, roles: {} };
 	if (!presetOrOverrides || typeof presetOrOverrides !== "object") throw new Error("material palette preset invalid");
-	return { preset: presetOrOverrides.preset, roles: presetOrOverrides.roles ?? {} };
+	const roles = presetOrOverrides.roles ?? {};
+	if (!roles || typeof roles !== "object" || Array.isArray(roles)) throw new Error("material parameter invalid: roles");
+	return { preset: presetOrOverrides.preset, roles };
+}
+
+function validateRoleParameters(roleName, role) {
+	if (!role || typeof role !== "object" || Array.isArray(role)) throw new Error(`material parameter invalid: ${roleName}`);
+	if (Object.keys(role).some((field) => !ROLE_FIELDS.includes(field))) throw new Error(`material parameter invalid: ${roleName}`);
+	for (const field of ["elevation_fill", "axon_pbr"]) {
+		if (typeof role[field] !== "string" || !/^#[0-9a-f]{6}$/i.test(role[field])) throw new Error(`material parameter invalid: ${roleName}.${field}`);
+	}
+	for (const field of UNIT_INTERVAL_FIELDS) {
+		if (!Number.isFinite(role[field]) || role[field] < 0 || role[field] > 1) throw new Error(`material parameter invalid: ${roleName}.${field}`);
+	}
 }
 
 function validateVisibility(roles) {
@@ -51,13 +66,16 @@ export function resolveMaterialPalette(presetOrOverrides) {
 	const request = resolveRequest(presetOrOverrides);
 	const preset = PRESETS[request.preset];
 	if (!preset) throw new Error(`material palette preset invalid: ${request.preset}`);
-	for (const roleName of Object.keys(request.roles)) {
+	for (const [roleName, override] of Object.entries(request.roles)) {
 		if (!ROLE_NAMES.includes(roleName)) throw new Error(`material role invalid: ${roleName}`);
+		if (!override || typeof override !== "object" || Array.isArray(override)) throw new Error(`material parameter invalid: ${roleName}`);
+		if (Object.keys(override).some((field) => !ROLE_FIELDS.includes(field))) throw new Error(`material parameter invalid: ${roleName}`);
 	}
 	const roles = Object.fromEntries(ROLE_NAMES.map((roleName) => [
 		roleName,
 		{ ...preset[roleName], ...(request.roles[roleName] ?? {}) },
 	]));
+	for (const roleName of ROLE_NAMES) validateRoleParameters(roleName, roles[roleName]);
 	validateVisibility(roles);
 	const resolved = { schema_version: SCHEMA_VERSION, preset: request.preset, roles };
 	return deepFreeze({ ...resolved, sha256: sha256(stableJson(resolved)) });
