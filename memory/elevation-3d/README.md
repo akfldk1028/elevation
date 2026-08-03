@@ -28,12 +28,17 @@ Tripo image-to-model plus source registration remains the API fallback. The curr
 7. `research/single-image-validity-review-2026-08-03.md`
 8. `sources/bibliography.md`
 
+For reusable appearance generation and future material/facade variants, also read `approaches/approach-e-silhouette-locked-render-variants.md`.
+
 ## Status
 
 - Current architecture correction: MASS-conditioned reconstruction recorded on 2026-08-03.
 - SPAR3D weights: not downloaded; gated Hugging Face access is required.
 - Official Stability SPAR3D API: fast image-only baseline (4 credits), but it cannot receive the source MASS point cloud.
 - MASS-conditioned SPAR3D remains web-deployable through a persistent self-hosted GPU API; avoid scale-to-zero cold starts.
+- Live API test: succeeded on `creative-013` in 6.741 seconds and returned a 530,672-byte GLB; see `evaluation/stability-spar3d-live-test-2026-08-03.md`.
+- Detailed-render stage: first photorealistic concrete/glass isometric variant generated and selected for the next SPAR3D comparison.
+- Detailed hosted-SPAR3D result: near-camera axonometric appearance passed, but held-out plan/elevation geometry failed; see `evaluation/detailed-render-spar3d-test-2026-08-03.md`.
 - Tripo credential: configured in ignored local `.env`.
 - Tripo API balance at last check: 0 credits.
 - Paid generation calls: none submitted.
