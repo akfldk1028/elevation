@@ -1,6 +1,6 @@
 # ADR-002: Reconstruct One 3D Object from One Existing Isometric Render
 
-Status: accepted only as a bounded feasibility experiment; not accepted as the production architecture
+Status: superseded by ADR-003; retained as the image-only Tripo fallback
 
 Date: 2026-08-03
 

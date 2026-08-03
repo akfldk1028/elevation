@@ -17,6 +17,6 @@
 - `Generating Daylight-driven Architectural Design via Diffusion Models` uses massing sections and daylight-derived guides to place facade openings.
 - `MeSS` uses an existing city mesh as a geometric prior and adds cross-view consistency and exposure alignment.
 
-## Design consequence
+## Revised design consequence
 
-The provider should receive explicit geometric evidence, but geometry generation itself stays out of scope. Floor guides should become control overlays or validation evidence, not permission to invent extra storeys.
+The generator should receive explicit geometric evidence. SPAR3D makes a bounded geometry-generation experiment reasonable because it can accept the source MASS as a point-cloud condition together with one image. The exact OBJ still remains the dimensional reference, and floor guides remain constraints or validation evidence rather than permission to invent extra storeys.

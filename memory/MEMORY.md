@@ -24,7 +24,8 @@
 
 - Research index: `memory/elevation-3d/README.md`
 - Goal: crop one existing isometric MASS render, reconstruct one actual 3D GLB from that single image, then derive all renders and drawings from the generated 3D object.
-- Current decision: Tripo `image_to_model` is a one-call concept-feasibility benchmark, not yet the production architecture. Reconstructing the current plain MASS render is lossy and redundant because the exact OBJ already exists.
-- The professor's shortcut is considered valid only when the single source image contains new architectural design information and approximate unseen geometry is acceptable.
-- The original OBJ, held-out views, and camera matrices validate the reconstructed model; they are not separate provider inputs.
+- Current decision: the primary test is local SPAR3D using one detailed isometric plus a 512-point surface cloud sampled from the exact MASS. This constrains generation with the source geometry, then restores exact global dimensions.
+- Tripo `image_to_model` followed by rigid/scale registration and optional source-anchored deformation is the API fallback.
+- The professor's shortcut is viable for concept and presentation output. Overall dimensions can be restored exactly, but local curves, voids, floor positions, and openings still require landmark validation or appearance transfer back to the exact MASS.
+- The original OBJ supplies the SPAR3D point-cloud condition and remains the authoritative dimensional reference. Held-out views and camera matrices validate the generated model.
 - Tripo credentials are configured locally, but the API balance was 0 credits at the last check and no paid generation has been submitted.

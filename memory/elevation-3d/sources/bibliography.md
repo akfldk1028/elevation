@@ -2,6 +2,10 @@
 
 ## Primary papers and projects
 
+- [SPAR3D: Stable Point-Aware Reconstruction of 3D Objects from Single Images](https://arxiv.org/abs/2501.04689)
+- [SPAR3D official project](https://spar3d.github.io/)
+- [SPAR3D official implementation](https://github.com/Stability-AI/stable-point-aware-3d)
+- [SPAR3D model card and weights](https://huggingface.co/stabilityai/stable-point-aware-3d)
 - [3D Synthesis for Architectural Design, WACV 2025](https://openaccess.thecvf.com/content/WACV2025/html/Tsai_3D_Synthesis_for_Architectural_Design_WACV_2025_paper.html)
 - [TripoSR: Fast 3D Object Reconstruction from a Single Image](https://arxiv.org/abs/2403.02151)
 - [InstantMesh: Efficient 3D Mesh Generation from a Single Image](https://arxiv.org/abs/2404.07191)
@@ -15,6 +19,9 @@
 - [MeSS: City Mesh-Guided Outdoor Scene Generation with Cross-View Consistent Diffusion](https://arxiv.org/abs/2508.15169)
 - [Pro-DG: Procedural Diffusion Guidance for Architectural Facade Generation](https://arxiv.org/abs/2504.01571)
 - [Generating Daylight-driven Architectural Design via Diffusion Models](https://zrealli.github.io/DDADesign/)
+- [WorldMesh: Mesh as a Scaffold for World Generation](https://arxiv.org/abs/2603.22972)
+- [As-Rigid-As-Possible Surface Modeling](https://diglib.eg.org/items/e0b21a71-350e-41e7-a586-3bfa526ed21c/full)
+- [Deformation Transfer for Triangle Meshes](https://groups.csail.mit.edu/graphics/pubs/sumner-2004-dtt.pdf)
 
 ## Provider documentation
 

@@ -8,7 +8,7 @@ Is it reasonable to crop the isometric panel from `render.png`, generate one 3D 
 
 ## Finding
 
-It is reasonable as a fast concept-visualization experiment. It is not reasonable as the sole source for accurate architectural drawings when an exact source OBJ already exists.
+It is reasonable as a fast concept-visualization experiment. It becomes substantially more defensible when the exact source MASS is supplied as a point-cloud condition rather than used only for post-hoc comparison.
 
 ## Evidence from the local candidate
 
@@ -19,6 +19,12 @@ The current brown render also contains no facade design or material information 
 ## Provider mismatch
 
 Tripo `image_to_model` accepts one image and generic model-generation controls. Its documented request does not accept this dataset's camera matrices, geometry program, or source OBJ as simultaneous constraints. Known camera pose can align a result but cannot resolve geometry hidden by a single view.
+
+## Better local match: SPAR3D
+
+SPAR3D's official implementation accepts an external point cloud together with one conditioning image. When supplied, the point cloud bypasses the model's point-cloud diffusion stage and conditions mesh generation along with image features. Sampling this cloud from the exact MASS carries known coarse geometry into the reconstruction instead of relying only on single-view inference.
+
+This does not make the output automatically dimensionally authoritative. The implementation uses 512 points, has a perspective-camera assumption in its high-level image path, and is not architecture-specific. It does, however, directly support the intended one-render-to-one-3D workflow better than image-only Tripo.
 
 ## Architectural evidence
 
@@ -43,4 +49,4 @@ Single-image reconstruction research likewise treats unseen surfaces as learned 
 
 ## Recommended interpretation
 
-Keep the single-image Tripo call as a cheap benchmark, not as the accepted architecture. For the current plain MASS data, the exact OBJ should remain the source of geometry and drawings. If a later image-generation stage creates one detailed architectural isometric render, repeat the single-image-to-3D benchmark and compare whether the added visual information justifies the geometric uncertainty.
+Use a detailed architectural isometric plus a source-MASS point cloud as the primary local experiment. Keep Tripo plus registration as the API fallback. Global dimensions may be restored after generation, but local geometry must pass landmark and silhouette gates; if it does not, transfer appearance/detail onto the exact MASS and derive technical geometry from the source.
