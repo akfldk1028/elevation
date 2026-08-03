@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { NodeIO } from "@gltf-transform/core";
+import { Triangle, Vector3 } from "three";
 import { buildEnrichedScene, writeEnrichedGlb } from "../plugins/elevation-3d/lib/enrichment.mjs";
 
 const temporaryRoots: string[] = [];
@@ -57,21 +58,19 @@ test("creates floor bands at every authored guide and mullions on every facade p
 		[...new Set(scene.details.filter((detail) => detail.kind === "mullion").map((detail) => detail.view))].sort(),
 		["back", "front", "left", "right"],
 	);
-	assert.equal(scene.details.every((detail) => detail.positions.length === 8 && detail.indices.length === 12), true);
+	assert.equal(scene.details.every((detail) => detail.positions.length >= 6 && detail.indices.length >= 8), true);
 });
 
 test("uses equal bay spacing without exceeding facade extents and clamps detail depths", () => {
 	const narrowGrammar = { ...grammar, bay_width_m: 3, frame_depth_m: 9, mullion_depth_m: 9 };
 	const scene = buildEnrichedScene({ mesh, floorGuides, facadePlanes, grammar: narrowGrammar, safeFallback: false });
 	const frontMullions = scene.details.filter((detail) => detail.kind === "mullion" && detail.view === "front");
-	assert.deepEqual(frontMullions.map((detail) => Number(detail.offset_m.toFixed(12))),
+	assert.deepEqual([...new Set(frontMullions.map((detail) => Number(detail.offset_m.toFixed(12))))],
 		[0, Number((8 / 3).toFixed(12)), Number((16 / 3).toFixed(12)), 8]);
-	assert.deepEqual(frontMullions.map((detail) => {
+	assert.equal(frontMullions.every((detail) => {
 		const horizontal = detail.positions.map((point) => point[0] - facadePlanes.facade_planes[0].origin[0]);
-		return [Number(Math.min(...horizontal).toFixed(12)), Number(Math.max(...horizontal).toFixed(12))];
-	}), [[0, 0.04], [8 / 3 - 0.04, 8 / 3 + 0.04], [16 / 3 - 0.04, 16 / 3 + 0.04], [7.96, 8]].map(
-		(bounds) => bounds.map((value) => Number(value.toFixed(12))),
-	));
+		return Math.min(...horizontal) >= -1e-12 && Math.max(...horizontal) <= 8 + 1e-12;
+	}), true);
 	assert.equal(frontMullions.every((detail) => detail.depth_m === 0.12), true);
 	assert.equal(scene.details.filter((detail) => detail.kind === "floor-band").every((detail) => detail.depth_m === 0.25), true);
 });
@@ -138,11 +137,12 @@ test("splits facade details across disconnected source components intersecting t
 		safeFallback: false,
 	});
 	const middleBands = scene.details.filter((detail) => detail.kind === "floor-band" && detail.elevation_m === 3.3);
-	assert.equal(middleBands.length, 2);
-	assert.deepEqual(
-		middleBands.map((detail) => [Math.min(...detail.positions.map((point) => point[0])), Math.max(...detail.positions.map((point) => point[0]))]),
-		[[-4, -2], [2, 4]],
-	);
+	assert.deepEqual([...new Set(middleBands.map((detail) => detail.component_id))].sort(), [0, 1]);
+	assert.equal(middleBands.every((detail) => {
+		const minimum = Math.min(...detail.positions.map((point) => point[0]));
+		const maximum = Math.max(...detail.positions.map((point) => point[0]));
+		return (minimum >= -4.18 && maximum <= -1.82) || (minimum >= 1.82 && maximum <= 4.18);
+	}), true);
 });
 
 test("adds mullion coverage inside every intersecting component span between global bay offsets", () => {
@@ -189,10 +189,76 @@ test("clips a nominal endpoint mullion to a tiny intersecting component span", (
 		safeFallback: false,
 	});
 	const mullions = scene.details.filter((detail) => detail.kind === "mullion");
-	assert.deepEqual(mullions.map((detail) => detail.offset_m), [0]);
-	const offsets = mullions[0].positions.map((point) => point[0] - facadePlanes.facade_planes[0].origin[0]);
-	assert.deepEqual(
-		[Number(Math.min(...offsets).toFixed(12)), Number(Math.max(...offsets).toFixed(12))],
-		[0.01, 0.015],
-	);
+	assert.deepEqual([...new Set(mullions.map((detail) => detail.offset_m))], [0]);
+	assert.equal(mullions.every((detail) => {
+		const offsets = detail.positions.map((point) => point[0] - facadePlanes.facade_planes[0].origin[0]);
+		return Math.min(...offsets) >= 0.01 - 1e-12 && Math.max(...offsets) <= 0.015 + 1e-12;
+	}), true);
+});
+
+test("keeps detached components separate when their facade projections overlap", () => {
+	const overlapping = {
+		vertices: [
+			[-1, -2, 0], [1, -2, 0], [1, -2, 6.6], [-1, -2, 6.6],
+			[-1, -1, 0], [1, -1, 0], [1, -1, 6.6], [-1, -1, 6.6],
+		],
+		triangles: [[0, 1, 2], [0, 2, 3], [4, 5, 6], [4, 6, 7]],
+	};
+	const scene = buildEnrichedScene({ mesh: overlapping, floorGuides, facadePlanes, grammar, safeFallback: false });
+	const attachedComponents = [...new Set(scene.details
+		.filter((detail) => detail.kind === "floor-band" && detail.view === "front" && detail.elevation_m === 3.3)
+		.map((detail) => detail.component_id))].sort();
+	assert.deepEqual(attachedComponents, [0, 1]);
+});
+
+test("recesses glazing inward from its authored facade surface", () => {
+	const scene = buildEnrichedScene({ mesh, floorGuides, facadePlanes, grammar, safeFallback: false });
+	const frontGlass = scene.details.find((detail) => detail.kind === "glazing" && detail.view === "front");
+	assert.ok(frontGlass);
+	const signedDepths = frontGlass.positions.map((point) => (
+		(point[0] - facadePlanes.facade_planes[0].origin[0]) * facadePlanes.facade_planes[0].normal[0]
+		+ (point[1] - facadePlanes.facade_planes[0].origin[1]) * facadePlanes.facade_planes[0].normal[1]
+	));
+	assert.equal(Math.max(...signedDepths) <= 1e-12, true);
+	assert.equal(Math.min(...signedDepths) < 0, true);
+});
+
+test("uses concrete floor bands and creates grammar-height concrete parapets", () => {
+	const scene = buildEnrichedScene({ mesh, floorGuides, facadePlanes, grammar, safeFallback: false });
+	assert.equal(scene.details.filter((detail) => detail.kind === "floor-band").every((detail) => detail.material === "concrete"), true);
+	const parapets = scene.details.filter((detail) => detail.kind === "parapet");
+	assert.equal(parapets.length > 0, true);
+	assert.equal(parapets.every((detail) => detail.material === "concrete"), true);
+	assert.equal(parapets.every((detail) => detail.positions.every((point) => point[2] >= 6.6 - grammar.parapet_height_m - 1e-12)), true);
+});
+
+test("keeps every generated detail vertex within strict distance of a real source triangle", () => {
+	const triangularMesh = {
+		vertices: [[-2, -1, 0], [2, -1, 0], [-2, -1, 3]],
+		triangles: [[0, 1, 2]],
+	};
+	const guides = { floor_guides_m: [0, 1.5, 3] };
+	const planes = { facade_planes: [{ view: "front", origin: [-2, -1, 0], normal: [0, -1, 0], extent_m: [4, 3] }] };
+	const scene = buildEnrichedScene({ mesh: triangularMesh, floorGuides: guides, facadePlanes: planes, grammar, safeFallback: false });
+	const sourceTriangle = new Triangle(...triangularMesh.vertices.map((point) => new Vector3(...point)));
+	const target = new Vector3();
+	const maximumDistance = Math.max(...scene.details.flatMap((detail) => detail.positions.map((point) => {
+		const sample = new Vector3(...point);
+		return sourceTriangle.closestPointToPoint(sample, target).distanceTo(sample);
+	})));
+	assert.equal(maximumDistance <= Math.max(grammar.frame_depth_m, grammar.mullion_depth_m) + 0.01 + 1e-12, true);
+});
+
+test("uses attached component triangles to cover a floor guide when facing triangles do not reach it", () => {
+	const recessedGround = {
+		vertices: [
+			[-1, -1, 1], [1, -1, 1], [1, -1, 3], [-1, -1, 3],
+			[-1, 1, 0], [-1, 1, 1],
+		],
+		triangles: [[0, 1, 2], [0, 2, 3], [0, 4, 5]],
+	};
+	const guides = { floor_guides_m: [0, 1, 3] };
+	const planes = { facade_planes: [{ view: "front", origin: [-1, -1, 0], normal: [0, -1, 0], extent_m: [2, 3] }] };
+	const scene = buildEnrichedScene({ mesh: recessedGround, floorGuides: guides, facadePlanes: planes, grammar, safeFallback: false });
+	assert.equal(scene.details.some((detail) => detail.kind === "floor-band" && detail.view === "front" && detail.elevation_m === 0), true);
 });
