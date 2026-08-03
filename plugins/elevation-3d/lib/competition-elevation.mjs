@@ -68,25 +68,92 @@ function edgeMetrics(raw, width, height) {
 	return { total_edge_density: edges / samples, strong_edge_density: strong / samples };
 }
 
-function sameMaterialSeamFraction(base, materialId, width, height, bounds) {
-	let candidates = 0;
-	const contentArea = (bounds.max_x - bounds.min_x + 1) * (bounds.max_y - bounds.min_y + 1);
+function decodeDepthMetres(raw, offset, near, far) {
+	const normalized = raw[offset] / 255 + raw[offset + 1] / (255 ** 2) + raw[offset + 2] / (255 ** 3);
+	return near + normalized * (far - near);
+}
+
+function decodeNormal(raw, offset) {
+	const vector = [raw[offset] / 255 * 2 - 1, raw[offset + 1] / 255 * 2 - 1, raw[offset + 2] / 255 * 2 - 1];
+	const length = Math.hypot(...vector);
+	return length > 0 ? vector.map((value) => value / length) : [0, 0, 0];
+}
+
+function diagnosticMetrics({ base, materialId, depth, normal, width, height, bounds, near, far }) {
+	const isBackground = (offset) => materialId[offset] === 0 && materialId[offset + 1] === 0 && materialId[offset + 2] === 0;
+	const sameId = (left, right) => materialId[left] === materialId[right] && materialId[left + 1] === materialId[right + 1] && materialId[left + 2] === materialId[right + 2];
 	const luminance = (offset) => 0.2126 * base[offset] + 0.7152 * base[offset + 1] + 0.0722 * base[offset + 2];
-	for (let y = bounds.min_y + 1; y < bounds.max_y; y++) {
-		for (let x = bounds.min_x + 1; x < bounds.max_x; x++) {
-			const offset = (y * width + x) * 3;
-			const id = [materialId[offset], materialId[offset + 1], materialId[offset + 2]];
-			if (id.every((value) => value === 0)) continue;
-			const neighborOffsets = [-width - 1, -width, -width + 1, -1, 1, width - 1, width, width + 1].map((delta) => offset + delta * 3);
-			if (neighborOffsets.some((neighbor) => id.some((value, channel) => materialId[neighbor + channel] !== value))) continue;
-			const at = (dx, dy) => luminance(offset + (dy * width + dx) * 3);
-			const gx = -at(-1, -1) + at(1, -1) - 2 * at(-1, 0) + 2 * at(1, 0) - at(-1, 1) + at(1, 1);
-			const gy = -at(-1, -1) - 2 * at(0, -1) - at(1, -1) + at(-1, 1) + 2 * at(0, 1) + at(1, 1);
-			const ax = Math.abs(gx), ay = Math.abs(gy);
-			if (Math.hypot(gx, gy) > 80 && Math.min(ax, ay) / Math.max(ax, ay) >= 0.3) candidates++;
+	const safeFromBoundary = (x, y, offset) => {
+		for (let dy = -6; dy <= 6; dy++) for (let dx = -6; dx <= 6; dx++) {
+			if (!sameId(offset, ((y + dy) * width + x + dx) * 3)) return false;
 		}
+		return true;
+	};
+	const candidates = new Uint8Array(width * height);
+	let candidateCount = 0;
+	let minDepth = Infinity, maxDepth = -Infinity, depthCount = 0, normalCount = 0;
+	const normalSum = [0, 0, 0], normalSquareSum = [0, 0, 0];
+	for (let y = bounds.min_y; y <= bounds.max_y; y++) for (let x = bounds.min_x; x <= bounds.max_x; x++) {
+		const offset = (y * width + x) * 3;
+		if (isBackground(offset)) continue;
+		const decodedNormal = decodeNormal(normal, offset);
+		for (let channel = 0; channel < 3; channel++) {
+			normalSum[channel] += decodedNormal[channel];
+			normalSquareSum[channel] += decodedNormal[channel] ** 2;
+		}
+		normalCount++;
+		const interior = x >= bounds.min_x + 7 && x <= bounds.max_x - 7 && y >= bounds.min_y + 7 && y <= bounds.max_y - 7 && safeFromBoundary(x, y, offset);
+		if (!interior) continue;
+		const depthM = decodeDepthMetres(depth, offset, near, far);
+		minDepth = Math.min(minDepth, depthM); maxDepth = Math.max(maxDepth, depthM); depthCount++;
+		const at = (dx, dy) => luminance(offset + (dy * width + dx) * 3);
+		const gx = -at(-1, -1) + at(1, -1) - 2 * at(-1, 0) + 2 * at(1, 0) - at(-1, 1) + at(1, 1);
+		const gy = -at(-1, -1) - 2 * at(0, -1) - at(1, -1) + at(-1, 1) + 2 * at(0, 1) + at(1, 1);
+		if (Math.hypot(gx, gy) <= 80) continue;
+		const stepX = Math.abs(gx) >= Math.abs(gy) ? 2 : 0;
+		const stepY = Math.abs(gy) >= Math.abs(gx) ? 2 : 0;
+		const left = ((y - stepY) * width + x - stepX) * 3;
+		const right = ((y + stepY) * width + x + stepX) * 3;
+		if (!sameId(left, right)) continue;
+		const depthDelta = Math.abs(decodeDepthMetres(depth, left, near, far) - decodeDepthMetres(depth, right, near, far));
+		if (depthDelta >= 0.0005) continue;
+		const leftNormal = decodeNormal(normal, left), rightNormal = decodeNormal(normal, right);
+		const normalDot = leftNormal.reduce((sum, value, channel) => sum + value * rightNormal[channel], 0);
+		if (normalDot < Math.cos(2 * Math.PI / 180)) continue;
+		candidates[y * width + x] = 1;
+		candidateCount++;
 	}
-	return candidates / contentArea;
+	const visited = new Uint8Array(candidates.length);
+	const segmentCounts = { connected_at_least_12px: 0, short: 0, axial: 0, diagonal: 0 };
+	for (let y = bounds.min_y; y <= bounds.max_y; y++) for (let x = bounds.min_x; x <= bounds.max_x; x++) {
+		const start = y * width + x;
+		if (!candidates[start] || visited[start]) continue;
+		const stack = [start]; visited[start] = 1;
+		let size = 0, minX = x, maxX = x, minY = y, maxY = y;
+		while (stack.length) {
+			const index = stack.pop(), currentX = index % width, currentY = Math.floor(index / width);
+			size++; minX = Math.min(minX, currentX); maxX = Math.max(maxX, currentX); minY = Math.min(minY, currentY); maxY = Math.max(maxY, currentY);
+			for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+				const next = (currentY + dy) * width + currentX + dx;
+				if ((dx || dy) && candidates[next] && !visited[next]) { visited[next] = 1; stack.push(next); }
+			}
+		}
+		if (size >= 12) segmentCounts.connected_at_least_12px++;
+		else segmentCounts.short++;
+		const segmentWidth = maxX - minX + 1, segmentHeight = maxY - minY + 1;
+		if (segmentWidth >= segmentHeight * 3 || segmentHeight >= segmentWidth * 3) segmentCounts.axial++;
+		else segmentCounts.diagonal++;
+	}
+	const contentArea = (bounds.max_x - bounds.min_x + 1) * (bounds.max_y - bounds.min_y + 1);
+	return {
+		seamFraction: candidateCount / contentArea,
+		segmentCounts,
+		depth: { encoding: "orthographic-linear-rgb24", min_m: minDepth, max_m: maxDepth, valid_pixels: depthCount, quantization_m: (far - near) / (255 ** 3) },
+		normal: {
+			non_background_pixels: normalCount,
+			channel_variance: normalSum.map((sum, channel) => normalSquareSum[channel] / normalCount - (sum / normalCount) ** 2),
+		},
+	};
 }
 
 function materialRolePixelCounts(raw, width, height) {
@@ -215,8 +282,8 @@ export async function renderCompetitionElevationBase({
 		};
 		const bytes = await writeBrowserPng(page, "base", path);
 		const materialIdBytes = await writeBrowserPng(page, "material-id", diagnosticPaths.material_id);
-		await writeBrowserPng(page, "depth", diagnosticPaths.depth);
-		await writeBrowserPng(page, "normal", diagnosticPaths.normal);
+		const depthBytes = await writeBrowserPng(page, "depth", diagnosticPaths.depth);
+		const normalBytes = await writeBrowserPng(page, "normal", diagnosticPaths.normal);
 		signal?.throwIfAborted();
 		const browserArtifact = await page.evaluate(() => globalThis.__ELEVATION3D_ARTIFACT__);
 		const decoded = await sharp(bytes).removeAlpha().raw().toBuffer({ resolveWithObject: true });
@@ -224,7 +291,19 @@ export async function renderCompetitionElevationBase({
 		const measured = contentBounds(decoded.data, decoded.info.width, decoded.info.height);
 		const edges = edgeMetrics(decoded.data, decoded.info.width, decoded.info.height);
 		const materialId = await sharp(materialIdBytes).removeAlpha().raw().toBuffer({ resolveWithObject: true });
-		const sameMaterialSeams = sameMaterialSeamFraction(decoded.data, materialId.data, decoded.info.width, decoded.info.height, measured.bounds);
+		const depth = await sharp(depthBytes).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+		const normal = await sharp(normalBytes).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+		const diagnostic = diagnosticMetrics({
+			base: decoded.data,
+			materialId: materialId.data,
+			depth: depth.data,
+			normal: normal.data,
+			width: decoded.info.width,
+			height: decoded.info.height,
+			bounds: measured.bounds,
+			near: browserArtifact.depth_encoding.near_m,
+			far: browserArtifact.depth_encoding.far_m,
+		});
 		const rolePixelCounts = materialRolePixelCounts(materialId.data, materialId.info.width, materialId.info.height);
 		const artifact = {
 			schema_version: "arr.elevation3d.base-elevation-artifact.v1",
@@ -234,6 +313,11 @@ export async function renderCompetitionElevationBase({
 			height: decoded.info.height,
 			camera: browserArtifact.camera,
 			projected_bounds_m: browserArtifact.projected_bounds_m,
+			exact_mass_projected_bounds_m: {
+				min: dimensions.projected_bounds_m.min,
+				max: dimensions.projected_bounds_m.max,
+			},
+			clipping: { applied: false },
 			content_bounds_px: measured.bounds,
 			annotation_lanes: browserArtifact.annotation_lanes,
 			palette_sha256: palette.sha256,
@@ -246,8 +330,11 @@ export async function renderCompetitionElevationBase({
 				background_fraction: 1 - measured.foregroundFraction,
 				dark_pixel_fraction: measured.darkFraction,
 				...edges,
-				same_material_seam_fraction: sameMaterialSeams,
-				seam_diagnostics_source: "base+material-id-pixel-scan",
+				same_material_seam_fraction: diagnostic.seamFraction,
+				seam_diagnostics_source: "base+material-id+metric-depth+view-normal",
+				seam_segments: diagnostic.segmentCounts,
+				depth: diagnostic.depth,
+				normal: diagnostic.normal,
 				role_pixel_counts: rolePixelCounts,
 				palette_delta_e00: paletteContrasts(palette),
 			},

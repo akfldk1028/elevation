@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { after, test } from "node:test";
 import sharp from "sharp";
 import { renderCompetitionElevationBase } from "../plugins/elevation-3d/lib/competition-elevation.mjs";
@@ -9,8 +9,9 @@ import { sha256 } from "../plugins/elevation-3d/lib/core.mjs";
 import { deriveElevationDimensions } from "../plugins/elevation-3d/lib/elevation-dimensions.mjs";
 import { resolveMaterialPalette } from "../plugins/elevation-3d/lib/material-palettes.mjs";
 
-const datasetMassRoot = "D:/Data/50_ELE/MAAS_ELEVATION_TEST_SET_20260730/candidates/creative-013/mass";
-const selectedGlbPath = "D:/Data/50_ELE/elevation-3d-e2e-results/creative-013/final-fix-b-round1-20260803-190000/versions/v001/enriched.glb";
+const workspaceRoot = resolve("..", "..", "..");
+const datasetMassRoot = join(process.env.ELEVATION3D_DATASET_ROOT ?? join(workspaceRoot, "MAAS_ELEVATION_TEST_SET_20260730"), "candidates", "creative-013", "mass");
+const selectedGlbPath = process.env.ELEVATION3D_SELECTED_GLB ?? join(workspaceRoot, "elevation-3d-e2e-results", "creative-013", "final-fix-b-round1-20260803-190000", "versions", "v001", "enriched.glb");
 const temporaryRoots: string[] = [];
 
 after(async () => Promise.all(temporaryRoots.map((root) => rm(root, { recursive: true, force: true }))));
@@ -57,7 +58,16 @@ test("renders the real creative-013 front with one orthographic pixel scale and 
 	assert.ok(artifact.content_bounds_px.max_x >= 2159 && artifact.content_bounds_px.max_x <= 2207);
 	const pixelAspect = (artifact.content_bounds_px.max_x - artifact.content_bounds_px.min_x + 1)
 		/ (artifact.content_bounds_px.max_y - artifact.content_bounds_px.min_y + 1);
-	assert.ok(Math.abs(pixelAspect / 2.460756 - 1) <= 0.01, `unexpected content aspect ${pixelAspect}`);
+	const loadedAspect = (artifact.projected_bounds_m.max[0] - artifact.projected_bounds_m.min[0])
+		/ (artifact.projected_bounds_m.max[1] - artifact.projected_bounds_m.min[1]);
+	const exactMassAspect = (artifact.exact_mass_projected_bounds_m.max[0] - artifact.exact_mass_projected_bounds_m.min[0])
+		/ (artifact.exact_mass_projected_bounds_m.max[1] - artifact.exact_mass_projected_bounds_m.min[1]);
+	assert.ok(Math.abs(pixelAspect / loadedAspect - 1) <= 0.01, `unexpected loaded-scene content aspect ${pixelAspect}`);
+	assert.ok(Math.abs(loadedAspect / 2.49712 - 1) <= 0.01, `unexpected loaded-scene world aspect ${loadedAspect}`);
+	assert.ok(Math.abs(exactMassAspect / 2.460756 - 1) <= 0.001, `unexpected exact-MASS aspect ${exactMassAspect}`);
+	assert.ok(artifact.projected_bounds_m.min[0] < artifact.exact_mass_projected_bounds_m.min[0]);
+	assert.ok(artifact.projected_bounds_m.max[0] > artifact.exact_mass_projected_bounds_m.max[0]);
+	assert.equal(artifact.clipping.applied, false);
 	assert.equal(artifact.palette_sha256, palette.sha256);
 	assert.equal(artifact.selected_glb_sha256, sha256(inputs.glbBytes));
 	assert.match(artifact.viewer_config_sha256, /^[a-f0-9]{64}$/);
@@ -72,7 +82,13 @@ test("renders the real creative-013 front with one orthographic pixel scale and 
 	assert.ok(artifact.diagnostics.total_edge_density >= 0.01 && artifact.diagnostics.total_edge_density <= 0.035);
 	assert.ok(artifact.diagnostics.strong_edge_density <= 0.015);
 	assert.ok(artifact.diagnostics.same_material_seam_fraction <= 0.001);
-	assert.equal(artifact.diagnostics.seam_diagnostics_source, "base+material-id-pixel-scan");
+	assert.equal(artifact.diagnostics.seam_diagnostics_source, "base+material-id+metric-depth+view-normal");
+	assert.equal(artifact.diagnostics.seam_segments.connected_at_least_12px, 0);
+	assert.equal(artifact.diagnostics.depth.encoding, "orthographic-linear-rgb24");
+	assert.ok(artifact.diagnostics.depth.max_m > artifact.diagnostics.depth.min_m);
+	assert.ok(artifact.diagnostics.depth.quantization_m < 0.0005);
+	assert.ok(artifact.diagnostics.normal.non_background_pixels > 0);
+	assert.ok(artifact.diagnostics.normal.channel_variance.some((value) => value > 0));
 	const contentArea = (artifact.content_bounds_px.max_x - artifact.content_bounds_px.min_x + 1)
 		* (artifact.content_bounds_px.max_y - artifact.content_bounds_px.min_y + 1);
 	for (const role of ["concrete", "glass", "bronze", "opaque"]) {
@@ -88,6 +104,41 @@ test("renders the real creative-013 front with one orthographic pixel scale and 
 		await stat(path);
 		assert.deepEqual(await sharp(path).metadata().then(({ width, height }) => [width, height]), [2400, 2400]);
 	}
+});
+
+test("competition render cancellation closes page, browser, and preview", { timeout: 120_000 }, async () => {
+	const runDir = await mkdtemp(join(tmpdir(), "elevation3d-competition-abort-"));
+	temporaryRoots.push(runDir);
+	const inputs = await creative013Inputs();
+	const controller = new AbortController();
+	const calls: string[] = [];
+	const page = {
+		on: () => {},
+		setViewport: async () => calls.push("viewport"),
+		goto: async () => { calls.push("goto"); controller.abort(new DOMException("stop", "AbortError")); },
+		waitForFunction: async () => calls.push("wait"),
+		close: async () => calls.push("page.close"),
+	};
+	const browser = {
+		newPage: async () => { calls.push("newPage"); return page; },
+		close: async () => calls.push("browser.close"),
+	};
+	await assert.rejects(() => renderCompetitionElevationBase({
+		runDir,
+		glbPath: selectedGlbPath,
+		sourceMesh: inputs.sourceMesh,
+		camera: inputs.camera,
+		palette: resolveMaterialPalette("competition-warm"),
+		dimensions: inputs.dimensions,
+		view: "front",
+		signal: controller.signal,
+		lifecycle: {
+			startPreview: async () => "http://127.0.0.1:4180/viewer/",
+			stopPreview: async () => calls.push("preview.stop"),
+			launchBrowser: async () => browser,
+		},
+	}), { name: "AbortError" });
+	assert.deepEqual(calls, ["newPage", "viewport", "goto", "wait", "page.close", "browser.close", "preview.stop"]);
 });
 
 test("rejects alternate views before starting the renderer", async () => {
