@@ -14,6 +14,12 @@ export async function downloadUrl(url, destination) {
 	await writeFile(destination, Buffer.from(await response.arrayBuffer()));
 }
 
+export async function captureCanvas(page, path) {
+	const canvas = await page.$("canvas");
+	if (!canvas) throw new Error("Viewer canvas not found");
+	await canvas.screenshot({ path });
+}
+
 function safeExtension(file) {
 	const byType = { GLB: ".glb", OBJ: ".obj", MTL: ".mtl", ZIP: ".zip", TEXTURE_IMAGE: ".png", IMAGE: ".png" };
 	return byType[file.type] ?? (extname(new URL(file.url).pathname) || ".bin");
@@ -38,7 +44,7 @@ export async function renderDrawings(runDir, strategies) {
 				const page = await browser.newPage(); await page.setViewport({ width: 2048, height: 2048, deviceScaleFactor: 1 });
 				await page.goto(`${base}?strategy=${strategy}&view=${view}`, { waitUntil: "networkidle0" });
 				await page.waitForFunction(() => globalThis.__ELEVATION3D_READY__ === true, { timeout: 30_000 });
-				await page.locator("canvas").screenshot({ path: join(dir, `${view}.png`) }); await page.close();
+				await captureCanvas(page, join(dir, `${view}.png`)); await page.close();
 			}
 		}
 	} finally { await browser.close(); }
