@@ -120,7 +120,7 @@ async function runVersion({ run, versionId, grammar, safeFallback, input, enrich
 		await recordVersionFailure(run, version, failure);
 		return { version, failure };
 	}
-	await recordVersionSuccess(run, version);
+	await recordVersionSuccess(run, version, report);
 	return { version, artifact, drawings, report };
 }
 

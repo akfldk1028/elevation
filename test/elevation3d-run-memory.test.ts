@@ -79,10 +79,12 @@ test("transitions an accepted version from started to passed", async () => {
 	const run = await createUnifiedRun({ input, approvedDesign, outputRoot, runId: "run-passed" });
 	const version = await beginVersion(run, "v001", grammar);
 
-	await recordVersionSuccess(run, version);
+	await recordVersionSuccess(run, version, { accepted: true, codes: [], metrics: { exact_base: true }, artifacts: {} });
 
 	const persisted = JSON.parse(await readFile(join(version.dir, "version.json"), "utf8"));
 	assert.equal(persisted.status, "passed");
+	assert.equal(persisted.validation_path, "validation.json");
+	assert.equal(JSON.parse(await readFile(join(version.dir, "validation.json"), "utf8")).metrics.exact_base, true);
 	assert.equal(version.metadata.status, "passed");
 });
 
@@ -150,4 +152,13 @@ test("records each version failure and appends one redacted final memory event",
 	for (const credential of ["password-value", "cookie-value", "session-value"]) {
 		assert.equal(JSON.stringify(event).includes(credential), false);
 	}
+
+	const candidateLines = (await readFile(join(memoryRoot, "runs", "creative-013.jsonl"), "utf8")).trim().split("\n");
+	assert.equal(candidateLines.length, 1);
+	const candidateEvent = JSON.parse(candidateLines[0]);
+	assert.equal(candidateEvent.selected_version, "fallback");
+	assert.equal(candidateEvent.attempts, 2);
+	assert.equal(candidateEvent.correction_applied, true);
+	assert.equal(candidateEvent.fallback, true);
+	assert.deepEqual(candidateEvent.failure_codes, ["DETAIL_BOUNDS_EXCEEDED", "MISSING_COMPONENT"]);
 });

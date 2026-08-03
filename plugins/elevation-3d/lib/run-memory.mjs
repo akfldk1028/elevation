@@ -1,5 +1,5 @@
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { redactSecrets } from "./core.mjs";
 
 const memoryAppendQueues = new Map();
@@ -98,12 +98,14 @@ export async function recordVersionFailure(run, version, failure) {
 	version.failures.push(record);
 }
 
-export async function recordVersionSuccess(run, version) {
+export async function recordVersionSuccess(run, version, validation) {
 	if (!run.versions.includes(version)) throw new Error(`Version ${version.id} does not belong to run ${run.id}`);
 	if (version.metadata.status !== "started") {
 		throw new Error(`Version ${version.id} cannot pass from status ${version.metadata.status}`);
 	}
-	version.metadata = { ...version.metadata, status: "passed" };
+	await writeJson(join(version.dir, "validation.json"), validation);
+	version.metadata = { ...version.metadata, status: "passed", validation_path: "validation.json" };
+	version.validation = persistent(validation);
 	await writeJson(join(version.dir, "version.json"), version.metadata);
 }
 
@@ -115,6 +117,29 @@ export async function selectFinal(run, selection) {
 	});
 	await writeJson(join(run.dir, "final.json"), final);
 	run.final = final;
+}
+
+async function appendUniqueRunEvent(memoryFile, event) {
+	const previousAppend = memoryAppendQueues.get(memoryFile) ?? Promise.resolve();
+	const currentAppend = previousAppend.catch(() => {}).then(async () => {
+		await mkdir(dirname(memoryFile), { recursive: true });
+		let previous = "";
+		try {
+			previous = await readFile(memoryFile, "utf8");
+		} catch (error) {
+			if (error.code !== "ENOENT") throw error;
+		}
+		const alreadyAppended = previous.split(/\r?\n/)
+			.filter(Boolean)
+			.some((line) => JSON.parse(line).run_id === event.run_id);
+		if (!alreadyAppended) await appendFile(memoryFile, `${JSON.stringify(event)}\n`);
+	});
+	memoryAppendQueues.set(memoryFile, currentAppend);
+	try {
+		await currentAppend;
+	} finally {
+		if (memoryAppendQueues.get(memoryFile) === currentAppend) memoryAppendQueues.delete(memoryFile);
+	}
 }
 
 export async function appendRunMemory(run, memoryRoot) {
@@ -133,25 +158,26 @@ export async function appendRunMemory(run, memoryRoot) {
 		}))),
 		final: run.final,
 	});
-	const memoryFile = join(resolve(memoryRoot), "unified-runs.jsonl");
-	const previousAppend = memoryAppendQueues.get(memoryFile) ?? Promise.resolve();
-	const currentAppend = previousAppend.catch(() => {}).then(async () => {
-		await mkdir(resolve(memoryRoot), { recursive: true });
-		let previous = "";
-		try {
-			previous = await readFile(memoryFile, "utf8");
-		} catch (error) {
-			if (error.code !== "ENOENT") throw error;
-		}
-		const alreadyAppended = previous.split(/\r?\n/)
-			.filter(Boolean)
-			.some((line) => JSON.parse(line).run_id === run.id);
-		if (!alreadyAppended) await appendFile(memoryFile, `${JSON.stringify(event)}\n`);
+	const selectedVersion = run.versions.find((version) => version.id === run.final.selected);
+	const candidateEvent = persistent({
+		schema_version: "arr.elevation3d.candidate-run-memory.v1",
+		run_id: run.id,
+		candidate_id: run.metadata.candidate_id,
+		selected_version: run.final.selected,
+		attempts: run.versions.filter((version) => version.id !== "fallback").length,
+		metrics: selectedVersion?.validation?.metrics ?? {},
+		failure_codes: [...new Set(run.versions.flatMap((version) => version.failures.flatMap((failure) => failure.codes)))],
+		correction_applied: run.versions.some((version) => version.id === "v002"),
+		correction: run.versions.some((version) => version.id === "v002")
+			? "bounded facade grammar correction attempted"
+			: "none",
+		fallback: run.final.selected === "fallback",
+		artifacts: run.metadata.artifacts,
+		final: run.final,
 	});
-	memoryAppendQueues.set(memoryFile, currentAppend);
-	try {
-		await currentAppend;
-	} finally {
-		if (memoryAppendQueues.get(memoryFile) === currentAppend) memoryAppendQueues.delete(memoryFile);
-	}
+	const root = resolve(memoryRoot);
+	await Promise.all([
+		appendUniqueRunEvent(join(root, "unified-runs.jsonl"), event),
+		appendUniqueRunEvent(join(root, "runs", `${run.metadata.candidate_id}.jsonl`), candidateEvent),
+	]);
 }
