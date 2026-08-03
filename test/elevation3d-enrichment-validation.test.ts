@@ -100,6 +100,8 @@ test("renders seven drawing keys from one relative GLB and source camera axes", 
 	await Promise.all(Object.values(drawings).map((path) => stat(path)));
 	const config = JSON.parse(await readFile(join(root, "viewer", "config.json"), "utf8"));
 	assert.deepEqual(config.strategies, { hunyuan: { glb: "../selected.glb" } });
+	assert.equal("mesh" in config, false);
 	assert.deepEqual(config.cameras.views.plan.projection_axes, top.projection_axes);
 	assert.equal(config.cameras.views.plan.rendering.material_mode, "line-oriented");
+	assert.notEqual(Buffer.compare(await readFile(drawings.plan), await readFile(drawings.top)), 0);
 });

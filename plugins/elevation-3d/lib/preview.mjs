@@ -8,7 +8,7 @@ const MIME = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; cha
 export async function startPreview(runDir, port = 4173) {
 	const root = resolve(runDir);
 	await stat(root);
-	if (servers.has(port)) return `http://127.0.0.1:${port}/viewer/`;
+	if (port !== 0 && servers.has(port)) return `http://127.0.0.1:${port}/viewer/`;
 	const server = createServer(async (request, response) => {
 		try {
 			const pathname = decodeURIComponent(new URL(request.url, "http://localhost").pathname).replace(/^\/+/, "");
@@ -23,8 +23,10 @@ export async function startPreview(runDir, port = 4173) {
 		}
 	});
 	await new Promise((resolveReady, reject) => { server.once("error", reject); server.listen(port, "127.0.0.1", resolveReady); });
-	servers.set(port, server);
-	return `http://127.0.0.1:${port}/viewer/`;
+	const address = server.address();
+	const assignedPort = typeof address === "object" && address ? address.port : port;
+	servers.set(assignedPort, server);
+	return `http://127.0.0.1:${assignedPort}/viewer/`;
 }
 
 export async function stopPreview(port) {
