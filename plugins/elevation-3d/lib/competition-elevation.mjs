@@ -10,11 +10,12 @@ import { buildElevationAnnotations } from "./elevation-annotations.mjs";
 import { validateCompetitionElevation } from "./elevation-presentation-validation.mjs";
 
 const OUTPUT_SIZE = 2400;
+const ELEVATION_VIEWS = new Set(["front", "back", "left", "right"]);
 
 function assertInputs({ view, camera, palette, dimensions }) {
-	if (view !== "front") throw new Error("front view required for competition elevation base");
-	if (camera?.projection !== "orthographic") throw new Error("orthographic front camera required");
-	if (dimensions?.view !== "front") throw new Error("front dimension manifest required");
+	if (!ELEVATION_VIEWS.has(view)) throw new Error(`unsupported elevation view: ${view}`);
+	if (camera?.projection !== "orthographic") throw new Error(`orthographic ${view} camera required`);
+	if (dimensions?.view !== view) throw new Error(`${view} dimension manifest required`);
 	if (!palette?.sha256 || !palette?.roles) throw new Error("resolved material palette required");
 }
 
@@ -221,10 +222,10 @@ async function writeBrowserPng(page, mode, path) {
 }
 
 export async function renderCompetitionElevationBase({
-	runDir, glbPath, sourceMesh, camera, palette, dimensions, view, signal, lifecycle = {},
+	runDir, glbPath, sourceMesh, camera, palette, dimensions, view, pixelsPerMetre, signal, lifecycle = {},
 }) {
 	assertInputs({ view, camera, palette, dimensions });
-	const outputDir = join(resolve(runDir), "competition-elevation", "front");
+	const outputDir = join(resolve(runDir), "competition-elevation", view);
 	await mkdir(outputDir, { recursive: true });
 	const selectedGlbBytes = await readFile(glbPath);
 	const selectedGlbSha256 = sha256(selectedGlbBytes);
@@ -235,12 +236,13 @@ export async function renderCompetitionElevationBase({
 		schema_version: "arr.elevation3d.competition-viewer.v1",
 		candidate_id: sourceMesh.identity?.candidate_id ?? "unknown",
 		geometry_hash: dimensions.geometry_hash,
-		cameras: { views: { front: camera } },
+		cameras: { views: { [view]: camera } },
 		strategies: { hunyuan: { glb: "selected.glb" } },
 		competition_elevation: {
-			view: "front",
+			view,
 			output_size: OUTPUT_SIZE,
 			margin_ratio: 0.09,
+			pixels_per_metre: pixelsPerMetre,
 			background: "#fafaf7",
 			palette: { preset: palette.preset, sha256: palette.sha256, roles: palette.roles },
 			projected_bounds_m: dimensions.projected_bounds_m,
@@ -271,16 +273,16 @@ export async function renderCompetitionElevationBase({
 		page = await browser.newPage();
 		page.on?.("pageerror", (error) => pageErrors.push(error.message));
 		await page.setViewport({ width: OUTPUT_SIZE, height: OUTPUT_SIZE, deviceScaleFactor: 1 });
-		await page.goto(`${base}?strategy=hunyuan&view=front&mode=competition-elevation`, { waitUntil: "networkidle0" });
+		await page.goto(`${base}?strategy=hunyuan&view=${encodeURIComponent(view)}&mode=competition-elevation`, { waitUntil: "networkidle0" });
 		await page.waitForFunction(() => globalThis.__ELEVATION3D_READY__ === true, { timeout: 60_000 });
 		signal?.throwIfAborted();
 		if (pageErrors.length) throw new Error(`competition viewer failed: ${pageErrors.join("; ")}`);
 
-		const path = join(outputDir, "front-base.png");
+		const path = join(outputDir, `${view}-base.png`);
 		const diagnosticPaths = {
-			material_id: join(outputDir, "front-material-id.png"),
-			depth: join(outputDir, "front-depth.png"),
-			normal: join(outputDir, "front-normal.png"),
+			material_id: join(outputDir, `${view}-material-id.png`),
+			depth: join(outputDir, `${view}-depth.png`),
+			normal: join(outputDir, `${view}-normal.png`),
 		};
 		const bytes = await writeBrowserPng(page, "base", path);
 		const materialIdBytes = await writeBrowserPng(page, "material-id", diagnosticPaths.material_id);
@@ -341,7 +343,7 @@ export async function renderCompetitionElevationBase({
 				palette_delta_e00: paletteContrasts(palette),
 			},
 		};
-		const manifestPath = join(outputDir, "front-base-render-manifest.json");
+		const manifestPath = join(outputDir, `${view}-base-render-manifest.json`);
 		await writeFile(manifestPath, JSON.stringify(artifact, null, 2));
 		artifact.manifest_path = manifestPath;
 		return artifact;
@@ -434,23 +436,23 @@ async function classifyAndCleanDarkArtifacts(base) {
 }
 
 export async function renderCompetitionElevation({
-	runDir, glbPath, sourceMesh, floorGuides, facadePlanes, camera, palette, dimensions, view, candidateId, signal, lifecycle,
+	runDir, glbPath, sourceMesh, floorGuides, facadePlanes, camera, palette, dimensions, view, candidateId, pixelsPerMetre, signal, lifecycle,
 }) {
-	const base = await renderCompetitionElevationBase({ runDir, glbPath, sourceMesh, camera, palette, dimensions, view, signal, lifecycle });
-	const outputDir = join(resolve(runDir), "competition-elevation", "front");
+	const base = await renderCompetitionElevationBase({ runDir, glbPath, sourceMesh, camera, palette, dimensions, view, pixelsPerMetre, signal, lifecycle });
+	const outputDir = join(resolve(runDir), "competition-elevation", view);
 	const annotation = buildElevationAnnotations({ dimensions, camera: base.camera, contentBounds: base.content_bounds_px, canvas: [base.width, base.height], candidateId });
-	const dimensionsPath = join(outputDir, "front-dimensions.json");
-	const svgPath = join(outputDir, "front-annotations.svg");
+	const dimensionsPath = join(outputDir, `${view}-dimensions.json`);
+	const svgPath = join(outputDir, `${view}-annotations.svg`);
 	await writeFile(dimensionsPath, JSON.stringify(dimensions, null, 2));
 	await writeFile(svgPath, annotation.svg);
 	const dimensionsRecord = { path: dimensionsPath, sha256: sha256(await readFile(dimensionsPath)) };
 	const svgRecord = { path: svgPath, sha256: sha256(await readFile(svgPath)) };
 	const presentationBase = await classifyAndCleanDarkArtifacts(base);
-	const presentationBasePath = join(outputDir, "front-presentation-base.png");
+	const presentationBasePath = join(outputDir, `${view}-presentation-base.png`);
 	const presentationBaseBytes = await sharp(presentationBase.pixels, { raw: presentationBase.info }).png().toBuffer();
 	await writeFile(presentationBasePath, presentationBaseBytes);
 	const presentationBaseRecord = { path: presentationBasePath, sha256: sha256(presentationBaseBytes) };
-	const finalPath = join(outputDir, "front.png");
+	const finalPath = join(outputDir, `${view}.png`);
 	const finalBytes = await sharp(presentationBaseBytes)
 		.composite([{ input: Buffer.from(annotation.svg), blend: "over" }])
 		.png()
@@ -466,12 +468,12 @@ export async function renderCompetitionElevation({
 		facade_height: dimensions.facade_extent.height.display_mm,
 		scale_bar: dimensions.scale_bar.display_mm,
 	};
-	const renderManifestPath = join(outputDir, "front-render-manifest.json");
+	const renderManifestPath = join(outputDir, `${view}-render-manifest.json`);
 	const baseManifestRecord = { path: base.manifest_path, sha256: sha256(await readFile(base.manifest_path)) };
 	const diagnosticRecords = Object.fromEntries(await Promise.all(Object.entries(base.diagnostic_paths).map(async ([name, path]) => [name, { path, sha256: sha256(await readFile(path)) }])));
 	const renderManifest = {
 		schema_version: "arr.elevation3d.competition-elevation.v1",
-		view: "front",
+		view,
 		candidate_id: candidateId ?? sourceMesh.identity?.candidate_id,
 		palette: { preset: palette.preset, sha256: palette.sha256 },
 		selected_glb_sha256: base.selected_glb_sha256,
@@ -509,7 +511,7 @@ export async function renderCompetitionElevation({
 		presentation: { authored_dark_geometry: presentationBase.report },
 	};
 	const validation = await validateCompetitionElevation({ artifacts: draft, sourceMesh, facadePlanes, floorGuides, view: camera, selectedGlbPath: glbPath });
-	const validationPath = join(outputDir, "front-validation.json");
+	const validationPath = join(outputDir, `${view}-validation.json`);
 	await writeFile(validationPath, JSON.stringify(validation, null, 2));
 	return {
 		schema_version: "arr.elevation3d.elevation-artifacts.v1",

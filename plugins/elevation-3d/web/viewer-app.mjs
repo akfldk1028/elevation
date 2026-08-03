@@ -112,16 +112,23 @@ function loadedProjectedBounds(root, axes) {
 	return bounds;
 }
 
-function createCompetitionCamera(root, view, size, marginRatio) {
+function createCompetitionCamera(root, view, size, marginRatio, pixelsPerMetre) {
+	if (view?.projection !== "orthographic") throw new Error("competition elevation camera projection must be orthographic");
 	const axes = view.projection_axes;
 	const bounds = loadedProjectedBounds(root, axes);
 	const width = bounds.maxH - bounds.minH;
 	const height = bounds.maxV - bounds.minV;
 	const usable = 1 - marginRatio * 2;
-	const span = Math.max(width / usable, height / usable);
+	const span = pixelsPerMetre == null ? Math.max(width / usable, height / usable) : size / pixelsPerMetre;
+	if (!(span >= width && span >= height)) throw new Error("competition elevation common scale clips projected geometry");
 	const centerH = (bounds.minH + bounds.maxH) / 2;
-	const centerV = (bounds.minV + bounds.maxV) / 2;
+	let centerV = (bounds.minV + bounds.maxV) / 2;
 	const centerD = (bounds.minD + bounds.maxD) / 2;
+	const pxPerM = size / span;
+	const projectedBottom = (size + height * pxPerM) / 2;
+	// Keep the fixed 5 m scale-bar label clear as well as the dimension lanes.
+	const reservedLaneTop = size - 550;
+	if (projectedBottom > reservedLaneTop) centerV += (reservedLaneTop - projectedBottom) / pxPerM;
 	const horizontal = new THREE.Vector3(...axes.horizontal);
 	const vertical = new THREE.Vector3(...axes.vertical);
 	const depth = new THREE.Vector3(...axes.depth);
@@ -134,7 +141,6 @@ function createCompetitionCamera(root, view, size, marginRatio) {
 	camera.lookAt(center);
 	camera.updateProjectionMatrix();
 	camera.updateMatrixWorld(true);
-	const pxPerM = size / span;
 	return {
 		camera,
 		manifest: {
@@ -198,7 +204,7 @@ function applyMaterials(records, key) {
 
 function renderCompetition(root, view) {
 	const settings = config.competition_elevation;
-	const fitted = createCompetitionCamera(root, view, outputSize, settings.margin_ratio);
+	const fitted = createCompetitionCamera(root, view, outputSize, settings.margin_ratio, settings.pixels_per_metre);
 	const semantic = competitionMaterials(root, settings.palette);
 	const renderTarget = new THREE.WebGLRenderTarget(outputSize, outputSize, {
 		minFilter: THREE.LinearFilter,
@@ -212,13 +218,18 @@ function renderCompetition(root, view) {
 	const postMaterial = new THREE.ShaderMaterial({
 		depthTest: false,
 		depthWrite: false,
-		uniforms: { tColor: { value: renderTarget.texture }, tDepth: { value: renderTarget.depthTexture }, texel: { value: new THREE.Vector2(1 / outputSize, 1 / outputSize) } },
+		uniforms: {
+			tColor: { value: renderTarget.texture },
+			tDepth: { value: renderTarget.depthTexture },
+			texel: { value: new THREE.Vector2(1 / outputSize, 1 / outputSize) },
+			lineStrength: { value: settings.view === "left" || settings.view === "right" ? 0.42 : 0.72 },
+		},
 		vertexShader: `varying vec2 vUv; void main(){vUv=uv;gl_Position=vec4(position.xy,0.,1.);}`,
-		fragmentShader: `uniform sampler2D tColor; uniform sampler2D tDepth; uniform vec2 texel; varying vec2 vUv;
+		fragmentShader: `uniform sampler2D tColor; uniform sampler2D tDepth; uniform vec2 texel; uniform float lineStrength; varying vec2 vUv;
 			void main(){vec3 c=texture2D(tColor,vUv).rgb; float d=texture2D(tDepth,vUv).r;
 			float e=0.; e=max(e,abs(d-texture2D(tDepth,vUv+vec2(texel.x,0.)).r)); e=max(e,abs(d-texture2D(tDepth,vUv-vec2(texel.x,0.)).r));
 			e=max(e,abs(d-texture2D(tDepth,vUv+vec2(0.,texel.y)).r)); e=max(e,abs(d-texture2D(tDepth,vUv-vec2(0.,texel.y)).r));
-			float line=smoothstep(0.00500,0.02000,e); gl_FragColor=vec4(mix(c,vec3(0.16,0.15,0.14),line*0.72),1.);}`,
+			float line=smoothstep(0.00500,0.02000,e); gl_FragColor=vec4(mix(c,vec3(0.16,0.15,0.14),line*lineStrength),1.);}`,
 	});
 	postScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), postMaterial));
 	function renderMode(mode) {
