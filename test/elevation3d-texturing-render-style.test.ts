@@ -26,7 +26,7 @@ const expectedStyle = {
 	ground: { enabledFor: ["axon", "opposite-axon"], opacity: 0.14, padding: 0.16 },
 	materialResponse: {
 		concrete: { maxRoughnessDelta: -0.08, tintMultiplier: "#fff4e6" },
-		glass: { maxEnvIntensity: 1.35, preserveTransparency: true, tintMultiplier: "#dcecff" },
+		glass: { maxEnvIntensity: 1.35, preserveTransparency: true, tintMultiplier: "#a8c0cc" },
 		bronze: { maxMetalnessDelta: 0.08, tintMultiplier: "#8a5a32" },
 		opaque: { maxRoughnessDelta: -0.04, tintMultiplier: "#454b52" },
 	},
@@ -47,7 +47,7 @@ test("resolves the approved competition daylight preset as an immutable value", 
 	assert.equal(COMPETITION_DAYLIGHT_STYLE_ID, "competition-daylight-v1");
 	assert.deepEqual(style, expectedStyle);
 	assertDeeplyFrozen(style);
-	assert.equal(renderStyleHash(style), "ed4dae4fc3bb869810d156adf11c69d23265d4822b4a26e46e6c61fb8da9d9dc");
+	assert.equal(renderStyleHash(style), "32abca17944b862d950b9ebd227a026de24aad04a51b5be103926f09754c1532");
 });
 
 test("normalizes equivalent overrides to one deterministic SHA-256 identity", () => {

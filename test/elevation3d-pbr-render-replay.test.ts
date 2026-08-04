@@ -271,5 +271,19 @@ test("preserves only a rejected canonical after accepted source identity verific
 		render_style: { id: "competition-daylight-v1" }, render_style_sha256: "a80ac48cf978eea1c63bfbd4842d38f7a21179d9c0e782f3b551a4ad72902a06",
 	}));
 	const migrated = await prepareCanonicalReplay({ outputRoot: root, canonicalDir, acceptedSourceDir: sourceDir, glbPath, camerasPath });
-	assert.match(migrated.preservedAttempt, /[\\/]attempts[\\/]rendered-pbr-v7-competition-daylight-attempt-003$/, "the exact predecessor style is a valid immutable source for the tint migration");
+	assert.match(migrated.preservedAttempt, /[\\/]attempts[\\/]rendered-pbr-v7-competition-daylight-attempt-003$/, "the exact accepted-source style remains valid for the tint migration");
+
+	await mkdir(canonicalDir); await writeFile(join(canonicalDir, "render-validation.json"), JSON.stringify({ validation: { accepted: false } }));
+	await writeFile(join(sourceDir, "render-validation.json"), JSON.stringify({
+		validation: { accepted: true }, selected_glb: { sha256: createHash("sha256").update(glb).digest("hex") },
+		render_style: { id: "competition-daylight-v1" }, render_style_sha256: "ed4dae4fc3bb869810d156adf11c69d23265d4822b4a26e46e6c61fb8da9d9dc",
+	}));
+	const predecessor = await prepareCanonicalReplay({ outputRoot: root, canonicalDir, acceptedSourceDir: sourceDir, glbPath, camerasPath });
+	assert.match(predecessor.preservedAttempt, /[\\/]attempts[\\/]rendered-pbr-v7-competition-daylight-attempt-004$/, "only the exact immediate predecessor tint style is migrated");
+	await mkdir(canonicalDir); await writeFile(join(canonicalDir, "render-validation.json"), JSON.stringify({ validation: { accepted: false } }));
+	await writeFile(join(sourceDir, "render-validation.json"), JSON.stringify({
+		validation: { accepted: true }, selected_glb: { sha256: createHash("sha256").update(glb).digest("hex") },
+		render_style: { id: "competition-daylight-v1" }, render_style_sha256: "f".repeat(64),
+	}));
+	await assert.rejects(() => prepareCanonicalReplay({ outputRoot: root, canonicalDir, acceptedSourceDir: sourceDir, glbPath, camerasPath }), /style identity/i);
 });

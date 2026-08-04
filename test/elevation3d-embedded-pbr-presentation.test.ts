@@ -321,7 +321,7 @@ test("preserves transparency, depth-write, and shadow eligibility for an opaque 
 	const presentation = createEmbeddedPbrPresentation({ THREE, RoomEnvironment, ...values });
 	assert.equal(values.glass.transparent, false);
 	assert.equal(values.glass.depthWrite, true);
-	assert.equal(values.glass.color.value, "#ffffff*#dcecff");
+	assert.equal(values.glass.color.value, "#ffffff*#a8c0cc");
 	assert.equal(values.glassMesh.castShadow, true);
 	assert.equal(values.glassMesh.receiveShadow, true);
 	assert.equal(presentation.evidence().shadows.casters, 3);
@@ -340,7 +340,7 @@ test("emits serializable lifecycle evidence and restores every owned resource ex
 	const evidence = presentation.evidence();
 	assert.doesNotThrow(() => JSON.stringify(evidence));
 	assert.deepEqual(evidence, {
-		style: { id: "competition-daylight-v1", hash: values.styleHash, materialTints: { concrete: "#fff4e6", glass: "#dcecff", bronze: "#8a5a32", opaque: "#454b52" } },
+		style: { id: "competition-daylight-v1", hash: values.styleHash, materialTints: { concrete: "#fff4e6", glass: "#a8c0cc", bronze: "#8a5a32", opaque: "#454b52" } },
 		toneMapping: { mode: "aces-filmic", exposure: 0.94, outputColorSpace: "srgb" },
 		environment: { type: "room-pmrem", intensity: 0.45, count: 1, status: "ready" },
 		lights: { hemisphere: 1, sun: 1 },
