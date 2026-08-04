@@ -11,19 +11,19 @@ const expectedStyle = {
 	id: "competition-daylight-v1",
 	background: "#fafaf7",
 	toneMapping: "aces-filmic",
-	exposure: 1.02,
-	environment: { type: "room-pmrem", intensity: 0.55 },
-	hemisphere: { sky: "#ffffff", ground: "#d8d1c5", intensity: 0.95 },
+	exposure: 0.94,
+	environment: { type: "room-pmrem", intensity: 0.45 },
+	hemisphere: { sky: "#ffffff", ground: "#d8d1c5", intensity: 0.8 },
 	sun: {
 		color: "#fff8ec",
-		intensity: 2.1,
-		position: [24, -18, 34],
+		intensity: 1.9,
+		position: [12, -8, 60],
 		shadowMapSize: 2048,
 		radius: 5,
 		bias: -0.0002,
 		normalBias: 0.02,
 	},
-	ground: { enabledFor: ["axon", "opposite-axon"], opacity: 0.2, padding: 0.16 },
+	ground: { enabledFor: ["axon", "opposite-axon"], opacity: 0.12, padding: 0.16 },
 	materialResponse: {
 		concrete: { maxRoughnessDelta: -0.08 },
 		glass: { maxEnvIntensity: 1.35, preserveTransparency: true },
@@ -47,7 +47,7 @@ test("resolves the approved competition daylight preset as an immutable value", 
 	assert.equal(COMPETITION_DAYLIGHT_STYLE_ID, "competition-daylight-v1");
 	assert.deepEqual(style, expectedStyle);
 	assertDeeplyFrozen(style);
-	assert.equal(renderStyleHash(style), "325b0e919dfc922fa2541f287b9cad796136c33d94972ec91148722d43e5ca7a");
+	assert.equal(renderStyleHash(style), "d56ddee36347d9d29580de3a4410998de9c23195d3cc3cea0edf7be6b16b40b6");
 });
 
 test("normalizes equivalent overrides to one deterministic SHA-256 identity", () => {
