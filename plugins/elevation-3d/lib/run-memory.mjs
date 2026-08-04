@@ -59,6 +59,49 @@ function persistent(value) {
 	return redactSecrets(redactAdditionalCredentials(omitBinary(value)));
 }
 
+function presentationArtifact(outputDir, artifact, label) {
+	if (!artifact?.path) return null;
+	if (/^https?:\/\//i.test(artifact.path)) {
+		return persistent({ path: artifact.path, ...(artifact.sha256 ? { sha256: artifact.sha256 } : {}) });
+	}
+	return {
+		path: runRelativePath(outputDir, artifact.path, label),
+		...(artifact.sha256 ? { sha256: artifact.sha256 } : {}),
+	};
+}
+
+export async function appendPresentationVersionMemory({ candidateId, outputDir, previousBaseline, report }, memoryFile) {
+	const accepted = report?.validation?.accepted === true;
+	const record = persistent({
+		schema_version: "arr.elevation3d.presentation-version-memory.v1",
+		candidate_id: assertSafePathSegment(candidateId, "candidate_id"),
+		version_id: "rendered-pbr-v7-competition-daylight",
+		output_directory: portableRelativePath(outputDir),
+		previous_baseline: {
+			version: previousBaseline?.version ?? "rendered-pbr-v6",
+			limitation: previousBaseline?.limitation ?? "The previous presentation had washed highlights and weak material separation.",
+		},
+		style: {
+			id: report?.render_style?.id ?? null,
+			sha256: report?.render_style_sha256 ?? null,
+		},
+		result: {
+			accepted,
+			status: accepted ? "accepted" : "rejected",
+			failure_codes: [...(report?.validation?.codes ?? [])],
+			metrics: report?.validation?.metrics ?? {},
+		},
+		artifacts: Object.fromEntries(Object.entries(report?.artifacts ?? {})
+			.map(([name, artifact]) => [name, presentationArtifact(outputDir, artifact, `presentation artifact ${name}`)])
+			.filter(([, artifact]) => artifact !== null)),
+		provider_calls: 0,
+		credits_consumed: 0,
+	});
+	await mkdir(dirname(memoryFile), { recursive: true });
+	await appendFile(memoryFile, `${JSON.stringify(record)}\n`);
+	return record;
+}
+
 function artifactReferences(input, approvedDesign) {
 	const inputArtifacts = (input.artifacts ?? []).map(({ path, sha256 }) => ({
 		path: portableRelativePath(path),

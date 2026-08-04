@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
-import { access, mkdtemp, readFile, rm } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, test } from "node:test";
 
 import {
+	appendPresentationVersionMemory,
 	appendRunMemory,
 	beginVersion,
 	createUnifiedRun,
@@ -36,6 +37,48 @@ const approvedDesign = {
 const grammar = {
 	bay_width_m: 2.25,
 };
+
+test("normalizes a redacted presentation-only version memory record", async () => {
+	const runRoot = await mkdtemp(join(tmpdir(), "elevation3d-presentation-memory-"));
+	temporaryRoots.push(runRoot);
+	const outputDir = join(runRoot, "rendered-pbr-v7-competition-daylight");
+	await mkdir(outputDir, { recursive: true });
+	const memoryFile = join(runRoot, "presentation-versions.jsonl");
+	await appendPresentationVersionMemory({
+		candidateId: "creative-013",
+		outputDir,
+		previousBaseline: {
+			version: "rendered-pbr-v6",
+			limitation: "Washed highlights at https://x.test/view?X-Amz-Signature=signed-secret",
+		},
+		report: {
+			render_style: { id: "competition-daylight-v1", authorization: "Bearer style-secret" },
+			render_style_sha256: "a".repeat(64),
+			validation: { accepted: false, status: "rejected", codes: ["PRESENTATION_HIGHLIGHTS_CLIPPED"], metrics: { clipped: 2 } },
+			provider_calls: 9,
+			credits_consumed: 12,
+			artifacts: {
+				contact_sheet: { path: join(outputDir, "contact-sheet.png"), sha256: "b".repeat(64) },
+				presentation_evidence: { path: "https://x.test/evidence?token=url-secret", sha256: "c".repeat(64) },
+			},
+		},
+	}, memoryFile);
+
+	const record = JSON.parse(await readFile(memoryFile, "utf8"));
+	assert.equal(record.schema_version, "arr.elevation3d.presentation-version-memory.v1");
+	assert.deepEqual(record.style, { id: "competition-daylight-v1", sha256: "a".repeat(64) });
+	assert.equal(record.previous_baseline.version, "rendered-pbr-v6");
+	assert.equal(record.previous_baseline.limitation.includes("signed-secret"), false);
+	assert.deepEqual(record.result, {
+		accepted: false, status: "rejected", failure_codes: ["PRESENTATION_HIGHLIGHTS_CLIPPED"], metrics: { clipped: 2 },
+	});
+	assert.deepEqual(record.artifacts.contact_sheet, { path: "contact-sheet.png", sha256: "b".repeat(64) });
+	assert.equal(record.artifacts.presentation_evidence.path, "https://x.test/evidence");
+	assert.equal(record.provider_calls, 0);
+	assert.equal(record.credits_consumed, 0);
+	assert.equal(JSON.stringify(record).includes("style-secret"), false);
+	assert.equal(JSON.stringify(record).includes("url-secret"), false);
+});
 
 test("creates immutable run metadata and v001 directories", async () => {
 	const outputRoot = await mkdtemp(join(tmpdir(), "elevation3d-run-memory-"));
