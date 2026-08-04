@@ -1,4 +1,4 @@
-import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import puppeteer from "puppeteer-core";
 import sharp from "sharp";
@@ -6,7 +6,8 @@ import { sha256 } from "../core.mjs";
 import { findChrome } from "../results.mjs";
 import { startPreview, stopPreview } from "../preview.mjs";
 import { buildViewerBundle } from "../viewer.mjs";
-import { validatePresentationEvidence } from "./render-style-evidence.mjs";
+import { analyzePresentationPng, comparePresentationEvidence, validatePresentationEvidence } from "./render-style-evidence.mjs";
+import { renderStyleHash, resolvePbrRenderStyle } from "./render-style.mjs";
 
 const VIEW_NAMES = ["front", "back", "left", "right", "plan", "top", "axon", "opposite-axon"];
 
@@ -98,12 +99,42 @@ function baselineExtentDelta(bounds, width, height, baseline) {
 	return Math.max(...Object.keys(normalized).map((key) => Math.abs(normalized[key] - baseline[key])));
 }
 
-export async function renderEmbeddedPbrViews({ glbPath, runDir, candidateId, cameras, baselineRunDir, outputSize = 1600, signal, lifecycle = {} } = {}) {
+async function writeJsonAtomic(path, value) {
+	const bytes = Buffer.from(`${JSON.stringify(value, null, 2)}\n`);
+	const temporaryPath = `${path}.${process.pid}.tmp`;
+	await writeFile(temporaryPath, bytes);
+	await rename(temporaryPath, path);
+	return { path, sha256: sha256(bytes) };
+}
+
+async function loadPresentationBaseline(runDir) {
+	if (!runDir) return { status: "not_compared", reason: "baseline_not_requested", run_dir: null, views: {} };
+	const root = resolve(runDir);
+	let report;
+	try {
+		report = JSON.parse(await readFile(join(root, "render-validation.json"), "utf8"));
+	} catch (error) {
+		if (error?.code === "ENOENT") return { status: "not_compared", reason: "baseline_missing", run_dir: root, views: {} };
+		throw error;
+	}
+	if (report.validation?.accepted !== true || !report.presentation_evidence) {
+		return { status: "not_compared", reason: "baseline_not_accepted", run_dir: root, views: {} };
+	}
+	return { status: "ready", run_dir: root, views: report.presentation_evidence };
+}
+
+export async function renderEmbeddedPbrViews({
+	glbPath, runDir, candidateId, cameras, baselineRunDir, outputSize = 1600, signal, lifecycle = {},
+	renderStyleId = "competition-daylight-v1", renderStyleOverrides, presentationBaselineRunDir,
+} = {}) {
 	const root = resolve(runDir);
 	await mkdir(root, { recursive: true });
 	const glbBytes = await readFile(resolve(glbPath));
 	const selectedGlbSha256 = sha256(glbBytes);
 	const proceduralBaseline = await loadProceduralBaseline(baselineRunDir);
+	const renderStyle = resolvePbrRenderStyle({ ...(renderStyleOverrides ?? {}), id: renderStyleId });
+	const renderStyleSha256 = renderStyleHash(renderStyle);
+	const styleArtifact = await writeJsonAtomic(join(root, "render-style.json"), renderStyle);
 	const config = {
 		schema_version: "arr.elevation3d.embedded-pbr-viewer.v1",
 		candidate_id: candidateId,
@@ -112,6 +143,7 @@ export async function renderEmbeddedPbrViews({ glbPath, runDir, candidateId, cam
 		all_views: {
 			material_mode: "embedded-pbr",
 			selected_glb: { path: "../textured.glb", sha256: selectedGlbSha256 },
+			render_style: renderStyle, render_style_sha256: renderStyleSha256,
 			palettes: {}, views: {}, validation: { accepted: true, codes: [] }, artifacts: [],
 		},
 	};
@@ -137,6 +169,7 @@ export async function renderEmbeddedPbrViews({ glbPath, runDir, candidateId, cam
 		await page.goto(`${base}?strategy=hunyuan`, { waitUntil: "networkidle0" });
 		await page.waitForFunction(() => globalThis.__ELEVATION3D_READY__ === true, { timeout: 60_000 });
 		const views = {};
+		const presentationEvidence = {};
 		for (const name of VIEW_NAMES) {
 			signal?.throwIfAborted();
 			await page.evaluate((view) => globalThis.__ELEVATION3D_TEST_CONTROLS__.activateView(view), name);
@@ -147,6 +180,7 @@ export async function renderEmbeddedPbrViews({ glbPath, runDir, candidateId, cam
 			});
 			const first = decodePng(firstUrl), second = decodePng(secondUrl);
 			const browserState = await page.evaluate(() => globalThis.__ELEVATION3D_VIEWER_STATE__);
+			const browserPresentation = await page.evaluate(() => globalThis.__ELEVATION3D_TEST_CONTROLS__.presentationEvidence());
 			await page.evaluate(() => globalThis.__ELEVATION3D_TEST_CONTROLS__.setEmbeddedMaps(false));
 			const diagnostic = decodePng(await page.evaluate(async () => globalThis.__ELEVATION3D_TEST_CONTROLS__.settledPng()));
 			await page.evaluate(() => globalThis.__ELEVATION3D_TEST_CONTROLS__.setEmbeddedMaps(true));
@@ -155,6 +189,14 @@ export async function renderEmbeddedPbrViews({ glbPath, runDir, candidateId, cam
 			await mkdir(directory, { recursive: true });
 			const path = join(directory, `${name}.png`);
 			await writeFile(path, second);
+			const presentationBounds = proceduralBaseline?.[name] ? {
+				minX: proceduralBaseline[name].minX * outputSize, minY: proceduralBaseline[name].minY * outputSize,
+				maxX: proceduralBaseline[name].maxX * outputSize, maxY: proceduralBaseline[name].maxY * outputSize,
+			} : evidence.projectedBoundsPx;
+			const imagePresentation = await analyzePresentationPng({
+				png: await readFile(path), buildingBounds: presentationBounds, background: renderStyle.background,
+			});
+			presentationEvidence[name] = { browser: browserPresentation ?? browserState.presentation, image: imagePresentation };
 			views[name] = {
 				path, sha256: sha256(second), settledHashes: [sha256(first), sha256(second)], selectedGlbSha256,
 				cameraType: browserState.camera.type,
@@ -163,21 +205,48 @@ export async function renderEmbeddedPbrViews({ glbPath, runDir, candidateId, cam
 			};
 		}
 		const pbrEvidence = await page.evaluate(() => globalThis.__ELEVATION3D_TEST_CONTROLS__.embeddedPbrEvidence());
-		const validation = validateEmbeddedPbrRender({ views, selectedGlbSha256, consoleErrors, materialMode: "embedded-pbr" });
+		const imageEvidence = Object.fromEntries(VIEW_NAMES.map((name) => [name, presentationEvidence[name].image]));
+		const presentationArtifact = await writeJsonAtomic(join(root, "presentation-evidence.json"), {
+			schema_version: "arr.elevation3d.presentation-evidence.v1", render_style_id: renderStyle.id,
+			render_style_sha256: renderStyleSha256, views: presentationEvidence,
+		});
+		const baseline = await loadPresentationBaseline(presentationBaselineRunDir);
+		const baselineComparison = baseline.status === "ready" ? {
+			schema_version: "arr.elevation3d.presentation-baseline-comparison.v1", status: "compared",
+			baseline_run_dir: baseline.run_dir,
+			views: Object.fromEntries(VIEW_NAMES.map((name) => [name, comparePresentationEvidence(imageEvidence[name], baseline.views[name])])),
+		} : {
+			schema_version: "arr.elevation3d.presentation-baseline-comparison.v1", status: baseline.status,
+			reason: baseline.reason, baseline_run_dir: baseline.run_dir, views: {},
+		};
+		const baselineArtifact = await writeJsonAtomic(join(root, "baseline-comparison.json"), baselineComparison);
+		const validation = validateEmbeddedPbrRender({
+			views, selectedGlbSha256, consoleErrors, materialMode: "embedded-pbr",
+			renderStyle, renderStyleSha256, presentationEvidence: imageEvidence,
+		});
 		const thumbnails = await Promise.all(VIEW_NAMES.map((name) => sharp(views[name].path).resize(500, 500).png().toBuffer()));
 		const contactSheetPath = join(root, "contact-sheet.png");
 		await sharp({ create: { width: 2000, height: 1000, channels: 3, background: "#fafaf7" } })
 			.composite(thumbnails.map((input, index) => ({ input, left: (index % 4) * 500, top: Math.floor(index / 4) * 500 })))
 			.png().toFile(contactSheetPath);
 		const report = {
-			schema_version: "arr.elevation3d.embedded-pbr-render.v1",
+			schema_version: "arr.elevation3d.embedded-pbr-render.v2",
 			selected_glb: { path: resolve(glbPath), sha256: selectedGlbSha256 }, material_mode: "embedded-pbr", views,
-			procedural_baseline: { run_dir: resolve(baselineRunDir), compared_views: VIEW_NAMES },
+			procedural_baseline: { run_dir: baselineRunDir ? resolve(baselineRunDir) : null, compared_views: proceduralBaseline ? VIEW_NAMES : [] },
+			render_style: renderStyle, render_style_sha256: renderStyleSha256,
+			presentation_evidence: imageEvidence, baseline_comparison: baselineComparison,
 			console_errors: consoleErrors,
 			pbr_evidence: pbrEvidence,
+			provider_calls: 0, credits_consumed: 0,
 			contact_sheet: { path: contactSheetPath, sha256: sha256(await readFile(contactSheetPath)) }, validation,
+			artifacts: {
+				render_style: styleArtifact, presentation_evidence: presentationArtifact, baseline_comparison: baselineArtifact,
+				contact_sheet: { path: contactSheetPath, sha256: sha256(await readFile(contactSheetPath)) },
+				...Object.fromEntries(VIEW_NAMES.map((name) => [`view_${name}`, { path: views[name].path, sha256: views[name].sha256 }])),
+			},
 		};
-		await writeFile(join(root, "render-validation.json"), `${JSON.stringify(report, null, 2)}\n`);
+		const reportArtifact = await writeJsonAtomic(join(root, "render-validation.json"), report);
+		report.artifacts.render_validation = reportArtifact;
 		return report;
 	} finally {
 		await page?.close().catch(() => {});

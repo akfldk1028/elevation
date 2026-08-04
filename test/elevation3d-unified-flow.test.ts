@@ -303,6 +303,35 @@ test("optional texturing exceptions and rejected render gates cannot block proce
 	}
 });
 
+test("optional texturing forwards only render style to the v7 renderer without changing provider arguments", async () => {
+	const item = await fixture(); process.chdir(item.root);
+	const deps: any = acceptedDeps(item.mesh);
+	const referenceImage = join(item.root, "reference-v7.png"); await writeFile(referenceImage, Buffer.from("reference"));
+	let providerArgs: any, renderArgs: any;
+	deps.deliver = async ({ runDir }: any) => {
+		const result = automaticDelivery(runDir);
+		await mkdir(join(result.run_dir, "viewer"), { recursive: true });
+		await writeFile(join(result.run_dir, "viewer", "config.json"), JSON.stringify({ cameras: { views: { front: { projection: "orthographic" } } } }));
+		return result;
+	};
+	deps.textureDeliver = async (args: any) => {
+		providerArgs = args;
+		return { status: "accepted", outputGlb: join(args.resultDir, "final", "textured.glb"), outputSha256: "a".repeat(64), actualCredits: 10, geometry: { accepted: true }, material: { status: "accepted" }, transfer: { status: "accepted" } };
+	};
+	deps.renderTextured = async (args: any) => { renderArgs = args; return { validation: { accepted: true, status: "accepted", codes: [] } }; };
+	await runElevation3d({
+		candidateId: item.candidateId, datasetRoot: item.datasetRoot, outputRoot: item.outputRoot, runId: "optional-v7-style",
+		texturing: { enabled: true, confirmLive: true, referenceImage, maxCredits: 11, seed: 47, dryRun: true, renderStyleId: "competition-daylight-v1" }, deps,
+	});
+	assert.equal(providerArgs.provider, "tripo");
+	assert.equal(providerArgs.referenceImage, referenceImage);
+	assert.equal(providerArgs.confirmLive, true); assert.equal(providerArgs.maxCredits, 11); assert.equal(providerArgs.seed, 47); assert.equal(providerArgs.dryRun, true);
+	assert.equal(Object.hasOwn(providerArgs, "renderStyleId"), false);
+	assert.equal(renderArgs.renderStyleId, "competition-daylight-v1");
+	assert.match(renderArgs.runDir, /rendered-pbr-v7-competition-daylight$/);
+	assert.deepEqual(renderArgs.cameras, { front: { projection: "orthographic" } });
+});
+
 test("blocks and remembers a final-delivery rejection without claiming enriched success", async () => {
 	const item = await fixture(); process.chdir(item.root);
 	const deps: any = acceptedDeps(item.mesh);
