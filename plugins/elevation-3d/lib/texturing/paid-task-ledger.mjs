@@ -72,9 +72,7 @@ async function acquireReservation(lockPath, { waitMs, pollMs, signal }) {
 		}
 		const alive = pidIsAlive(owner?.pid);
 		if (alive === false) {
-			const stalePath = `${lockPath}.stale-${token}`;
-			try { await rename(lockPath, stalePath); await rm(stalePath, { force: true }); continue; }
-			catch (error) { if (error?.code === "ENOENT") continue; throw error; }
+			throw codedError("PAID_TASK_RESERVATION_STALE", "Paid task reservation owner is not alive; refusing submission");
 		}
 		if (Date.now() - started >= waitMs) throw codedError("PAID_TASK_RESERVATION_TIMEOUT", "Timed out waiting for the paid task reservation");
 		await delay(Math.min(pollMs, Math.max(1, waitMs - (Date.now() - started))), undefined, { signal });
