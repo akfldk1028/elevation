@@ -8,6 +8,7 @@ import { validateGeometryLock } from "./geometry-validator.mjs";
 import { extractPbrEvidence } from "./pbr-extractor.mjs";
 import { isProtectedGlassMaterial, validateMaterialEvidence } from "./material-validator.mjs";
 import { chooseTextureCompression } from "./texture-compression.mjs";
+import { transferNormalizedProviderPbr } from "./normalized-pbr-transfer.mjs";
 
 function providerMaterialFor(original, providerMaterials, primitiveIndex) {
 	const sameName = providerMaterials.find((material) => material.getName() === original?.getName());
@@ -36,28 +37,45 @@ export async function rebuildTexturedGlb({ authoritativeGlb, preparedUvGlb, prov
 	const preparedGeometry = validateGeometryLock(authoritative, prepared);
 	if (!preparedGeometry.accepted) throw new TexturingError("PREPARED_GEOMETRY_MISMATCH", "Locally prepared UV GLB changed authoritative geometry", preparedGeometry);
 	const providerGeometry = validateGeometryLock(authoritative, provider);
-	if (!providerGeometry.accepted) throw new TexturingError("PROVIDER_GEOMETRY_MISMATCH", "Provider GLB changed authoritative geometry", providerGeometry);
 	const providerEvidence = await extractPbrEvidence(providerGlb);
-	const providerMaterial = validateMaterialEvidence(providerEvidence);
+	const supportsNormalizedTransfer = [prepared, provider].every((document) => {
+		const names = new Set(document.getRoot().listMeshes().map((mesh) => mesh.getName()));
+		return names.has("exact-mass") && names.has("facade-details");
+	});
+	if (!providerGeometry.accepted && !supportsNormalizedTransfer) {
+		throw new TexturingError("PROVIDER_GEOMETRY_MISMATCH", "Provider GLB changed authoritative geometry", providerGeometry);
+	}
+	const normalizedTransfer = !providerGeometry.accepted;
+	const providerMaterial = validateMaterialEvidence(providerEvidence, normalizedTransfer ? {
+		minimumTextureSize: 0,
+		requiredMaterialNames: ["facade-details_material"],
+		requiredPbrSlots: ["baseColor", "metallicRoughness", "normal"],
+		warnMissingSlots: ["occlusion"],
+	} : undefined);
 	if (!providerMaterial.accepted) throw new TexturingError("PROVIDER_MATERIAL_INVALID", "Provider PBR evidence failed validation", providerMaterial);
 
-	addProviderExtensions(prepared, provider);
-	const providerMaterials = provider.getRoot().listMaterials();
-	const resolver = createDefaultPropertyResolver(prepared, provider);
-	const copiedProperties = copyToDocument(prepared, provider, providerMaterials, resolver);
-	let primitiveIndex = 0;
-	for (const mesh of prepared.getRoot().listMeshes()) {
-		for (const primitive of mesh.listPrimitives()) {
-			const original = primitive.getMaterial();
-			if (original && isProtectedGlassMaterial(original)) {
+	let transfer = { status: "accepted", mode: "direct", matchedPrimitives: null };
+	if (normalizedTransfer) {
+		transfer = { ...await transferNormalizedProviderPbr({ prepared, provider }), mode: "normalized-safe-primitives" };
+	} else {
+		addProviderExtensions(prepared, provider);
+		const providerMaterials = provider.getRoot().listMaterials();
+		const resolver = createDefaultPropertyResolver(prepared, provider);
+		const copiedProperties = copyToDocument(prepared, provider, providerMaterials, resolver);
+		let primitiveIndex = 0;
+		for (const mesh of prepared.getRoot().listMeshes()) {
+			for (const primitive of mesh.listPrimitives()) {
+				const original = primitive.getMaterial();
+				if (original && isProtectedGlassMaterial(original)) {
+					primitiveIndex += 1;
+					continue;
+				}
+				const sourceMaterial = providerMaterialFor(original, providerMaterials, primitiveIndex);
+				const copiedMaterial = sourceMaterial ? copiedProperties.get(sourceMaterial) : null;
+				if (!copiedMaterial) throw new TexturingError("PBR_MATERIAL_MAPPING_FAILED", `No provider material maps to primitive ${primitiveIndex}`);
+				primitive.setMaterial(copiedMaterial);
 				primitiveIndex += 1;
-				continue;
 			}
-			const sourceMaterial = providerMaterialFor(original, providerMaterials, primitiveIndex);
-			const copiedMaterial = sourceMaterial ? copiedProperties.get(sourceMaterial) : null;
-			if (!copiedMaterial) throw new TexturingError("PBR_MATERIAL_MAPPING_FAILED", `No provider material maps to primitive ${primitiveIndex}`);
-			primitive.setMaterial(copiedMaterial);
-			primitiveIndex += 1;
 		}
 	}
 	await prepared.transform(prune({
@@ -82,7 +100,13 @@ export async function rebuildTexturedGlb({ authoritativeGlb, preparedUvGlb, prov
 	const finalGeometry = validateGeometryLock(authoritative, finalDocument);
 	if (!finalGeometry.accepted) throw new TexturingError("FINAL_GEOMETRY_MISMATCH", "Rebuilt GLB changed authoritative geometry", finalGeometry);
 	const finalEvidence = await extractPbrEvidence(outputPath);
-	const finalMaterial = validateMaterialEvidence(finalEvidence);
+	const finalMaterial = validateMaterialEvidence(finalEvidence, normalizedTransfer ? {
+		minimumTextureSize: 2048,
+		minimumUvCoverage: 0,
+		requiredMaterialNames: ["facade-details_material"],
+		requiredPbrSlots: ["baseColor", "metallicRoughness", "normal"],
+		warnMissingSlots: ["occlusion"],
+	} : undefined);
 	if (!finalMaterial.accepted) throw new TexturingError("FINAL_MATERIAL_INVALID", "Rebuilt GLB failed PBR validation", finalMaterial);
 	const bytes = await readFile(outputPath);
 	return {
@@ -91,6 +115,7 @@ export async function rebuildTexturedGlb({ authoritativeGlb, preparedUvGlb, prov
 		outputBytes: bytes.length,
 		geometry: finalGeometry,
 		material: finalMaterial,
+		transfer,
 		compression: chooseTextureCompression({ ktx2Encoder: null }).mode,
 	};
 }

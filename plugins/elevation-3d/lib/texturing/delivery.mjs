@@ -171,10 +171,12 @@ export async function deliverTexturedGlb(options) {
 		await Promise.all([
 			atomicJson(join(outputDirectory, "geometry-report.json"), rebuilt.geometry),
 			atomicJson(join(outputDirectory, "material-report.json"), rebuilt.material),
+			atomicJson(join(outputDirectory, "transfer-report.json"), rebuilt.transfer),
 		]);
 		const actualCredits = consumedCredits(importTask) + consumedCredits(textureTask);
+		const deliveryStatus = [rebuilt.material?.status, rebuilt.transfer?.status].includes("review") ? "review" : "accepted";
 		const manifest = {
-			status: "accepted",
+			status: deliveryStatus,
 			provider: providerName,
 			requestHash: state.requestHash,
 			outputGlb: rebuilt.outputGlb,
@@ -185,8 +187,8 @@ export async function deliverTexturedGlb(options) {
 			proceduralDelivery,
 		};
 		await atomicJson(join(outputDirectory, "manifest.json"), manifest);
-		await setState({ state: "accepted", actualCredits, outputSha256: rebuilt.outputSha256 });
-		return { status: "accepted", ...manifest, preparation, download, geometry: rebuilt.geometry, material: rebuilt.material };
+		await setState({ state: deliveryStatus, actualCredits, outputSha256: rebuilt.outputSha256 });
+		return { status: deliveryStatus, ...manifest, preparation, download, geometry: rebuilt.geometry, material: rebuilt.material, transfer: rebuilt.transfer };
 	} catch (error) {
 		const status = failureStatus(error);
 		if (status === "cancelled" && activeTaskId) {
