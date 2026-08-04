@@ -1,12 +1,14 @@
 import assert from "node:assert/strict";
 import { copyFile, mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, join, resolve } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 import { prepareRun } from "../plugins/elevation-3d/lib/core.mjs";
 import { captureCanvas, finalizeResults, renderDrawings } from "../plugins/elevation-3d/lib/results.mjs";
+import { resolveElevation3dAssets } from "./helpers/elevation3d-assets.ts";
 
-const DATASET = resolve("..", "..", "..", "MAAS_ELEVATION_TEST_SET_20260730");
+const DATASET = resolveElevation3dAssets({ start: dirname(fileURLToPath(import.meta.url)), datasetOverride: process.env.ELEVATION3D_DATASET_ROOT, glbOverride: process.env.ELEVATION3D_SELECTED_GLB }).datasetRoot;
 const brief = { summary_ko: "교육시설", materials: ["벽돌"], window_rhythm: "층 정렬", ground_floor: "유리", roof: "평지붕", negative_constraints: ["형상 변경 금지"] };
 
 test("downloads terminal results, verifies geometry, and builds viewer", async () => {
