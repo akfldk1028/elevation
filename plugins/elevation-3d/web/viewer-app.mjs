@@ -65,10 +65,45 @@ function renderInteractiveAllViews(root) {
 	root.traverse((object) => {
 		if (!object.isMesh) return;
 		const materials = Array.isArray(object.material) ? object.material : [object.material];
-		materialRecords.push({ object, roles: materials.map(semanticRole), array: Array.isArray(object.material) });
+		let ancestor = object;
+		let facadeDetail = false;
+		while (ancestor) {
+			if (String(ancestor.name).toLowerCase() === "facade-details") facadeDetail = true;
+			ancestor = ancestor.parent;
+		}
+		materialRecords.push({
+			object,
+			roles: materials.map(semanticRole),
+			array: Array.isArray(object.material),
+			facadeDetail,
+			currentMaterials: materials,
+		});
 	});
 	let currentView = "axon", currentPalette = "warm", currentClipping = { enabled: false, elevation_m: null, plane_world: null }, fullscreenRequests = 0;
 	const glbLoadCount = 1;
+	function materialStability() {
+		let transparentMaterials = 0;
+		let transparentDepthWriters = 0;
+		let polygonOffsetFacadeDetails = 0;
+		let deterministicRenderOrder = true;
+		for (const record of materialRecords) {
+			const materials = Array.isArray(record.object.material) ? record.object.material : [record.object.material];
+			const transparent = materials.some((material) => material.transparent);
+			transparentMaterials += materials.filter((material) => material.transparent).length;
+			transparentDepthWriters += materials.filter((material) => material.transparent && material.depthWrite).length;
+			if (record.facadeDetail && materials.every((material) => material.polygonOffset && material.polygonOffsetFactor === -4 && material.polygonOffsetUnits === -4)) polygonOffsetFacadeDetails++;
+			const expectedRenderOrder = transparent ? 2 : record.facadeDetail ? 1 : 0;
+			if (record.object.renderOrder !== expectedRenderOrder) deterministicRenderOrder = false;
+		}
+		return {
+			mesh_count: materialRecords.length,
+			facade_detail_meshes: materialRecords.filter((record) => record.facadeDetail).length,
+			transparent_materials: transparentMaterials,
+			transparent_depth_writers: transparentDepthWriters,
+			polygon_offset_facade_details: polygonOffsetFacadeDetails,
+			deterministic_render_order: deterministicRenderOrder,
+		};
+	}
 	function state() {
 		globalThis.__ELEVATION3D_VIEWER_STATE__ = {
 			view: currentView, palette: currentPalette, selected_glb_sha256: allViews.selected_glb.sha256,
@@ -76,6 +111,7 @@ function renderInteractiveAllViews(root) {
 			fullscreen_active: Boolean(document.fullscreenElement), fullscreen_requests: fullscreenRequests,
 			camera: { type: camera?.isOrthographicCamera ? "orthographic" : "perspective", position: camera?.position.toArray(), target: controls?.target.toArray(), zoom: camera?.zoom, projection_axes: config.cameras.views[currentView]?.projection_axes, depth: config.cameras.views[currentView]?.depth },
 			clipping: currentClipping,
+			material_stability: materialStability(),
 		};
 		document.querySelector("[data-current-state]").textContent = `view=${currentView} · palette=${currentPalette} · sha256=${allViews.selected_glb.sha256}`;
 	}
@@ -116,14 +152,33 @@ function renderInteractiveAllViews(root) {
 	}
 	function applyPalette(name) {
 		const palette = allViews.palettes[name];
+		const detachedMaterials = new Set();
 		for (const record of materialRecords) {
+			for (const material of record.currentMaterials) detachedMaterials.add(material);
 			const replacements = record.roles.map((role) => {
 				const values = palette.roles[role];
-				const material = new THREE.MeshStandardMaterial({ color: values.axon_pbr, roughness: values.roughness, metalness: values.metalness, opacity: values.opacity, transparent: values.opacity < 1, side: THREE.DoubleSide });
+				const transparent = values.opacity < 1;
+				const polygonOffsetFactor = record.facadeDetail ? -4 : 4;
+				const material = new THREE.MeshStandardMaterial({
+					color: values.axon_pbr,
+					roughness: values.roughness,
+					metalness: values.metalness,
+					opacity: values.opacity,
+					transparent,
+					depthWrite: !transparent,
+					side: THREE.DoubleSide,
+					polygonOffset: true,
+					polygonOffsetFactor,
+					polygonOffsetUnits: polygonOffsetFactor,
+				});
+				material.forceSinglePass = transparent;
 				return material;
 			});
 			record.object.material = record.array ? replacements : replacements[0];
+			record.object.renderOrder = replacements.some((material) => material.transparent) ? 2 : record.facadeDetail ? 1 : 0;
+			record.currentMaterials = replacements;
 		}
+		for (const material of detachedMaterials) material.dispose();
 		currentPalette = name; applyClipping(currentView); state();
 	}
 	const buttons = document.querySelector("[data-view-buttons]");

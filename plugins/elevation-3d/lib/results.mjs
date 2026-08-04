@@ -113,6 +113,16 @@ export async function verifyAllViewsViewer({ runDir, outputDir = join(runDir, "b
 		const distance = (state) => Math.hypot(...state.camera.position.map((value, index) => value - state.camera.target[index]));
 		const interacted = join(outputDir, "viewer-interacted.png"); await page.screenshot({ path: interacted });
 		await page.click("[data-reset]");
+		await page.evaluate(async () => {
+			for (let frame = 0; frame < 30; frame++) await new Promise((resolve) => requestAnimationFrame(resolve));
+		});
+		const settledFrameHashes = [];
+		for (let frame = 0; frame < 3; frame++) {
+			await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(resolve)));
+			const dataUrl = await page.$eval("canvas", (item) => item.toDataURL("image/png"));
+			settledFrameHashes.push(sha256(Buffer.from(dataUrl.split(",")[1], "base64")));
+		}
+		const settledState = await page.evaluate(() => globalThis.__ELEVATION3D_VIEWER_STATE__);
 		const artifactUrls = await page.$$eval("[data-artifact-links] a", (items) => items.map((item) => item.href));
 		const openedArtifacts = [];
 		for (const url of artifactUrls) {
@@ -128,6 +138,9 @@ export async function verifyAllViewsViewer({ runDir, outputDir = join(runDir, "b
 			rotated: JSON.stringify(after.camera.position) !== JSON.stringify(before.camera.position),
 			zoomed: Math.abs(distance(after) - distance(before)) > 1e-6,
 			fullscreen_control: fullscreenControl, fullscreen_requests: fullscreenState.fullscreen_requests,
+			material_stability: settledState.material_stability,
+			settled_frame_hashes: settledFrameHashes,
+			settled_frames_identical: new Set(settledFrameHashes).size === 1,
 			opened_artifacts: openedArtifacts, console_errors: consoleErrors, screenshots: { initial, interacted },
 		};
 		const reportPath = join(outputDir, "browser-verification.json");
