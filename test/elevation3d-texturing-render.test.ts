@@ -24,6 +24,16 @@ function contractHash(value: unknown): string {
 	return createHash("sha256").update(canonicalJson(value)).digest("hex");
 }
 
+function serializedCameraHash(value: any): string {
+	const normalize = (input: any): any => {
+		if (typeof input === "number") return Number.isFinite(input) ? Math.round(input * 1e9) / 1e9 : null;
+		if (Array.isArray(input)) return input.map(normalize);
+		if (input && typeof input === "object") return Object.fromEntries(Object.keys(input).sort().map((key) => [key, normalize(input[key])]));
+		return input;
+	};
+	return createHash("sha256").update(JSON.stringify(normalize(value))).digest("hex");
+}
+
 function cameraContract(name: string) {
 	const orthographic = names.slice(0, 6).includes(name);
 	const orthographicPositions: Record<string, number[]> = {
@@ -221,6 +231,25 @@ test("expected camera contract is derived from persisted preset and bounds witho
 		configured: { projection_axes: { horizontal: [1, 0, 0], vertical: [0, 0, 1], depth: [0, -1, 0] }, depth: null },
 		clipping: { enabled: false, elevation_m: null, plane_world: null },
 	});
+});
+
+test("camera identity tolerates only sub-nanometre serialization drift", () => {
+	const style = resolvePbrRenderStyle();
+	const validate = (views: any) => validateEmbeddedPbrRender({
+		views, selectedGlbSha256, consoleErrors: [], materialMode: "embedded-pbr",
+		renderStyle: style, renderStyleSha256: renderStyleHash(style), presentationEvidence: validPresentationEvidence(), semanticRoleEvidence: validSemanticRoleEvidence(),
+	});
+	const serializationDrift: any = validViews();
+	serializationDrift["opposite-axon"].cameraEvidence.expected.position[1] = 42.038736009056;
+	serializationDrift["opposite-axon"].cameraEvidence.actual.position[1] = 42.038736009055;
+	serializationDrift["opposite-axon"].cameraEvidence.expected_hash = serializedCameraHash(serializationDrift["opposite-axon"].cameraEvidence.expected);
+	serializationDrift["opposite-axon"].cameraEvidence.actual_hash = serializedCameraHash(serializationDrift["opposite-axon"].cameraEvidence.actual);
+	assert.equal(validate(serializationDrift).accepted, true);
+
+	const meaningfulTamper: any = structuredClone(serializationDrift);
+	meaningfulTamper["opposite-axon"].cameraEvidence.actual.position[1] += 0.000001;
+	meaningfulTamper["opposite-axon"].cameraEvidence.actual_hash = serializedCameraHash(meaningfulTamper["opposite-axon"].cameraEvidence.actual);
+	assert.ok(validate(meaningfulTamper).codes.includes("CAMERA_IDENTITY_MISMATCH"));
 });
 
 test("presentation gates do not alter existing geometry, camera, PBR, or stability failures", () => {
