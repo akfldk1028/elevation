@@ -35,8 +35,35 @@ async function fixturePng({ building = "varied", shadow = "soft", background = [
 		for (let x = 24; x <= 28; x += 1) for (let y = 15; y <= 24; y += 1) set(x, y, [shades[x - 24], shades[x - 24], shades[x - 24]]);
 	} else if (shadow === "hard") {
 		for (let x = 24; x <= 28; x += 1) for (let y = 15; y <= 24; y += 1) set(x, y, [0, 0, 0]);
+	} else if (shadow === "textured-object") {
+		for (let x = 24; x <= 28; x += 1) for (let y = 15; y <= 24; y += 1) {
+			set(x, y, (x + y) % 2 === 0 ? [200, 225, 205] : [220, 190, 205]);
+		}
+	} else if (shadow === "oversized-image") {
+		for (let x = 24; x <= 30; x += 1) for (let y = 6; y <= 23; y += 1) {
+			const shade = 216 + (x - 24) * 4;
+			set(x, y, [shade, shade, shade]);
+		}
 	}
 	return sharp(pixels, { raw: { width: WIDTH, height: HEIGHT, channels: 3 } }).png().toBuffer();
+}
+
+async function nonRectangularTransparentPng({ oversizedBuildingShadow = false } = {}) {
+	const background: Rgb = [250, 250, 247];
+	const pixels = Buffer.alloc(WIDTH * HEIGHT * 4);
+	for (let pixel = 0; pixel < WIDTH * HEIGHT; pixel += 1) pixels.set([...background, 255], pixel * 4);
+	const set = (x: number, y: number, color: Rgb, alpha = 255) => pixels.set([...color, alpha], (y * WIDTH + x) * 4);
+	for (let y = BUILDING_BOUNDS.minY; y <= BUILDING_BOUNDS.maxY; y += 1) {
+		for (let x = BUILDING_BOUNDS.minX; x <= BUILDING_BOUNDS.maxX; x += 1) {
+			if (x < 13 || y >= 18) set(x, y, x < 13 ? [72, 96, 128] : [154, 104, 54]);
+			else set(x, y, [0, 0, 0], 0);
+		}
+	}
+	if (oversizedBuildingShadow) for (let x = 24; x <= 27; x += 1) for (let y = 4; y <= 23; y += 1) {
+		const shade = 216 + (x - 24) * 8;
+		set(x, y, [shade, shade, shade]);
+	}
+	return sharp(pixels, { raw: { width: WIDTH, height: HEIGHT, channels: 4 } }).png().toBuffer();
 }
 
 async function evidence(options = {}) {
@@ -73,6 +100,38 @@ test("a bounded soft adjacent shadow is distinguished from no shadow and a hard 
 	assert.equal(hard.contactShadow.detected, false);
 	assert.ok(soft.contactShadow.areaFraction > 0 && soft.contactShadow.areaFraction < 0.12);
 	assert.equal(soft.contactShadow.insideBuildingPixels, 0);
+});
+
+test("foreground metrics exclude transparent openings and background inside non-rectangular bounds", async () => {
+	const measured = await analyzePresentationPng({
+		png: await nonRectangularTransparentPng(), buildingBounds: BUILDING_BOUNDS, background: BACKGROUND,
+	});
+	assert.equal(measured.building.sampleCount, 156);
+	assert.ok(measured.building.luminanceP05 > 70);
+	assert.ok(measured.building.luminanceP95 < 150);
+});
+
+test("a bounded adjacent textured object is not classified as a contact shadow", async () => {
+	const textured = await evidence({ shadow: "textured-object" });
+	assert.ok(textured.contactShadow.pixelCount > 0);
+	assert.ok(textured.contactShadow.chromaP95 > 12);
+	assert.ok(textured.contactShadow.localTextureP90 > 15);
+	assert.equal(textured.contactShadow.detected, false);
+});
+
+test("oversized soft shadows exercise image-area and building-area caps independently", async () => {
+	const imageOversized = await evidence({ shadow: "oversized-image" });
+	assert.ok(imageOversized.contactShadow.areaFraction > 0.12);
+	assert.ok(imageOversized.contactShadow.buildingAreaFraction < 0.5);
+	assert.equal(imageOversized.contactShadow.detected, false);
+	const buildingOversized = await analyzePresentationPng({
+		png: await nonRectangularTransparentPng({ oversizedBuildingShadow: true }),
+		buildingBounds: BUILDING_BOUNDS,
+		background: BACKGROUND,
+	});
+	assert.ok(buildingOversized.contactShadow.areaFraction < 0.12);
+	assert.ok(buildingOversized.contactShadow.buildingAreaFraction > 0.5);
+	assert.equal(buildingOversized.contactShadow.detected, false);
 });
 
 test("material separation reports luminance and chroma spread without filename metadata", async () => {

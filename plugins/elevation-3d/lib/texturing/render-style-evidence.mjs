@@ -42,45 +42,97 @@ function isInside(x, y, bounds) {
 }
 
 export async function analyzePresentationPng({ png, buildingBounds, background }) {
-	const decoded = await sharp(png).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+	const backgroundRgb = parseBackground(background);
+	const decoded = await sharp(png)
+		.flatten({ background: { r: backgroundRgb[0], g: backgroundRgb[1], b: backgroundRgb[2] } })
+		.removeAlpha().raw().toBuffer({ resolveWithObject: true });
 	const { width, height } = decoded.info;
 	const bounds = normalizeBounds(buildingBounds, width, height);
-	const backgroundRgb = parseBackground(background);
 	const backgroundLuminance = luminance(...backgroundRgb);
 	const buildingLuminance = [];
 	const buildingChroma = [];
-	const outside = [];
+	const totalPixels = width * height;
+	const foregroundMask = new Uint8Array(totalPixels);
+	const shadowCandidateMask = new Uint8Array(totalPixels);
+	const pixelLuminance = new Float64Array(totalPixels);
+	const pixelDelta = new Float64Array(totalPixels);
+	const pixelChroma = new Float64Array(totalPixels);
 	const adjacency = Math.max(2, Math.ceil(Math.max(bounds.maxX - bounds.minX + 1, bounds.maxY - bounds.minY + 1) * 0.35));
 
 	for (let y = 0; y < height; y += 1) for (let x = 0; x < width; x += 1) {
-		const offset = (y * width + x) * 3;
+		const pixel = y * width + x;
+		const offset = pixel * 3;
 		const red = decoded.data[offset], green = decoded.data[offset + 1], blue = decoded.data[offset + 2];
-		const pixelLuminance = luminance(red, green, blue);
-		if (isInside(x, y, bounds)) {
-			buildingLuminance.push(pixelLuminance);
-			buildingChroma.push(Math.max(red, green, blue) - Math.min(red, green, blue));
-			continue;
+		pixelLuminance[pixel] = luminance(red, green, blue);
+		pixelDelta[pixel] = Math.hypot(red - backgroundRgb[0], green - backgroundRgb[1], blue - backgroundRgb[2]);
+		pixelChroma[pixel] = Math.max(red, green, blue) - Math.min(red, green, blue);
+		if (isInside(x, y, bounds) && pixelDelta[pixel] >= 4) {
+			foregroundMask[pixel] = 1;
+			buildingLuminance.push(pixelLuminance[pixel]);
+			buildingChroma.push(pixelChroma[pixel]);
 		}
-		const delta = Math.hypot(red - backgroundRgb[0], green - backgroundRgb[1], blue - backgroundRgb[2]);
-		const darkening = backgroundLuminance - pixelLuminance;
+		const darkening = backgroundLuminance - pixelLuminance[pixel];
 		const adjacent = x >= bounds.minX - adjacency && x <= bounds.maxX + adjacency
 			&& y >= bounds.minY - adjacency && y <= bounds.maxY + adjacency;
-		const shadowCandidate = adjacent && darkening >= 5 && darkening <= 90 && delta >= 5 && delta <= 120;
-		outside.push({ delta, luminance: pixelLuminance, darkening, shadowCandidate });
+		if (!isInside(x, y, bounds) && adjacent && darkening >= 5 && darkening <= 90
+			&& pixelDelta[pixel] >= 5 && pixelDelta[pixel] <= 120) shadowCandidateMask[pixel] = 1;
 	}
 
-	const shadowPixels = outside.filter((pixel) => pixel.shadowCandidate);
-	const shadowLuminance = shadowPixels.map((pixel) => pixel.luminance);
+	const neighborOffsets = [[-1, -1], [0, -1], [1, -1], [-1, 0], [1, 0], [-1, 1], [0, 1], [1, 1]];
+	const seedPixels = [];
+	for (let y = 0; y < height; y += 1) for (let x = 0; x < width; x += 1) {
+		const pixel = y * width + x;
+		if (!shadowCandidateMask[pixel]) continue;
+		if (neighborOffsets.some(([dx, dy]) => {
+			const nx = x + dx, ny = y + dy;
+			return nx >= 0 && nx < width && ny >= 0 && ny < height && foregroundMask[ny * width + nx];
+		})) seedPixels.push(pixel);
+	}
+	const connectedMask = new Uint8Array(totalPixels);
+	const queue = [...seedPixels];
+	for (const pixel of seedPixels) connectedMask[pixel] = 1;
+	for (let cursor = 0; cursor < queue.length; cursor += 1) {
+		const pixel = queue[cursor], x = pixel % width, y = Math.floor(pixel / width);
+		for (const [dx, dy] of neighborOffsets) {
+			const nx = x + dx, ny = y + dy;
+			if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue;
+			const neighbor = ny * width + nx;
+			if (shadowCandidateMask[neighbor] && !connectedMask[neighbor]) {
+				connectedMask[neighbor] = 1;
+				queue.push(neighbor);
+			}
+		}
+	}
+	const shadowPixels = queue;
+	const shadowLuminance = shadowPixels.map((pixel) => pixelLuminance[pixel]);
+	const shadowChroma = shadowPixels.map((pixel) => pixelChroma[pixel]);
+	const localDifferences = [];
+	for (const pixel of shadowPixels) {
+		const x = pixel % width, y = Math.floor(pixel / width);
+		for (const [dx, dy] of [[1, 0], [0, 1]]) {
+			const nx = x + dx, ny = y + dy;
+			if (nx < width && ny < height && connectedMask[ny * width + nx]) {
+				localDifferences.push(Math.abs(pixelLuminance[pixel] - pixelLuminance[ny * width + nx]));
+			}
+		}
+	}
 	const shadowAreaFraction = shadowPixels.length / (width * height);
+	const shadowBuildingAreaFraction = buildingLuminance.length > 0 ? shadowPixels.length / buildingLuminance.length : Infinity;
 	const shadowRange = shadowLuminance.length ? percentile(shadowLuminance, 0.95) - percentile(shadowLuminance, 0.05) : 0;
-	const buildingArea = buildingLuminance.length;
+	const shadowChromaP95 = percentile(shadowChroma, 0.95);
+	const localTextureP90 = percentile(localDifferences, 0.9) ?? 0;
 	const contactShadowDetected = shadowPixels.length >= 4
 		&& shadowAreaFraction >= 0.002 && shadowAreaFraction <= 0.12
-		&& shadowPixels.length / buildingArea <= 0.5
-		&& shadowRange >= 6;
-	const cleanBackground = outside.filter((pixel) => !pixel.shadowCandidate);
-	const backgroundDeltas = cleanBackground.map((pixel) => pixel.delta);
-	const backgroundLuminances = cleanBackground.map((pixel) => pixel.luminance);
+		&& shadowBuildingAreaFraction <= 0.5
+		&& shadowRange >= 6
+		&& shadowChromaP95 <= 12
+		&& localTextureP90 <= 15;
+	const backgroundDeltas = [];
+	const backgroundLuminances = [];
+	for (let pixel = 0; pixel < totalPixels; pixel += 1) if (!foregroundMask[pixel] && !connectedMask[pixel]) {
+		backgroundDeltas.push(pixelDelta[pixel]);
+		backgroundLuminances.push(pixelLuminance[pixel]);
+	}
 
 	return {
 		image: { width, height },
@@ -91,7 +143,7 @@ export async function analyzePresentationPng({ png, buildingBounds, background }
 			luminanceP95: percentile(buildingLuminance, 0.95),
 		},
 		background: {
-			sampleCount: cleanBackground.length,
+			sampleCount: backgroundDeltas.length,
 			deltaP95: percentile(backgroundDeltas, 0.95),
 			luminanceVariance: variance(backgroundLuminances),
 		},
@@ -99,7 +151,11 @@ export async function analyzePresentationPng({ png, buildingBounds, background }
 			detected: contactShadowDetected,
 			pixelCount: shadowPixels.length,
 			areaFraction: shadowAreaFraction,
+			buildingAreaFraction: shadowBuildingAreaFraction,
 			luminanceRange: shadowRange,
+			chromaP95: shadowChromaP95,
+			localTextureP90,
+			connectedToForeground: seedPixels.length > 0,
 			insideBuildingPixels: 0,
 		},
 		materialSeparation: {
