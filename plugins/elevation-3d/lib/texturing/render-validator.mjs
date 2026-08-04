@@ -6,10 +6,14 @@ import { sha256 } from "../core.mjs";
 import { findChrome } from "../results.mjs";
 import { startPreview, stopPreview } from "../preview.mjs";
 import { buildViewerBundle } from "../viewer.mjs";
+import { validatePresentationEvidence } from "./render-style-evidence.mjs";
 
 const VIEW_NAMES = ["front", "back", "left", "right", "plan", "top", "axon", "opposite-axon"];
 
-export function validateEmbeddedPbrRender({ views, selectedGlbSha256, consoleErrors, materialMode }) {
+export function validateEmbeddedPbrRender({
+	views, selectedGlbSha256, consoleErrors, materialMode,
+	renderStyle, renderStyleSha256, presentationEvidence,
+}) {
 	const codes = [];
 	const records = VIEW_NAMES.map((name) => views?.[name]).filter(Boolean);
 	if (records.length !== VIEW_NAMES.length) codes.push("VIEWS_INCOMPLETE");
@@ -24,6 +28,9 @@ export function validateEmbeddedPbrRender({ views, selectedGlbSha256, consoleErr
 	if (["axon", "opposite-axon"].some((name) => !(views?.[name]?.pbrPixelDelta >= 0.5))) codes.push("PBR_EVIDENCE_MISSING");
 	if ((consoleErrors ?? []).length > 0) codes.push("CONSOLE_ERROR");
 	if (materialMode !== "embedded-pbr") codes.push("MATERIAL_MODE_INVALID");
+	if (renderStyle !== undefined || renderStyleSha256 !== undefined || presentationEvidence !== undefined) {
+		codes.push(...validatePresentationEvidence({ views: presentationEvidence, style: renderStyle, styleHash: renderStyleSha256 }).codes);
+	}
 	const unique = [...new Set(codes)];
 	return { accepted: unique.length === 0, status: unique.length === 0 ? "accepted" : "rejected", codes: unique };
 }
