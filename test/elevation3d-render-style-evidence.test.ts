@@ -70,6 +70,23 @@ async function evidence(options = {}) {
 	return analyzePresentationPng({ png: await fixturePng(options), buildingBounds: BUILDING_BOUNDS, background: BACKGROUND });
 }
 
+async function scaleAwareShadowEvidence(buildingWidth: number) {
+	const width = 64, height = 64;
+	const bounds = { minX: 10, minY: 10, maxX: 9 + buildingWidth, maxY: 19 };
+	const pixels = Buffer.alloc(width * height * 3);
+	for (let pixel = 0; pixel < width * height; pixel += 1) pixels.set([250, 250, 247], pixel * 3);
+	const set = (x: number, y: number, color: Rgb) => pixels.set(color, (y * width + x) * 3);
+	for (let y = bounds.minY; y <= bounds.maxY; y += 1) for (let x = bounds.minX; x <= bounds.maxX; x += 1) {
+		set(x, y, [100, 120, 140]);
+	}
+	for (const [offset, shade] of [242, 236, 230, 224].entries()) set(bounds.maxX + 1, 16 + offset, [shade, shade, shade]);
+	return analyzePresentationPng({
+		png: await sharp(pixels, { raw: { width, height, channels: 3 } }).png().toBuffer(),
+		buildingBounds: bounds,
+		background: BACKGROUND,
+	});
+}
+
 function viewsFrom(sample: Awaited<ReturnType<typeof evidence>>) {
 	return Object.fromEntries(["front", "back", "left", "right", "plan", "top", "axon", "opposite-axon"].map((name) => [name, structuredClone(sample)]));
 }
@@ -100,6 +117,23 @@ test("a bounded soft adjacent shadow is distinguished from no shadow and a hard 
 	assert.equal(hard.contactShadow.detected, false);
 	assert.ok(soft.contactShadow.areaFraction > 0 && soft.contactShadow.areaFraction < 0.12);
 	assert.equal(soft.contactShadow.insideBuildingPixels, 0);
+});
+
+test("a scale-aware building fraction accepts a credible shadow below the image-area minimum", async () => {
+	const measured = await scaleAwareShadowEvidence(10);
+	assert.ok(measured.contactShadow.areaFraction < 0.002);
+	assert.ok(measured.contactShadow.buildingAreaFraction >= 0.01);
+	assert.ok(measured.contactShadow.buildingAreaFraction < 0.1);
+	assert.equal(measured.contactShadow.minimumCoverageRoute, "building");
+	assert.equal(measured.contactShadow.detected, true);
+});
+
+test("a tiny shadow below both scale-aware minimum routes remains rejected", async () => {
+	const measured = await scaleAwareShadowEvidence(50);
+	assert.ok(measured.contactShadow.areaFraction < 0.002);
+	assert.ok(measured.contactShadow.buildingAreaFraction < 0.01);
+	assert.equal(measured.contactShadow.minimumCoverageRoute, null);
+	assert.equal(measured.contactShadow.detected, false);
 });
 
 test("foreground metrics exclude transparent openings and background inside non-rectangular bounds", async () => {

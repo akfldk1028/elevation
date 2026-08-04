@@ -119,11 +119,16 @@ export async function analyzePresentationPng({ png, buildingBounds, background }
 	}
 	const shadowAreaFraction = shadowPixels.length / (width * height);
 	const shadowBuildingAreaFraction = buildingLuminance.length > 0 ? shadowPixels.length / buildingLuminance.length : Infinity;
+	const imageMinimumPassed = shadowAreaFraction >= 0.002;
+	const buildingMinimumPassed = shadowBuildingAreaFraction >= 0.01;
+	const minimumCoverageRoute = imageMinimumPassed && buildingMinimumPassed ? "image-and-building"
+		: imageMinimumPassed ? "image"
+			: buildingMinimumPassed ? "building" : null;
 	const shadowRange = shadowLuminance.length ? percentile(shadowLuminance, 0.95) - percentile(shadowLuminance, 0.05) : 0;
 	const shadowChromaP95 = percentile(shadowChroma, 0.95);
 	const localTextureP90 = percentile(localDifferences, 0.9) ?? 0;
 	const contactShadowDetected = shadowPixels.length >= 4
-		&& shadowAreaFraction >= 0.002 && shadowAreaFraction <= 0.12
+		&& minimumCoverageRoute !== null && shadowAreaFraction <= 0.12
 		&& shadowBuildingAreaFraction <= 0.5
 		&& shadowRange >= 6
 		&& shadowChromaP95 <= 12
@@ -153,6 +158,7 @@ export async function analyzePresentationPng({ png, buildingBounds, background }
 			pixelCount: shadowPixels.length,
 			areaFraction: shadowAreaFraction,
 			buildingAreaFraction: shadowBuildingAreaFraction,
+			minimumCoverageRoute,
 			luminanceRange: shadowRange,
 			chromaP95: shadowChromaP95,
 			localTextureP90,
@@ -211,7 +217,8 @@ export function validatePresentationEvidence({ views, style, styleHash }) {
 	if (SHADOW_VIEWS.some((name) => {
 		const shadow = views?.[name]?.contactShadow;
 		return shadow?.detected !== true || shadow.insideBuildingPixels !== 0
-			|| !finiteAtLeast(shadow.areaFraction, 0.002) || shadow.areaFraction > 0.12;
+			|| !(finiteAtLeast(shadow.areaFraction, 0.002) || finiteAtLeast(shadow.buildingAreaFraction, 0.01))
+			|| shadow.areaFraction > 0.12 || shadow.buildingAreaFraction > 0.5;
 	})) codes.push("PBR_CONTACT_SHADOW_MISSING");
 	return { accepted: codes.length === 0, codes: [...new Set(codes)] };
 }
