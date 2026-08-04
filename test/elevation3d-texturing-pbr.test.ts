@@ -9,7 +9,9 @@ import { canonicalSurfaceSignature } from "../plugins/elevation-3d/lib/texturing
 import { extractPbrEvidence } from "../plugins/elevation-3d/lib/texturing/pbr-extractor.mjs";
 import { rebuildTexturedGlb } from "../plugins/elevation-3d/lib/texturing/pbr-embedder.mjs";
 import { validateMaterialEvidence } from "../plugins/elevation-3d/lib/texturing/material-validator.mjs";
+import { analyzeNormalizedPbrTransfer } from "../plugins/elevation-3d/lib/texturing/normalized-pbr-transfer.mjs";
 import { chooseTextureCompression } from "../plugins/elevation-3d/lib/texturing/texture-compression.mjs";
+import { discoverElevation3dAssetRoot } from "./helpers/elevation3d-assets.ts";
 
 async function textureBytes(size: number, color: { r: number; g: number; b: number; alpha?: number }) {
 	return sharp({ create: { width: size, height: size, channels: 4, background: { ...color, alpha: color.alpha ?? 1 } } })
@@ -163,4 +165,21 @@ test("texture compression explicitly falls back when no KTX2 encoder is configur
 		mode: "portable-fallback",
 		mimeTypes: ["image/png", "image/webp"],
 	});
+});
+
+test("normalized PBR transfer identifies fully matched non-glass primitives in the real Tripo artifact", async () => {
+	const sharedRoot = discoverElevation3dAssetRoot(process.cwd());
+	const authoritativeGlb = join(sharedRoot, "elevation-3d-e2e-results", "autonomous", "creative-013", "automatic-allviews-flicker-v2-20260804", "delivery", "enriched.glb");
+	const providerGlb = join(sharedRoot, "elevation-3d-e2e-results", "autonomous", "creative-013", "tripo-pbr-v1-20260804", "provider", "provider-textured.glb");
+	const report = await analyzeNormalizedPbrTransfer({ authoritativeGlb, providerGlb });
+	assert.equal(report.normalization.accepted, true);
+	assert.equal(Math.abs(report.normalization.uniformScale - 24.721488) < 0.0001, true);
+	assert.equal(report.anchorSurface.accepted, true);
+	assert.equal(report.transfer.totalPrimitives, 1171);
+	assert.equal(report.transfer.matchedPrimitives, 1166);
+	assert.equal(report.transfer.status, "review");
+	assert.equal(report.transfer.areaCoverage >= 0.90, true);
+	assert.equal(report.transfer.materials.concrete.areaCoverage >= 0.80, true);
+	assert.equal(report.transfer.materials.bronze.areaCoverage >= 0.95, true);
+	assert.equal(report.transfer.materials.opaque.areaCoverage >= 0.95, true);
 });
