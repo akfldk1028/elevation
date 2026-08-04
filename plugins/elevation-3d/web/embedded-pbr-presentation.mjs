@@ -37,6 +37,7 @@ export function createEmbeddedPbrPresentation({
 	let disposed = false;
 	let activeView = null;
 	let receiver = null;
+	let presentationObjectsVisible = true;
 
 	renderer.outputColorSpace = THREE.SRGBColorSpace;
 	renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -114,15 +115,14 @@ export function createEmbeddedPbrPresentation({
 		const width = (bounds.max.x - bounds.min.x) * (1 + style.ground.padding * 2);
 		const height = (bounds.max.y - bounds.min.y) * (1 + style.ground.padding * 2);
 		const geometry = new THREE.PlaneGeometry(width, height);
-		const material = new THREE.MeshStandardMaterial({
-			color: style.background,
-			roughness: 1,
-			metalness: 0,
+		const material = new THREE.ShadowMaterial({
+			color: "#000000",
 			opacity: style.ground.opacity,
-			transparent: style.ground.opacity < 1,
-			depthWrite: style.ground.opacity >= 1,
+			transparent: true,
+			depthWrite: false,
 		});
 		const result = markPresentationOnly(new THREE.Mesh(geometry, material), "competition-daylight-shadow-receiver");
+		result.visible = presentationObjectsVisible;
 		result.position.set(
 			(bounds.min.x + bounds.max.x) / 2,
 			(bounds.min.y + bounds.max.y) / 2,
@@ -131,6 +131,11 @@ export function createEmbeddedPbrPresentation({
 		result.receiveShadow = true;
 		result.castShadow = false;
 		return result;
+	}
+
+	function setPresentationObjectsVisible(visible) {
+		presentationObjectsVisible = visible === true;
+		if (receiver) receiver.visible = presentationObjectsVisible;
 	}
 
 	function activateView(viewName) {
@@ -183,5 +188,5 @@ export function createEmbeddedPbrPresentation({
 		renderer.setClearColor(rendererState.clearColor, rendererState.clearAlpha);
 	}
 
-	return { activateView, evidence, dispose };
+	return { activateView, setPresentationObjectsVisible, evidence, dispose };
 }

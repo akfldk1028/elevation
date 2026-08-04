@@ -198,10 +198,17 @@ export async function renderEmbeddedPbrViews({
 			const first = decodePng(firstUrl), second = decodePng(secondUrl);
 			const browserState = await page.evaluate(() => globalThis.__ELEVATION3D_VIEWER_STATE__);
 			const browserPresentation = await page.evaluate(() => globalThis.__ELEVATION3D_TEST_CONTROLS__.presentationEvidence());
-			await page.evaluate(() => globalThis.__ELEVATION3D_TEST_CONTROLS__.setEmbeddedMaps(false));
-			const diagnostic = decodePng(await page.evaluate(async () => globalThis.__ELEVATION3D_TEST_CONTROLS__.settledPng()));
-			await page.evaluate(() => globalThis.__ELEVATION3D_TEST_CONTROLS__.setEmbeddedMaps(true));
-			const evidence = await compareRenderEvidence(second, diagnostic);
+			await page.evaluate(() => globalThis.__ELEVATION3D_TEST_CONTROLS__.setPresentationObjectsVisible(false));
+			let geometryTextured, diagnostic;
+			try {
+				geometryTextured = decodePng(await page.evaluate(async () => globalThis.__ELEVATION3D_TEST_CONTROLS__.settledPng()));
+				await page.evaluate(() => globalThis.__ELEVATION3D_TEST_CONTROLS__.setEmbeddedMaps(false));
+				diagnostic = decodePng(await page.evaluate(async () => globalThis.__ELEVATION3D_TEST_CONTROLS__.settledPng()));
+			} finally {
+				await page.evaluate(() => globalThis.__ELEVATION3D_TEST_CONTROLS__.setEmbeddedMaps(true));
+				await page.evaluate(() => globalThis.__ELEVATION3D_TEST_CONTROLS__.setPresentationObjectsVisible(true));
+			}
+			const evidence = await compareRenderEvidence(geometryTextured, diagnostic);
 			const directory = join(root, "views", name);
 			await mkdir(directory, { recursive: true });
 			const path = join(directory, `${name}.png`);

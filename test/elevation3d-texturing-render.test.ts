@@ -95,7 +95,7 @@ test("presentation gates do not alter existing geometry, camera, PBR, or stabili
 	}
 });
 
-async function presentationPng(viewIndex: number, diagnostic = false) {
+async function presentationPng(viewIndex: number, diagnostic = false, presentation = true) {
 	const width = 100, height = 100;
 	const data = Buffer.alloc(width * height * 3, 0);
 	for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
@@ -104,7 +104,7 @@ async function presentationPng(viewIndex: number, diagnostic = false) {
 		if (x >= 10 && x <= 89 && y >= 5 && y <= 84) {
 			const light = diagnostic ? 105 : 70 + ((x + y + viewIndex) % 6) * 24;
 			color = diagnostic ? [light, light, light] : [light, Math.min(240, light + 28), Math.max(20, light - 18)];
-		} else if (y === 85 && x >= 20 && x <= (diagnostic ? 20 : 39)) {
+		} else if (presentation && y === 85 && x >= 20 && x <= 39) {
 			const light = 212 - Math.floor((x - 20) / 3) * 3;
 			color = [light, light, light];
 		}
@@ -140,8 +140,9 @@ test("render-only v2 delivery persists resolved style, per-view evidence, baseli
 		validation: { accepted: true }, presentation_evidence: validPresentationEvidence(),
 	}));
 	const textured = await Promise.all(names.map((_, index) => presentationPng(index)));
-	const diagnostic = await Promise.all(names.map((_, index) => presentationPng(index, true)));
-	let activeView = "axon", embeddedMaps = true;
+	const geometryTextured = await Promise.all(names.map((_, index) => presentationPng(index, false, false)));
+	const diagnostic = await Promise.all(names.map((_, index) => presentationPng(index, true, false)));
+	let activeView = "axon", embeddedMaps = true, presentationVisible = true;
 	const dataUrl = (bytes: Buffer) => `data:image/png;base64,${bytes.toString("base64")}`;
 	const page = {
 		on: () => {}, setViewport: async () => {}, goto: async () => {}, waitForFunction: async () => {}, close: async () => {},
@@ -155,9 +156,13 @@ test("render-only v2 delivery persists resolved style, per-view evidence, baseli
 			};
 			if (source.includes("setEmbeddedMaps(false)")) { embeddedMaps = false; return; }
 			if (source.includes("setEmbeddedMaps(true)")) { embeddedMaps = true; return; }
+			if (source.includes("setPresentationObjectsVisible(false)")) { presentationVisible = false; return; }
+			if (source.includes("setPresentationObjectsVisible(true)")) { presentationVisible = true; return; }
 			if (source.includes("presentationEvidence")) return { style: { id: "competition-daylight-v1" }, view: activeView };
 			if (source.includes("embeddedPbrEvidence")) return { embedded_maps: true };
-			if (source.includes("settledPng")) return dataUrl(embeddedMaps ? textured[names.indexOf(activeView)] : diagnostic[names.indexOf(activeView)]);
+			if (source.includes("settledPng")) return dataUrl(embeddedMaps
+				? (presentationVisible ? textured[names.indexOf(activeView)] : geometryTextured[names.indexOf(activeView)])
+				: diagnostic[names.indexOf(activeView)]);
 			throw new Error(`unexpected browser callback: ${source}`);
 		},
 	};
@@ -171,6 +176,7 @@ test("render-only v2 delivery persists resolved style, per-view evidence, baseli
 	assert.equal(report.schema_version, "arr.elevation3d.embedded-pbr-render.v2");
 	assert.equal(report.provider_calls, 0); assert.equal(report.credits_consumed, 0);
 	assert.equal(report.validation.accepted, true, JSON.stringify(report.validation));
+	assert.equal(report.views.axon.baselineProjectedExtentDelta, 0, "presentation-only pixels must not expand procedural geometry bounds");
 	const style = JSON.parse(await readFile(join(runDir, "render-style.json"), "utf8"));
 	assert.equal(style.id, "competition-daylight-v1");
 	const viewerConfig = JSON.parse(await readFile(join(runDir, "viewer", "config.json"), "utf8"));

@@ -20,6 +20,7 @@ class Color {
 class Node {
 	children: Node[] = [];
 	parent: Node | null = null;
+	visible = true;
 	position = new Vector3();
 	userData: Record<string, unknown> = {};
 	name = "";
@@ -37,6 +38,7 @@ class MeshStandardMaterial {
 	constructor(values: Record<string, any>) { Object.assign(this, values); this.color = values.color; this.roughness = values.roughness; this.metalness = values.metalness; this.opacity = values.opacity; this.transparent = values.transparent; this.depthWrite = values.depthWrite; }
 	dispose() { this.disposed = true; }
 }
+class ShadowMaterial extends MeshStandardMaterial {}
 class Mesh extends Node {
 	isMesh = true; castShadow = false; receiveShadow = false;
 	geometry: PlaneGeometry | null; material: MeshStandardMaterial | MeshStandardMaterial[];
@@ -60,7 +62,7 @@ class PMREMGenerator {
 
 const THREE = {
 	SRGBColorSpace: "srgb", ACESFilmicToneMapping: "aces", PCFSoftShadowMap: "pcf-soft",
-	Color, Vector3, Group, PlaneGeometry, MeshStandardMaterial, Mesh, HemisphereLight, DirectionalLight, PMREMGenerator,
+	Color, Vector3, Group, PlaneGeometry, MeshStandardMaterial, ShadowMaterial, Mesh, HemisphereLight, DirectionalLight, PMREMGenerator,
 };
 
 function fixture() {
@@ -124,6 +126,7 @@ test("manages an authoritative-bounds receiver only for axon views", () => {
 	presentation.activateView("axon");
 	const first = values.scene.children.find((node) => node.name === "competition-daylight-shadow-receiver") as Mesh;
 	assert.ok(first); assert.equal(first.userData.presentationOnly, true);
+	assert.equal(first.material instanceof ShadowMaterial, true, "receiver must render shadows without a visible material fill");
 	assert.deepEqual(first.position, new Vector3().set(1, 3, 1.99));
 	assert.equal((first.geometry as PlaneGeometry).width, 15.84); assert.equal((first.geometry as PlaneGeometry).height, 15.84);
 	presentation.activateView("axon");
@@ -134,6 +137,18 @@ test("manages an authoritative-bounds receiver only for axon views", () => {
 	assert.equal((first.geometry as PlaneGeometry).disposed, true); assert.equal((first.material as MeshStandardMaterial).disposed, true);
 	presentation.activateView("plan");
 	assert.equal(second.parent, null); assert.equal(values.scene.children.some((node) => node.name === "competition-daylight-shadow-receiver"), false);
+});
+
+test("can exclude presentation-only pixels from geometry evidence without removing the saved-view receiver", () => {
+	const values = fixture();
+	const presentation = createEmbeddedPbrPresentation({ THREE, RoomEnvironment, ...values });
+	presentation.activateView("axon");
+	const receiver = values.scene.children.find((node) => node.name === "competition-daylight-shadow-receiver") as Mesh;
+	assert.equal(receiver.visible, true);
+	presentation.setPresentationObjectsVisible(false);
+	assert.equal(receiver.visible, false);
+	presentation.setPresentationObjectsVisible(true);
+	assert.equal(receiver.visible, true);
 });
 
 test("applies a bounded semantic response only once when a material is shared by multiple meshes", () => {

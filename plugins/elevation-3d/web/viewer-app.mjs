@@ -233,6 +233,7 @@ function renderInteractiveAllViews(root) {
 		rotateAndZoom() { controls.rotateLeft(0.25); controls.dollyIn(1.2); controls.update(); state(); },
 		reset() { activateView(currentView); }, toggleFullscreen, activateView,
 		presentationEvidence() { return presentation?.evidence() ?? null; },
+		setPresentationObjectsVisible(visible) { presentation?.setPresentationObjectsVisible(visible); },
 		async settledPng() {
 			await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
 			renderer.render(scene, camera);

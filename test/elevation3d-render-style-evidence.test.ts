@@ -162,3 +162,12 @@ test("presentation validation separates style, contact-shadow, and range failure
 	const clippedViews = viewsFrom(await evidence({ building: "white" }));
 	assert.deepEqual(validatePresentationEvidence({ views: clippedViews, style, styleHash }).codes, ["PBR_PRESENTATION_RANGE_INVALID"]);
 });
+
+test("roof-only plan and top views do not require multi-material separation", async () => {
+	const style = resolvePbrRenderStyle();
+	const views = viewsFrom(await evidence());
+	for (const name of ["plan", "top"]) views[name].materialSeparation = { luminanceSpread: 1, chromaSpread: 1 };
+	assert.equal(validatePresentationEvidence({ views, style, styleHash: renderStyleHash(style) }).accepted, true);
+	views.axon.materialSeparation = { luminanceSpread: 1, chromaSpread: 1 };
+	assert.deepEqual(validatePresentationEvidence({ views, style, styleHash: renderStyleHash(style) }).codes, ["PBR_PRESENTATION_RANGE_INVALID"]);
+});
