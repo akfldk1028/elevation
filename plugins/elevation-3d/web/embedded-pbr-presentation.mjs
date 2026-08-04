@@ -6,6 +6,10 @@ function clamp(value, minimum, maximum) {
 	return Math.min(maximum, Math.max(minimum, value));
 }
 
+function evidenceNumber(value) {
+	return Math.round(value * 1_000_000) / 1_000_000;
+}
+
 function materialsFor(record) {
 	return record.currentMaterials ?? (Array.isArray(record.object.material) ? record.object.material : [record.object.material]);
 }
@@ -62,11 +66,30 @@ export function createEmbeddedPbrPresentation({
 	);
 	markPresentationOnly(sun.target, "competition-daylight-sun-target");
 	sun.position.set(...style.sun.position);
+	const target = [
+		(bounds.min.x + bounds.max.x) / 2,
+		(bounds.min.y + bounds.max.y) / 2,
+		(bounds.min.z + bounds.max.z) / 2,
+	];
+	sun.target.position.set(...target);
 	sun.castShadow = true;
 	sun.shadow.mapSize.set(style.sun.shadowMapSize, style.sun.shadowMapSize);
 	sun.shadow.radius = style.sun.radius;
 	sun.shadow.bias = clamp(style.sun.bias, -0.001, 0.001);
 	sun.shadow.normalBias = clamp(style.sun.normalBias, 0, 0.1);
+	const receiverWidth = (bounds.max.x - bounds.min.x) * (1 + style.ground.padding * 2);
+	const receiverHeight = (bounds.max.y - bounds.min.y) * (1 + style.ground.padding * 2);
+	const shadowExtent = Math.hypot(receiverWidth, receiverHeight, bounds.max.z - bounds.min.z) * 0.55;
+	const sunDistance = Math.hypot(
+		sun.position.x - target[0], sun.position.y - target[1], sun.position.z - target[2],
+	);
+	Object.assign(sun.shadow.camera, {
+		left: -shadowExtent, right: shadowExtent, top: shadowExtent, bottom: -shadowExtent,
+		near: Math.max(0.1, sunDistance - shadowExtent), far: sunDistance + shadowExtent,
+	});
+	sun.target.updateMatrixWorld();
+	sun.updateMatrixWorld();
+	sun.shadow.camera.updateProjectionMatrix();
 	scene.add(hemisphere, sun, sun.target);
 
 	for (const record of materialRecords) {
@@ -112,9 +135,7 @@ export function createEmbeddedPbrPresentation({
 	}
 
 	function createReceiver() {
-		const width = (bounds.max.x - bounds.min.x) * (1 + style.ground.padding * 2);
-		const height = (bounds.max.y - bounds.min.y) * (1 + style.ground.padding * 2);
-		const geometry = new THREE.PlaneGeometry(width, height);
+		const geometry = new THREE.PlaneGeometry(receiverWidth, receiverHeight);
 		const material = new THREE.ShadowMaterial({
 			color: "#000000",
 			opacity: style.ground.opacity,
@@ -159,6 +180,9 @@ export function createEmbeddedPbrPresentation({
 			shadows: {
 				enabled: true, type: THREE.PCFSoftShadowMap, casters: opaqueMeshes,
 				receivers: opaqueMeshes + (receiver ? 1 : 0), bias: sun.shadow.bias, normalBias: sun.shadow.normalBias,
+				target: target.map(evidenceNumber),
+				camera: Object.fromEntries(["left", "right", "top", "bottom", "near", "far"]
+					.map((field) => [field, evidenceNumber(sun.shadow.camera[field])])),
 			},
 			materialRoles: Object.fromEntries(Object.entries(roleCounts).sort(([left], [right]) => left.localeCompare(right))),
 			presentationObjects: { helpers: 3, receivers: receiver ? 1 : 0, total: 3 + (receiver ? 1 : 0) },
