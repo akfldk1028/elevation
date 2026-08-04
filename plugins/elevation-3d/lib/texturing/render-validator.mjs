@@ -18,6 +18,7 @@ export function validateEmbeddedPbrRender({ views, selectedGlbSha256, consoleErr
 	if (records.some((record) => new Set(record.settledHashes ?? []).size !== 1)) codes.push("RENDER_UNSTABLE");
 	if (records.some((record) => !(record.foregroundFraction > 0.01 && record.foregroundFraction < 0.9))) codes.push("CAMERA_FRAMING_INVALID");
 	if (records.some((record) => !(record.silhouetteIou >= 0.985) || !(record.projectedExtentDelta <= 0.005))) codes.push("SILHOUETTE_MISMATCH");
+	if (records.some((record) => !(record.baselineProjectedExtentDelta <= 0.03))) codes.push("PROCEDURAL_BASELINE_MISMATCH");
 	if (VIEW_NAMES.slice(0, 6).some((name) => views?.[name]?.cameraType !== "orthographic")
 		|| VIEW_NAMES.slice(6).some((name) => views?.[name]?.cameraType !== "perspective")) codes.push("CAMERA_PROJECTION_INVALID");
 	if (["axon", "opposite-axon"].some((name) => !(views?.[name]?.pbrPixelDelta >= 0.5))) codes.push("PBR_EVIDENCE_MISSING");
@@ -61,14 +62,41 @@ async function compareRenderEvidence(texturedBytes, diagnosticBytes) {
 		silhouetteIou: union > 0 ? intersection / union : 0,
 		projectedExtentDelta: extentDelta,
 		pbrPixelDelta: union > 0 ? pixelDifference / union : 0,
+		projectedBoundsPx: bounds[1],
 	};
 }
 
-export async function renderEmbeddedPbrViews({ glbPath, runDir, candidateId, cameras, outputSize = 1600, signal, lifecycle = {} } = {}) {
+async function loadProceduralBaseline(runDir) {
+	if (!runDir) return null;
+	const root = resolve(runDir);
+	const manifest = JSON.parse(await readFile(join(root, "all-views-manifest.json"), "utf8"));
+	const result = {};
+	for (const name of VIEW_NAMES) {
+		const view = manifest.views?.[name];
+		const detailedPath = view?.manifest?.path ? join(root, view.manifest.path) : null;
+		const detailed = detailedPath ? JSON.parse(await readFile(detailedPath, "utf8")) : null;
+		const bounds = detailed?.building_content?.bounds_px ?? detailed?.content_bounds_px ?? view?.validation?.metrics?.content_bounds_px;
+		if (!bounds || !(view.width > 0) || !(view.height > 0)) throw new Error(`Procedural baseline extent is missing for ${name}`);
+		result[name] = {
+			minX: bounds.min_x / view.width, minY: bounds.min_y / view.height,
+			maxX: bounds.max_x / view.width, maxY: bounds.max_y / view.height,
+		};
+	}
+	return result;
+}
+
+function baselineExtentDelta(bounds, width, height, baseline) {
+	if (!baseline) return Infinity;
+	const normalized = { minX: bounds.minX / width, minY: bounds.minY / height, maxX: bounds.maxX / width, maxY: bounds.maxY / height };
+	return Math.max(...Object.keys(normalized).map((key) => Math.abs(normalized[key] - baseline[key])));
+}
+
+export async function renderEmbeddedPbrViews({ glbPath, runDir, candidateId, cameras, baselineRunDir, outputSize = 1600, signal, lifecycle = {} } = {}) {
 	const root = resolve(runDir);
 	await mkdir(root, { recursive: true });
 	const glbBytes = await readFile(resolve(glbPath));
 	const selectedGlbSha256 = sha256(glbBytes);
+	const proceduralBaseline = await loadProceduralBaseline(baselineRunDir);
 	const config = {
 		schema_version: "arr.elevation3d.embedded-pbr-viewer.v1",
 		candidate_id: candidateId,
@@ -124,6 +152,7 @@ export async function renderEmbeddedPbrViews({ glbPath, runDir, candidateId, cam
 				path, sha256: sha256(second), settledHashes: [sha256(first), sha256(second)], selectedGlbSha256,
 				cameraType: browserState.camera.type,
 				...evidence,
+				baselineProjectedExtentDelta: baselineExtentDelta(evidence.projectedBoundsPx, outputSize, outputSize, proceduralBaseline?.[name]),
 			};
 		}
 		const pbrEvidence = await page.evaluate(() => globalThis.__ELEVATION3D_TEST_CONTROLS__.embeddedPbrEvidence());
@@ -136,6 +165,7 @@ export async function renderEmbeddedPbrViews({ glbPath, runDir, candidateId, cam
 		const report = {
 			schema_version: "arr.elevation3d.embedded-pbr-render.v1",
 			selected_glb: { path: resolve(glbPath), sha256: selectedGlbSha256 }, material_mode: "embedded-pbr", views,
+			procedural_baseline: { run_dir: resolve(baselineRunDir), compared_views: VIEW_NAMES },
 			console_errors: consoleErrors,
 			pbr_evidence: pbrEvidence,
 			contact_sheet: { path: contactSheetPath, sha256: sha256(await readFile(contactSheetPath)) }, validation,

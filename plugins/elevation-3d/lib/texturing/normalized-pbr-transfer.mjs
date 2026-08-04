@@ -168,7 +168,7 @@ export function resolveExactUvCandidates(records) {
 		point: point.map((value) => Math.round(value * 100_000)).join(","),
 		uv: record.uvs[index].map((value) => Math.round(value * 100_000)).join(","),
 	})).sort((left, right) => left.point.localeCompare(right.point)).map(({ point, uv }) => `${point}:${uv}`).join("|")));
-	if (uvKeys.size > 1) return { matched: false, mode: "ambiguous", record: null, candidates };
+	if (uvKeys.size > 1) return { matched: false, mode: "ambiguous", record: null, candidates, contextualAllowed: false };
 	return { matched: true, mode: "exact", record: records[0], candidates: [] };
 }
 
@@ -204,7 +204,7 @@ function matchPrimitive(primitive, providerIndex, quantizationMeters) {
 		matches.push({ ...matchingProviderTriangle(points, providerIndex, quantizationMeters), corners, points });
 	}
 	const anchorUvs = matches.filter((match) => match.matched).flatMap((match) => match.record.uvs);
-	for (const match of matches.filter((candidate) => candidate.mode === "ambiguous")) {
+	for (const match of matches.filter((candidate) => candidate.mode === "ambiguous" && candidate.contextualAllowed !== false)) {
 		if (anchorUvs.length === 0) continue;
 		const scored = match.candidates.map((candidate) => ({
 			...candidate,

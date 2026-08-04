@@ -358,6 +358,7 @@ async function finalizeEnrichedSuccess({
 					runDir: join(run.dir, "texturing", versionResult.version.id, "rendered-pbr"),
 					candidateId,
 					cameras: viewerConfig.cameras.views,
+					baselineRunDir: delivery.run_dir,
 					signal,
 					lifecycle: texturingLifecycle,
 					});
