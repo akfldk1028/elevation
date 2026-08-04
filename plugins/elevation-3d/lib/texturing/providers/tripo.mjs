@@ -152,7 +152,7 @@ export function createTripoProvider({
 				texture_alignment: "geometry",
 				bake: true,
 				texture_seed: seed,
-				texture_prompt: { style_image: styleImage },
+				texture_prompt: { image: styleImage },
 			}, signal);
 		},
 		async getTask(taskId, { signal } = {}) {

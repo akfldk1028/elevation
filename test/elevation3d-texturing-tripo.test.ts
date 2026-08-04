@@ -85,7 +85,7 @@ test("Tripo adapter maps balance, STS uploads, import, and exact standard PBR te
 				texture_alignment: "geometry",
 				bake: true,
 				texture_seed: 13013,
-				texture_prompt: { style_image: styleImage },
+				texture_prompt: { image: styleImage },
 			},
 		]);
 		assert.equal(requests.every((request) => request.authorization === `Bearer ${apiKey}`), true);
