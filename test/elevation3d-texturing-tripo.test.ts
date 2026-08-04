@@ -225,7 +225,7 @@ test("independent paid ledgers reserve one submission and the loser resumes its 
 	} finally { await rm(directory, { recursive: true, force: true }); }
 });
 
-test("paid ledger reservation is abortable and recovers a stale lock only after its PID is dead", async () => {
+test("paid ledger reservation remains abortable while a live owner holds the lock", async () => {
 	const directory = await mkdtemp(join(tmpdir(), "tripo-ledger-locks-"));
 	try {
 		const path = join(directory, "ledger.json"), lockPath = `${path}.lock`, key = "e".repeat(64);
@@ -235,8 +235,31 @@ test("paid ledger reservation is abortable and recovers a stale lock only after 
 		await assert.rejects(() => createPaidTaskLedger(path, { lockWaitMs: 2_000, lockPollMs: 5 }).getOrSubmitTask({
 			key, kind: "import", signal: controller.signal, submit: async () => "must-not-submit",
 		}), { name: "AbortError" });
-		await writeFile(lockPath, JSON.stringify({ version: 1, token: "dead-owner", pid: 2_147_483_647, created_at: new Date(0).toISOString() }));
-		assert.equal(await createPaidTaskLedger(path).getOrSubmitTask({ key, kind: "import", submit: async () => "recovered-task" }), "recovered-task");
+	} finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test("independent paid ledgers fail closed without changing a dead-owner lock", async () => {
+	const directory = await mkdtemp(join(tmpdir(), "tripo-ledger-stale-lock-"));
+	try {
+		const path = join(directory, "ledger.json"), lockPath = `${path}.lock`, key = "e".repeat(64);
+		const staleLock = Buffer.from(JSON.stringify({
+			version: 1, token: "dead-owner", pid: 2_147_483_647, created_at: new Date(0).toISOString(),
+		}));
+		await writeFile(lockPath, staleLock);
+		let submissions = 0;
+		const submit = async () => { submissions++; return "must-not-submit"; };
+		const first = createPaidTaskLedger(path, { lockWaitMs: 2_000, lockPollMs: 5 });
+		const second = createPaidTaskLedger(path, { lockWaitMs: 2_000, lockPollMs: 5 });
+		const results = await Promise.allSettled([
+			first.getOrSubmitTask({ key, kind: "import", submit }),
+			second.getOrSubmitTask({ key, kind: "import", submit }),
+		]);
+		for (const result of results) {
+			assert.equal(result.status, "rejected");
+			if (result.status === "rejected") assert.equal(result.reason.code, "PAID_TASK_RESERVATION_STALE");
+		}
+		assert.equal(submissions, 0);
+		assert.deepEqual(await readFile(lockPath), staleLock);
 	} finally { await rm(directory, { recursive: true, force: true }); }
 });
 
