@@ -175,7 +175,7 @@ async function loadPresentationBaseline(runDir) {
 		&& report.validation?.accepted === true && !report.presentation_evidence) {
 		try {
 			const realRoot = await realpath(root);
-			const views = {};
+			const views = {}, pngs = {};
 			for (const name of VIEW_NAMES) {
 				const record = report.views?.[name];
 				const specified = record?.path;
@@ -191,8 +191,9 @@ async function loadPresentationBaseline(runDir) {
 				const bounds = record.projectedBoundsPx;
 				if (!bounds || ![bounds.minX, bounds.minY, bounds.maxX, bounds.maxY].every(Number.isFinite)) throw new Error("bounds");
 				views[name] = await analyzePresentationPng({ png: bytes, buildingBounds: bounds, background: "#fafaf7" });
+				pngs[name] = bytes;
 			}
-			return { status: "legacy_reanalyzed", run_dir: realRoot, views };
+			return { status: "legacy_reanalyzed", run_dir: realRoot, views, pngs };
 		} catch (error) {
 			return { status: "not_compared", reason: error?.message === "path" ? "baseline_legacy_path_invalid" : error?.message === "hash" ? "baseline_legacy_hash_invalid" : "baseline_legacy_evidence_invalid", run_dir: root, views: {} };
 		}
@@ -259,7 +260,8 @@ export async function renderEmbeddedPbrViews({
 		await page.waitForFunction(() => globalThis.__ELEVATION3D_READY__ === true, { timeout: 60_000 });
 		const views = {};
 		const presentationEvidence = {};
-		const semanticRoleEvidence = {};
+		const semanticRoleEvidence = {}, semanticRoleMasks = {};
+		const semanticGeometryEvidence = await page.evaluate(() => globalThis.__ELEVATION3D_TEST_CONTROLS__.semanticRoleGeometry());
 		for (const name of VIEW_NAMES) {
 			signal?.throwIfAborted();
 			await page.evaluate((view) => globalThis.__ELEVATION3D_TEST_CONTROLS__.activateView(view), name);
@@ -272,6 +274,7 @@ export async function renderEmbeddedPbrViews({
 			const browserState = await page.evaluate(() => globalThis.__ELEVATION3D_VIEWER_STATE__);
 			const browserPresentation = await page.evaluate(() => globalThis.__ELEVATION3D_TEST_CONTROLS__.presentationEvidence());
 			const semanticRoleMask = decodePng(await page.evaluate(() => globalThis.__ELEVATION3D_TEST_CONTROLS__.semanticRolePng()));
+			semanticRoleMasks[name] = semanticRoleMask;
 			await page.evaluate(() => globalThis.__ELEVATION3D_TEST_CONTROLS__.setPresentationObjectsVisible(false));
 			let geometryTextured, diagnostic;
 			try {
@@ -297,7 +300,7 @@ export async function renderEmbeddedPbrViews({
 				png: await readFile(path), buildingBounds: presentationBounds, background: renderStyle.background,
 			});
 			presentationEvidence[name] = { browser: browserPresentation ?? browserState.presentation, image: imagePresentation };
-			semanticRoleEvidence[name] = await analyzeSemanticRolePng({ finalPng: second, roleMaskPng: semanticRoleMask });
+			semanticRoleEvidence[name] = await analyzeSemanticRolePng({ finalPng: second, roleMaskPng: semanticRoleMask, geometry: semanticGeometryEvidence });
 			views[name] = {
 				path, sha256: sha256(second), settledHashes: [sha256(first), sha256(second)], selectedGlbSha256,
 				semanticRoleMaskPath, semanticRoleMaskSha256: sha256(semanticRoleMask),
@@ -322,6 +325,9 @@ export async function renderEmbeddedPbrViews({
 			schema_version: "arr.elevation3d.semantic-role-evidence.v1", views: semanticRoleEvidence,
 		});
 		const baseline = await loadPresentationBaseline(presentationBaselineRunDir);
+		const baselineSemanticRoleEvidence = baseline.status === "legacy_reanalyzed" ? Object.fromEntries(await Promise.all(VIEW_NAMES.map(async (name) => [
+			name, await analyzeSemanticRolePng({ finalPng: baseline.pngs[name], roleMaskPng: semanticRoleMasks[name], geometry: semanticGeometryEvidence }),
+		]))) : null;
 		const comparableBaseline = baseline.status === "ready" || baseline.status === "legacy_reanalyzed";
 		const comparisonViews = comparableBaseline
 			? Object.fromEntries(VIEW_NAMES.map((name) => [name, comparePresentationEvidence(imageEvidence[name], baseline.views[name])])) : {};
@@ -330,7 +336,10 @@ export async function renderEmbeddedPbrViews({
 			status: baseline.status === "legacy_reanalyzed" ? "compared_legacy_reanalyzed" : "compared",
 			baseline_run_dir: baseline.run_dir,
 			views: comparisonViews,
-			...(baseline.status === "legacy_reanalyzed" ? { decision: evaluatePresentationImprovement({ current: imageEvidence, baseline: baseline.views, semantic: semanticRoleEvidence }) } : {}),
+			...(baseline.status === "legacy_reanalyzed" ? {
+				legacy_semantic_roles: baselineSemanticRoleEvidence,
+				decision: evaluatePresentationImprovement({ current: imageEvidence, baseline: baseline.views, semantic: semanticRoleEvidence, baselineSemantic: baselineSemanticRoleEvidence }),
+			} : {}),
 		} : {
 			schema_version: "arr.elevation3d.presentation-baseline-comparison.v1", status: baseline.status,
 			reason: baseline.reason, baseline_run_dir: baseline.run_dir, views: {},

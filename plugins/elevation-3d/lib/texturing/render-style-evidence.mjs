@@ -180,7 +180,7 @@ const SEMANTIC_ROLE_IDS = Object.freeze({
 	concrete: [255, 0, 0], glass: [0, 255, 0], bronze: [0, 0, 255], opaque: [255, 255, 0],
 });
 
-export async function analyzeSemanticRolePng({ finalPng, roleMaskPng }) {
+export async function analyzeSemanticRolePng({ finalPng, roleMaskPng, geometry = {} }) {
 	const [finalImage, maskImage] = await Promise.all([
 		sharp(finalPng).removeAlpha().raw().toBuffer({ resolveWithObject: true }),
 		sharp(roleMaskPng).removeAlpha().raw().toBuffer({ resolveWithObject: true }),
@@ -200,9 +200,20 @@ export async function analyzeSemanticRolePng({ finalPng, roleMaskPng }) {
 		record.pixelCount++;
 		for (let channel = 0; channel < 3; channel++) record.sums[channel] += finalImage.data[offset + channel];
 	}
+	const totalRolePixels = Object.values(accumulators).reduce((sum, record) => sum + record.pixelCount, 0);
 	const roles = Object.fromEntries(Object.entries(accumulators).sort(([left], [right]) => left.localeCompare(right)).map(([role, record]) => {
 		const meanColor = record.pixelCount ? record.sums.map((sum) => Math.round(sum / record.pixelCount * 1e6) / 1e6) : [0, 0, 0];
-		return [role, { pixelCount: record.pixelCount, meanColor, meanLuminance: evidenceNumber(luminance(...meanColor)) }];
+		const geometryTriangles = geometry?.[role]?.triangleCount ?? null;
+		return [role, {
+			pixelCount: record.pixelCount,
+			coverageFraction: totalRolePixels ? evidenceNumber(record.pixelCount / totalRolePixels) : 0,
+			meanColor, meanLuminance: evidenceNumber(luminance(...meanColor)),
+			visibility: {
+				status: record.pixelCount > 0 ? "visible" : "not_visible",
+				reason: record.pixelCount > 0 ? "authoritative_role_mask_fragments" : "no_authoritative_role_mask_fragments_survived_depth_and_clipping",
+				geometryTriangles,
+			},
+		}];
 	}));
 	const pairwise = {};
 	const roleOrder = Object.keys(SEMANTIC_ROLE_IDS);
@@ -219,8 +230,12 @@ export async function analyzeSemanticRolePng({ finalPng, roleMaskPng }) {
 export function validateSemanticRoleEvidence({ views }) {
 	const codes = [];
 	const requiredViews = ["front", "back", "left", "right", "axon", "opposite-axon"];
-	const requiredRoles = ["concrete", "glass"];
-	if (requiredViews.some((name) => requiredRoles.some((role) => !(views?.[name]?.roles?.[role]?.pixelCount >= 4)))) {
+	const requiredRoles = ["concrete", "glass", "bronze"];
+	const minimumPixels = 4, minimumCoverageFraction = 0.0005;
+	if (requiredViews.some((name) => requiredRoles.some((role) => {
+		const record = views?.[name]?.roles?.[role];
+		return !(record?.pixelCount >= minimumPixels) || !(record?.coverageFraction == null || record.coverageFraction >= minimumCoverageFraction);
+	}))) {
 		codes.push("PBR_SEMANTIC_ROLE_MISSING");
 	}
 	for (const name of [...requiredViews, "plan", "top"]) {
@@ -233,10 +248,15 @@ export function validateSemanticRoleEvidence({ views }) {
 			if (!separation || !(separation.colorDistance >= 5)) codes.push("PBR_SEMANTIC_ROLE_COLLAPSED");
 		}
 	}
-	return { accepted: codes.length === 0, codes: [...new Set(codes)], thresholds: { minimumPixels: 4, minimumColorDistance: 5 }, requiredRoles };
+	return { accepted: codes.length === 0, codes: [...new Set(codes)], thresholds: { minimumPixels, minimumCoverageFraction, minimumColorDistance: 5 }, requiredRoles };
 }
 
-export function evaluatePresentationImprovement({ current, baseline, semantic }) {
+function semanticMaterialScore(view) {
+	const distances = ["concrete:glass", "concrete:bronze", "glass:bronze"].map((pair) => view?.pairwise?.[pair]?.colorDistance);
+	return distances.every(Number.isFinite) ? evidenceNumber(Math.min(...distances)) : null;
+}
+
+export function evaluatePresentationImprovement({ current, baseline, semantic, baselineSemantic }) {
 	const views = {};
 	let accepted = validateSemanticRoleEvidence({ views: semantic }).accepted;
 	for (const name of ["front", "back", "left", "right"]) {
@@ -261,19 +281,24 @@ export function evaluatePresentationImprovement({ current, baseline, semantic })
 		const semanticAccepted = validateSemanticRoleEvidence({ views: Object.fromEntries(
 			["front", "back", "left", "right", "plan", "top", "axon", "opposite-axon"].map((view) => [view, semantic?.[view]]),
 		) }).accepted;
-		const viewAccepted = nonCollapsed && groundingImproved && semanticAccepted;
+		const oldScore = semanticMaterialScore(baselineSemantic?.[name]);
+		const newScore = semanticMaterialScore(semantic?.[name]);
+		const gain = Number.isFinite(oldScore) && Number.isFinite(newScore) ? evidenceNumber(newScore - oldScore) : null;
+		const semanticMaterialImproved = Number.isFinite(gain) && gain >= 1;
+		const viewAccepted = nonCollapsed && groundingImproved && semanticAccepted && semanticMaterialImproved;
 		views[name] = {
 			accepted: viewAccepted, groundingImproved, nonCollapsed, semanticAccepted,
+			semanticMaterialScore: { old: oldScore, new: newScore, gain, improved: semanticMaterialImproved },
 			old: baseline?.[name]?.materialSeparation ?? null, new: separation ?? null,
 			delta: baseline?.[name] ? comparePresentationEvidence(current[name], baseline[name]) : null,
-			reasons: [groundingImproved ? "bounded_grounding_added" : "grounding_not_improved", nonCollapsed ? "material_evidence_noncollapsed" : "material_evidence_collapsed", semanticAccepted ? "semantic_roles_separated" : "semantic_roles_invalid"],
+			reasons: [groundingImproved ? "bounded_grounding_added" : "grounding_not_improved", nonCollapsed ? "material_evidence_noncollapsed" : "material_evidence_collapsed", semanticAccepted ? "semantic_roles_separated" : "semantic_roles_invalid", semanticMaterialImproved ? "role_aware_material_score_improved" : "role_aware_material_score_not_improved"],
 		};
 		if (!viewAccepted) accepted = false;
 	}
 	for (const name of ["plan", "top"]) views[name] = {
 		accepted: true, comparison: "geometry_and_range_only", old: baseline?.[name]?.materialSeparation ?? null, new: current?.[name]?.materialSeparation ?? null,
 	};
-	return { accepted, thresholds: { elevationLuminanceRetentionMinimum: 0.75, nonCollapsedSpreadMinimum: 15 }, views };
+	return { accepted, thresholds: { elevationLuminanceRetentionMinimum: 0.75, nonCollapsedSpreadMinimum: 15, semanticMaterialScoreMinimumGain: 1, semanticMaterialScore: "minimum RGB distance across concrete/glass, concrete/bronze, and glass/bronze" }, views };
 }
 
 export function comparePresentationEvidence(current, baseline) {
