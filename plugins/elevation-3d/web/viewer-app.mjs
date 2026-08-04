@@ -52,6 +52,7 @@ function createLegacyCamera(name) {
 }
 
 function renderInteractiveAllViews(root) {
+	const materialMode = allViews.material_mode ?? "procedural-preview";
 	const panel = document.querySelector("[data-all-views-panel]");
 	panel.hidden = false;
 	document.querySelector("[data-status]").hidden = true;
@@ -78,8 +79,19 @@ function renderInteractiveAllViews(root) {
 			facadeDetail,
 			currentMaterials: materials,
 		});
+		if (materialMode === "embedded-pbr") {
+			for (const material of materials) {
+				material.depthWrite = !material.transparent;
+				material.side = THREE.DoubleSide;
+				material.polygonOffset = true;
+				material.polygonOffsetFactor = facadeDetail ? -4 : 4;
+				material.polygonOffsetUnits = facadeDetail ? -4 : 4;
+				material.needsUpdate = true;
+			}
+			object.renderOrder = materials.some((material) => material.transparent) ? 2 : facadeDetail ? 1 : 0;
+		}
 	});
-	let currentView = "axon", currentPalette = "warm", currentClipping = { enabled: false, elevation_m: null, plane_world: null }, fullscreenRequests = 0;
+	let currentView = "axon", currentPalette = materialMode === "embedded-pbr" ? "embedded-pbr" : "warm", currentClipping = { enabled: false, elevation_m: null, plane_world: null }, fullscreenRequests = 0;
 	const glbLoadCount = 1;
 	function materialStability() {
 		let transparentMaterials = 0;
@@ -106,7 +118,7 @@ function renderInteractiveAllViews(root) {
 	}
 	function state() {
 		globalThis.__ELEVATION3D_VIEWER_STATE__ = {
-			view: currentView, palette: currentPalette, selected_glb_sha256: allViews.selected_glb.sha256,
+			view: currentView, palette: currentPalette, material_mode: materialMode, selected_glb_sha256: allViews.selected_glb.sha256,
 			glb_load_count: glbLoadCount, fullscreen_supported: typeof document.documentElement.requestFullscreen === "function",
 			fullscreen_active: Boolean(document.fullscreenElement), fullscreen_requests: fullscreenRequests,
 			camera: { type: camera?.isOrthographicCamera ? "orthographic" : "perspective", position: camera?.position.toArray(), target: controls?.target.toArray(), zoom: camera?.zoom, projection_axes: config.cameras.views[currentView]?.projection_axes, depth: config.cameras.views[currentView]?.depth },
@@ -151,6 +163,7 @@ function renderInteractiveAllViews(root) {
 		state();
 	}
 	function applyPalette(name) {
+		if (materialMode === "embedded-pbr") return;
 		const palette = allViews.palettes[name];
 		const detachedMaterials = new Set();
 		for (const record of materialRecords) {
@@ -185,7 +198,9 @@ function renderInteractiveAllViews(root) {
 	for (const name of Object.keys(config.cameras.views)) {
 		const button = document.createElement("button"); button.type = "button"; button.dataset.view = name; button.textContent = name; button.addEventListener("click", () => activateView(name)); buttons.append(button);
 	}
-	document.querySelector("[data-palette]").addEventListener("change", (event) => applyPalette(event.target.value));
+	const paletteSelector = document.querySelector("[data-palette]");
+	paletteSelector.disabled = materialMode === "embedded-pbr";
+	paletteSelector.addEventListener("change", (event) => applyPalette(event.target.value));
 	document.querySelector("[data-reset]").addEventListener("click", () => activateView(currentView));
 	async function toggleFullscreen() {
 		fullscreenRequests++; state();
@@ -199,8 +214,17 @@ function renderInteractiveAllViews(root) {
 	const links = document.querySelector("[data-artifact-links]");
 	for (const artifact of allViews.artifacts ?? []) { const link = document.createElement("a"); link.href = artifact.path; link.textContent = artifact.label; link.target = "_blank"; links.append(link); }
 	addEventListener("resize", () => { if (camera.isPerspectiveCamera) camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight, false); });
-	globalThis.__ELEVATION3D_TEST_CONTROLS__ = { rotateAndZoom() { controls.rotateLeft(0.25); controls.dollyIn(1.2); controls.update(); state(); }, reset() { activateView(currentView); }, toggleFullscreen };
-	applyPalette("warm"); activateView("axon");
+	globalThis.__ELEVATION3D_TEST_CONTROLS__ = {
+		rotateAndZoom() { controls.rotateLeft(0.25); controls.dollyIn(1.2); controls.update(); state(); },
+		reset() { activateView(currentView); }, toggleFullscreen, activateView,
+		async settledPng() {
+			await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+			renderer.render(scene, camera);
+			return renderer.domElement.toDataURL("image/png");
+		},
+	};
+	if (materialMode !== "embedded-pbr") applyPalette("warm");
+	activateView("axon");
 	renderer.setAnimationLoop(() => { controls.update(); renderer.render(scene, camera); });
 }
 
