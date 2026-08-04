@@ -154,6 +154,8 @@ export function createEmbeddedPbrPresentation({
 	const sceneState = { environment: scene.environment, environmentIntensity: scene.environmentIntensity };
 	const materialState = new Map();
 	const adjustedMaterials = new Set();
+	const ownedRoleMaterials = new Set();
+	const recordMaterialState = materialRecords.map((record) => ({ record, objectMaterial: record.object.material, currentMaterials: record.currentMaterials }));
 	const meshShadowState = new Map();
 	const roleCounts = {};
 	let disposed = false;
@@ -228,6 +230,30 @@ export function createEmbeddedPbrPresentation({
 	sun.shadow.camera.updateProjectionMatrix();
 	scene.add(hemisphere, sun, sun.target);
 
+	const materialRoles = new Map();
+	for (const record of materialRecords) for (const [index, material] of materialsFor(record).entries()) {
+		if (!materialRoles.has(material)) materialRoles.set(material, new Set());
+		materialRoles.get(material).add(record.roles[index] ?? "opaque");
+	}
+	const roleClones = new Map();
+	for (const record of materialRecords) {
+		const originals = materialsFor(record);
+		const replacements = originals.map((material, index) => {
+			const role = record.roles[index] ?? "opaque";
+			if (materialRoles.get(material)?.size <= 1) return material;
+			if (!roleClones.has(material)) roleClones.set(material, new Map());
+			const byRole = roleClones.get(material);
+			if (!byRole.has(role)) {
+				const clone = material.clone();
+				byRole.set(role, clone);
+				ownedRoleMaterials.add(clone);
+			}
+			return byRole.get(role);
+		});
+		record.object.material = record.array ? replacements : replacements[0];
+		record.currentMaterials = replacements;
+	}
+
 	for (const record of materialRecords) {
 		const materials = materialsFor(record);
 		if (!meshShadowState.has(record.object)) {
@@ -235,22 +261,22 @@ export function createEmbeddedPbrPresentation({
 		}
 		for (const [index, material] of materials.entries()) {
 			if (!materialState.has(material)) {
-				materialState.set(material, Object.fromEntries(SCALAR_PROPERTIES.map((property) => [property, material[property]])));
+				materialState.set(material, {
+					...Object.fromEntries(SCALAR_PROPERTIES.map((property) => [property, material[property]])),
+					color: material.color?.clone?.() ?? null,
+				});
 			}
 			const role = record.roles[index] ?? "opaque";
 			roleCounts[role] = (roleCounts[role] ?? 0) + 1;
 			if (adjustedMaterials.has(material)) continue;
 			adjustedMaterials.add(material);
+			material.color?.multiply?.(new THREE.Color(style.materialResponse[role].tintMultiplier));
 			if (role === "concrete" && Number.isFinite(material.roughness)) {
 				material.roughness = clamp(material.roughness + style.materialResponse.concrete.maxRoughnessDelta, 0, 1);
 			} else if (role === "bronze" && Number.isFinite(material.metalness)) {
 				material.metalness = clamp(material.metalness + style.materialResponse.bronze.maxMetalnessDelta, 0, 1);
 			} else if (role === "glass") {
 				if (Number.isFinite(material.envMapIntensity)) material.envMapIntensity = style.materialResponse.glass.maxEnvIntensity;
-				if (style.materialResponse.glass.preserveTransparency) {
-					material.transparent = true;
-					material.depthWrite = false;
-				}
 			} else if (Number.isFinite(material.roughness)) {
 				material.roughness = clamp(material.roughness + style.materialResponse.opaque.maxRoughnessDelta, 0, 1);
 			}
@@ -309,7 +335,10 @@ export function createEmbeddedPbrPresentation({
 	function evidence() {
 		const opaqueMeshes = materialRecords.filter((record) => materialsFor(record).every((material) => !material.transparent)).length;
 		return {
-			style: { id: style.id, hash: styleHash },
+			style: {
+				id: style.id, hash: styleHash,
+				materialTints: Object.fromEntries(Object.entries(style.materialResponse).map(([role, response]) => [role, response.tintMultiplier])),
+			},
 			toneMapping: { mode: style.toneMapping, exposure: style.exposure, outputColorSpace: THREE.SRGBColorSpace },
 			environment: environmentEvidence,
 			lights: { hemisphere: 1, sun: 1 },
@@ -333,7 +362,16 @@ export function createEmbeddedPbrPresentation({
 		scene.remove(hemisphere);
 		scene.remove(sun);
 		scene.remove(sun.target);
-		for (const [material, values] of materialState) Object.assign(material, values);
+		for (const [material, values] of materialState) {
+			const { color, ...scalars } = values;
+			Object.assign(material, scalars);
+			if (color) material.color?.copy?.(color);
+		}
+		for (const { record, objectMaterial, currentMaterials } of recordMaterialState) {
+			record.object.material = objectMaterial;
+			record.currentMaterials = currentMaterials;
+		}
+		for (const material of ownedRoleMaterials) material.dispose();
 		for (const [mesh, values] of meshShadowState) Object.assign(mesh, values);
 		scene.environment = sceneState.environment;
 		scene.environmentIntensity = sceneState.environmentIntensity;

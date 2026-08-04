@@ -264,4 +264,12 @@ test("preserves only a rejected canonical after accepted source identity verific
 	});
 	assert.match(acceptedPrepared.preservedAttempt, /[\\/]attempts[\\/]rendered-pbr-v7-competition-daylight-attempt-002$/);
 	assert.equal(await readFile(join(acceptedPrepared.preservedAttempt, "accepted-sentinel.txt"), "utf8"), "authorized preservation");
+
+	await mkdir(canonicalDir); await writeFile(join(canonicalDir, "render-validation.json"), JSON.stringify({ validation: { accepted: false } }));
+	await writeFile(join(sourceDir, "render-validation.json"), JSON.stringify({
+		validation: { accepted: true }, selected_glb: { sha256: createHash("sha256").update(glb).digest("hex") },
+		render_style: { id: "competition-daylight-v1" }, render_style_sha256: "a80ac48cf978eea1c63bfbd4842d38f7a21179d9c0e782f3b551a4ad72902a06",
+	}));
+	const migrated = await prepareCanonicalReplay({ outputRoot: root, canonicalDir, acceptedSourceDir: sourceDir, glbPath, camerasPath });
+	assert.match(migrated.preservedAttempt, /[\\/]attempts[\\/]rendered-pbr-v7-competition-daylight-attempt-003$/, "the exact predecessor style is a valid immutable source for the tint migration");
 });

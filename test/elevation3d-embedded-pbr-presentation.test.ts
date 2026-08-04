@@ -16,6 +16,7 @@ class Color {
 	constructor(value?: unknown) { this.value = value; }
 	copy(source: Color | unknown) { this.value = source instanceof Color ? source.value : source; return this; }
 	clone() { return new Color(this.value); }
+	multiply(source: Color) { this.value = `${this.value}*${source.value}`; return this; }
 }
 
 class Node {
@@ -38,7 +39,8 @@ class PlaneGeometry { disposed = false; width: number; height: number; construct
 class MeshStandardMaterial {
 	color: unknown; roughness: number; metalness: number; opacity: number; transparent: boolean; depthWrite: boolean;
 	disposed = false;
-	constructor(values: Record<string, any>) { Object.assign(this, values); this.color = values.color; this.roughness = values.roughness; this.metalness = values.metalness; this.opacity = values.opacity; this.transparent = values.transparent; this.depthWrite = values.depthWrite; }
+	constructor(values: Record<string, any>) { Object.assign(this, values); this.color = values.color instanceof Color ? values.color : new Color(values.color ?? "#ffffff"); this.roughness = values.roughness; this.metalness = values.metalness; this.opacity = values.opacity; this.transparent = values.transparent; this.depthWrite = values.depthWrite; }
+	clone() { const result = new MeshStandardMaterial({ ...this, color: this.color.clone() }); for (const key of ["map", "normalMap", "roughnessMap", "metalnessMap"]) result[key] = this[key]; return result; }
 	dispose() { this.disposed = true; }
 }
 class ShadowMaterial extends MeshStandardMaterial {}
@@ -270,25 +272,60 @@ test("applies a bounded semantic response only once when a material is shared by
 		object: sharedMesh, roles: ["concrete"], array: false, facadeDetail: false, currentMaterials: [values.concrete],
 	});
 	const presentation = createEmbeddedPbrPresentation({ THREE, RoomEnvironment, ...values });
+	assert.equal(values.concreteMesh.material, values.concrete); assert.equal(sharedMesh.material, values.concrete, "single-role sharing must not clone");
 	assert.equal(values.concrete.roughness, 0.64);
+	assert.equal(values.concrete.color.value, "#ffffff*#fff4e6");
 	assert.equal(values.concreteMesh.castShadow, true);
 	assert.equal(sharedMesh.castShadow, true);
 	assert.equal(presentation.evidence().materialRoles.concrete, 2);
 	presentation.dispose();
 	assert.equal(values.concrete.roughness, 0.72);
+	assert.equal(values.concrete.color.value, "#ffffff");
 });
 
-test("computes shadow eligibility after an initially opaque glass-role material becomes transparent", () => {
+test("splits a normalized provider material by role to fix real collapse classes and restores owned state", () => {
+	const values = fixture();
+	const shared = Object.assign(new MeshStandardMaterial({ color: "#c8c3bb", roughness: 0.55, metalness: 0.2, opacity: 1, transparent: false, depthWrite: true }), {
+		map: {}, normalMap: {}, roughnessMap: {}, metalnessMap: {},
+	});
+	const rightBronze = new Mesh(null, shared), rightOpaque = new Mesh(null, shared), planConcrete = new Mesh(null, shared);
+	values.root.add(rightBronze, rightOpaque, planConcrete);
+	values.materialRecords.push(
+		{ object: rightBronze, roles: ["bronze"], array: false, facadeDetail: true, currentMaterials: [shared] },
+		{ object: rightOpaque, roles: ["opaque"], array: false, facadeDetail: true, currentMaterials: [shared] },
+		{ object: planConcrete, roles: ["concrete"], array: false, facadeDetail: true, currentMaterials: [shared] },
+	);
+	const presentation = createEmbeddedPbrPresentation({ THREE, RoomEnvironment, ...values });
+	const roleMaterials = [rightBronze.material, rightOpaque.material, planConcrete.material] as MeshStandardMaterial[];
+	assert.equal(new Set(roleMaterials).size, 3, "right bronze:opaque and plan concrete:opaque need distinct role instances");
+	assert.deepEqual(roleMaterials.map((material) => material.color.value), ["#c8c3bb*#8a5a32", "#c8c3bb*#454b52", "#c8c3bb*#fff4e6"]);
+	for (const material of roleMaterials) for (const slot of ["map", "normalMap", "roughnessMap", "metalnessMap"]) assert.equal(material[slot], shared[slot]);
+	const activeBeforeDiagnostic = roleMaterials.slice();
+	const renderSemanticRoleMask = (embeddedPresentationModule as any).renderSemanticRoleMask;
+	const diagnosticRenderer = {
+		...values.renderer, render() {}, domElement: { toDataURL: () => "data:image/png;base64,AA==" },
+	};
+	renderSemanticRoleMask({ THREE: { ...THREE, MeshBasicMaterial: MeshStandardMaterial, NoToneMapping: "none" }, renderer: diagnosticRenderer, scene: values.scene, camera: {}, materialRecords: values.materialRecords });
+	assert.deepEqual([rightBronze.material, rightOpaque.material, planConcrete.material], activeBeforeDiagnostic, "diagnostic mask must restore tinted role assignments");
+	presentation.dispose();
+	assert.equal(rightBronze.material, shared); assert.equal(rightOpaque.material, shared); assert.equal(planConcrete.material, shared);
+	assert.equal(values.materialRecords.at(-1).currentMaterials[0], shared);
+	assert.ok(roleMaterials.every((material) => material.disposed), "only owned role clones are disposed");
+	assert.equal(shared.disposed, false); assert.equal(shared.color.value, "#c8c3bb");
+});
+
+test("preserves transparency, depth-write, and shadow eligibility for an opaque glass-role material", () => {
 	const values = fixture();
 	values.glass.transparent = false;
 	values.glass.depthWrite = true;
 	const presentation = createEmbeddedPbrPresentation({ THREE, RoomEnvironment, ...values });
-	assert.equal(values.glass.transparent, true);
-	assert.equal(values.glass.depthWrite, false);
-	assert.equal(values.glassMesh.castShadow, false);
-	assert.equal(values.glassMesh.receiveShadow, false);
-	assert.equal(presentation.evidence().shadows.casters, 2);
-	assert.equal(presentation.evidence().shadows.receivers, 2);
+	assert.equal(values.glass.transparent, false);
+	assert.equal(values.glass.depthWrite, true);
+	assert.equal(values.glass.color.value, "#ffffff*#dcecff");
+	assert.equal(values.glassMesh.castShadow, true);
+	assert.equal(values.glassMesh.receiveShadow, true);
+	assert.equal(presentation.evidence().shadows.casters, 3);
+	assert.equal(presentation.evidence().shadows.receivers, 3);
 });
 
 test("emits serializable lifecycle evidence and restores every owned resource exactly once", () => {
@@ -303,7 +340,7 @@ test("emits serializable lifecycle evidence and restores every owned resource ex
 	const evidence = presentation.evidence();
 	assert.doesNotThrow(() => JSON.stringify(evidence));
 	assert.deepEqual(evidence, {
-		style: { id: "competition-daylight-v1", hash: values.styleHash },
+		style: { id: "competition-daylight-v1", hash: values.styleHash, materialTints: { concrete: "#fff4e6", glass: "#dcecff", bronze: "#8a5a32", opaque: "#454b52" } },
 		toneMapping: { mode: "aces-filmic", exposure: 0.94, outputColorSpace: "srgb" },
 		environment: { type: "room-pmrem", intensity: 0.45, count: 1, status: "ready" },
 		lights: { hemisphere: 1, sun: 1 },
