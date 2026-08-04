@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, test } from "node:test";
+import { after, test } from "node:test";
 import sharp from "sharp";
 import { renderEmbeddedPbrViews, validateEmbeddedPbrRender } from "../plugins/elevation-3d/lib/texturing/render-validator.mjs";
 import { renderStyleHash, resolvePbrRenderStyle } from "../plugins/elevation-3d/lib/texturing/render-style.mjs";
@@ -11,7 +12,7 @@ const names = ["front", "back", "left", "right", "plan", "top", "axon", "opposit
 const selectedGlbSha256 = "a".repeat(64);
 const temporaryRoots: string[] = [];
 
-afterEach(async () => Promise.all(temporaryRoots.splice(0).map((root) => rm(root, { recursive: true, force: true }))));
+after(async () => Promise.all(temporaryRoots.splice(0).map((root) => rm(root, { recursive: true, force: true }))));
 
 function validViews() {
 	return Object.fromEntries(names.map((name, index) => [name, {
@@ -124,7 +125,7 @@ async function writeProceduralBaseline(root: string) {
 	await writeFile(join(root, "all-views-manifest.json"), JSON.stringify({ views }));
 }
 
-test("render-only v2 delivery persists resolved style, per-view evidence, baseline comparison, and final hashes", async () => {
+test("render-only v2 delivery persists resolved style, per-view evidence, baseline comparison, and final hashes", async (t) => {
 	const root = await mkdtemp(join(tmpdir(), "elevation3d-render-artifacts-"));
 	temporaryRoots.push(root);
 	const runDir = join(root, "render");
@@ -187,13 +188,31 @@ test("render-only v2 delivery persists resolved style, per-view evidence, baseli
 	}
 	for (const name of names) await access(join(runDir, "views", name, `${name}.png`));
 	for (const record of Object.values(report.artifacts) as any[]) assert.match(record.sha256, /^[a-f0-9]{64}$/);
+	const persistedBytes = await readFile(join(runDir, "render-validation.json"));
+	assert.deepEqual(JSON.parse(persistedBytes.toString("utf8")), report);
+	assert.equal(
+		(await readFile(join(runDir, "render-validation.sha256"), "utf8")).trim(),
+		createHash("sha256").update(persistedBytes).digest("hex"),
+	);
 
-	const withoutBaseline = await renderEmbeddedPbrViews({
-		glbPath, runDir: join(root, "render-without-v6"), candidateId: "creative-013", cameras: {}, baselineRunDir,
-		presentationBaselineRunDir: join(root, "missing-v6"), outputSize: 100,
-		lifecycle: { startPreview: async () => "http://127.0.0.1:4173/", stopPreview: async () => {}, launchBrowser: async () => browser },
+	for (const [label, baselineReport, reason] of [
+		["missing", null, "baseline_missing"],
+		["rejected", { schema_version: "arr.elevation3d.embedded-pbr-render.v1", validation: { accepted: false }, presentation_evidence: validPresentationEvidence() }, "baseline_not_accepted"],
+		["empty evidence", { schema_version: "arr.elevation3d.embedded-pbr-render.v1", validation: { accepted: true }, presentation_evidence: {} }, "baseline_evidence_incomplete"],
+		["incomplete evidence", { schema_version: "arr.elevation3d.embedded-pbr-render.v1", validation: { accepted: true }, presentation_evidence: { front: validPresentationEvidence().front } }, "baseline_evidence_incomplete"],
+	] as const) await t.test(`${label} v6 presentation baseline is not compared`, async () => {
+		const baselineDir = join(root, `v6-${label.replaceAll(" ", "-")}`);
+		if (baselineReport) {
+			await mkdir(baselineDir, { recursive: true });
+			await writeFile(join(baselineDir, "render-validation.json"), JSON.stringify(baselineReport));
+		}
+		const withoutBaseline = await renderEmbeddedPbrViews({
+			glbPath, runDir: join(root, `render-${label.replaceAll(" ", "-")}`), candidateId: "creative-013", cameras: {}, baselineRunDir,
+			presentationBaselineRunDir: baselineDir, outputSize: 100,
+			lifecycle: { startPreview: async () => "http://127.0.0.1:4173/", stopPreview: async () => {}, launchBrowser: async () => browser },
+		});
+		assert.equal(withoutBaseline.baseline_comparison.status, "not_compared");
+		assert.equal(withoutBaseline.baseline_comparison.reason, reason);
+		assert.equal(withoutBaseline.validation.accepted, true, JSON.stringify(withoutBaseline.validation));
 	});
-	assert.equal(withoutBaseline.baseline_comparison.status, "not_compared");
-	assert.equal(withoutBaseline.baseline_comparison.reason, "baseline_missing");
-	assert.equal(withoutBaseline.validation.accepted, true, JSON.stringify(withoutBaseline.validation));
 });

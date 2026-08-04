@@ -107,6 +107,12 @@ async function writeJsonAtomic(path, value) {
 	return { path, sha256: sha256(bytes) };
 }
 
+async function writeTextAtomic(path, value) {
+	const temporaryPath = `${path}.${process.pid}.tmp`;
+	await writeFile(temporaryPath, value);
+	await rename(temporaryPath, path);
+}
+
 async function loadPresentationBaseline(runDir) {
 	if (!runDir) return { status: "not_compared", reason: "baseline_not_requested", run_dir: null, views: {} };
 	const root = resolve(runDir);
@@ -117,9 +123,20 @@ async function loadPresentationBaseline(runDir) {
 		if (error?.code === "ENOENT") return { status: "not_compared", reason: "baseline_missing", run_dir: root, views: {} };
 		throw error;
 	}
+	if (!["arr.elevation3d.embedded-pbr-render.v1", "arr.elevation3d.embedded-pbr-render.v2"].includes(report.schema_version)) {
+		return { status: "not_compared", reason: "baseline_schema_invalid", run_dir: root, views: {} };
+	}
 	if (report.validation?.accepted !== true || !report.presentation_evidence) {
 		return { status: "not_compared", reason: "baseline_not_accepted", run_dir: root, views: {} };
 	}
+	const complete = VIEW_NAMES.every((name) => {
+		const evidence = report.presentation_evidence[name];
+		return evidence && [
+			evidence.materialSeparation?.luminanceSpread, evidence.materialSeparation?.chromaSpread,
+			evidence.background?.deltaP95, evidence.background?.luminanceVariance,
+		].every(Number.isFinite);
+	});
+	if (!complete) return { status: "not_compared", reason: "baseline_evidence_incomplete", run_dir: root, views: {} };
 	return { status: "ready", run_dir: root, views: report.presentation_evidence };
 }
 
@@ -246,7 +263,7 @@ export async function renderEmbeddedPbrViews({
 			},
 		};
 		const reportArtifact = await writeJsonAtomic(join(root, "render-validation.json"), report);
-		report.artifacts.render_validation = reportArtifact;
+		await writeTextAtomic(join(root, "render-validation.sha256"), `${reportArtifact.sha256}\n`);
 		return report;
 	} finally {
 		await page?.close().catch(() => {});
