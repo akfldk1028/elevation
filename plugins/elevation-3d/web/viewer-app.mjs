@@ -106,6 +106,12 @@ function renderInteractiveAllViews(root, gltf = null) {
 		THREE, RoomEnvironment, renderer, scene, root, bounds, materialRecords,
 		style: resolvedStyle, styleHash: allViews.render_style_sha256,
 	}) : null;
+	if (presentation) for (const record of materialRecords) for (const material of record.currentMaterials) {
+		if (!embeddedMaps.has(material)) embeddedMaps.set(material, {
+			map: material.map, normalMap: material.normalMap,
+			roughnessMap: material.roughnessMap, metalnessMap: material.metalnessMap,
+		});
+	}
 	let currentView = "axon", currentPalette = materialMode === "embedded-pbr" ? "embedded-pbr" : "warm", currentClipping = { enabled: false, elevation_m: null, plane_world: null }, expectedCameraContract = null, fullscreenRequests = 0;
 	const glbLoadCount = 1;
 	function materialStability() {

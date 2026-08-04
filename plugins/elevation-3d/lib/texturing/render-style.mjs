@@ -18,10 +18,10 @@ const PRESET = {
 	},
 	ground: { enabledFor: ["axon", "opposite-axon"], opacity: 0.14, padding: 0.16 },
 	materialResponse: {
-		concrete: { maxRoughnessDelta: -0.08 },
-		glass: { maxEnvIntensity: 1.35, preserveTransparency: true },
-		bronze: { maxMetalnessDelta: 0.08 },
-		opaque: { maxRoughnessDelta: -0.04 },
+		concrete: { maxRoughnessDelta: -0.08, tintMultiplier: "#fff4e6" },
+		glass: { maxEnvIntensity: 1.35, preserveTransparency: true, tintMultiplier: "#dcecff" },
+		bronze: { maxMetalnessDelta: 0.08, tintMultiplier: "#8a5a32" },
+		opaque: { maxRoughnessDelta: -0.04, tintMultiplier: "#454b52" },
 	},
 };
 
@@ -107,10 +107,14 @@ function validate(style) {
 	bounded(style.ground.opacity, 0, 0.5, "style.ground.opacity");
 	bounded(style.ground.padding, 0, 1, "style.ground.padding");
 	bounded(style.materialResponse.concrete.maxRoughnessDelta, -1, 1, "style.materialResponse.concrete.maxRoughnessDelta");
+	style.materialResponse.concrete.tintMultiplier = color(style.materialResponse.concrete.tintMultiplier, "style.materialResponse.concrete.tintMultiplier");
 	bounded(style.materialResponse.glass.maxEnvIntensity, 0, 5, "style.materialResponse.glass.maxEnvIntensity");
 	if (typeof style.materialResponse.glass.preserveTransparency !== "boolean") invalid("style.materialResponse.glass.preserveTransparency must be boolean");
+	style.materialResponse.glass.tintMultiplier = color(style.materialResponse.glass.tintMultiplier, "style.materialResponse.glass.tintMultiplier");
 	bounded(style.materialResponse.bronze.maxMetalnessDelta, -1, 1, "style.materialResponse.bronze.maxMetalnessDelta");
+	style.materialResponse.bronze.tintMultiplier = color(style.materialResponse.bronze.tintMultiplier, "style.materialResponse.bronze.tintMultiplier");
 	bounded(style.materialResponse.opaque.maxRoughnessDelta, -1, 1, "style.materialResponse.opaque.maxRoughnessDelta");
+	style.materialResponse.opaque.tintMultiplier = color(style.materialResponse.opaque.tintMultiplier, "style.materialResponse.opaque.tintMultiplier");
 	return style;
 }
 

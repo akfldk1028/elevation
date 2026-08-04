@@ -25,10 +25,10 @@ const expectedStyle = {
 	},
 	ground: { enabledFor: ["axon", "opposite-axon"], opacity: 0.14, padding: 0.16 },
 	materialResponse: {
-		concrete: { maxRoughnessDelta: -0.08 },
-		glass: { maxEnvIntensity: 1.35, preserveTransparency: true },
-		bronze: { maxMetalnessDelta: 0.08 },
-		opaque: { maxRoughnessDelta: -0.04 },
+		concrete: { maxRoughnessDelta: -0.08, tintMultiplier: "#fff4e6" },
+		glass: { maxEnvIntensity: 1.35, preserveTransparency: true, tintMultiplier: "#dcecff" },
+		bronze: { maxMetalnessDelta: 0.08, tintMultiplier: "#8a5a32" },
+		opaque: { maxRoughnessDelta: -0.04, tintMultiplier: "#454b52" },
 	},
 };
 
@@ -47,7 +47,7 @@ test("resolves the approved competition daylight preset as an immutable value", 
 	assert.equal(COMPETITION_DAYLIGHT_STYLE_ID, "competition-daylight-v1");
 	assert.deepEqual(style, expectedStyle);
 	assertDeeplyFrozen(style);
-	assert.equal(renderStyleHash(style), "a80ac48cf978eea1c63bfbd4842d38f7a21179d9c0e782f3b551a4ad72902a06");
+	assert.equal(renderStyleHash(style), "ed4dae4fc3bb869810d156adf11c69d23265d4822b4a26e46e6c61fb8da9d9dc");
 });
 
 test("normalizes equivalent overrides to one deterministic SHA-256 identity", () => {
@@ -107,6 +107,8 @@ test("rejects extreme finite daylight values outside the approved operating enve
 		{ materialResponse: { opaque: { maxRoughnessDelta: 1.01 } } },
 		{ materialResponse: { bronze: { maxMetalnessDelta: 1.01 } } },
 		{ materialResponse: { glass: { maxEnvIntensity: 5.01 } } },
+		{ materialResponse: { bronze: { tintMultiplier: "bronze" } } },
+		{ materialResponse: { opaque: { tintMultiplier: "#12345g" } } },
 	];
 	for (const overrides of invalidOverrides) {
 		assert.throws(() => resolvePbrRenderStyle(overrides), isInvalidStyle, JSON.stringify(overrides));

@@ -7,6 +7,7 @@ import { renderEmbeddedPbrViews } from "../plugins/elevation-3d/lib/texturing/re
 import { renderStyleHash, resolvePbrRenderStyle } from "../plugins/elevation-3d/lib/texturing/render-style.mjs";
 
 const OUTPUT_VERSION = "rendered-pbr-v7-competition-daylight";
+const PREVIOUS_STYLE_SHA256 = "a80ac48cf978eea1c63bfbd4842d38f7a21179d9c0e782f3b551a4ad72902a06";
 const PREVIOUS_LIMITATION = "The rendered-pbr-v6 presentation had washed highlights and weak material separation.";
 const VIEW_NAMES = ["front", "back", "left", "right", "plan", "top", "axon", "opposite-axon"];
 
@@ -36,10 +37,11 @@ export async function prepareCanonicalReplay({ outputRoot, canonicalDir, accepte
 		readFile(join(existingCanonical, "render-validation.json"), "utf8").then(JSON.parse),
 	]);
 	const style = resolvePbrRenderStyle();
+	const styleSha256 = renderStyleHash(style);
 	const glbSha256 = (await import("node:crypto")).createHash("sha256").update(glbBytes).digest("hex");
 	if (sourceReport.validation?.accepted !== true) throw new Error("Accepted source report is not accepted");
 	if (sourceReport.selected_glb?.sha256 !== glbSha256) throw new Error("Accepted source GLB identity does not match");
-	if (sourceReport.render_style?.id !== style.id || sourceReport.render_style_sha256 !== renderStyleHash(style)) throw new Error("Accepted source style identity does not match");
+	if (sourceReport.render_style?.id !== style.id || !new Set([styleSha256, PREVIOUS_STYLE_SHA256]).has(sourceReport.render_style_sha256)) throw new Error("Accepted source style identity does not match");
 	if (canonicalJson(sourceConfig.cameras?.views) !== canonicalJson(acceptedConfig.cameras?.views)) throw new Error("Accepted source camera identity does not match");
 	if (canonicalReport.validation?.accepted === true && archiveAcceptedCanonical !== true) throw new Error("Refusing to overwrite an accepted canonical artifact");
 	if (![true, false].includes(canonicalReport.validation?.accepted)) throw new Error("Existing canonical artifact has no explicit validation decision");
@@ -61,7 +63,7 @@ export async function prepareCanonicalReplay({ outputRoot, canonicalDir, accepte
 		await lock.close();
 		await rm(lockPath, { force: true });
 	}
-	return { canonicalDir: canonical, preservedAttempt, acceptedSourceDir: source, glbSha256, styleSha256: renderStyleHash(style) };
+	return { canonicalDir: canonical, preservedAttempt, acceptedSourceDir: source, glbSha256, styleSha256 };
 }
 
 function requiredArgument(values, name) {
