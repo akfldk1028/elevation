@@ -104,3 +104,12 @@ Durable run and candidate events use the v2 memory schema. Each attempted versio
 - Provider geometry remains rejected as authority because Tripo normalized it to about 1 m and changed 24,296 triangles to 23,900. The next stage transfers only matched UV/PBR evidence back to the exact local MASS.
 - Procedural delivery remains untouched at `D:/Data/50_ELE/elevation-3d-e2e-results/autonomous/creative-013/automatic-allviews-flicker-v2-20260804/delivery`.
 - Detailed failure and verification record: `logs/2026-08-04-tripo-pbr-v1.md`.
+
+## Geometry-locked Tripo PBR transfer v2 — 2026-08-04
+
+- The downloaded Tripo result is never used as geometry. Its uniform normalization is inverted only to establish surface correspondence with the authoritative local MASS.
+- Safe transfer is whole-primitive and fail-closed: exact, coplanar, and context-disambiguated triangle matches may receive provider UV/PBR; any missing or conflicting triangle preserves the entire local primitive and material. Glass always remains local.
+- Real result: 1,166/1,171 non-glass facade primitives and 92.5224527% area safely transferred. The final 9,377,156-byte GLB has SHA-256 `8ff913dfe5a29e1420dc3d65c2d29b69809a49cb7093e7f0c0b1bf74ec8d6bf8` and retains the authoritative 24,296-triangle canonical surface.
+- Eight embedded-PBR views render from that single GLB with stable frame hashes and zero console errors. The technical render gate passes, while material/coverage quality remains `review` because AO is missing, concrete coverage is 83.65%, and the visual style is lighter and less photoreal than the approved competition isometric.
+- The unified agent flow now makes texturing an optional post-process after procedural delivery. It requires explicit `enabled` and `confirm_live`; credentials alone never imply consent. Provider rejection never removes the procedural package and paid tasks are never auto-retried.
+- Artifacts: `D:/Data/50_ELE/elevation-3d-e2e-results/autonomous/creative-013/tripo-pbr-v1-20260804/final/textured.glb` and sibling `rendered-pbr-v1/contact-sheet.png`.
