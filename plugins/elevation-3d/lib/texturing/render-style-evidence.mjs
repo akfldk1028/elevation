@@ -3,6 +3,7 @@ import { COMPETITION_DAYLIGHT_STYLE_ID, renderStyleHash, resolvePbrRenderStyle }
 
 const REQUIRED_VIEWS = ["front", "back", "left", "right", "plan", "top", "axon", "opposite-axon"];
 const SHADOW_VIEWS = ["axon", "opposite-axon"];
+const MATERIAL_SEPARATION_VIEWS = ["front", "back", "left", "right", "axon", "opposite-axon"];
 
 function percentile(values, fraction) {
 	if (values.length === 0) return null;
@@ -201,10 +202,12 @@ export function validatePresentationEvidence({ views, style, styleHash }) {
 		|| !Number.isFinite(record.building?.luminanceP95) || record.building.luminanceP95 > 248
 		|| !finiteAtLeast(record.background?.sampleCount, 1)
 		|| !Number.isFinite(record.background?.deltaP95) || record.background.deltaP95 > 12
-		|| !Number.isFinite(record.background?.luminanceVariance) || record.background.luminanceVariance > 25
-		|| !(finiteAtLeast(record.materialSeparation?.luminanceSpread, 15)
-			|| finiteAtLeast(record.materialSeparation?.chromaSpread, 15)));
-	if (rangeInvalid) codes.push("PBR_PRESENTATION_RANGE_INVALID");
+		|| !Number.isFinite(record.background?.luminanceVariance) || record.background.luminanceVariance > 25);
+	const materialSeparationInvalid = MATERIAL_SEPARATION_VIEWS.some((name) => {
+		const separation = views?.[name]?.materialSeparation;
+		return !(finiteAtLeast(separation?.luminanceSpread, 15) || finiteAtLeast(separation?.chromaSpread, 15));
+	});
+	if (rangeInvalid || materialSeparationInvalid) codes.push("PBR_PRESENTATION_RANGE_INVALID");
 	if (SHADOW_VIEWS.some((name) => {
 		const shadow = views?.[name]?.contactShadow;
 		return shadow?.detected !== true || shadow.insideBuildingPixels !== 0
