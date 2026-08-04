@@ -12,7 +12,7 @@ import { renderStyleHash, resolvePbrRenderStyle } from "./render-style.mjs";
 const VIEW_NAMES = ["front", "back", "left", "right", "plan", "top", "axon", "opposite-axon"];
 
 function normalizeCameraValue(value) {
-	if (typeof value === "number") return Number.isFinite(value) ? Math.round(value * 1e12) / 1e12 : null;
+	if (typeof value === "number") return Number.isFinite(value) ? Math.round(value * 1e9) / 1e9 : null;
 	if (Array.isArray(value)) return value.map(normalizeCameraValue);
 	if (value && typeof value === "object") return Object.fromEntries(Object.keys(value).sort().map((key) => [key, normalizeCameraValue(value[key])]));
 	return value;
