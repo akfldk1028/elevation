@@ -56,11 +56,18 @@ export function createPaidTaskLedger(path) {
 				const ledger = await readLedger(ledgerPath);
 				const existing = ledger.requests[key]?.tasks?.[kind];
 				if (existing?.taskId) return existing.taskId;
+				if (existing?.status === "submitting") {
+					const error = new Error(`Refusing to resubmit uncertain ${kind} task; reconcile provider state manually`);
+					error.code = "PAID_TASK_SUBMISSION_UNCERTAIN";
+					throw error;
+				}
+				const request = ledger.requests[key] ?? { tasks: {} };
+				request.tasks[kind] = { taskId: null, status: "submitting", consumedCredits: null };
+				ledger.requests[key] = request;
+				await atomicWrite(ledgerPath, ledger);
 				const taskId = await submit();
 				if (typeof taskId !== "string" || taskId.length === 0) throw new Error("Provider did not return a task ID");
-				const request = ledger.requests[key] ?? { tasks: {} };
 				request.tasks[kind] = { taskId, status: "submitted", consumedCredits: null };
-				ledger.requests[key] = request;
 				await atomicWrite(ledgerPath, ledger);
 				return taskId;
 			});
@@ -83,7 +90,7 @@ export function createPaidTaskLedger(path) {
 				for (const [kind, task] of Object.entries(request.tasks ?? {})) tasks.push({
 					requestKey,
 					kind,
-					taskHash: sha256(task.taskId),
+					taskHash: task.taskId ? sha256(task.taskId) : null,
 					status: task.status,
 					consumedCredits: task.consumedCredits,
 				});

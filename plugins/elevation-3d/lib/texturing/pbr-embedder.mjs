@@ -27,6 +27,26 @@ function addProviderExtensions(target, source) {
 	}
 }
 
+function assertDirectPrimitiveLayout(localPrimitive, providerPrimitive, primitiveIndex, tolerance = 0.0001) {
+	const localPosition = localPrimitive.getAttribute("POSITION"), providerPosition = providerPrimitive?.getAttribute("POSITION");
+	const localIndices = localPrimitive.getIndices(), providerIndices = providerPrimitive?.getIndices();
+	if (!localPosition || !providerPosition || localPosition.getCount() !== providerPosition.getCount()
+		|| Boolean(localIndices) !== Boolean(providerIndices) || localIndices?.getCount() !== providerIndices?.getCount()) {
+		throw new TexturingError("PROVIDER_UV_LAYOUT_UNVERIFIED", `Provider primitive ${primitiveIndex} layout cannot be mapped safely`);
+	}
+	for (let index = 0; index < localPosition.getCount(); index += 1) {
+		const local = localPosition.getElement(index, [0, 0, 0]), provider = providerPosition.getElement(index, [0, 0, 0]);
+		if (Math.hypot(local[0] - provider[0], local[1] - provider[1], local[2] - provider[2]) > tolerance) {
+			throw new TexturingError("PROVIDER_UV_LAYOUT_UNVERIFIED", `Provider primitive ${primitiveIndex} vertex order differs from the authoritative layout`);
+		}
+	}
+	for (let index = 0; localIndices && index < localIndices.getCount(); index += 1) {
+		if (localIndices.getScalar(index) !== providerIndices.getScalar(index)) {
+			throw new TexturingError("PROVIDER_UV_LAYOUT_UNVERIFIED", `Provider primitive ${primitiveIndex} index order differs from the authoritative layout`);
+		}
+	}
+}
+
 export async function rebuildTexturedGlb({ authoritativeGlb, preparedUvGlb, providerGlb, outputGlb, signal }) {
 	if (signal?.aborted) throw signal.reason ?? new DOMException("The operation was aborted", "AbortError");
 	const io = new NodeIO();
@@ -60,8 +80,10 @@ export async function rebuildTexturedGlb({ authoritativeGlb, preparedUvGlb, prov
 	} else {
 		addProviderExtensions(prepared, provider);
 		const providerMaterials = provider.getRoot().listMaterials();
+		const providerPrimitives = provider.getRoot().listMeshes().flatMap((mesh) => mesh.listPrimitives());
 		const resolver = createDefaultPropertyResolver(prepared, provider);
 		const copiedProperties = copyToDocument(prepared, provider, providerMaterials, resolver);
+		const targetBuffer = prepared.getRoot().listBuffers()[0] ?? prepared.createBuffer("provider-uv-buffer");
 		let primitiveIndex = 0;
 		for (const mesh of prepared.getRoot().listMeshes()) {
 			for (const primitive of mesh.listPrimitives()) {
@@ -73,6 +95,13 @@ export async function rebuildTexturedGlb({ authoritativeGlb, preparedUvGlb, prov
 				const sourceMaterial = providerMaterialFor(original, providerMaterials, primitiveIndex);
 				const copiedMaterial = sourceMaterial ? copiedProperties.get(sourceMaterial) : null;
 				if (!copiedMaterial) throw new TexturingError("PBR_MATERIAL_MAPPING_FAILED", `No provider material maps to primitive ${primitiveIndex}`);
+				const providerPrimitive = providerPrimitives[primitiveIndex];
+				assertDirectPrimitiveLayout(primitive, providerPrimitive, primitiveIndex);
+				const sourceUv = providerPrimitive.getAttribute("TEXCOORD_0");
+				if (!sourceUv?.getArray()) throw new TexturingError("PROVIDER_UV_MISSING", `Provider primitive ${primitiveIndex} has no transferable TEXCOORD_0`);
+				const copiedUv = prepared.createAccessor(`provider-uv-${primitiveIndex}`)
+					.setBuffer(targetBuffer).setType(sourceUv.getType()).setArray(sourceUv.getArray().slice()).setNormalized(sourceUv.getNormalized());
+				primitive.setAttribute("TEXCOORD_0", copiedUv);
 				primitive.setMaterial(copiedMaterial);
 				primitiveIndex += 1;
 			}

@@ -200,6 +200,17 @@ test("paid task ledger resumes a persisted task without submitting a duplicate",
 	}
 });
 
+test("paid task ledger fails closed after a crash in the submission uncertainty window", async () => {
+	const directory = await mkdtemp(join(tmpdir(), "tripo-ledger-uncertain-"));
+	try {
+		const path = join(directory, "ledger.json"), key = "a".repeat(64);
+		await writeFile(path, JSON.stringify({ version: 1, requests: { [key]: { tasks: { texture: { status: "submitting", taskId: null, consumedCredits: null } } } } }));
+		let submissions = 0;
+		await assert.rejects(() => createPaidTaskLedger(path).getOrSubmitTask({ key, kind: "texture", submit: async () => { submissions++; return "duplicate"; } }), (error: any) => error.code === "PAID_TASK_SUBMISSION_UNCERTAIN");
+		assert.equal(submissions, 0);
+	} finally { await rm(directory, { recursive: true, force: true }); }
+});
+
 test("provider router rejects unconfigured names and creates the Tripo boundary", () => {
 	assert.equal(createTexturingProvider("tripo", { apiKey, baseUrl }).name, "tripo");
 	assert.throws(() => createTexturingProvider("unknown", { apiKey }), /Unsupported texturing provider/);

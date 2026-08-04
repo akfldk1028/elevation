@@ -279,6 +279,30 @@ test("optional texturing runs only after procedural delivery and preserves it on
 	assert.equal(final.texturing.retryDecision, "no-auto-retry");
 });
 
+test("optional texturing exceptions and rejected render gates cannot block procedural success", async () => {
+	for (const mode of ["throw", "render-rejected"] as const) {
+		const item = await fixture(); process.chdir(item.root);
+		const deps: any = acceptedDeps(item.mesh);
+		const referenceImage = join(item.root, `reference-${mode}.png`); await writeFile(referenceImage, Buffer.from("reference"));
+		if (mode === "throw") {
+			deps.textureDeliver = async () => { const error: any = new Error("provider unavailable"); error.code = "TRIPO_API_ERROR"; throw error; };
+		} else {
+			deps.deliver = async ({ runDir }: any) => {
+				const result = automaticDelivery(runDir);
+				await mkdir(join(result.run_dir, "viewer"), { recursive: true });
+				await writeFile(join(result.run_dir, "viewer", "config.json"), JSON.stringify({ cameras: { views: {} } }));
+				return result;
+			};
+			deps.textureDeliver = async ({ resultDir }: any) => ({ status: "accepted", outputGlb: join(resultDir, "final", "textured.glb"), outputSha256: "a".repeat(64), actualCredits: 10, geometry: { accepted: true }, material: { status: "accepted" }, transfer: { status: "accepted" } });
+			deps.renderTextured = async () => ({ validation: { accepted: false, status: "rejected", codes: ["PBR_EVIDENCE_MISSING"] } });
+		}
+		const result = await runElevation3d({ candidateId: item.candidateId, datasetRoot: item.datasetRoot, outputRoot: item.outputRoot, runId: `optional-${mode}`, texturing: { enabled: true, confirmLive: true, referenceImage }, deps });
+		assert.equal(result.delivery.validation.accepted, true);
+		assert.equal(result.texturing.status, "rejected");
+		assert.equal((await readJson(join(result.run_dir, "final.json"))).selected, "v001");
+	}
+});
+
 test("blocks and remembers a final-delivery rejection without claiming enriched success", async () => {
 	const item = await fixture(); process.chdir(item.root);
 	const deps: any = acceptedDeps(item.mesh);

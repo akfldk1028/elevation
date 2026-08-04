@@ -63,6 +63,7 @@ function renderInteractiveAllViews(root) {
 	const radius = Math.max(bounds.getSize(new THREE.Vector3()).length() * 0.75, 1);
 	let camera, controls;
 	const materialRecords = [];
+	const embeddedMaps = new Map();
 	root.traverse((object) => {
 		if (!object.isMesh) return;
 		const materials = Array.isArray(object.material) ? object.material : [object.material];
@@ -81,6 +82,10 @@ function renderInteractiveAllViews(root) {
 		});
 		if (materialMode === "embedded-pbr") {
 			for (const material of materials) {
+				embeddedMaps.set(material, {
+					map: material.map, normalMap: material.normalMap,
+					roughnessMap: material.roughnessMap, metalnessMap: material.metalnessMap,
+				});
 				material.depthWrite = !material.transparent;
 				material.side = THREE.DoubleSide;
 				material.polygonOffset = true;
@@ -221,6 +226,20 @@ function renderInteractiveAllViews(root) {
 			await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
 			renderer.render(scene, camera);
 			return renderer.domElement.toDataURL("image/png");
+		},
+		setEmbeddedMaps(enabled) {
+			for (const [material, maps] of embeddedMaps) {
+				for (const field of ["map", "normalMap", "roughnessMap", "metalnessMap"]) material[field] = enabled ? maps[field] : null;
+				material.needsUpdate = true;
+			}
+		},
+		embeddedPbrEvidence() {
+			return {
+				material_count: embeddedMaps.size,
+				base_color_maps: [...embeddedMaps.values()].filter((maps) => maps.map).length,
+				normal_maps: [...embeddedMaps.values()].filter((maps) => maps.normalMap).length,
+				metallic_roughness_maps: [...embeddedMaps.values()].filter((maps) => maps.roughnessMap || maps.metalnessMap).length,
+			};
 		},
 	};
 	if (materialMode !== "embedded-pbr") applyPalette("warm");

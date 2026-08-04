@@ -334,8 +334,9 @@ async function finalizeEnrichedSuccess({
 		});
 		throwIfAborted(signal);
 		if (texturing?.enabled === true) {
-			const referenceImage = texturing.referenceImage;
-			texturingResult = await textureDeliver({
+			try {
+				const referenceImage = texturing.referenceImage;
+				texturingResult = await textureDeliver({
 				acceptedGlb: versionResult.artifact.path,
 				referenceImage,
 				resultDir: join(run.dir, "texturing", versionResult.version.id),
@@ -349,17 +350,39 @@ async function finalizeEnrichedSuccess({
 				dryRun: texturing.dryRun === true,
 				signal,
 				env: process.env,
-			});
-			if (["accepted", "review"].includes(texturingResult.status) && texturingResult.outputGlb) {
-				const viewerConfig = JSON.parse(await readFile(join(delivery.run_dir, "viewer", "config.json"), "utf8"));
-				texturingResult.render = await renderTextured({
+				});
+				if (["accepted", "review"].includes(texturingResult.status) && texturingResult.outputGlb) {
+					const viewerConfig = JSON.parse(await readFile(join(delivery.run_dir, "viewer", "config.json"), "utf8"));
+					texturingResult.render = await renderTextured({
 					glbPath: texturingResult.outputGlb,
 					runDir: join(run.dir, "texturing", versionResult.version.id, "rendered-pbr"),
 					candidateId,
 					cameras: viewerConfig.cameras.views,
 					signal,
 					lifecycle: texturingLifecycle,
-				});
+					});
+					if (texturingResult.render?.validation?.accepted !== true) {
+						texturingResult = {
+							...texturingResult,
+							status: "rejected",
+							failure: {
+								code: "TEXTURED_RENDER_REJECTED",
+								message: "Embedded-PBR eight-view validation rejected the textured delivery",
+								details: texturingResult.render?.validation,
+							},
+						};
+					}
+				}
+			} catch (error) {
+				if (isAbort(error, signal)) throw error;
+				texturingResult = {
+					status: "rejected",
+					proceduralDelivery: delivery.run_dir,
+					failure: redactSecrets({
+						code: error?.code ?? "OPTIONAL_TEXTURING_FAILED",
+						message: error instanceof Error ? error.message : String(error),
+					}),
+				};
 			}
 		}
 		await selectFinal(run, {
