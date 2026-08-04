@@ -1,5 +1,5 @@
-import { access, readFile } from "node:fs/promises";
-import { basename, isAbsolute, relative, resolve } from "node:path";
+import { mkdir, readFile, realpath } from "node:fs/promises";
+import { basename, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { appendPresentationVersionMemory } from "../plugins/elevation-3d/lib/run-memory.mjs";
@@ -25,7 +25,7 @@ export function parseReplayArgs(argv, cwd = process.cwd()) {
 		if (values.has(name)) throw new Error(`Duplicate replay argument: ${name}`);
 		values.set(name, value);
 	}
-	const supported = new Set(["--glb", "--cameras", "--procedural-baseline", "--presentation-baseline", "--output"]);
+	const supported = new Set(["--glb", "--cameras", "--procedural-baseline", "--presentation-baseline", "--output-root", "--output"]);
 	for (const name of values.keys()) if (!supported.has(name)) throw new Error(`Unsupported replay argument: ${name}`);
 	const resolved = (name) => resolve(cwd, requiredArgument(values, name));
 	const outputDir = resolved("--output");
@@ -35,28 +35,28 @@ export function parseReplayArgs(argv, cwd = process.cwd()) {
 		proceduralBaselineRunDir: resolved("--procedural-baseline"),
 		...(values.has("--presentation-baseline") ? { presentationBaselineRunDir: resolved("--presentation-baseline") } : {}),
 		outputDir,
-		outputRoot: outputDir,
+		outputRoot: resolved("--output-root"),
 	};
 }
 
-function assertScopedFreshOutput(outputDir, outputRoot) {
+async function resolveScopedOutput(outputDir, outputRoot, realpathFs = realpath) {
 	if (!outputRoot) throw new Error("An explicit output root is required");
 	const root = resolve(outputRoot);
 	const output = resolve(outputDir);
-	const child = relative(root, output);
-	if (child === ".." || child.startsWith("..\\") || child.startsWith("../") || isAbsolute(child)) {
-		throw new Error("Output directory must remain below the explicit output root");
-	}
+	if (output === root) throw new Error("Output directory must be distinct from and below the explicit output root");
+	if (dirname(output) !== root) throw new Error("Output directory must be the fixed direct child below the explicit output root");
 	if (basename(output) !== OUTPUT_VERSION) throw new Error(`Output directory must be named ${OUTPUT_VERSION}`);
+	const [realRoot, realParent] = await Promise.all([realpathFs(root), realpathFs(dirname(output))]);
+	if (resolve(realParent) !== resolve(realRoot)) throw new Error("Output directory parent must resolve to the explicit output root");
 	return { root, output };
 }
 
-async function assertMissing(path) {
+async function reserveOutput(path, mkdirFs = mkdir) {
 	try {
-		await access(path);
-		throw new Error(`Output directory already exists: ${path}`);
+		await mkdirFs(path, { recursive: false });
 	} catch (error) {
-		if (error?.code !== "ENOENT") throw error;
+		if (error?.code === "EEXIST") throw new Error(`Output directory already exists or is reserved: ${path}`);
+		throw error;
 	}
 }
 
@@ -65,8 +65,7 @@ export async function renderCompetitionDaylightReplay(options, deps = {}) {
 	const camerasPath = resolve(options.camerasPath);
 	const proceduralBaselineRunDir = resolve(options.proceduralBaselineRunDir);
 	const presentationBaselineRunDir = options.presentationBaselineRunDir ? resolve(options.presentationBaselineRunDir) : undefined;
-	const { root: outputRoot, output: outputDir } = assertScopedFreshOutput(options.outputDir, options.outputRoot);
-	await assertMissing(outputDir);
+	const { root: outputRoot, output: outputDir } = await resolveScopedOutput(options.outputDir, options.outputRoot, deps.realpath);
 	if (presentationBaselineRunDir && basename(presentationBaselineRunDir) !== "rendered-pbr-v6") {
 		throw new Error("Presentation baseline must point to rendered-pbr-v6");
 	}
@@ -81,6 +80,7 @@ export async function renderCompetitionDaylightReplay(options, deps = {}) {
 	const appendMemory = deps.appendPresentationVersionMemory ?? appendPresentationVersionMemory;
 	const renderStyle = resolvePbrRenderStyle();
 	const renderStyleSha256 = renderStyleHash(renderStyle);
+	await reserveOutput(outputDir, deps.mkdir);
 	let report;
 	try {
 		report = await render({
