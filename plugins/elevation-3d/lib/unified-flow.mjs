@@ -1,11 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
-import { loadCandidatePackage, sha256 } from "./core.mjs";
+import { loadCandidatePackage, redactSecrets, sha256 } from "./core.mjs";
 import { buildEnrichedScene, writeEnrichedGlb } from "./enrichment.mjs";
 import { validateEnrichment } from "./enrichment-validation.mjs";
 import { correctGrammar, normalizeFacadeGrammar, resolveApprovedDesign } from "./facade-grammar.mjs";
+import { deliverSelectedAllViews } from "./final-delivery.mjs";
 import {
 	appendRunMemory,
 	assertSafePathSegment,
@@ -314,6 +315,56 @@ async function terminateCancelled(run, memoryRoot, error) {
 	throw error;
 }
 
+async function finalizeEnrichedSuccess({ run, versionResult, attempts, input, candidateId, signal, deliver, memoryRoot, lifecycle }) {
+	let delivery;
+	try {
+		delivery = await deliver({
+			runDir: run.dir,
+			candidateId,
+			artifact: versionResult.artifact,
+			input,
+			signal,
+			lifecycle,
+		});
+		throwIfAborted(signal);
+		await selectFinal(run, {
+			selected: versionResult.version.id,
+			reason: "enrichment, validation, and all-view delivery passed",
+			delivery: delivery.memory_record,
+		});
+	} catch (error) {
+		if (isAbort(error, signal)) throw error;
+		const code = typeof error?.code === "string" ? error.code : "FINAL_DELIVERY_FAILED";
+		const failurePath = join(run.dir, "delivery-failure.json");
+		const failure = redactSecrets({
+			schema_version: "arr.elevation3d.delivery-failure.v1",
+			stage: "delivery",
+			code,
+			message: error instanceof Error ? error.message : String(error),
+			evidence: error?.evidence ?? {},
+		});
+		await writeFile(failurePath, `${JSON.stringify(failure, null, 2)}\n`);
+		await selectFinal(run, {
+			selected: "blocked",
+			reason: `delivery: ${code}`,
+			delivery_failure: { path: failurePath, code, stage: "delivery" },
+		});
+		await appendRunMemory(run, memoryRoot);
+		throw error;
+	}
+	await appendRunMemory(run, memoryRoot);
+	return {
+		selected_version: versionResult.version.id,
+		attempts,
+		fallback: false,
+		run_dir: run.dir,
+		artifact: versionResult.artifact,
+		drawings: versionResult.drawings,
+		validation: versionResult.report,
+		delivery,
+	};
+}
+
 export async function runElevation3d({
 	candidateId,
 	datasetRoot,
@@ -351,23 +402,14 @@ export async function runElevation3d({
 	const enrich = deps.enrich ?? enrichVersion;
 	const render = deps.render ?? renderVersion;
 	const validate = deps.validate ?? validateVersion;
+	const deliver = deps.deliver ?? deliverSelectedAllViews;
 	try {
 	const first = await runVersion({
 		run, versionId: "v001", grammar, safeFallback: false, input, enrich, render, validate, signal,
 		renderLifecycle: deps.renderLifecycle, renderProgressObserver: deps.onRenderProgress,
 	});
 	if (!first.failure) {
-		await selectFinal(run, { selected: first.version.id, reason: "enrichment and all gates passed" });
-		await appendRunMemory(run, memoryRoot);
-		return {
-			selected_version: first.version.id,
-			attempts: 1,
-			fallback: false,
-			run_dir: run.dir,
-			artifact: first.artifact,
-			drawings: first.drawings,
-			validation: first.report,
-		};
+		return await finalizeEnrichedSuccess({ run, versionResult: first, attempts: 1, input, candidateId, signal, deliver, memoryRoot, lifecycle: deps.deliveryLifecycle });
 	}
 	if (!first.failure.retryable) await terminateBlocked(run, memoryRoot, first.failure, first.cause);
 
@@ -377,17 +419,7 @@ export async function runElevation3d({
 		renderLifecycle: deps.renderLifecycle, renderProgressObserver: deps.onRenderProgress,
 	});
 	if (!second.failure) {
-		await selectFinal(run, { selected: second.version.id, reason: "bounded correction passed all gates" });
-		await appendRunMemory(run, memoryRoot);
-		return {
-			selected_version: second.version.id,
-			attempts: 2,
-			fallback: false,
-			run_dir: run.dir,
-			artifact: second.artifact,
-			drawings: second.drawings,
-			validation: second.report,
-		};
+		return await finalizeEnrichedSuccess({ run, versionResult: second, attempts: 2, input, candidateId, signal, deliver, memoryRoot, lifecycle: deps.deliveryLifecycle });
 	}
 	if (!second.failure.retryable) await terminateBlocked(run, memoryRoot, second.failure, second.cause);
 
@@ -408,6 +440,8 @@ export async function runElevation3d({
 		artifact: fallback.artifact,
 		drawings: fallback.drawings,
 		validation: fallback.report,
+		delivery: null,
+		delivery_status: "not_applicable_fallback",
 	};
 	} catch (error) {
 		if (isAbort(error, signal)) await terminateCancelled(run, memoryRoot, signal?.reason ?? error);
