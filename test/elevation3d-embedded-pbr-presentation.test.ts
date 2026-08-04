@@ -21,12 +21,14 @@ class Node {
 	children: Node[] = [];
 	parent: Node | null = null;
 	visible = true;
+	matrixWorldUpdates = 0;
 	position = new Vector3();
 	userData: Record<string, unknown> = {};
 	name = "";
 	add(...nodes: Node[]) { for (const node of nodes) { node.parent?.remove(node); node.parent = this; this.children.push(node); } }
 	remove(node: Node) { this.children = this.children.filter((child) => child !== node); if (node.parent === this) node.parent = null; }
 	traverse(visitor: (node: Node) => void) { visitor(this); for (const child of this.children) child.traverse(visitor); }
+	updateMatrixWorld() { this.matrixWorldUpdates++; }
 }
 
 class Scene extends Node { environment: unknown = "old-environment"; environmentIntensity = 0.25; }
@@ -47,7 +49,11 @@ class Mesh extends Node {
 class HemisphereLight extends Node { sky: string; ground: string; intensity: number; constructor(sky: string, ground: string, intensity: number) { super(); this.sky = sky; this.ground = ground; this.intensity = intensity; } }
 class DirectionalLight extends Node {
 	target = new Node(); castShadow = false;
-	shadow = { mapSize: { width: 0, height: 0, set: (width: number, height: number) => { this.shadow.mapSize.width = width; this.shadow.mapSize.height = height; } }, radius: 0, bias: 0, normalBias: 0 };
+	shadow = {
+		mapSize: { width: 0, height: 0, set: (width: number, height: number) => { this.shadow.mapSize.width = width; this.shadow.mapSize.height = height; } },
+		radius: 0, bias: 0, normalBias: 0,
+		camera: { left: -5, right: 5, top: 5, bottom: -5, near: 0.5, far: 500, projectionUpdates: 0, updateProjectionMatrix() { this.projectionUpdates++; } },
+	};
 	color: string; intensity: number; constructor(color: string, intensity: number) { super(); this.color = color; this.intensity = intensity; }
 }
 class RoomEnvironment { disposed = false; dispose() { this.disposed = true; } }
@@ -105,6 +111,13 @@ test("configures one competition daylight rig while preserving embedded material
 	assert.equal(values.scene.environmentIntensity, 0.55);
 	assert.equal(values.scene.children.filter((node) => node instanceof HemisphereLight).length, 1);
 	assert.equal(values.scene.children.filter((node) => node instanceof DirectionalLight).length, 1);
+	const sun = values.scene.children.find((node) => node instanceof DirectionalLight) as DirectionalLight;
+	assert.deepEqual(sun.target.position, new Vector3().set(1, 3, 7));
+	assert.equal(sun.target.matrixWorldUpdates, 1);
+	assert.equal(sun.shadow.camera.projectionUpdates, 1);
+	assert.ok(sun.shadow.camera.left < -11 && sun.shadow.camera.right > 11);
+	assert.ok(sun.shadow.camera.bottom < -11 && sun.shadow.camera.top > 11);
+	assert.ok(sun.shadow.camera.near > 0 && sun.shadow.camera.far > 50);
 	assert.equal(values.concreteMesh.castShadow, true); assert.equal(values.concreteMesh.receiveShadow, true);
 	assert.equal(values.bronzeMesh.castShadow, true); assert.equal(values.bronzeMesh.receiveShadow, true);
 	assert.equal(values.glassMesh.castShadow, false); assert.equal(values.glassMesh.receiveShadow, false);
@@ -196,7 +209,11 @@ test("emits serializable lifecycle evidence and restores every owned resource ex
 		toneMapping: { mode: "aces-filmic", exposure: 1.02, outputColorSpace: "srgb" },
 		environment: { type: "room-pmrem", intensity: 0.55, count: 1 },
 		lights: { hemisphere: 1, sun: 1 },
-		shadows: { enabled: true, type: "pcf-soft", casters: 2, receivers: 3, bias: -0.0002, normalBias: 0.02 },
+		shadows: {
+			enabled: true, type: "pcf-soft", casters: 2, receivers: 3, bias: -0.0002, normalBias: 0.02,
+			target: [1, 3, 7],
+			camera: { left: -13.492512, right: 13.492512, top: 13.492512, bottom: -13.492512, near: 27.726415, far: 54.71144 },
+		},
 		materialRoles: { bronze: 1, concrete: 1, glass: 1 },
 		presentationObjects: { helpers: 3, receivers: 1, total: 4 },
 		view: "axon",
