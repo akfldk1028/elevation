@@ -55,8 +55,8 @@ test("normalizes a redacted presentation-only version memory record", async () =
 			render_style: { id: "competition-daylight-v1", authorization: "Bearer style-secret" },
 			render_style_sha256: "a".repeat(64),
 			validation: { accepted: false, status: "rejected", codes: ["PRESENTATION_HIGHLIGHTS_CLIPPED"], metrics: { clipped: 2 } },
-			provider_calls: 9,
-			credits_consumed: 12,
+			provider_calls: 0,
+			credits_consumed: 0,
 			artifacts: {
 				contact_sheet: { path: join(outputDir, "contact-sheet.png"), sha256: "b".repeat(64) },
 				presentation_evidence: { path: "https://x.test/evidence?token=url-secret", sha256: "c".repeat(64) },
@@ -78,6 +78,24 @@ test("normalizes a redacted presentation-only version memory record", async () =
 	assert.equal(record.credits_consumed, 0);
 	assert.equal(JSON.stringify(record).includes("style-secret"), false);
 	assert.equal(JSON.stringify(record).includes("url-secret"), false);
+});
+
+test("rejects missing or nonzero provider provenance instead of normalizing it to zero", async () => {
+	const runRoot = await mkdtemp(join(tmpdir(), "elevation3d-presentation-provider-zero-"));
+	temporaryRoots.push(runRoot);
+	const outputDir = join(runRoot, "rendered-pbr-v7-competition-daylight");
+	await mkdir(outputDir, { recursive: true });
+	for (const counters of [
+		{ credits_consumed: 0 },
+		{ provider_calls: 0 },
+		{ provider_calls: 1, credits_consumed: 0 },
+		{ provider_calls: 0, credits_consumed: 0.1 },
+	]) {
+		await assert.rejects(() => appendPresentationVersionMemory({
+			candidateId: "creative-013", outputDir, previousBaseline: {},
+			report: { validation: { accepted: false, codes: [] }, ...counters },
+		}, join(runRoot, `memory-${JSON.stringify(counters).replace(/\W/g, "-")}.jsonl`)), /provider_calls.*zero|credits_consumed.*zero/i);
+	}
 });
 
 test("creates immutable run metadata and v001 directories", async () => {

@@ -21,6 +21,10 @@ function luminance(red, green, blue) {
 	return 0.2126 * red + 0.7152 * green + 0.0722 * blue;
 }
 
+function evidenceNumber(value) {
+	return Math.round(value * 1_000_000) / 1_000_000;
+}
+
 function parseBackground(value) {
 	if (typeof value !== "string" || !/^#[0-9a-f]{6}$/i.test(value)) throw new TypeError("background must be a six-digit hex color");
 	return [1, 3, 5].map((offset) => Number.parseInt(value.slice(offset, offset + 2), 16));
@@ -170,6 +174,106 @@ export async function analyzePresentationPng({ png, buildingBounds, background }
 			chromaSpread: percentile(buildingChroma, 0.9) - percentile(buildingChroma, 0.1),
 		},
 	};
+}
+
+const SEMANTIC_ROLE_IDS = Object.freeze({
+	concrete: [255, 0, 0], glass: [0, 255, 0], bronze: [0, 0, 255], opaque: [255, 255, 0],
+});
+
+export async function analyzeSemanticRolePng({ finalPng, roleMaskPng }) {
+	const [finalImage, maskImage] = await Promise.all([
+		sharp(finalPng).removeAlpha().raw().toBuffer({ resolveWithObject: true }),
+		sharp(roleMaskPng).removeAlpha().raw().toBuffer({ resolveWithObject: true }),
+	]);
+	if (finalImage.info.width !== maskImage.info.width || finalImage.info.height !== maskImage.info.height) {
+		throw new RangeError("semantic role mask dimensions must match the final PNG");
+	}
+	const accumulators = Object.fromEntries(Object.keys(SEMANTIC_ROLE_IDS).map((role) => [role, { pixelCount: 0, sums: [0, 0, 0] }]));
+	for (let offset = 0; offset < maskImage.data.length; offset += 3) {
+		let matched = null, closest = Infinity;
+		for (const [role, id] of Object.entries(SEMANTIC_ROLE_IDS)) {
+			const distance = Math.hypot(maskImage.data[offset] - id[0], maskImage.data[offset + 1] - id[1], maskImage.data[offset + 2] - id[2]);
+			if (distance < closest) { matched = role; closest = distance; }
+		}
+		if (closest > 24) continue;
+		const record = accumulators[matched];
+		record.pixelCount++;
+		for (let channel = 0; channel < 3; channel++) record.sums[channel] += finalImage.data[offset + channel];
+	}
+	const roles = Object.fromEntries(Object.entries(accumulators).sort(([left], [right]) => left.localeCompare(right)).map(([role, record]) => {
+		const meanColor = record.pixelCount ? record.sums.map((sum) => Math.round(sum / record.pixelCount * 1e6) / 1e6) : [0, 0, 0];
+		return [role, { pixelCount: record.pixelCount, meanColor, meanLuminance: evidenceNumber(luminance(...meanColor)) }];
+	}));
+	const pairwise = {};
+	const roleOrder = Object.keys(SEMANTIC_ROLE_IDS);
+	for (let left = 0; left < roleOrder.length; left++) for (let right = left + 1; right < roleOrder.length; right++) {
+		const leftRole = roleOrder[left], rightRole = roleOrder[right];
+		pairwise[`${leftRole}:${rightRole}`] = {
+			colorDistance: evidenceNumber(Math.hypot(...roles[leftRole].meanColor.map((value, index) => value - roles[rightRole].meanColor[index]))),
+			luminanceDistance: evidenceNumber(Math.abs(roles[leftRole].meanLuminance - roles[rightRole].meanLuminance)),
+		};
+	}
+	return { roles, pairwise };
+}
+
+export function validateSemanticRoleEvidence({ views }) {
+	const codes = [];
+	const requiredViews = ["front", "back", "left", "right", "axon", "opposite-axon"];
+	const requiredRoles = ["concrete", "glass"];
+	if (requiredViews.some((name) => requiredRoles.some((role) => !(views?.[name]?.roles?.[role]?.pixelCount >= 4)))) {
+		codes.push("PBR_SEMANTIC_ROLE_MISSING");
+	}
+	for (const name of [...requiredViews, "plan", "top"]) {
+		const evidence = views?.[name];
+		if (!evidence) { codes.push("PBR_SEMANTIC_ROLE_MISSING"); continue; }
+		const visible = Object.entries(evidence.roles ?? {}).filter(([, record]) => record.pixelCount >= 4).map(([role]) => role);
+		for (let left = 0; left < visible.length; left++) for (let right = left + 1; right < visible.length; right++) {
+			const direct = `${visible[left]}:${visible[right]}`, reverse = `${visible[right]}:${visible[left]}`;
+			const separation = evidence.pairwise?.[direct] ?? evidence.pairwise?.[reverse];
+			if (!separation || !(separation.colorDistance >= 5)) codes.push("PBR_SEMANTIC_ROLE_COLLAPSED");
+		}
+	}
+	return { accepted: codes.length === 0, codes: [...new Set(codes)], thresholds: { minimumPixels: 4, minimumColorDistance: 5 }, requiredRoles };
+}
+
+export function evaluatePresentationImprovement({ current, baseline, semantic }) {
+	const views = {};
+	let accepted = validateSemanticRoleEvidence({ views: semantic }).accepted;
+	for (const name of ["front", "back", "left", "right"]) {
+		const currentSpread = current?.[name]?.materialSeparation?.luminanceSpread;
+		const baselineSpread = baseline?.[name]?.materialSeparation?.luminanceSpread;
+		const luminanceRetention = Number.isFinite(currentSpread) && Number.isFinite(baselineSpread)
+			? (baselineSpread > 0 ? evidenceNumber(currentSpread / baselineSpread) : (currentSpread >= 15 ? 1 : 0)) : 0;
+		const rangeValid = current?.[name]?.building?.luminanceP05 >= 10
+			&& current?.[name]?.building?.luminanceP95 <= 248;
+		const viewAccepted = luminanceRetention >= 0.75 && rangeValid;
+		views[name] = {
+			accepted: viewAccepted, luminanceRetention,
+			old: baseline?.[name]?.materialSeparation ?? null, new: current?.[name]?.materialSeparation ?? null,
+			reasons: [luminanceRetention >= 0.75 ? "luminance_spread_retained" : "luminance_spread_collapsed", rangeValid ? "presentation_range_valid" : "presentation_range_invalid"],
+		};
+		if (!viewAccepted) accepted = false;
+	}
+	for (const name of ["axon", "opposite-axon"]) {
+		const separation = current?.[name]?.materialSeparation;
+		const nonCollapsed = separation?.luminanceSpread >= 15 || separation?.chromaSpread >= 15;
+		const groundingImproved = current?.[name]?.contactShadow?.detected === true && baseline?.[name]?.contactShadow?.detected !== true;
+		const semanticAccepted = validateSemanticRoleEvidence({ views: Object.fromEntries(
+			["front", "back", "left", "right", "plan", "top", "axon", "opposite-axon"].map((view) => [view, semantic?.[view]]),
+		) }).accepted;
+		const viewAccepted = nonCollapsed && groundingImproved && semanticAccepted;
+		views[name] = {
+			accepted: viewAccepted, groundingImproved, nonCollapsed, semanticAccepted,
+			old: baseline?.[name]?.materialSeparation ?? null, new: separation ?? null,
+			delta: baseline?.[name] ? comparePresentationEvidence(current[name], baseline[name]) : null,
+			reasons: [groundingImproved ? "bounded_grounding_added" : "grounding_not_improved", nonCollapsed ? "material_evidence_noncollapsed" : "material_evidence_collapsed", semanticAccepted ? "semantic_roles_separated" : "semantic_roles_invalid"],
+		};
+		if (!viewAccepted) accepted = false;
+	}
+	for (const name of ["plan", "top"]) views[name] = {
+		accepted: true, comparison: "geometry_and_range_only", old: baseline?.[name]?.materialSeparation ?? null, new: current?.[name]?.materialSeparation ?? null,
+	};
+	return { accepted, thresholds: { elevationLuminanceRetentionMinimum: 0.75, nonCollapsedSpreadMinimum: 15 }, views };
 }
 
 export function comparePresentationEvidence(current, baseline) {

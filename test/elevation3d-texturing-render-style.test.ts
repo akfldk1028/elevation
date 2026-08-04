@@ -84,6 +84,47 @@ test("rejects values that could create an invalid or unrecorded render state", (
 	}
 });
 
+test("rejects extreme finite daylight values outside the approved operating envelope", () => {
+	const invalidOverrides = [
+		{ exposure: 0 },
+		{ exposure: 3.01 },
+		{ environment: { intensity: 10.01 } },
+		{ hemisphere: { intensity: 10.01 } },
+		{ sun: { intensity: 10.01 } },
+		{ sun: { position: [1000.01, 0, 1] } },
+		{ sun: { position: [0, -1000.01, 1] } },
+		{ sun: { position: [0, 0, 0] } },
+		{ sun: { shadowMapSize: 128 } },
+		{ sun: { shadowMapSize: 512 + 256 } },
+		{ sun: { shadowMapSize: 8192 } },
+		{ sun: { radius: 20.01 } },
+		{ sun: { bias: -0.1001 } },
+		{ sun: { bias: 0.1001 } },
+		{ sun: { normalBias: 1.01 } },
+		{ ground: { opacity: 0.5001 } },
+		{ ground: { padding: 1.01 } },
+		{ materialResponse: { concrete: { maxRoughnessDelta: -1.01 } } },
+		{ materialResponse: { opaque: { maxRoughnessDelta: 1.01 } } },
+		{ materialResponse: { bronze: { maxMetalnessDelta: 1.01 } } },
+		{ materialResponse: { glass: { maxEnvIntensity: 5.01 } } },
+	];
+	for (const overrides of invalidOverrides) {
+		assert.throws(() => resolvePbrRenderStyle(overrides), isInvalidStyle, JSON.stringify(overrides));
+	}
+});
+
+test("accepts every inclusive daylight style boundary", () => {
+	for (const overrides of [
+		{ exposure: 3 },
+		{ environment: { intensity: 10 } },
+		{ hemisphere: { intensity: 10 } },
+		{ sun: { intensity: 10, position: [-1000, 1000, 1], shadowMapSize: 4096, radius: 20, bias: -0.1, normalBias: 1 } },
+		{ sun: { bias: 0.1, shadowMapSize: 256 } },
+		{ ground: { opacity: 0.5, padding: 1 } },
+		{ materialResponse: { concrete: { maxRoughnessDelta: -1 }, opaque: { maxRoughnessDelta: 1 }, bronze: { maxMetalnessDelta: -1 }, glass: { maxEnvIntensity: 5 } } },
+	]) assert.doesNotThrow(() => resolvePbrRenderStyle(overrides));
+});
+
 test("enables the bounded ground/contact receiver only for the two axons", () => {
 	const style = resolvePbrRenderStyle();
 	for (const view of ["axon", "opposite-axon"]) {

@@ -71,6 +71,8 @@ function presentationArtifact(outputDir, artifact, label) {
 }
 
 export async function appendPresentationVersionMemory({ candidateId, outputDir, previousBaseline, report }, memoryFile) {
+	if (report?.provider_calls !== 0) throw new Error("presentation report provider_calls must be explicitly zero");
+	if (report?.credits_consumed !== 0) throw new Error("presentation report credits_consumed must be explicitly zero");
 	const accepted = report?.validation?.accepted === true;
 	const record = persistent({
 		schema_version: "arr.elevation3d.presentation-version-memory.v1",
@@ -94,8 +96,9 @@ export async function appendPresentationVersionMemory({ candidateId, outputDir, 
 		artifacts: Object.fromEntries(Object.entries(report?.artifacts ?? {})
 			.map(([name, artifact]) => [name, presentationArtifact(outputDir, artifact, `presentation artifact ${name}`)])
 			.filter(([, artifact]) => artifact !== null)),
-		provider_calls: 0,
-		credits_consumed: 0,
+		...(report?.canonical_selection ? { canonical_selection: report.canonical_selection } : {}),
+		provider_calls: report.provider_calls,
+		credits_consumed: report.credits_consumed,
 	});
 	await mkdir(dirname(memoryFile), { recursive: true });
 	await appendFile(memoryFile, `${JSON.stringify(record)}\n`);

@@ -64,6 +64,13 @@ function nonNegative(value, path) {
 	if (value < 0) invalid(`${path} must not be negative`);
 }
 
+function bounded(value, minimum, maximum, path, { minimumExclusive = false } = {}) {
+	finite(value, path);
+	if ((minimumExclusive ? value <= minimum : value < minimum) || value > maximum) {
+		invalid(`${path} must be between ${minimumExclusive ? "greater than " : ""}${minimum} and ${maximum}`);
+	}
+}
+
 function color(value, path) {
 	if (typeof value !== "string" || !/^#[0-9a-f]{6}$/i.test(value)) invalid(`${path} must be a six-digit hex color`);
 	return value.toLowerCase();
@@ -73,33 +80,37 @@ function validate(style) {
 	if (style.id !== COMPETITION_DAYLIGHT_STYLE_ID) invalid("style.id is not supported");
 	style.background = color(style.background, "style.background");
 	if (style.toneMapping !== "aces-filmic") invalid("style.toneMapping is not supported");
-	nonNegative(style.exposure, "style.exposure");
+	bounded(style.exposure, 0, 3, "style.exposure", { minimumExclusive: true });
 	if (style.environment.type !== "room-pmrem") invalid("style.environment.type is not supported");
-	nonNegative(style.environment.intensity, "style.environment.intensity");
+	bounded(style.environment.intensity, 0, 10, "style.environment.intensity");
 	style.hemisphere.sky = color(style.hemisphere.sky, "style.hemisphere.sky");
 	style.hemisphere.ground = color(style.hemisphere.ground, "style.hemisphere.ground");
-	nonNegative(style.hemisphere.intensity, "style.hemisphere.intensity");
+	bounded(style.hemisphere.intensity, 0, 10, "style.hemisphere.intensity");
 	style.sun.color = color(style.sun.color, "style.sun.color");
-	nonNegative(style.sun.intensity, "style.sun.intensity");
+	bounded(style.sun.intensity, 0, 10, "style.sun.intensity");
 	if (!Array.isArray(style.sun.position) || style.sun.position.length !== 3) invalid("style.sun.position must be a three-element vector");
-	style.sun.position.forEach((value, index) => finite(value, `style.sun.position[${index}]`));
-	if (!Number.isInteger(style.sun.shadowMapSize) || style.sun.shadowMapSize <= 0) invalid("style.sun.shadowMapSize must be a positive integer");
-	nonNegative(style.sun.radius, "style.sun.radius");
-	finite(style.sun.bias, "style.sun.bias");
-	nonNegative(style.sun.normalBias, "style.sun.normalBias");
+	style.sun.position.forEach((value, index) => bounded(value, -1000, 1000, `style.sun.position[${index}]`));
+	if (style.sun.position.every((value) => value === 0)) invalid("style.sun.position must be nonzero");
+	if (!Number.isInteger(style.sun.shadowMapSize)
+		|| style.sun.shadowMapSize < 256 || style.sun.shadowMapSize > 4096
+		|| (style.sun.shadowMapSize & (style.sun.shadowMapSize - 1)) !== 0) {
+		invalid("style.sun.shadowMapSize must be a power of two between 256 and 4096");
+	}
+	bounded(style.sun.radius, 0, 20, "style.sun.radius");
+	bounded(style.sun.bias, -0.1, 0.1, "style.sun.bias");
+	bounded(style.sun.normalBias, 0, 1, "style.sun.normalBias");
 	if (!Array.isArray(style.ground.enabledFor)
 		|| new Set(style.ground.enabledFor).size !== style.ground.enabledFor.length
 		|| style.ground.enabledFor.some((view) => view !== "axon" && view !== "opposite-axon")) {
 		invalid("style.ground.enabledFor contains an unsupported view");
 	}
-	finite(style.ground.opacity, "style.ground.opacity");
-	if (style.ground.opacity < 0 || style.ground.opacity > 1) invalid("style.ground.opacity must be between zero and one");
-	nonNegative(style.ground.padding, "style.ground.padding");
-	finite(style.materialResponse.concrete.maxRoughnessDelta, "style.materialResponse.concrete.maxRoughnessDelta");
-	nonNegative(style.materialResponse.glass.maxEnvIntensity, "style.materialResponse.glass.maxEnvIntensity");
+	bounded(style.ground.opacity, 0, 0.5, "style.ground.opacity");
+	bounded(style.ground.padding, 0, 1, "style.ground.padding");
+	bounded(style.materialResponse.concrete.maxRoughnessDelta, -1, 1, "style.materialResponse.concrete.maxRoughnessDelta");
+	bounded(style.materialResponse.glass.maxEnvIntensity, 0, 5, "style.materialResponse.glass.maxEnvIntensity");
 	if (typeof style.materialResponse.glass.preserveTransparency !== "boolean") invalid("style.materialResponse.glass.preserveTransparency must be boolean");
-	finite(style.materialResponse.bronze.maxMetalnessDelta, "style.materialResponse.bronze.maxMetalnessDelta");
-	finite(style.materialResponse.opaque.maxRoughnessDelta, "style.materialResponse.opaque.maxRoughnessDelta");
+	bounded(style.materialResponse.bronze.maxMetalnessDelta, -1, 1, "style.materialResponse.bronze.maxMetalnessDelta");
+	bounded(style.materialResponse.opaque.maxRoughnessDelta, -1, 1, "style.materialResponse.opaque.maxRoughnessDelta");
 	return style;
 }
 

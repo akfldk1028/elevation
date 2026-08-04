@@ -1,5 +1,5 @@
-import { mkdir, readFile, realpath } from "node:fs/promises";
-import { basename, dirname, resolve } from "node:path";
+import { mkdir, open, readFile, realpath, rename, rm } from "node:fs/promises";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { appendPresentationVersionMemory } from "../plugins/elevation-3d/lib/run-memory.mjs";
@@ -9,6 +9,60 @@ import { renderStyleHash, resolvePbrRenderStyle } from "../plugins/elevation-3d/
 const OUTPUT_VERSION = "rendered-pbr-v7-competition-daylight";
 const PREVIOUS_LIMITATION = "The rendered-pbr-v6 presentation had washed highlights and weak material separation.";
 const VIEW_NAMES = ["front", "back", "left", "right", "plan", "top", "axon", "opposite-axon"];
+
+function canonicalJson(value) {
+	if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+	if (value && typeof value === "object") return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(",")}}`;
+	return JSON.stringify(value);
+}
+
+function assertContained(root, candidate, label) {
+	const scoped = relative(root, candidate);
+	if (scoped.startsWith("..") || isAbsolute(scoped)) throw new Error(`${label} escapes the output root`);
+}
+
+export async function prepareCanonicalReplay({ outputRoot, canonicalDir, acceptedSourceDir, glbPath, camerasPath }) {
+	const root = await realpath(resolve(outputRoot));
+	const canonical = resolve(canonicalDir);
+	if (dirname(canonical) !== resolve(outputRoot) || basename(canonical) !== OUTPUT_VERSION) throw new Error("Canonical target must be the fixed direct child of the output root");
+	const [source, existingCanonical] = await Promise.all([realpath(resolve(acceptedSourceDir)), realpath(canonical)]);
+	assertContained(root, source, "Accepted source");
+	assertContained(root, existingCanonical, "Canonical target");
+	const [sourceReport, sourceConfig, acceptedConfig, glbBytes, canonicalReport] = await Promise.all([
+		readFile(join(source, "render-validation.json"), "utf8").then(JSON.parse),
+		readFile(join(source, "viewer", "config.json"), "utf8").then(JSON.parse),
+		readFile(resolve(camerasPath), "utf8").then(JSON.parse),
+		readFile(resolve(glbPath)),
+		readFile(join(existingCanonical, "render-validation.json"), "utf8").then(JSON.parse),
+	]);
+	const style = resolvePbrRenderStyle();
+	const glbSha256 = (await import("node:crypto")).createHash("sha256").update(glbBytes).digest("hex");
+	if (sourceReport.validation?.accepted !== true) throw new Error("Accepted source report is not accepted");
+	if (sourceReport.selected_glb?.sha256 !== glbSha256) throw new Error("Accepted source GLB identity does not match");
+	if (sourceReport.render_style?.id !== style.id || sourceReport.render_style_sha256 !== renderStyleHash(style)) throw new Error("Accepted source style identity does not match");
+	if (canonicalJson(sourceConfig.cameras?.views) !== canonicalJson(acceptedConfig.cameras?.views)) throw new Error("Accepted source camera identity does not match");
+	if (canonicalReport.validation?.accepted === true) throw new Error("Refusing to overwrite an accepted canonical artifact");
+	if (canonicalReport.validation?.accepted !== false) throw new Error("Existing canonical artifact is not explicitly rejected");
+	const attempts = join(root, "attempts");
+	await mkdir(attempts, { recursive: true });
+	assertContained(root, await realpath(attempts), "Attempts directory");
+	let preservedAttempt;
+	for (let index = 1; index <= 999; index++) {
+		const candidate = join(attempts, `${OUTPUT_VERSION}-attempt-${String(index).padStart(3, "0")}`);
+		try { await realpath(candidate); }
+		catch (error) { if (error?.code === "ENOENT") { preservedAttempt = candidate; break; } throw error; }
+	}
+	if (!preservedAttempt) throw new Error("No canonical attempt slot is available");
+	const lockPath = join(root, ".canonical-rerender.lock");
+	const lock = await open(lockPath, "wx");
+	try {
+		await rename(existingCanonical, preservedAttempt);
+	} finally {
+		await lock.close();
+		await rm(lockPath, { force: true });
+	}
+	return { canonicalDir: canonical, preservedAttempt, acceptedSourceDir: source, glbSha256, styleSha256: renderStyleHash(style) };
+}
 
 function requiredArgument(values, name) {
 	const value = values.get(name);
@@ -25,7 +79,7 @@ export function parseReplayArgs(argv, cwd = process.cwd()) {
 		if (values.has(name)) throw new Error(`Duplicate replay argument: ${name}`);
 		values.set(name, value);
 	}
-	const supported = new Set(["--glb", "--cameras", "--procedural-baseline", "--presentation-baseline", "--output-root", "--output"]);
+	const supported = new Set(["--glb", "--cameras", "--procedural-baseline", "--presentation-baseline", "--accepted-source", "--output-root", "--output"]);
 	for (const name of values.keys()) if (!supported.has(name)) throw new Error(`Unsupported replay argument: ${name}`);
 	const resolved = (name) => resolve(cwd, requiredArgument(values, name));
 	const outputDir = resolved("--output");
@@ -34,6 +88,7 @@ export function parseReplayArgs(argv, cwd = process.cwd()) {
 		camerasPath: resolved("--cameras"),
 		proceduralBaselineRunDir: resolved("--procedural-baseline"),
 		...(values.has("--presentation-baseline") ? { presentationBaselineRunDir: resolved("--presentation-baseline") } : {}),
+		...(values.has("--accepted-source") ? { acceptedSourceDir: resolved("--accepted-source") } : {}),
 		outputDir,
 		outputRoot: resolved("--output-root"),
 	};
@@ -65,10 +120,12 @@ export async function renderCompetitionDaylightReplay(options, deps = {}) {
 	const camerasPath = resolve(options.camerasPath);
 	const proceduralBaselineRunDir = resolve(options.proceduralBaselineRunDir);
 	const presentationBaselineRunDir = options.presentationBaselineRunDir ? resolve(options.presentationBaselineRunDir) : undefined;
+	const acceptedSourceDir = options.acceptedSourceDir ? resolve(options.acceptedSourceDir) : undefined;
 	const { root: outputRoot, output: outputDir } = await resolveScopedOutput(options.outputDir, options.outputRoot, deps.realpath);
 	if (presentationBaselineRunDir && basename(presentationBaselineRunDir) !== "rendered-pbr-v6") {
 		throw new Error("Presentation baseline must point to rendered-pbr-v6");
 	}
+	if (acceptedSourceDir && !presentationBaselineRunDir) throw new Error("Canonical replay requires the rendered-pbr-v6 presentation baseline");
 	const viewerConfig = JSON.parse(await readFile(camerasPath, "utf8"));
 	if (viewerConfig.all_views?.validation?.accepted !== true) {
 		throw new Error("Viewer config is not accepted");
@@ -80,15 +137,27 @@ export async function renderCompetitionDaylightReplay(options, deps = {}) {
 	const appendMemory = deps.appendPresentationVersionMemory ?? appendPresentationVersionMemory;
 	const renderStyle = resolvePbrRenderStyle();
 	const renderStyleSha256 = renderStyleHash(renderStyle);
+	const prepare = deps.prepareCanonicalReplay ?? prepareCanonicalReplay;
+	const canonicalPreparation = acceptedSourceDir ? await prepare({
+		outputRoot, canonicalDir: outputDir, acceptedSourceDir, glbPath, camerasPath,
+	}) : null;
 	await reserveOutput(outputDir, deps.mkdir);
 	let report;
 	try {
 		report = await render({
 			glbPath, runDir: outputDir, candidateId: viewerConfig.candidate_id,
 			cameras: viewerConfig.cameras.views, baselineRunDir: proceduralBaselineRunDir,
-			...(presentationBaselineRunDir ? { presentationBaselineRunDir } : {}),
+			...(presentationBaselineRunDir ? { presentationBaselineRunDir, requirePresentationBaselineComparison: true } : {}),
+			...(canonicalPreparation ? { canonicalSelection: {
+				canonical_path: outputDir, preserved_attempt: canonicalPreparation.preservedAttempt,
+				accepted_source: canonicalPreparation.acceptedSourceDir,
+			} } : {}),
 			renderStyleId: "competition-daylight-v1",
 		});
+		if (canonicalPreparation && !(report.baseline_comparison?.status === "compared_legacy_reanalyzed"
+			&& report.baseline_comparison?.decision?.accepted === true && report.validation?.accepted === true)) {
+			throw Object.assign(new Error("Canonical replay did not pass the required legacy comparison"), { code: "PBR_BASELINE_COMPARISON_REQUIRED" });
+		}
 	} catch (error) {
 		report = {
 			render_style: renderStyle, render_style_sha256: renderStyleSha256,

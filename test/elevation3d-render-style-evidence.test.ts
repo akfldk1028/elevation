@@ -6,6 +6,7 @@ import {
 	comparePresentationEvidence,
 	validatePresentationEvidence,
 } from "../plugins/elevation-3d/lib/texturing/render-style-evidence.mjs";
+import * as presentationEvidenceModule from "../plugins/elevation-3d/lib/texturing/render-style-evidence.mjs";
 import { renderStyleHash, resolvePbrRenderStyle } from "../plugins/elevation-3d/lib/texturing/render-style.mjs";
 
 const WIDTH = 32;
@@ -204,4 +205,74 @@ test("roof-only plan and top views do not require multi-material separation", as
 	assert.equal(validatePresentationEvidence({ views, style, styleHash: renderStyleHash(style) }).accepted, true);
 	views.axon.materialSeparation = { luminanceSpread: 1, chromaSpread: 1 };
 	assert.deepEqual(validatePresentationEvidence({ views, style, styleHash: renderStyleHash(style) }).codes, ["PBR_PRESENTATION_RANGE_INVALID"]);
+});
+
+test("semantic role masks measure final role colors and reject collapsed or missing required roles", async () => {
+	const analyzeSemanticRolePng = (presentationEvidenceModule as any).analyzeSemanticRolePng;
+	const validateSemanticRoleEvidence = (presentationEvidenceModule as any).validateSemanticRoleEvidence;
+	assert.equal(typeof analyzeSemanticRolePng, "function");
+	assert.equal(typeof validateSemanticRoleEvidence, "function");
+	const width = 8, height = 4;
+	const roleIds: Record<string, Rgb> = { concrete: [255, 0, 0], glass: [0, 255, 0], bronze: [0, 0, 255], opaque: [255, 255, 0] };
+	const roleColors: Record<string, Rgb> = { concrete: [190, 180, 165], glass: [75, 130, 170], bronze: [80, 55, 35], opaque: [135, 120, 105] };
+	const mask = Buffer.alloc(width * height * 3);
+	const final = Buffer.alloc(width * height * 3);
+	for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+		const role = Object.keys(roleIds)[Math.floor(x / 2)];
+		mask.set(roleIds[role], (y * width + x) * 3);
+		final.set(roleColors[role], (y * width + x) * 3);
+	}
+	const encode = (data: Buffer) => sharp(data, { raw: { width, height, channels: 3 } }).png().toBuffer();
+	const measured = await analyzeSemanticRolePng({ finalPng: await encode(final), roleMaskPng: await encode(mask) });
+	assert.deepEqual(Object.fromEntries(Object.entries(measured.roles).map(([role, value]: any) => [role, value.pixelCount])), { bronze: 8, concrete: 8, glass: 8, opaque: 8 });
+	assert.deepEqual(measured.roles.glass.meanColor, roleColors.glass);
+	assert.equal(Object.keys(measured.pairwise).length, 6);
+	assert.equal(validateSemanticRoleEvidence({ views: Object.fromEntries(["front", "back", "left", "right", "plan", "top", "axon", "opposite-axon"].map((name) => [name, measured])) }).accepted, true);
+
+	const collapsedFinal = Buffer.from(final);
+	for (let y = 0; y < height; y++) for (let x = 2; x < 4; x++) collapsedFinal.set(roleColors.concrete, (y * width + x) * 3);
+	const collapsed = await analyzeSemanticRolePng({ finalPng: await encode(collapsedFinal), roleMaskPng: await encode(mask) });
+	assert.equal(collapsed.pairwise["concrete:glass"].colorDistance, 0);
+	const collapsedViews = Object.fromEntries(["front", "back", "left", "right", "plan", "top", "axon", "opposite-axon"].map((name) => [name, collapsed]));
+	assert.ok(validateSemanticRoleEvidence({ views: collapsedViews }).codes.includes("PBR_SEMANTIC_ROLE_COLLAPSED"));
+
+	const missingMask = Buffer.from(mask);
+	for (let y = 0; y < height; y++) for (let x = 2; x < 4; x++) missingMask.set([0, 0, 0], (y * width + x) * 3);
+	const missing = await analyzeSemanticRolePng({ finalPng: await encode(final), roleMaskPng: await encode(missingMask) });
+	assert.equal(missing.roles.glass.pixelCount, 0);
+	const missingViews = Object.fromEntries(["front", "back", "left", "right", "plan", "top", "axon", "opposite-axon"].map((name) => [name, missing]));
+	assert.ok(validateSemanticRoleEvidence({ views: missingViews }).codes.includes("PBR_SEMANTIC_ROLE_MISSING"));
+
+	const boundaryViews = Object.fromEntries(["front", "back", "left", "right", "plan", "top", "axon", "opposite-axon"].map((name) => [name, structuredClone(measured)]));
+	for (const name of ["front", "back", "left", "right", "axon", "opposite-axon"]) boundaryViews[name].pairwise["concrete:glass"].colorDistance = 5;
+	assert.equal(validateSemanticRoleEvidence({ views: boundaryViews }).accepted, true);
+	boundaryViews.axon.pairwise["concrete:glass"].colorDistance = 4.99;
+	assert.ok(validateSemanticRoleEvidence({ views: boundaryViews }).codes.includes("PBR_SEMANTIC_ROLE_COLLAPSED"));
+});
+
+test("legacy improvement requires grounded non-collapsed axons and non-collapsed elevations", () => {
+	const evaluatePresentationImprovement = (presentationEvidenceModule as any).evaluatePresentationImprovement;
+	assert.equal(typeof evaluatePresentationImprovement, "function");
+	const sample = (luminanceSpread: number, chromaSpread: number, detected: boolean) => ({
+		building: { sampleCount: 100, luminanceP05: 40, luminanceP95: 220 },
+		background: { sampleCount: 500, deltaP95: 0, luminanceVariance: 0 },
+		contactShadow: { detected }, materialSeparation: { luminanceSpread, chromaSpread },
+	});
+	const baseline = Object.fromEntries(["front", "back", "left", "right", "plan", "top", "axon", "opposite-axon"].map((name) => [name, sample(60, 15, false)]));
+	const current = structuredClone(baseline);
+	for (const name of ["front", "back", "left", "right"]) current[name] = sample(45, 15, false);
+	for (const name of ["axon", "opposite-axon"]) current[name] = sample(30, 12, true);
+	current.plan = sample(1, 1, false); current.top = sample(1, 1, false);
+	const semantic = Object.fromEntries(["front", "back", "left", "right", "plan", "top", "axon", "opposite-axon"].map((name) => [name, {
+		roles: Object.fromEntries(["concrete", "glass", "bronze", "opaque"].map((role) => [role, { pixelCount: 10 }])),
+		pairwise: { "concrete:glass": { colorDistance: 20 }, "concrete:bronze": { colorDistance: 20 }, "concrete:opaque": { colorDistance: 20 }, "glass:bronze": { colorDistance: 20 }, "glass:opaque": { colorDistance: 20 }, "bronze:opaque": { colorDistance: 20 } },
+	}]));
+	const accepted = evaluatePresentationImprovement({ current, baseline, semantic });
+	assert.equal(accepted.accepted, true);
+	assert.equal(accepted.views.axon.groundingImproved, true);
+	assert.equal(accepted.views.front.luminanceRetention, 0.75);
+	const collapsedElevation = structuredClone(current); collapsedElevation.front.materialSeparation.luminanceSpread = 44.9;
+	assert.equal(evaluatePresentationImprovement({ current: collapsedElevation, baseline, semantic }).accepted, false);
+	const ungroundedAxon = structuredClone(current); ungroundedAxon.axon.contactShadow.detected = false;
+	assert.equal(evaluatePresentationImprovement({ current: ungroundedAxon, baseline, semantic }).accepted, false);
 });
