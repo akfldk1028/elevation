@@ -122,6 +122,7 @@ function acceptedDeps(sourceMesh: Awaited<ReturnType<typeof fixture>>["mesh"]) {
 			metrics: {},
 			artifacts: { glb: artifact.path, drawings: requiredDrawings },
 		}),
+		deliver: async ({ runDir }: any) => automaticDelivery(runDir),
 	};
 }
 
@@ -201,15 +202,116 @@ test("rejects invalid package and browser evidence and propagates cancellation",
 	});
 });
 
+function automaticDelivery(runDir: string) {
+	const deliveryRoot = join(runDir, "delivery");
+	return {
+		schema_version: "arr.elevation3d.final-delivery.v1",
+		run_dir: deliveryRoot,
+		manifest: { schema_version: "arr.elevation3d.all-views.v1" },
+		validation: { accepted: true, codes: [] },
+		viewer: { path: join(deliveryRoot, "viewer", "index.html") },
+		browser_verification: { path: join(deliveryRoot, "browser-verification", "browser-verification.json"), console_errors: [] },
+		views: Object.fromEntries(DELIVERY_VIEW_NAMES.map((name, index) => [name, {
+			path: join(deliveryRoot, "views", name, `${name}.png`), sha256: String(index).padStart(64, "f"),
+		}])),
+		memory_record: {
+			schema_version: "arr.elevation3d.final-delivery-memory.v1",
+			manifest: { path: join(deliveryRoot, "all-views-manifest.json"), sha256: "d".repeat(64) },
+			validation: { path: join(deliveryRoot, "validation.json"), sha256: "e".repeat(64) },
+			viewer: { path: join(deliveryRoot, "viewer", "index.html"), config_sha256: "1".repeat(64) },
+			browser_verification: { path: join(deliveryRoot, "browser-verification", "browser-verification.json"), sha256: "b".repeat(64) },
+			views: Object.fromEntries(DELIVERY_VIEW_NAMES.map((name, index) => [name, {
+				path: join(deliveryRoot, "views", name, `${name}.png`), sha256: String(index).padStart(64, "f"),
+			}])),
+		},
+	};
+}
+
+test("runs final delivery before selecting and remembering an enriched success", async () => {
+	const item = await fixture(); process.chdir(item.root);
+	const deps: any = acceptedDeps(item.mesh);
+	const deliveryCalls: any[] = [];
+	deps.deliver = async (args: any) => {
+		deliveryCalls.push(args);
+		await assert.rejects(access(join(args.runDir, "final.json")), /ENOENT/);
+		await assert.rejects(access(join(item.root, "memory", "elevation-3d", "unified-runs.jsonl")), /ENOENT/);
+		return automaticDelivery(args.runDir);
+	};
+	const result = await runElevation3d({ candidateId: item.candidateId, datasetRoot: item.datasetRoot, outputRoot: item.outputRoot, runId: "automatic-delivery", deps });
+	assert.equal(deliveryCalls.length, 1);
+	assert.equal(result.delivery.validation.accepted, true);
+	assert.deepEqual(Object.keys(result.delivery.views).sort(), [...DELIVERY_VIEW_NAMES].sort());
+	const final = await readJson(join(result.run_dir, "final.json"));
+	assert.equal(final.selected, "v001");
+	assert.equal(final.delivery.manifest.sha256, "d".repeat(64));
+	const memory = JSON.parse((await readFile(join(item.root, "memory", "elevation-3d", "unified-runs.jsonl"), "utf8")).trim());
+	assert.equal(memory.final.delivery.manifest.sha256, "d".repeat(64));
+});
+
+test("blocks and remembers a final-delivery rejection without claiming enriched success", async () => {
+	const item = await fixture(); process.chdir(item.root);
+	const deps: any = acceptedDeps(item.mesh);
+	deps.deliver = async () => { throw new FinalDeliveryError({ code: "BROWSER_VERIFICATION_REJECTED", message: "flicker evidence rejected", evidence: { transparent_depth_writers: 1 } }); };
+	await assert.rejects(
+		() => runElevation3d({ candidateId: item.candidateId, datasetRoot: item.datasetRoot, outputRoot: item.outputRoot, runId: "delivery-blocked", deps }),
+		(error: any) => { assert.equal(error.code, "BROWSER_VERIFICATION_REJECTED"); return true; },
+	);
+	const runDir = join(item.outputRoot, item.candidateId, "delivery-blocked");
+	const final = await readJson(join(runDir, "final.json"));
+	assert.equal(final.selected, "blocked");
+	assert.equal(final.delivery_failure.code, "BROWSER_VERIFICATION_REJECTED");
+	assert.equal((await readJson(join(runDir, "delivery-failure.json"))).code, "BROWSER_VERIFICATION_REJECTED");
+	const memory = JSON.parse((await readFile(join(item.root, "memory", "elevation-3d", "unified-runs.jsonl"), "utf8")).trim());
+	assert.equal(memory.final.selected, "blocked");
+	assert.equal(memory.final.delivery_failure.code, "BROWSER_VERIFICATION_REJECTED");
+});
+
+test("blocks a delivery whose memory record escapes the run directory", async () => {
+	const item = await fixture(); process.chdir(item.root);
+	const deps: any = acceptedDeps(item.mesh);
+	deps.deliver = async (args: any) => {
+		const delivery = automaticDelivery(args.runDir);
+		delivery.memory_record.viewer.path = join(item.root, "outside-viewer.html");
+		return delivery;
+	};
+	await assert.rejects(
+		() => runElevation3d({ candidateId: item.candidateId, datasetRoot: item.datasetRoot, outputRoot: item.outputRoot, runId: "delivery-path-blocked", deps }),
+		/must remain within the run directory/,
+	);
+	const runDir = join(item.outputRoot, item.candidateId, "delivery-path-blocked");
+	const final = await readJson(join(runDir, "final.json"));
+	assert.equal(final.selected, "blocked");
+	assert.equal(final.delivery_failure.code, "FINAL_DELIVERY_FAILED");
+});
+
+test("cancellation during final delivery records cancelled and never claims success", async () => {
+	const item = await fixture(); process.chdir(item.root);
+	const controller = new AbortController();
+	const deps: any = acceptedDeps(item.mesh);
+	deps.deliver = async () => {
+		controller.abort(new DOMException("stop final delivery", "AbortError"));
+		controller.signal.throwIfAborted();
+	};
+	await assert.rejects(
+		() => runElevation3d({ candidateId: item.candidateId, datasetRoot: item.datasetRoot, outputRoot: item.outputRoot, runId: "delivery-cancelled", signal: controller.signal, deps }),
+		{ name: "AbortError" },
+	);
+	const runDir = join(item.outputRoot, item.candidateId, "delivery-cancelled");
+	assert.equal((await readJson(join(runDir, "final.json"))).selected, "cancelled");
+	await assert.rejects(access(join(runDir, "delivery-failure.json")), /ENOENT/);
+});
+
 function validationDeps(
 	sourceMesh: Awaited<ReturnType<typeof fixture>>["mesh"],
 	failures: Record<string, string[]>,
 ) {
 	const enrichCalls: Array<{ versionId: string; safeFallback: boolean }> = [];
 	const validateCalls: string[] = [];
+	const deliveryCalls: any[] = [];
 	return {
 		enrichCalls,
 		validateCalls,
+		deliveryCalls,
 		enrich: async ({ outputPath, versionId, safeFallback }: {
 			outputPath: string;
 			versionId: string;
@@ -236,6 +338,7 @@ function validationDeps(
 				artifacts: { glb: artifact.path, drawings: requiredDrawings },
 			};
 		},
+		deliver: async (args: any) => { deliveryCalls.push(args); return automaticDelivery(args.runDir); },
 	};
 }
 
@@ -305,6 +408,7 @@ function realFileDeps(defects: Record<string, "missing-glb" | "corrupt-glb" | "m
 			if (defects[args.versionId] === "corrupt-drawing") await writeFile(drawings.top, Buffer.from("not a png"));
 			return drawings;
 		},
+		deliver: async ({ runDir }: any) => automaticDelivery(runDir),
 	};
 }
 
@@ -351,6 +455,7 @@ async function checkpointDeps(sourceMesh: Awaited<ReturnType<typeof fixture>>["m
 				},
 			};
 		},
+		deliver: async ({ runDir }: any) => automaticDelivery(runDir),
 	};
 }
 
@@ -382,7 +487,9 @@ test("selects v001 when enrichment and all gates pass", async () => {
 test("applies exactly one bounded correction and selects v002", async () => {
 	const input = await fixture();
 	process.chdir(input.root);
-	const deps = validationDeps(input.mesh, { v001: ["DETAIL_BOUNDS_EXCEEDED"] });
+	const deps: any = validationDeps(input.mesh, { v001: ["DETAIL_BOUNDS_EXCEEDED"] });
+	const deliveryCalls: any[] = [];
+	deps.deliver = async (args: any) => { deliveryCalls.push(args); return automaticDelivery(args.runDir); };
 	const result = await runElevation3d({
 		candidateId: input.candidateId,
 		datasetRoot: input.datasetRoot,
@@ -394,6 +501,8 @@ test("applies exactly one bounded correction and selects v002", async () => {
 	assert.equal(result.selected_version, "v002");
 	assert.equal(result.attempts, 2);
 	assert.equal(result.fallback, false);
+	assert.equal(deliveryCalls.length, 1);
+	assert.equal(result.delivery.validation.accepted, true);
 	assert.deepEqual(deps.validateCalls, ["v001", "v002"]);
 	assert.deepEqual((await readJson(join(result.run_dir, "versions", "v001", "failure.json"))).codes, [
 		"DETAIL_BOUNDS_EXCEEDED",
@@ -407,10 +516,12 @@ test("applies exactly one bounded correction and selects v002", async () => {
 test("quarantines both failures and selects a rendered and validated exact-mass fallback", async () => {
 	const input = await fixture();
 	process.chdir(input.root);
-	const deps = validationDeps(input.mesh, {
+	const deps: any = validationDeps(input.mesh, {
 		v001: ["DETAIL_BOUNDS_EXCEEDED"],
 		v002: ["PRIMITIVE_BUDGET_EXCEEDED"],
 	});
+	const deliveryCalls: any[] = [];
+	deps.deliver = async (args: any) => { deliveryCalls.push(args); return automaticDelivery(args.runDir); };
 	const result = await runElevation3d({
 		candidateId: input.candidateId,
 		datasetRoot: input.datasetRoot,
@@ -422,6 +533,9 @@ test("quarantines both failures and selects a rendered and validated exact-mass 
 	assert.equal(result.selected_version, "fallback");
 	assert.equal(result.attempts, 2);
 	assert.equal(result.fallback, true);
+	assert.equal(result.delivery, null);
+	assert.equal(result.delivery_status, "not_applicable_fallback");
+	assert.equal(deliveryCalls.length, 0);
 	assert.deepEqual(deps.validateCalls, ["v001", "v002", "fallback"]);
 	assert.deepEqual(deps.enrichCalls, [
 		{ versionId: "v001", safeFallback: false },

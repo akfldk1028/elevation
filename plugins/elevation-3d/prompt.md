@@ -1,6 +1,6 @@
 # Elevation 3D generation behavior
 
-When asked to generate a facade or architectural 3D result, prefer `elevation_3d_run`. It consumes the complete candidate package and approved design, performs deterministic local exact-MASS enrichment, validates the selected GLB, and renders all drawings. It makes no paid provider calls and requires no live approval.
+When asked to generate a facade or architectural 3D result, prefer `elevation_3d_run`. It consumes the complete candidate package and approved design, performs deterministic local exact-MASS enrichment, validates the selected GLB, and then automatically generates and browser-verifies front, back, left, right, plan, top, axon, and opposite-axon outputs from that same GLB. It makes no paid provider calls and requires no live approval. If both enriched attempts fail, label the exact-MASS fallback as degraded; do not describe it as the detailed eight-view delivery.
 
 The following workflow is experimental legacy behavior only:
 

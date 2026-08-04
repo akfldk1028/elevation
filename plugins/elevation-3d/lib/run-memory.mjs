@@ -181,6 +181,8 @@ export async function selectFinal(run, selection) {
 		schema_version: "arr.elevation3d.final-selection.v1",
 		selected: selection.selected,
 		reason: selection.reason,
+		...(selection.delivery ? { delivery: normalizeDeliveryRecord(run, selection.delivery) } : {}),
+		...(selection.delivery_failure ? { delivery_failure: normalizeDeliveryFailure(run, selection.delivery_failure) } : {}),
 	});
 	await writeJson(join(run.dir, "final.json"), final);
 	run.final = final;
@@ -219,6 +221,36 @@ function runRelativePath(runDir, path, label) {
 	return relativePath.replaceAll("\\", "/");
 }
 
+function deliveryArtifact(run, record, label) {
+	if (!record?.path) throw new Error(`${label} path is required`);
+	return {
+		path: runRelativePath(run.dir, record.path, label),
+		...(record.sha256 ? { sha256: record.sha256 } : {}),
+		...(record.config_sha256 ? { config_sha256: record.config_sha256 } : {}),
+	};
+}
+
+function normalizeDeliveryRecord(run, delivery) {
+	const viewNames = ["front", "back", "left", "right", "plan", "top", "axon", "opposite-axon"];
+	if (Object.keys(delivery.views ?? {}).sort().join("|") !== [...viewNames].sort().join("|")) throw new Error("final delivery must record all eight views");
+	return {
+		schema_version: delivery.schema_version,
+		manifest: deliveryArtifact(run, delivery.manifest, "delivery manifest"),
+		validation: deliveryArtifact(run, delivery.validation, "delivery validation"),
+		viewer: deliveryArtifact(run, delivery.viewer, "delivery viewer"),
+		browser_verification: deliveryArtifact(run, delivery.browser_verification, "delivery browser verification"),
+		views: Object.fromEntries(viewNames.map((name) => [name, deliveryArtifact(run, delivery.views[name], `delivery ${name}`)])),
+	};
+}
+
+function normalizeDeliveryFailure(run, failure) {
+	return {
+		stage: "delivery",
+		code: failure.code,
+		path: runRelativePath(run.dir, failure.path, "delivery failure"),
+	};
+}
+
 function selectedOutputArtifacts(run, selectedVersion, selectedHistory) {
 	const runDir = resolve(run.dir);
 	if (!selectedVersion) {
@@ -246,6 +278,7 @@ function selectedOutputArtifacts(run, selectedVersion, selectedHistory) {
 		validation_report: runRelativePath(runDir, join(selectedVersion.dir, "validation.json"), "validation report"),
 		drawing_provenance: selectedHistory?.artifacts?.drawing_provenance ?? null,
 		drawings,
+		...(run.final?.delivery ? { delivery: run.final.delivery } : {}),
 	};
 }
 
