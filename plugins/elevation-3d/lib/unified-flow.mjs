@@ -19,6 +19,8 @@ import {
 	selectFinal,
 } from "./run-memory.mjs";
 import { renderUnifiedDrawings } from "./unified-render.mjs";
+import { deliverTexturedGlb } from "./texturing/delivery.mjs";
+import { renderEmbeddedPbrViews } from "./texturing/render-validator.mjs";
 
 async function enrichVersion({ sourceMesh, floorGuides, facadePlanes, grammar, safeFallback, outputPath }) {
 	const scene = buildEnrichedScene({
@@ -315,8 +317,12 @@ async function terminateCancelled(run, memoryRoot, error) {
 	throw error;
 }
 
-async function finalizeEnrichedSuccess({ run, versionResult, attempts, input, candidateId, signal, deliver, memoryRoot, lifecycle }) {
+async function finalizeEnrichedSuccess({
+	run, versionResult, attempts, input, candidateId, signal, deliver, memoryRoot, lifecycle,
+	texturing, textureDeliver, renderTextured, texturingLifecycle,
+}) {
 	let delivery;
+	let texturingResult = null;
 	try {
 		delivery = await deliver({
 			runDir: run.dir,
@@ -327,10 +333,53 @@ async function finalizeEnrichedSuccess({ run, versionResult, attempts, input, ca
 			lifecycle,
 		});
 		throwIfAborted(signal);
+		if (texturing?.enabled === true) {
+			const referenceImage = texturing.referenceImage;
+			texturingResult = await textureDeliver({
+				acceptedGlb: versionResult.artifact.path,
+				referenceImage,
+				resultDir: join(run.dir, "texturing", versionResult.version.id),
+				runRoot: run.dir,
+				proceduralDelivery: delivery.run_dir,
+				provider: "tripo",
+				providerOptions: { apiKey: process.env.TRIPO_API_KEY },
+				confirmLive: texturing.confirmLive === true,
+				maxCredits: texturing.maxCredits ?? 15,
+				seed: texturing.seed ?? 13013,
+				dryRun: texturing.dryRun === true,
+				signal,
+				env: process.env,
+			});
+			if (["accepted", "review"].includes(texturingResult.status) && texturingResult.outputGlb) {
+				const viewerConfig = JSON.parse(await readFile(join(delivery.run_dir, "viewer", "config.json"), "utf8"));
+				texturingResult.render = await renderTextured({
+					glbPath: texturingResult.outputGlb,
+					runDir: join(run.dir, "texturing", versionResult.version.id, "rendered-pbr"),
+					candidateId,
+					cameras: viewerConfig.cameras.views,
+					signal,
+					lifecycle: texturingLifecycle,
+				});
+			}
+		}
 		await selectFinal(run, {
 			selected: versionResult.version.id,
-			reason: "enrichment, validation, and all-view delivery passed",
+			reason: texturingResult ? "enrichment and procedural delivery passed; optional texturing recorded" : "enrichment, validation, and all-view delivery passed",
 			delivery: delivery.memory_record,
+			...(texturingResult ? { texturing: redactSecrets({
+				status: texturingResult.status,
+				provider: "tripo",
+				outputGlb: texturingResult.outputGlb ?? null,
+				outputSha256: texturingResult.outputSha256 ?? null,
+				actualCredits: texturingResult.actualCredits ?? 0,
+				geometryStatus: texturingResult.geometry?.accepted ? "accepted" : texturingResult.failure ? "rejected" : null,
+				materialStatus: texturingResult.material?.status ?? null,
+				transferStatus: texturingResult.transfer?.status ?? null,
+				renderStatus: texturingResult.render?.validation?.status ?? null,
+				fallbackPath: delivery.run_dir,
+				failureCode: texturingResult.failure?.code ?? null,
+				retryDecision: "no-auto-retry",
+			}) } : {}),
 		});
 	} catch (error) {
 		if (isAbort(error, signal)) throw error;
@@ -362,6 +411,7 @@ async function finalizeEnrichedSuccess({ run, versionResult, attempts, input, ca
 		drawings: versionResult.drawings,
 		validation: versionResult.report,
 		delivery,
+		texturing: texturingResult,
 	};
 }
 
@@ -370,6 +420,7 @@ export async function runElevation3d({
 	datasetRoot,
 	outputRoot,
 	approvedImage,
+	texturing,
 	runId,
 	signal,
 	deps = {},
@@ -403,13 +454,15 @@ export async function runElevation3d({
 	const render = deps.render ?? renderVersion;
 	const validate = deps.validate ?? validateVersion;
 	const deliver = deps.deliver ?? deliverSelectedAllViews;
+	const textureDeliver = deps.textureDeliver ?? deliverTexturedGlb;
+	const renderTextured = deps.renderTextured ?? renderEmbeddedPbrViews;
 	try {
 	const first = await runVersion({
 		run, versionId: "v001", grammar, safeFallback: false, input, enrich, render, validate, signal,
 		renderLifecycle: deps.renderLifecycle, renderProgressObserver: deps.onRenderProgress,
 	});
 	if (!first.failure) {
-		return await finalizeEnrichedSuccess({ run, versionResult: first, attempts: 1, input, candidateId, signal, deliver, memoryRoot, lifecycle: deps.deliveryLifecycle });
+		return await finalizeEnrichedSuccess({ run, versionResult: first, attempts: 1, input, candidateId, signal, deliver, memoryRoot, lifecycle: deps.deliveryLifecycle, texturing, textureDeliver, renderTextured, texturingLifecycle: deps.texturingLifecycle });
 	}
 	if (!first.failure.retryable) await terminateBlocked(run, memoryRoot, first.failure, first.cause);
 
@@ -419,7 +472,7 @@ export async function runElevation3d({
 		renderLifecycle: deps.renderLifecycle, renderProgressObserver: deps.onRenderProgress,
 	});
 	if (!second.failure) {
-		return await finalizeEnrichedSuccess({ run, versionResult: second, attempts: 2, input, candidateId, signal, deliver, memoryRoot, lifecycle: deps.deliveryLifecycle });
+		return await finalizeEnrichedSuccess({ run, versionResult: second, attempts: 2, input, candidateId, signal, deliver, memoryRoot, lifecycle: deps.deliveryLifecycle, texturing, textureDeliver, renderTextured, texturingLifecycle: deps.texturingLifecycle });
 	}
 	if (!second.failure.retryable) await terminateBlocked(run, memoryRoot, second.failure, second.cause);
 

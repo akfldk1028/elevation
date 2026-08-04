@@ -183,6 +183,7 @@ export async function selectFinal(run, selection) {
 		reason: selection.reason,
 		...(selection.delivery ? { delivery: normalizeDeliveryRecord(run, selection.delivery) } : {}),
 		...(selection.delivery_failure ? { delivery_failure: normalizeDeliveryFailure(run, selection.delivery_failure) } : {}),
+		...(selection.texturing ? { texturing: normalizeTexturingRecord(run, selection.texturing) } : {}),
 	});
 	await writeJson(join(run.dir, "final.json"), final);
 	run.final = final;
@@ -249,6 +250,23 @@ function normalizeDeliveryFailure(run, failure) {
 		code: failure.code,
 		path: runRelativePath(run.dir, failure.path, "delivery failure"),
 	};
+}
+
+function normalizeTexturingRecord(run, texturing) {
+	return redactSecrets({
+		status: texturing.status,
+		provider: texturing.provider,
+		outputGlb: texturing.outputGlb ? runRelativePath(run.dir, texturing.outputGlb, "textured GLB") : null,
+		outputSha256: texturing.outputSha256 ?? null,
+		actualCredits: texturing.actualCredits ?? 0,
+		geometryStatus: texturing.geometryStatus ?? null,
+		materialStatus: texturing.materialStatus ?? null,
+		transferStatus: texturing.transferStatus ?? null,
+		renderStatus: texturing.renderStatus ?? null,
+		fallbackPath: texturing.fallbackPath ? runRelativePath(run.dir, texturing.fallbackPath, "texturing fallback") : null,
+		failureCode: texturing.failureCode ?? null,
+		retryDecision: texturing.retryDecision ?? "no-auto-retry",
+	});
 }
 
 function selectedOutputArtifacts(run, selectedVersion, selectedHistory) {
