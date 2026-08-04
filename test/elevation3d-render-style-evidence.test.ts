@@ -309,4 +309,23 @@ test("legacy improvement requires both grounded axons to improve role-aware mate
 	const rejected = evaluatePresentationImprovement({ current, baseline, semantic: degraded, baselineSemantic });
 	assert.equal(rejected.accepted, false);
 	assert.equal(rejected.views["opposite-axon"].semanticMaterialScore.improved, false);
+
+	const round3Regression = structuredClone(semantic);
+	const round3Baseline = structuredClone(baselineSemantic);
+	for (const [name, oldScore, newScore] of [
+		["axon", 45.657283, 55.313881],
+		["opposite-axon", 36.318611, 21.234204],
+	] as const) {
+		for (const pair of ["concrete:glass", "concrete:bronze", "glass:bronze"]) {
+			round3Baseline[name].pairwise[pair].colorDistance = oldScore;
+			round3Regression[name].pairwise[pair].colorDistance = newScore;
+		}
+	}
+	const exactRegression = evaluatePresentationImprovement({ current, baseline, semantic: round3Regression, baselineSemantic: round3Baseline });
+	assert.equal(exactRegression.accepted, false, "the current opposite concrete:glass regression remains load-bearing");
+	assert.deepEqual(exactRegression.views["opposite-axon"].semanticMaterialScore, { old: 36.318611, new: 21.234204, gain: -15.084407, improved: false });
+	round3Regression["opposite-axon"].pairwise["concrete:glass"].colorDistance = 37.318611;
+	round3Regression["opposite-axon"].pairwise["concrete:bronze"].colorDistance = 200;
+	round3Regression["opposite-axon"].pairwise["glass:bronze"].colorDistance = 200;
+	assert.equal(evaluatePresentationImprovement({ current, baseline, semantic: round3Regression, baselineSemantic: round3Baseline }).accepted, true, "both axons must gain at least one point");
 });

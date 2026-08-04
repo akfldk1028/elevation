@@ -19,7 +19,7 @@ const PRESET = {
 	ground: { enabledFor: ["axon", "opposite-axon"], opacity: 0.14, padding: 0.16 },
 	materialResponse: {
 		concrete: { maxRoughnessDelta: -0.08, tintMultiplier: "#fff4e6" },
-		glass: { maxEnvIntensity: 1.35, preserveTransparency: true, tintMultiplier: "#dcecff" },
+		glass: { maxEnvIntensity: 1.35, preserveTransparency: true, tintMultiplier: "#a8c0cc" },
 		bronze: { maxMetalnessDelta: 0.08, tintMultiplier: "#8a5a32" },
 		opaque: { maxRoughnessDelta: -0.04, tintMultiplier: "#454b52" },
 	},
