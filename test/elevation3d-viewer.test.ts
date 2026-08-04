@@ -119,6 +119,15 @@ test("interactive all-views viewer loads one GLB and exposes controls without re
 		assert.equal(verification.camera_presets.top.clipping.enabled, false);
 		assert.equal(verification.camera_presets.axon.type, "perspective");
 		assert.ok(verification.camera_presets.axon.depth.reduce((sum, value, index) => sum + value * verification.camera_presets["opposite-axon"].depth[index], 0) < -0.8);
+		assert.equal(verification.material_stability.transparent_depth_writers, 0);
+		assert.equal(verification.material_stability.facade_detail_meshes > 0, true);
+		assert.equal(
+			verification.material_stability.polygon_offset_facade_details,
+			verification.material_stability.facade_detail_meshes,
+		);
+		assert.equal(verification.material_stability.deterministic_render_order, true);
+		assert.equal(verification.settled_frames_identical, true);
+		assert.equal(new Set(verification.settled_frame_hashes).size, 1);
 		assert.deepEqual(verification.console_errors, []);
 		await stat(verification.screenshots.initial);
 		await stat(verification.screenshots.interacted);
