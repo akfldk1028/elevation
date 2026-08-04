@@ -112,7 +112,7 @@ function renderInteractiveAllViews(root, gltf = null) {
 			roughnessMap: material.roughnessMap, metalnessMap: material.metalnessMap,
 		});
 	}
-	let currentView = "axon", currentPalette = materialMode === "embedded-pbr" ? "embedded-pbr" : "warm", currentClipping = { enabled: false, elevation_m: null, plane_world: null }, expectedCameraContract = null, fullscreenRequests = 0;
+	let currentView = "axon", currentPalette = materialMode === "embedded-pbr" ? "embedded-pbr" : "warm", currentClipping = { enabled: false, elevation_m: null, plane_world: null }, fullscreenRequests = 0;
 	const glbLoadCount = 1;
 	function materialStability() {
 		let transparentMaterials = 0;
@@ -150,12 +150,13 @@ function renderInteractiveAllViews(root, gltf = null) {
 		};
 		globalThis.__ELEVATION3D_VIEWER_STATE__ = {
 			view: currentView, palette: currentPalette, material_mode: materialMode, selected_glb_sha256: allViews.selected_glb.sha256,
+			building_bounds: { center: center.toArray(), radius },
 			render_style_id: presentationState?.style.id ?? null, render_style_sha256: presentationState?.style.hash ?? null,
 			glb_load_count: glbLoadCount, fullscreen_supported: typeof document.documentElement.requestFullscreen === "function",
 			fullscreen_active: Boolean(document.fullscreenElement), fullscreen_requests: fullscreenRequests,
 			camera: {
 				...cameraContract, zoom: camera?.zoom, projection_axes: preset?.projection_axes, depth: preset?.depth,
-				contract: cameraContract, expected_contract: expectedCameraContract ?? cameraContract,
+				contract: cameraContract,
 			},
 			clipping: currentClipping,
 			material_stability: materialStability(),
@@ -195,14 +196,6 @@ function renderInteractiveAllViews(root, gltf = null) {
 		controls.enableDamping = true; controls.enablePan = true; controls.enableZoom = true;
 		controls.target.copy(config.cameras.views[name].target ? new THREE.Vector3(...config.cameras.views[name].target) : center);
 		controls.addEventListener("change", state); controls.update(); currentView = name; applyClipping(name); presentation?.activateView(name);
-		const preset = config.cameras.views[name];
-		expectedCameraContract = {
-			type: camera.isOrthographicCamera ? "orthographic" : "perspective",
-			position: camera.position.toArray(), target: controls.target.toArray(), up: camera.up.toArray(),
-			perspective: camera.isPerspectiveCamera ? { fov: camera.fov, near: camera.near, far: camera.far, aspect: camera.aspect } : null,
-			orthographic: camera.isOrthographicCamera ? { left: camera.left, right: camera.right, top: camera.top, bottom: camera.bottom, near: camera.near, far: camera.far, zoom: camera.zoom } : null,
-			configured: { projection_axes: preset.projection_axes ?? null, depth: preset.depth ?? null }, clipping: currentClipping,
-		};
 		document.querySelectorAll("[data-view]").forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.view === name)));
 		state();
 	}
