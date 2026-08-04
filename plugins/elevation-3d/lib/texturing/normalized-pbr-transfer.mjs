@@ -158,9 +158,23 @@ function createProviderTriangleIndex(mesh, normalization, quantizationMeters) {
 	return { byKey, triangles };
 }
 
+export function resolveExactUvCandidates(records) {
+	if (!records?.length) return { matched: false, mode: "missing", record: null, candidates: [] };
+	const candidates = records.map((record) => ({
+		record,
+		centroidUv: record.uvs[0].map((_, axis) => record.uvs.reduce((sum, uv) => sum + uv[axis], 0) / record.uvs.length),
+	}));
+	const uvKeys = new Set(records.map((record) => record.points.map((point, index) => ({
+		point: point.map((value) => Math.round(value * 100_000)).join(","),
+		uv: record.uvs[index].map((value) => Math.round(value * 100_000)).join(","),
+	})).sort((left, right) => left.point.localeCompare(right.point)).map(({ point, uv }) => `${point}:${uv}`).join("|")));
+	if (uvKeys.size > 1) return { matched: false, mode: "ambiguous", record: null, candidates };
+	return { matched: true, mode: "exact", record: records[0], candidates: [] };
+}
+
 function matchingProviderTriangle(points, providerIndex, quantizationMeters) {
 	const exact = providerIndex.byKey.get(triangleKey(points, quantizationMeters));
-	if (exact?.length) return { matched: true, mode: "exact", record: exact[0], candidates: [] };
+	if (exact?.length) return resolveExactUvCandidates(exact);
 	const centroid = points[0].map((_, axis) => points.reduce((sum, point) => sum + point[axis], 0) / 3);
 	const normal = normalized(vectorCross(vectorSubtract(points[1], points[0]), vectorSubtract(points[2], points[0])));
 	const candidates = [];

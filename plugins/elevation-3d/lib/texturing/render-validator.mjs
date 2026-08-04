@@ -17,6 +17,10 @@ export function validateEmbeddedPbrRender({ views, selectedGlbSha256, consoleErr
 	if (new Set(records.map((record) => record.sha256)).size !== records.length) codes.push("VIEWS_DUPLICATE");
 	if (records.some((record) => new Set(record.settledHashes ?? []).size !== 1)) codes.push("RENDER_UNSTABLE");
 	if (records.some((record) => !(record.foregroundFraction > 0.01 && record.foregroundFraction < 0.9))) codes.push("CAMERA_FRAMING_INVALID");
+	if (records.some((record) => !(record.silhouetteIou >= 0.985) || !(record.projectedExtentDelta <= 0.005))) codes.push("SILHOUETTE_MISMATCH");
+	if (VIEW_NAMES.slice(0, 6).some((name) => views?.[name]?.cameraType !== "orthographic")
+		|| VIEW_NAMES.slice(6).some((name) => views?.[name]?.cameraType !== "perspective")) codes.push("CAMERA_PROJECTION_INVALID");
+	if (["axon", "opposite-axon"].some((name) => !(views?.[name]?.pbrPixelDelta >= 0.5))) codes.push("PBR_EVIDENCE_MISSING");
 	if ((consoleErrors ?? []).length > 0) codes.push("CONSOLE_ERROR");
 	if (materialMode !== "embedded-pbr") codes.push("MATERIAL_MODE_INVALID");
 	const unique = [...new Set(codes)];
@@ -29,14 +33,35 @@ function decodePng(dataUrl) {
 	return Buffer.from(match[1], "base64");
 }
 
-async function foregroundFraction(bytes) {
-	const { data, info } = await sharp(bytes).removeAlpha().raw().toBuffer({ resolveWithObject: true });
-	const background = [data[0], data[1], data[2]];
-	let foreground = 0;
-	for (let offset = 0; offset < data.length; offset += 3) {
-		if (Math.hypot(data[offset] - background[0], data[offset + 1] - background[1], data[offset + 2] - background[2]) > 8) foreground += 1;
+async function compareRenderEvidence(texturedBytes, diagnosticBytes) {
+	const [textured, diagnostic] = await Promise.all([
+		sharp(texturedBytes).removeAlpha().raw().toBuffer({ resolveWithObject: true }),
+		sharp(diagnosticBytes).removeAlpha().raw().toBuffer({ resolveWithObject: true }),
+	]);
+	const backgrounds = [textured, diagnostic].map(({ data }) => [data[0], data[1], data[2]]);
+	const bounds = [{ minX: textured.info.width, minY: textured.info.height, maxX: -1, maxY: -1 }, { minX: textured.info.width, minY: textured.info.height, maxX: -1, maxY: -1 }];
+	let texturedCount = 0, intersection = 0, union = 0, pixelDifference = 0;
+	for (let pixel = 0; pixel < textured.info.width * textured.info.height; pixel += 1) {
+		const offset = pixel * 3, x = pixel % textured.info.width, y = Math.floor(pixel / textured.info.width);
+		const flags = [textured, diagnostic].map(({ data }, image) => Math.hypot(data[offset] - backgrounds[image][0], data[offset + 1] - backgrounds[image][1], data[offset + 2] - backgrounds[image][2]) > 2);
+		if (flags[0]) texturedCount++;
+		if (flags[0] && flags[1]) intersection++;
+		if (flags[0] || flags[1]) {
+			union++;
+			pixelDifference += (Math.abs(textured.data[offset] - diagnostic.data[offset]) + Math.abs(textured.data[offset + 1] - diagnostic.data[offset + 1]) + Math.abs(textured.data[offset + 2] - diagnostic.data[offset + 2])) / 3;
+		}
+		for (let image = 0; image < 2; image++) if (flags[image]) {
+			bounds[image].minX = Math.min(bounds[image].minX, x); bounds[image].maxX = Math.max(bounds[image].maxX, x);
+			bounds[image].minY = Math.min(bounds[image].minY, y); bounds[image].maxY = Math.max(bounds[image].maxY, y);
+		}
 	}
-	return foreground / (info.width * info.height);
+	const extentDelta = Math.max(...["minX", "minY", "maxX", "maxY"].map((field) => Math.abs(bounds[0][field] - bounds[1][field]))) / textured.info.width;
+	return {
+		foregroundFraction: texturedCount / (textured.info.width * textured.info.height),
+		silhouetteIou: union > 0 ? intersection / union : 0,
+		projectedExtentDelta: extentDelta,
+		pbrPixelDelta: union > 0 ? pixelDifference / union : 0,
+	};
 }
 
 export async function renderEmbeddedPbrViews({ glbPath, runDir, candidateId, cameras, outputSize = 1600, signal, lifecycle = {} } = {}) {
@@ -86,15 +111,22 @@ export async function renderEmbeddedPbrViews({ glbPath, runDir, candidateId, cam
 				return [first, second];
 			});
 			const first = decodePng(firstUrl), second = decodePng(secondUrl);
+			const browserState = await page.evaluate(() => globalThis.__ELEVATION3D_VIEWER_STATE__);
+			await page.evaluate(() => globalThis.__ELEVATION3D_TEST_CONTROLS__.setEmbeddedMaps(false));
+			const diagnostic = decodePng(await page.evaluate(async () => globalThis.__ELEVATION3D_TEST_CONTROLS__.settledPng()));
+			await page.evaluate(() => globalThis.__ELEVATION3D_TEST_CONTROLS__.setEmbeddedMaps(true));
+			const evidence = await compareRenderEvidence(second, diagnostic);
 			const directory = join(root, "views", name);
 			await mkdir(directory, { recursive: true });
 			const path = join(directory, `${name}.png`);
 			await writeFile(path, second);
 			views[name] = {
 				path, sha256: sha256(second), settledHashes: [sha256(first), sha256(second)], selectedGlbSha256,
-				foregroundFraction: await foregroundFraction(second),
+				cameraType: browserState.camera.type,
+				...evidence,
 			};
 		}
+		const pbrEvidence = await page.evaluate(() => globalThis.__ELEVATION3D_TEST_CONTROLS__.embeddedPbrEvidence());
 		const validation = validateEmbeddedPbrRender({ views, selectedGlbSha256, consoleErrors, materialMode: "embedded-pbr" });
 		const thumbnails = await Promise.all(VIEW_NAMES.map((name) => sharp(views[name].path).resize(500, 500).png().toBuffer()));
 		const contactSheetPath = join(root, "contact-sheet.png");
@@ -105,6 +137,7 @@ export async function renderEmbeddedPbrViews({ glbPath, runDir, candidateId, cam
 			schema_version: "arr.elevation3d.embedded-pbr-render.v1",
 			selected_glb: { path: resolve(glbPath), sha256: selectedGlbSha256 }, material_mode: "embedded-pbr", views,
 			console_errors: consoleErrors,
+			pbr_evidence: pbrEvidence,
 			contact_sheet: { path: contactSheetPath, sha256: sha256(await readFile(contactSheetPath)) }, validation,
 		};
 		await writeFile(join(root, "render-validation.json"), `${JSON.stringify(report, null, 2)}\n`);

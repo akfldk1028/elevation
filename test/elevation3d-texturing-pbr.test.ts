@@ -9,7 +9,7 @@ import { canonicalSurfaceSignature } from "../plugins/elevation-3d/lib/texturing
 import { extractPbrEvidence } from "../plugins/elevation-3d/lib/texturing/pbr-extractor.mjs";
 import { rebuildTexturedGlb } from "../plugins/elevation-3d/lib/texturing/pbr-embedder.mjs";
 import { validateMaterialEvidence } from "../plugins/elevation-3d/lib/texturing/material-validator.mjs";
-import { analyzeNormalizedPbrTransfer } from "../plugins/elevation-3d/lib/texturing/normalized-pbr-transfer.mjs";
+import { analyzeNormalizedPbrTransfer, resolveExactUvCandidates } from "../plugins/elevation-3d/lib/texturing/normalized-pbr-transfer.mjs";
 import { chooseTextureCompression } from "../plugins/elevation-3d/lib/texturing/texture-compression.mjs";
 import { discoverElevation3dAssetRoot } from "./helpers/elevation3d-assets.ts";
 
@@ -19,7 +19,7 @@ async function textureBytes(size: number, color: { r: number; g: number; b: numb
 		.toBuffer();
 }
 
-async function writeArchitecturalGlb(path: string, options: { pbr?: boolean; moved?: boolean; textureSize?: number } = {}) {
+async function writeArchitecturalGlb(path: string, options: { pbr?: boolean; moved?: boolean; textureSize?: number; uvShift?: number } = {}) {
 	const document = new Document();
 	const buffer = document.createBuffer("geometry");
 	const positions = [
@@ -32,7 +32,7 @@ async function writeArchitecturalGlb(path: string, options: { pbr?: boolean; mov
 	const concreteIndex = document.createAccessor("concrete-index", buffer).setType("SCALAR")
 		.setArray(new Uint16Array([0, 1, 2, 0, 2, 3]));
 	const concreteUv = document.createAccessor("concrete-uv", buffer).setType("VEC2")
-		.setArray(new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]));
+		.setArray(new Float32Array([0, 0, 1, 0, 1, 1, 0, 1].map((value) => value + (options.uvShift ?? 0))));
 	const glassPosition = document.createAccessor("glass-position", buffer).setType("VEC3")
 		.setArray(new Float32Array(positions.slice(4).flat()));
 	const glassIndex = document.createAccessor("glass-index", buffer).setType("SCALAR")
@@ -140,6 +140,26 @@ test("PBR rebuild keeps local geometry and glass semantics while embedding provi
 	} finally {
 		await rm(directory, { recursive: true, force: true });
 	}
+});
+
+test("direct PBR rebuild transfers provider UVs instead of retaining a stale local unwrap", async () => {
+	const directory = await mkdtemp(join(tmpdir(), "pbr-direct-uv-"));
+	try {
+		const authoritative = join(directory, "authoritative.glb"), provider = join(directory, "provider.glb"), output = join(directory, "output.glb");
+		await writeArchitecturalGlb(authoritative);
+		await writeArchitecturalGlb(provider, { pbr: true, uvShift: 0.25 });
+		await rebuildTexturedGlb({ authoritativeGlb: authoritative, preparedUvGlb: authoritative, providerGlb: provider, outputGlb: output });
+		const result = await new NodeIO().read(output);
+		const concrete = result.getRoot().listMeshes()[0].listPrimitives()[0].getAttribute("TEXCOORD_0")!;
+		assert.deepEqual(concrete.getElement(0, [0, 0]).map((value) => Math.round(value * 100) / 100), [0.25, 0.25]);
+	} finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test("exact triangle duplicates with different UV islands remain ambiguous", () => {
+	const record = (offset: number) => ({ points: [[0, 0, 0], [1, 0, 0], [0, 1, 0]], uvs: [[offset, 0], [offset + 1, 0], [offset, 1]] });
+	assert.equal(resolveExactUvCandidates([record(0)]).mode, "exact");
+	assert.equal(resolveExactUvCandidates([record(0), record(0)]).mode, "exact");
+	assert.equal(resolveExactUvCandidates([record(0), record(2)]).mode, "ambiguous");
 });
 
 test("PBR rebuild rejects provider geometry displacement before writing a final asset", async () => {
