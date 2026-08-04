@@ -129,6 +129,35 @@ test("manages an authoritative-bounds receiver only for axon views", () => {
 	assert.equal(second.parent, null); assert.equal(values.scene.children.some((node) => node.name === "competition-daylight-shadow-receiver"), false);
 });
 
+test("applies a bounded semantic response only once when a material is shared by multiple meshes", () => {
+	const values = fixture();
+	const sharedMesh = new Mesh(null, values.concrete);
+	values.root.add(sharedMesh);
+	values.materialRecords.push({
+		object: sharedMesh, roles: ["concrete"], array: false, facadeDetail: false, currentMaterials: [values.concrete],
+	});
+	const presentation = createEmbeddedPbrPresentation({ THREE, RoomEnvironment, ...values });
+	assert.equal(values.concrete.roughness, 0.64);
+	assert.equal(values.concreteMesh.castShadow, true);
+	assert.equal(sharedMesh.castShadow, true);
+	assert.equal(presentation.evidence().materialRoles.concrete, 2);
+	presentation.dispose();
+	assert.equal(values.concrete.roughness, 0.72);
+});
+
+test("computes shadow eligibility after an initially opaque glass-role material becomes transparent", () => {
+	const values = fixture();
+	values.glass.transparent = false;
+	values.glass.depthWrite = true;
+	const presentation = createEmbeddedPbrPresentation({ THREE, RoomEnvironment, ...values });
+	assert.equal(values.glass.transparent, true);
+	assert.equal(values.glass.depthWrite, false);
+	assert.equal(values.glassMesh.castShadow, false);
+	assert.equal(values.glassMesh.receiveShadow, false);
+	assert.equal(presentation.evidence().shadows.casters, 2);
+	assert.equal(presentation.evidence().shadows.receivers, 2);
+});
+
 test("emits serializable lifecycle evidence and restores every owned resource exactly once", () => {
 	const values = fixture();
 	const originals = {

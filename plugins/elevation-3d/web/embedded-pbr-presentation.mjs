@@ -31,6 +31,7 @@ export function createEmbeddedPbrPresentation({
 	};
 	const sceneState = { environment: scene.environment, environmentIntensity: scene.environmentIntensity };
 	const materialState = new Map();
+	const adjustedMaterials = new Set();
 	const meshShadowState = new Map();
 	const roleCounts = {};
 	let disposed = false;
@@ -69,18 +70,17 @@ export function createEmbeddedPbrPresentation({
 
 	for (const record of materialRecords) {
 		const materials = materialsFor(record);
-		const opaque = materials.every((material) => !material.transparent);
 		if (!meshShadowState.has(record.object)) {
 			meshShadowState.set(record.object, { castShadow: record.object.castShadow, receiveShadow: record.object.receiveShadow });
 		}
-		record.object.castShadow = opaque;
-		record.object.receiveShadow = opaque;
 		for (const [index, material] of materials.entries()) {
 			if (!materialState.has(material)) {
 				materialState.set(material, Object.fromEntries(SCALAR_PROPERTIES.map((property) => [property, material[property]])));
 			}
 			const role = record.roles[index] ?? "opaque";
 			roleCounts[role] = (roleCounts[role] ?? 0) + 1;
+			if (adjustedMaterials.has(material)) continue;
+			adjustedMaterials.add(material);
 			if (role === "concrete" && Number.isFinite(material.roughness)) {
 				material.roughness = clamp(material.roughness + style.materialResponse.concrete.maxRoughnessDelta, 0, 1);
 			} else if (role === "bronze" && Number.isFinite(material.metalness)) {
@@ -95,6 +95,11 @@ export function createEmbeddedPbrPresentation({
 				material.roughness = clamp(material.roughness + style.materialResponse.opaque.maxRoughnessDelta, 0, 1);
 			}
 		}
+	}
+	for (const record of materialRecords) {
+		const opaque = materialsFor(record).every((material) => !material.transparent);
+		record.object.castShadow = opaque;
+		record.object.receiveShadow = opaque;
 	}
 
 	function removeReceiver() {
