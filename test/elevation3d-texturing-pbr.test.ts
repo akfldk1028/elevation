@@ -159,7 +159,9 @@ test("exact triangle duplicates with different UV islands remain ambiguous", () 
 	const record = (offset: number) => ({ points: [[0, 0, 0], [1, 0, 0], [0, 1, 0]], uvs: [[offset, 0], [offset + 1, 0], [offset, 1]] });
 	assert.equal(resolveExactUvCandidates([record(0)]).mode, "exact");
 	assert.equal(resolveExactUvCandidates([record(0), record(0)]).mode, "exact");
-	assert.equal(resolveExactUvCandidates([record(0), record(2)]).mode, "ambiguous");
+	const ambiguous = resolveExactUvCandidates([record(0), record(2)]);
+	assert.equal(ambiguous.mode, "ambiguous");
+	assert.equal(ambiguous.contextualAllowed, false);
 });
 
 test("PBR rebuild rejects provider geometry displacement before writing a final asset", async () => {

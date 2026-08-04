@@ -12,6 +12,7 @@ test("embedded PBR render validation requires one stable GLB across eight distin
 		foregroundFraction: 0.2,
 		silhouetteIou: 1,
 		projectedExtentDelta: 0,
+		baselineProjectedExtentDelta: 0,
 		cameraType: names.slice(0, 6).includes(name) ? "orthographic" : "perspective",
 		pbrPixelDelta: names.includes("axon") ? 2 : names.includes("opposite-axon") ? 2 : null,
 	}]));
