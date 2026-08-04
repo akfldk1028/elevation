@@ -1,6 +1,8 @@
 # Elevation 3D generation behavior
 
-When asked to generate a facade or architectural 3D result, prefer `elevation_3d_run`. It consumes the complete candidate package and approved design, performs deterministic local exact-MASS enrichment, validates the selected GLB, and then automatically generates and browser-verifies front, back, left, right, plan, top, axon, and opposite-axon outputs from that same GLB. It makes no paid provider calls and requires no live approval. If both enriched attempts fail, label the exact-MASS fallback as degraded; do not describe it as the detailed eight-view delivery.
+When asked to generate a facade or architectural 3D result, prefer `elevation_3d_run`. It consumes the complete candidate package and approved design, performs deterministic local exact-MASS enrichment, validates the selected GLB, and then automatically generates and browser-verifies front, back, left, right, plan, top, axon, and opposite-axon outputs from that same GLB. Its default path makes no paid provider calls. If both enriched attempts fail, label the exact-MASS fallback as degraded; do not describe it as the detailed eight-view delivery.
+
+Tripo PBR is an optional post-process on an already accepted enriched GLB. Enable it only when the caller explicitly supplies `texturing.enabled=true`, `texturing.confirm_live=true`, and a reference image. The presence of `TRIPO_API_KEY` is capability, not consent. Preserve the procedural delivery, accept no provider geometry as authoritative, transfer only validated PBR evidence, render eight views from the rebuilt local GLB, and never auto-retry a paid texture task.
 
 The following workflow is experimental legacy behavior only:
 
