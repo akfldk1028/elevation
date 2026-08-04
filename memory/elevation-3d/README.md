@@ -41,7 +41,7 @@ For reusable appearance generation and future material/facade variants, also rea
 - Detailed-render stage: first photorealistic concrete/glass isometric variant generated and selected for the next SPAR3D comparison.
 - Detailed hosted-SPAR3D result: near-camera axonometric appearance passed, but held-out plan/elevation geometry failed; see `evaluation/detailed-render-spar3d-test-2026-08-03.md`.
 - Tripo credential: configured in ignored local `.env`.
-- Tripo API balance at last check: 100 credits on 2026-08-04; both rejected texture submissions created no texture task and consumed 0 credits.
+- Tripo API balance before the accepted texture task was 100 credits. Three malformed prompt submissions created no texture task and consumed 0 credits; the corrected primary-image texture task consumed 10 credits.
 - Stability paid generation calls: two successful 4-credit SPAR3D tests; 17 credits remained after the detailed-image test.
 - Existing Hunyuan/Wan implementation: retained as superseded experimental work, not the current primary workflow.
 
@@ -98,8 +98,9 @@ Durable run and candidate events use the v2 memory schema. Each attempted versio
 
 - The accepted local GLB remains the only geometry authority. Tripo is restricted to optional UV/material evidence, and provider geometry is discarded before rebuilding the final GLB.
 - Live import succeeded once at 0 credits and is resumable from the ignored local ledger. Durable import task hash: `3cbd861bea3110c8a2f94e30e731365f2586bd146cbe42040ce5fc4ddf1a8e27`; no raw remote task ID is stored here.
-- Two texture submission attempts were rejected before task creation with provider code `1004` (`One or more of your parameter is invalid`). Texture task count and consumed credits remain zero; balance stayed at 100.
-- Attempt 1 used the undocumented `/upload/sts` multipart route. Attempt 2 used the official `/upload` route and failed identically, proving the route was not the sole cause.
-- The current unspent correction mirrors the official Python SDK's texture-prompt file descriptor (`type: "jpg"` even for an uploaded PNG). It is covered by a regression test but has not been submitted live because automatic repeated paid-task attempts are forbidden.
+- Three texture submissions were rejected before task creation with provider code `1004`; endpoint and file-type corrections alone did not resolve the request.
+- Root cause: the architectural reference was incorrectly sent only as optional `style_image`. Sending it as the required primary `texture_prompt.image` created one standard texture task, which completed in 85.9 seconds and consumed 10 credits.
+- Provider GLB SHA-256 is `3405370a005575075cc851a643ed415cfcf13d1266f296d8d85ef1e64716b187` (8,435,908 bytes). It contains embedded 1K/2K base-color, metallic/roughness, and normal maps.
+- Provider geometry remains rejected as authority because Tripo normalized it to about 1 m and changed 24,296 triangles to 23,900. The next stage transfers only matched UV/PBR evidence back to the exact local MASS.
 - Procedural delivery remains untouched at `D:/Data/50_ELE/elevation-3d-e2e-results/autonomous/creative-013/automatic-allviews-flicker-v2-20260804/delivery`.
 - Detailed failure and verification record: `logs/2026-08-04-tripo-pbr-v1.md`.
