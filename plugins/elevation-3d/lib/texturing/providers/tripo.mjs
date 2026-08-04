@@ -84,6 +84,7 @@ export function createTripoProvider({
 		if (!response.ok || payload?.code !== 0) {
 			throw new TexturingError("TRIPO_API_ERROR", redact(payload?.message ?? `Tripo returned HTTP ${response.status}`, apiKey), {
 				providerCode: payload?.code,
+				suggestion: payload?.suggestion == null ? undefined : redact(payload.suggestion, apiKey),
 				traceId: response.headers.get("x-tripo-trace-id"),
 			});
 		}
@@ -131,9 +132,11 @@ export function createTripoProvider({
 			if (!["png", "jpeg", "webp"].includes(type)) throw new TexturingError("TRIPO_IMAGE_FORMAT_NOT_ALLOWED", `Unsupported Tripo image format: ${type}`);
 			const form = new FormData();
 			form.append("file", new Blob([await readFile(absolutePath)]), basename(absolutePath));
-			const data = await apiRequest("/upload/sts", { method: "POST", body: form, signal });
+			const data = await apiRequest("/upload", { method: "POST", body: form, signal });
 			if (typeof data?.image_token !== "string" || data.image_token.length === 0) throw new TexturingError("TRIPO_INVALID_RESPONSE", "Tripo image upload omitted image_token");
-			return { type, file_token: data.image_token };
+			// Tripo's official SDK serializes uploaded texture-prompt images as
+			// `type: "jpg"` even when the local upload is PNG or WebP.
+			return { type: "jpg", file_token: data.image_token };
 		},
 		submitImport({ file, signal }) {
 			return submitTask({ type: "import_model", file }, signal);
