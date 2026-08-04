@@ -7,8 +7,9 @@ import { afterEach, test } from "node:test";
 import { NodeIO } from "@gltf-transform/core";
 import sharp from "sharp";
 
-import { sha256 } from "../plugins/elevation-3d/lib/core.mjs";
+import { loadCandidatePackage, sha256 } from "../plugins/elevation-3d/lib/core.mjs";
 import { buildEnrichedScene, writeEnrichedGlb } from "../plugins/elevation-3d/lib/enrichment.mjs";
+import { deliverSelectedAllViews, FinalDeliveryError } from "../plugins/elevation-3d/lib/final-delivery.mjs";
 import { GeneratedStageError, runElevation3d } from "../plugins/elevation-3d/lib/unified-flow.mjs";
 import * as unifiedFlow from "../plugins/elevation-3d/lib/unified-flow.mjs";
 
@@ -123,6 +124,82 @@ function acceptedDeps(sourceMesh: Awaited<ReturnType<typeof fixture>>["mesh"]) {
 		}),
 	};
 }
+
+const DELIVERY_VIEW_NAMES = ["front", "back", "left", "right", "plan", "top", "axon", "opposite-axon"];
+
+function acceptedFinalDeliveryDeps() {
+	const calls = { render: [] as any[], browser: [] as any[] };
+	return {
+		calls,
+		renderAllViews: async (args: any) => {
+			calls.render.push(args);
+			return {
+				manifest: { schema_version: "arr.elevation3d.all-views.v1", viewer: { path: "viewer/index.html" } },
+				manifest_record: { path: join(args.runDir, "all-views-manifest.json"), sha256: "d".repeat(64) },
+				validation: { accepted: true, codes: [], path: join(args.runDir, "validation.json"), sha256: "e".repeat(64) },
+				views: Object.fromEntries(DELIVERY_VIEW_NAMES.map((name, index) => [name, {
+					path: join(args.runDir, "views", name, `${name}.png`), sha256: String(index).padStart(64, "f"),
+				}])),
+			};
+		},
+		verifyAllViewsViewer: async (args: any) => {
+			calls.browser.push(args);
+			return {
+				path: join(args.runDir, "browser-verification", "browser-verification.json"), sha256: "b".repeat(64),
+				console_errors: [], glb_load_count: 1, activated_views: [...DELIVERY_VIEW_NAMES],
+				camera_presets: Object.fromEntries(DELIVERY_VIEW_NAMES.map((name) => [name, { type: name === "axon" || name === "opposite-axon" ? "perspective" : "orthographic" }])),
+				material_stability: { transparent_depth_writers: 0, facade_detail_meshes: 10, polygon_offset_facade_details: 10, deterministic_render_order: true },
+				settled_frames_identical: true, settled_frame_hashes: ["c".repeat(64), "c".repeat(64), "c".repeat(64)],
+			};
+		},
+	};
+}
+
+test("delivers one normalized eight-view package and browser verification from an accepted GLB", async () => {
+	const item = await fixture();
+	const input = await loadCandidatePackage(item.datasetRoot, item.candidateId);
+	const deps = acceptedFinalDeliveryDeps();
+	const artifactPath = join(item.outputRoot, "accepted", "enriched.glb");
+	const delivery = await deliverSelectedAllViews({
+		runDir: join(item.outputRoot, "accepted"), candidateId: item.candidateId,
+		artifact: { path: artifactPath, sha256: "a".repeat(64) }, input, deps,
+	});
+
+	assert.deepEqual(Object.keys(delivery.views).sort(), [...DELIVERY_VIEW_NAMES].sort());
+	assert.equal(delivery.validation.accepted, true);
+	assert.deepEqual(delivery.browser_verification.console_errors, []);
+	assert.equal(delivery.invocations.render_all_views, 1);
+	assert.equal(delivery.invocations.browser_verification, 1);
+	assert.equal(deps.calls.render.length, 1);
+	assert.equal(deps.calls.browser.length, 1);
+	assert.equal(deps.calls.render[0].cutElevationM, 1.2);
+	assert.equal(deps.calls.render[0].palette.preset, "competition-warm");
+	assert.equal(deps.calls.render[0].cameras.axon.projection, "perspective");
+	assert.equal(deps.calls.render[0].cameras["opposite-axon"].projection, "perspective");
+	assert.ok(deps.calls.render[0].cameras.axon.position[0] > deps.calls.render[0].cameras["opposite-axon"].position[0]);
+	assert.equal(delivery.memory_record.manifest.sha256, "d".repeat(64));
+});
+
+test("rejects invalid package and browser evidence and propagates cancellation", async () => {
+	const item = await fixture();
+	const input = await loadCandidatePackage(item.datasetRoot, item.candidateId);
+	const base = { runDir: join(item.outputRoot, "rejected"), candidateId: item.candidateId, artifact: { path: join(item.outputRoot, "rejected", "enriched.glb"), sha256: "a".repeat(64) }, input };
+	for (const [mutation, code] of [
+		[(deps: any) => { deps.renderAllViews = async () => ({ validation: { accepted: false, codes: ["BAD"] }, views: {} }); }, "ALL_VIEWS_REJECTED"],
+		[(deps: any) => { deps.verifyAllViewsViewer = async () => ({ console_errors: ["boom"], glb_load_count: 1 }); }, "BROWSER_VERIFICATION_REJECTED"],
+	] as const) {
+		const deps = acceptedFinalDeliveryDeps(); mutation(deps);
+		await assert.rejects(() => deliverSelectedAllViews({ ...base, deps }), (error: any) => {
+			assert.equal(error instanceof FinalDeliveryError, true); assert.equal(error.code, code); return true;
+		});
+	}
+	const controller = new AbortController(); controller.abort(new DOMException("stop delivery", "AbortError"));
+	await assert.rejects(() => deliverSelectedAllViews({ ...base, signal: controller.signal, deps: acceptedFinalDeliveryDeps() }), { name: "AbortError" });
+	const missingTop = structuredClone(input); delete missingTop.cameras.views.top;
+	await assert.rejects(() => deliverSelectedAllViews({ ...base, input: missingTop, deps: acceptedFinalDeliveryDeps() }), (error: any) => {
+		assert.equal(error instanceof FinalDeliveryError, true); assert.equal(error.code, "CAMERA_INPUT_INVALID"); return true;
+	});
+});
 
 function validationDeps(
 	sourceMesh: Awaited<ReturnType<typeof fixture>>["mesh"],
