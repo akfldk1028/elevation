@@ -76,6 +76,15 @@ function validSemanticRoleEvidence() {
 	return Object.fromEntries(names.map((name) => [name, { roles: structuredClone(roles), pairwise: structuredClone(pairwise) }]));
 }
 
+function validSemanticGeometryEvidence() {
+	return {
+		concrete: { meshCount: 313, vertexCount: 25157, triangleCount: 3748, attributionSources: { "object.userData.material": 312, "material.name": 1 } },
+		glass: { meshCount: 971, vertexCount: 19343, triangleCount: 10528, attributionSources: { "object.userData.material": 971 } },
+		bronze: { meshCount: 519, vertexCount: 12208, triangleCount: 6104, attributionSources: { "object.userData.material": 519 } },
+		opaque: { meshCount: 340, vertexCount: 7832, triangleCount: 3916, attributionSources: { "object.userData.material": 340 } },
+	};
+}
+
 test("embedded PBR render validation requires one stable GLB across eight distinct views", () => {
 	const views = validViews();
 	assert.deepEqual(validateEmbeddedPbrRender({ views, selectedGlbSha256, consoleErrors: [], materialMode: "embedded-pbr" }), {
@@ -258,6 +267,7 @@ test("render-only v2 delivery persists resolved style, per-view evidence, baseli
 			if (source.includes("setPresentationObjectsVisible(false)")) { presentationVisible = false; return; }
 			if (source.includes("setPresentationObjectsVisible(true)")) { presentationVisible = true; return; }
 			if (source.includes("presentationEvidence")) return { style: { id: "competition-daylight-v1" }, view: activeView };
+			if (source.includes("semanticRoleGeometry")) return validSemanticGeometryEvidence();
 			if (source.includes("semanticRolePng")) return dataUrl(roleMask);
 			if (source.includes("embeddedPbrEvidence")) return { embedded_maps: true };
 			if (source.includes("settledPng")) return dataUrl(embeddedMaps
@@ -278,6 +288,8 @@ test("render-only v2 delivery persists resolved style, per-view evidence, baseli
 	assert.equal(report.validation.accepted, true, JSON.stringify(report.validation));
 	assert.equal(report.views.axon.baselineProjectedExtentDelta, 0, "presentation-only pixels must not expand procedural geometry bounds");
 	assert.equal(report.semantic_role_evidence.front.roles.concrete.pixelCount, 1600);
+	assert.equal(report.semantic_role_evidence.front.roles.bronze.visibility.geometryTriangles, 6104);
+	assert.equal(report.semantic_role_evidence.front.roles.bronze.coverageFraction, 0.25);
 	assert.equal(Object.keys(report.semantic_role_evidence.axon.pairwise).length, 6);
 	assert.match(report.views.front.semanticRoleMaskSha256, /^[a-f0-9]{64}$/);
 	const style = JSON.parse(await readFile(join(runDir, "render-style.json"), "utf8"));
@@ -325,6 +337,8 @@ test("render-only v2 delivery persists resolved style, per-view evidence, baseli
 			lifecycle: { startPreview: async () => "http://127.0.0.1:4173/", stopPreview: async () => {}, launchBrowser: async () => browser },
 		});
 		assert.equal(legacyCompared.baseline_comparison.status, "compared_legacy_reanalyzed");
+		assert.equal(legacyCompared.baseline_comparison.legacy_semantic_roles.axon.roles.bronze.pixelCount, 1600);
+		assert.equal(legacyCompared.baseline_comparison.decision.views.axon.semanticMaterialScore.improved, true);
 		assert.equal(legacyCompared.baseline_comparison.decision.accepted, true, JSON.stringify(legacyCompared.baseline_comparison.decision));
 		assert.equal(legacyCompared.validation.accepted, true, JSON.stringify(legacyCompared.validation));
 

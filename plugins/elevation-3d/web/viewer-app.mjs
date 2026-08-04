@@ -3,7 +3,7 @@ import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { resolvePbrRenderStyle } from "../lib/texturing/render-style.mjs";
-import { createEmbeddedPbrPresentation, renderSemanticRoleMask } from "./embedded-pbr-presentation.mjs";
+import { createEmbeddedPbrPresentation, renderSemanticRoleMask, resolveGltfPrimitiveExtras, resolveSemanticRole, semanticRoleGeometryEvidence } from "./embedded-pbr-presentation.mjs";
 
 const params = new URLSearchParams(location.search);
 const config = await fetch("config.json").then((response) => response.json());
@@ -53,7 +53,7 @@ function createLegacyCamera(name) {
 	return camera;
 }
 
-function renderInteractiveAllViews(root) {
+function renderInteractiveAllViews(root, gltf = null) {
 	const materialMode = allViews.material_mode ?? "procedural-preview";
 	const panel = document.querySelector("[data-all-views-panel]");
 	panel.hidden = false;
@@ -76,9 +76,12 @@ function renderInteractiveAllViews(root) {
 			if (String(ancestor.name).toLowerCase() === "facade-details") facadeDetail = true;
 			ancestor = ancestor.parent;
 		}
+		const primitiveExtras = resolveGltfPrimitiveExtras({ gltf, object });
+		const resolvedRoles = materials.map((material) => resolveSemanticRole({ object, material, primitiveExtras }));
 		materialRecords.push({
 			object,
-			roles: materials.map(semanticRole),
+			roles: resolvedRoles.map((entry) => entry.role),
+			roleSources: resolvedRoles.map((entry) => entry.source),
 			array: Array.isArray(object.material),
 			facadeDetail,
 			currentMaterials: materials,
@@ -253,6 +256,7 @@ function renderInteractiveAllViews(root) {
 		rotateAndZoom() { controls.rotateLeft(0.25); controls.dollyIn(1.2); controls.update(); state(); },
 		reset() { activateView(currentView); }, toggleFullscreen, activateView,
 		presentationEvidence() { return presentation?.evidence() ?? null; },
+		semanticRoleGeometry() { return semanticRoleGeometryEvidence(materialRecords); },
 		semanticRolePng() { return renderSemanticRoleMask({ THREE, renderer, scene, camera, materialRecords }); },
 		setPresentationObjectsVisible(visible) { presentation?.setPresentationObjectsVisible(visible); },
 		async settledPng() {
@@ -843,9 +847,10 @@ function renderCompetitionAxon(root, view) {
 }
 
 const strategy = params.get("strategy") ?? (config.strategies.hunyuan?.glb ? "hunyuan" : "wan_projection");
-let loadedRoot;
+let loadedRoot, loadedGltf = null;
 if (strategy === "hunyuan" && config.strategies.hunyuan?.glb) {
 	const gltf = await new GLTFLoader().loadAsync(config.strategies.hunyuan.glb);
+	loadedGltf = gltf;
 	loadedRoot = gltf.scene;
 	if (!competition && !allViews && config.cameras.views[params.get("view") ?? "axon"]?.rendering?.material_mode === "line-oriented") {
 		gltf.scene.traverse((object) => {
@@ -860,7 +865,7 @@ if (strategy === "hunyuan" && config.strategies.hunyuan?.glb) {
 	scene.add(loadedRoot);
 }
 const viewName = params.get("view") ?? "axon";
-if (allViews) renderInteractiveAllViews(loadedRoot);
+if (allViews) renderInteractiveAllViews(loadedRoot, loadedGltf);
 else if (competitionElevation) renderCompetition(loadedRoot, config.cameras.views[viewName]);
 else if (competitionPlan) renderCompetitionPlan(loadedRoot, config.cameras.views[viewName]);
 else if (competitionAxon) renderCompetitionAxon(loadedRoot, config.cameras.views[viewName]);

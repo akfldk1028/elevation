@@ -28,6 +28,73 @@ function markPresentationOnly(node, name) {
 }
 
 const SEMANTIC_ROLE_COLORS = Object.freeze({ concrete: 0xff0000, glass: 0x00ff00, bronze: 0x0000ff, opaque: 0xffff00 });
+const SEMANTIC_ROLES = Object.freeze(Object.keys(SEMANTIC_ROLE_COLORS));
+const KIND_ROLES = Object.freeze({ mullion: "bronze", glazing: "glass", "opaque-panel": "opaque", "floor-band": "concrete", parapet: "concrete", "exact-mass": "concrete" });
+
+function namedRole(value) {
+	const name = String(value ?? "").toLowerCase();
+	return SEMANTIC_ROLES.find((role) => name === role || name.includes(role)) ?? null;
+}
+
+function userDataRole(userData) {
+	for (const field of ["material", "semantic_role", "semanticRole", "material_role", "materialRole", "role"]) {
+		const role = namedRole(userData?.[field]);
+		if (role) return { role, field };
+	}
+	const kind = String(userData?.kind ?? "").toLowerCase();
+	return KIND_ROLES[kind] ? { role: KIND_ROLES[kind], field: "kind" } : null;
+}
+
+export function resolveSemanticRole({ object, material, primitiveExtras }) {
+	const primitiveData = userDataRole(primitiveExtras);
+	if (primitiveData) return { role: primitiveData.role, source: `primitive.extras.${primitiveData.field}` };
+	const objectData = userDataRole(object?.userData);
+	if (objectData) return { role: objectData.role, source: `object.userData.${objectData.field}` };
+	const materialData = userDataRole(material?.userData);
+	if (materialData) return { role: materialData.role, source: `material.userData.${materialData.field}` };
+	const materialName = namedRole(material?.name);
+	if (materialName) return { role: materialName, source: "material.name" };
+	const objectName = namedRole(object?.name);
+	if (objectName) return { role: objectName, source: "object.name" };
+	let ancestor = object?.parent;
+	while (ancestor) {
+		const data = userDataRole(ancestor.userData);
+		if (data) return { role: data.role, source: `ancestor.userData.${data.field}` };
+		const role = namedRole(ancestor.name);
+		if (role) return { role, source: "ancestor.name" };
+		ancestor = ancestor.parent;
+	}
+	return { role: "concrete", source: "fallback.concrete" };
+}
+
+export function resolveGltfPrimitiveExtras({ gltf, object }) {
+	const association = gltf?.parser?.associations?.get(object);
+	if (!Number.isInteger(association?.meshes) || !Number.isInteger(association?.primitives)) return null;
+	return gltf.parser.json.meshes?.[association.meshes]?.primitives?.[association.primitives]?.extras ?? null;
+}
+
+export function semanticRoleGeometryEvidence(materialRecords) {
+	const result = Object.fromEntries(SEMANTIC_ROLES.map((role) => [role, { meshCount: 0, vertexCount: 0, triangleCount: 0, attributionSources: {} }]));
+	for (const record of materialRecords) {
+		const positionCount = record.object.geometry?.getAttribute?.("position")?.count ?? 0;
+		const indexCount = record.object.geometry?.getIndex?.()?.count ?? record.object.geometry?.index?.count ?? positionCount;
+		for (const [index, role] of record.roles.entries()) {
+			const target = result[role] ?? result.opaque;
+			const groups = record.array ? (record.object.geometry?.groups ?? []).filter((group) => group.materialIndex === index) : [];
+			const elementCount = groups.length ? groups.reduce((sum, group) => sum + group.count, 0) : indexCount / Math.max(1, record.roles.length);
+			target.meshCount++;
+			target.vertexCount += positionCount / Math.max(1, record.roles.length);
+			target.triangleCount += elementCount / 3;
+			const source = record.roleSources?.[index] ?? "unknown";
+			target.attributionSources[source] = (target.attributionSources[source] ?? 0) + 1;
+		}
+	}
+	for (const record of Object.values(result)) {
+		record.vertexCount = Math.round(record.vertexCount);
+		record.triangleCount = Math.round(record.triangleCount);
+	}
+	return result;
+}
 
 export function renderSemanticRoleMask({ THREE, renderer, scene, camera, materialRecords }) {
 	const clearColor = renderer.getClearColor(new THREE.Color()).clone();

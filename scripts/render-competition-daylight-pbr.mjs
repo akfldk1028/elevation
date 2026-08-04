@@ -21,7 +21,7 @@ function assertContained(root, candidate, label) {
 	if (scoped.startsWith("..") || isAbsolute(scoped)) throw new Error(`${label} escapes the output root`);
 }
 
-export async function prepareCanonicalReplay({ outputRoot, canonicalDir, acceptedSourceDir, glbPath, camerasPath }) {
+export async function prepareCanonicalReplay({ outputRoot, canonicalDir, acceptedSourceDir, glbPath, camerasPath, archiveAcceptedCanonical = false }) {
 	const root = await realpath(resolve(outputRoot));
 	const canonical = resolve(canonicalDir);
 	if (dirname(canonical) !== resolve(outputRoot) || basename(canonical) !== OUTPUT_VERSION) throw new Error("Canonical target must be the fixed direct child of the output root");
@@ -41,8 +41,8 @@ export async function prepareCanonicalReplay({ outputRoot, canonicalDir, accepte
 	if (sourceReport.selected_glb?.sha256 !== glbSha256) throw new Error("Accepted source GLB identity does not match");
 	if (sourceReport.render_style?.id !== style.id || sourceReport.render_style_sha256 !== renderStyleHash(style)) throw new Error("Accepted source style identity does not match");
 	if (canonicalJson(sourceConfig.cameras?.views) !== canonicalJson(acceptedConfig.cameras?.views)) throw new Error("Accepted source camera identity does not match");
-	if (canonicalReport.validation?.accepted === true) throw new Error("Refusing to overwrite an accepted canonical artifact");
-	if (canonicalReport.validation?.accepted !== false) throw new Error("Existing canonical artifact is not explicitly rejected");
+	if (canonicalReport.validation?.accepted === true && archiveAcceptedCanonical !== true) throw new Error("Refusing to overwrite an accepted canonical artifact");
+	if (![true, false].includes(canonicalReport.validation?.accepted)) throw new Error("Existing canonical artifact has no explicit validation decision");
 	const attempts = join(root, "attempts");
 	await mkdir(attempts, { recursive: true });
 	assertContained(root, await realpath(attempts), "Attempts directory");
@@ -79,7 +79,7 @@ export function parseReplayArgs(argv, cwd = process.cwd()) {
 		if (values.has(name)) throw new Error(`Duplicate replay argument: ${name}`);
 		values.set(name, value);
 	}
-	const supported = new Set(["--glb", "--cameras", "--procedural-baseline", "--presentation-baseline", "--accepted-source", "--output-root", "--output"]);
+	const supported = new Set(["--glb", "--cameras", "--procedural-baseline", "--presentation-baseline", "--accepted-source", "--archive-accepted-canonical", "--output-root", "--output"]);
 	for (const name of values.keys()) if (!supported.has(name)) throw new Error(`Unsupported replay argument: ${name}`);
 	const resolved = (name) => resolve(cwd, requiredArgument(values, name));
 	const outputDir = resolved("--output");
@@ -89,6 +89,7 @@ export function parseReplayArgs(argv, cwd = process.cwd()) {
 		proceduralBaselineRunDir: resolved("--procedural-baseline"),
 		...(values.has("--presentation-baseline") ? { presentationBaselineRunDir: resolved("--presentation-baseline") } : {}),
 		...(values.has("--accepted-source") ? { acceptedSourceDir: resolved("--accepted-source") } : {}),
+		...(values.has("--archive-accepted-canonical") ? { archiveAcceptedCanonical: requiredArgument(values, "--archive-accepted-canonical") === "true" } : {}),
 		outputDir,
 		outputRoot: resolved("--output-root"),
 	};
@@ -121,6 +122,7 @@ export async function renderCompetitionDaylightReplay(options, deps = {}) {
 	const proceduralBaselineRunDir = resolve(options.proceduralBaselineRunDir);
 	const presentationBaselineRunDir = options.presentationBaselineRunDir ? resolve(options.presentationBaselineRunDir) : undefined;
 	const acceptedSourceDir = options.acceptedSourceDir ? resolve(options.acceptedSourceDir) : undefined;
+	const archiveAcceptedCanonical = options.archiveAcceptedCanonical === true;
 	const { root: outputRoot, output: outputDir } = await resolveScopedOutput(options.outputDir, options.outputRoot, deps.realpath);
 	if (presentationBaselineRunDir && basename(presentationBaselineRunDir) !== "rendered-pbr-v6") {
 		throw new Error("Presentation baseline must point to rendered-pbr-v6");
@@ -139,7 +141,7 @@ export async function renderCompetitionDaylightReplay(options, deps = {}) {
 	const renderStyleSha256 = renderStyleHash(renderStyle);
 	const prepare = deps.prepareCanonicalReplay ?? prepareCanonicalReplay;
 	const canonicalPreparation = acceptedSourceDir ? await prepare({
-		outputRoot, canonicalDir: outputDir, acceptedSourceDir, glbPath, camerasPath,
+		outputRoot, canonicalDir: outputDir, acceptedSourceDir, glbPath, camerasPath, archiveAcceptedCanonical,
 	}) : null;
 	await reserveOutput(outputDir, deps.mkdir);
 	let report;

@@ -243,6 +243,31 @@ test("semantic role masks measure final role colors and reject collapsed or miss
 	const missingViews = Object.fromEntries(["front", "back", "left", "right", "plan", "top", "axon", "opposite-axon"].map((name) => [name, missing]));
 	assert.ok(validateSemanticRoleEvidence({ views: missingViews }).codes.includes("PBR_SEMANTIC_ROLE_MISSING"));
 
+	const missingBronze = structuredClone(measured);
+	missingBronze.roles.bronze.pixelCount = 1;
+	missingBronze.roles.bronze.coverageFraction = 1 / 32;
+	missingBronze.roles.bronze.visibility = { status: "visible", reason: "authoritative_role_mask_fragments", geometryTriangles: 6104 };
+	const missingBronzeViews = Object.fromEntries(["front", "back", "left", "right", "plan", "top", "axon", "opposite-axon"].map((name) => [name, structuredClone(missingBronze)]));
+	assert.ok(validateSemanticRoleEvidence({ views: missingBronzeViews }).codes.includes("PBR_SEMANTIC_ROLE_MISSING"), "one attributed bronze pixel must not satisfy coverage");
+	const insufficientBronzeCoverage = structuredClone(measured);
+	insufficientBronzeCoverage.roles.bronze.pixelCount = 4;
+	insufficientBronzeCoverage.roles.bronze.coverageFraction = 0.000499;
+	const insufficientCoverageViews = Object.fromEntries(["front", "back", "left", "right", "plan", "top", "axon", "opposite-axon"].map((name) => [name, structuredClone(insufficientBronzeCoverage)]));
+	assert.ok(validateSemanticRoleEvidence({ views: insufficientCoverageViews }).codes.includes("PBR_SEMANTIC_ROLE_MISSING"), "bronze coverage below the relative boundary must be rejected");
+	const collapsedBronze = structuredClone(measured);
+	collapsedBronze.pairwise["concrete:bronze"].colorDistance = 0;
+	const collapsedBronzeViews = Object.fromEntries(["front", "back", "left", "right", "plan", "top", "axon", "opposite-axon"].map((name) => [name, structuredClone(collapsedBronze)]));
+	assert.ok(validateSemanticRoleEvidence({ views: collapsedBronzeViews }).codes.includes("PBR_SEMANTIC_ROLE_COLLAPSED"));
+	const absentOpaqueMask = Buffer.from(mask);
+	for (let y = 0; y < height; y++) for (let x = 6; x < 8; x++) absentOpaqueMask.set([0, 0, 0], (y * width + x) * 3);
+	const absentOpaque = await analyzeSemanticRolePng({
+		finalPng: await encode(final), roleMaskPng: await encode(absentOpaqueMask),
+		geometry: { opaque: { triangleCount: 3916 } },
+	});
+	assert.deepEqual(absentOpaque.roles.opaque.visibility, {
+		status: "not_visible", reason: "no_authoritative_role_mask_fragments_survived_depth_and_clipping", geometryTriangles: 3916,
+	});
+
 	const boundaryViews = Object.fromEntries(["front", "back", "left", "right", "plan", "top", "axon", "opposite-axon"].map((name) => [name, structuredClone(measured)]));
 	for (const name of ["front", "back", "left", "right", "axon", "opposite-axon"]) boundaryViews[name].pairwise["concrete:glass"].colorDistance = 5;
 	assert.equal(validateSemanticRoleEvidence({ views: boundaryViews }).accepted, true);
@@ -250,7 +275,7 @@ test("semantic role masks measure final role colors and reject collapsed or miss
 	assert.ok(validateSemanticRoleEvidence({ views: boundaryViews }).codes.includes("PBR_SEMANTIC_ROLE_COLLAPSED"));
 });
 
-test("legacy improvement requires grounded non-collapsed axons and non-collapsed elevations", () => {
+test("legacy improvement requires both grounded axons to improve role-aware material separation", () => {
 	const evaluatePresentationImprovement = (presentationEvidenceModule as any).evaluatePresentationImprovement;
 	assert.equal(typeof evaluatePresentationImprovement, "function");
 	const sample = (luminanceSpread: number, chromaSpread: number, detected: boolean) => ({
@@ -267,12 +292,21 @@ test("legacy improvement requires grounded non-collapsed axons and non-collapsed
 		roles: Object.fromEntries(["concrete", "glass", "bronze", "opaque"].map((role) => [role, { pixelCount: 10 }])),
 		pairwise: { "concrete:glass": { colorDistance: 20 }, "concrete:bronze": { colorDistance: 20 }, "concrete:opaque": { colorDistance: 20 }, "glass:bronze": { colorDistance: 20 }, "glass:opaque": { colorDistance: 20 }, "bronze:opaque": { colorDistance: 20 } },
 	}]));
-	const accepted = evaluatePresentationImprovement({ current, baseline, semantic });
+	const baselineSemantic = structuredClone(semantic);
+	for (const name of ["axon", "opposite-axon"]) for (const pair of ["concrete:glass", "concrete:bronze", "glass:bronze"]) baselineSemantic[name].pairwise[pair].colorDistance = 15;
+	const accepted = evaluatePresentationImprovement({ current, baseline, semantic, baselineSemantic });
 	assert.equal(accepted.accepted, true);
 	assert.equal(accepted.views.axon.groundingImproved, true);
+	assert.deepEqual(accepted.views.axon.semanticMaterialScore, { old: 15, new: 20, gain: 5, improved: true });
 	assert.equal(accepted.views.front.luminanceRetention, 0.75);
 	const collapsedElevation = structuredClone(current); collapsedElevation.front.materialSeparation.luminanceSpread = 44.9;
-	assert.equal(evaluatePresentationImprovement({ current: collapsedElevation, baseline, semantic }).accepted, false);
+	assert.equal(evaluatePresentationImprovement({ current: collapsedElevation, baseline, semantic, baselineSemantic }).accepted, false);
 	const ungroundedAxon = structuredClone(current); ungroundedAxon.axon.contactShadow.detected = false;
-	assert.equal(evaluatePresentationImprovement({ current: ungroundedAxon, baseline, semantic }).accepted, false);
+	assert.equal(evaluatePresentationImprovement({ current: ungroundedAxon, baseline, semantic, baselineSemantic }).accepted, false);
+	assert.equal(evaluatePresentationImprovement({ current, baseline, semantic }).accepted, false, "grounding alone must not replace legacy semantic evidence");
+	const degraded = structuredClone(semantic);
+	for (const pair of ["concrete:glass", "concrete:bronze", "glass:bronze"]) degraded["opposite-axon"].pairwise[pair].colorDistance = 14;
+	const rejected = evaluatePresentationImprovement({ current, baseline, semantic: degraded, baselineSemantic });
+	assert.equal(rejected.accepted, false);
+	assert.equal(rejected.views["opposite-axon"].semanticMaterialScore.improved, false);
 });

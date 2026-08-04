@@ -31,6 +31,7 @@ test("resolves replay paths from CLI arguments", () => {
 		"--procedural-baseline", "accepted/delivery",
 		"--presentation-baseline", "old/rendered-pbr-v6",
 		"--accepted-source", "accepted-primary/rendered-pbr-v7-competition-daylight",
+		"--archive-accepted-canonical", "true",
 		"--output-root", "new",
 		"--output", "new/rendered-pbr-v7-competition-daylight",
 	], cwd), {
@@ -39,6 +40,7 @@ test("resolves replay paths from CLI arguments", () => {
 		proceduralBaselineRunDir: join(cwd, "accepted/delivery"),
 		presentationBaselineRunDir: join(cwd, "old/rendered-pbr-v6"),
 		acceptedSourceDir: join(cwd, "accepted-primary/rendered-pbr-v7-competition-daylight"),
+		archiveAcceptedCanonical: true,
 		outputDir: join(cwd, "new/rendered-pbr-v7-competition-daylight"),
 		outputRoot: join(cwd, "new"),
 	});
@@ -256,4 +258,10 @@ test("preserves only a rejected canonical after accepted source identity verific
 
 	await mkdir(canonicalDir); await writeFile(join(canonicalDir, "render-validation.json"), JSON.stringify({ validation: { accepted: true } }));
 	await assert.rejects(() => prepareCanonicalReplay({ outputRoot: root, canonicalDir, acceptedSourceDir: sourceDir, glbPath, camerasPath }), /accepted canonical/i);
+	await writeFile(join(canonicalDir, "accepted-sentinel.txt"), "authorized preservation");
+	const acceptedPrepared = await prepareCanonicalReplay({
+		outputRoot: root, canonicalDir, acceptedSourceDir: sourceDir, glbPath, camerasPath, archiveAcceptedCanonical: true,
+	});
+	assert.match(acceptedPrepared.preservedAttempt, /[\\/]attempts[\\/]rendered-pbr-v7-competition-daylight-attempt-002$/);
+	assert.equal(await readFile(join(acceptedPrepared.preservedAttempt, "accepted-sentinel.txt"), "utf8"), "authorized preservation");
 });

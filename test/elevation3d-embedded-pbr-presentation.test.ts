@@ -231,6 +231,37 @@ test("can exclude presentation-only pixels from geometry evidence without removi
 	assert.equal(receiver.visible, true);
 });
 
+test("resolves provider-collapsed materials from authoritative primitive extras and ancestry", () => {
+	const resolveSemanticRole = (embeddedPresentationModule as any).resolveSemanticRole;
+	const resolveGltfPrimitiveExtras = (embeddedPresentationModule as any).resolveGltfPrimitiveExtras;
+	assert.equal(typeof resolveSemanticRole, "function");
+	assert.equal(typeof resolveGltfPrimitiveExtras, "function");
+	const material = { name: "facade-details_material", userData: {} };
+	const primitive = new Node();
+	primitive.name = "facade-details_417";
+	const opaquePrimitive = new Node();
+	const gltf = {
+		parser: {
+			associations: new Map([[primitive, { meshes: 1, primitives: 0 }], [opaquePrimitive, { meshes: 1, primitives: 1 }]]),
+			json: { meshes: [{}, { primitives: [
+				{ extras: { kind: "mullion", material: "bronze" } },
+				{ extras: { kind: "opaque-panel", material: "opaque" } },
+			] }] },
+		},
+	};
+	assert.deepEqual(resolveSemanticRole({ object: primitive, material, primitiveExtras: resolveGltfPrimitiveExtras({ gltf, object: primitive }) }), { role: "bronze", source: "primitive.extras.material" });
+	assert.deepEqual(resolveSemanticRole({ object: opaquePrimitive, material, primitiveExtras: resolveGltfPrimitiveExtras({ gltf, object: opaquePrimitive }) }), { role: "opaque", source: "primitive.extras.material" });
+	primitive.userData = { kind: "mullion", material: "bronze" };
+	assert.deepEqual(resolveSemanticRole({ object: primitive, material }), { role: "bronze", source: "object.userData.material" });
+	primitive.userData = { kind: "opaque-panel" };
+	assert.deepEqual(resolveSemanticRole({ object: primitive, material }), { role: "opaque", source: "object.userData.kind" });
+	primitive.userData = {};
+	const ancestor = new Group(); ancestor.userData = { semantic_role: "glass" }; ancestor.add(primitive);
+	assert.deepEqual(resolveSemanticRole({ object: primitive, material }), { role: "glass", source: "ancestor.userData.semantic_role" });
+	ancestor.userData = {};
+	assert.deepEqual(resolveSemanticRole({ object: primitive, material: { name: "bronze-frame" } }), { role: "bronze", source: "material.name" });
+});
+
 test("applies a bounded semantic response only once when a material is shared by multiple meshes", () => {
 	const values = fixture();
 	const sharedMesh = new Mesh(null, values.concrete);
