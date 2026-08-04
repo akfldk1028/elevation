@@ -9,6 +9,7 @@ import {
 } from "../plugins/elevation-3d/lib/texturing/paid-task-ledger.mjs";
 import { createTexturingProvider } from "../plugins/elevation-3d/lib/texturing/provider-router.mjs";
 import { createTripoProvider } from "../plugins/elevation-3d/lib/texturing/providers/tripo.mjs";
+import { parseEnvText, parseTripoCliArgs } from "../scripts/test-tripo-pbr-texturing.mjs";
 
 const apiKey = "secret-key-value";
 const baseUrl = "https://api.example.test/v2/openapi";
@@ -44,7 +45,7 @@ test("Tripo adapter maps balance, STS uploads, import, and exact standard PBR te
 				sts_ak: "temporary-access",
 				sts_sk: "temporary-secret",
 			} });
-			if (url.endsWith("/upload/sts")) return jsonResponse({ code: 0, data: { image_token: "image-token-1" } });
+			if (url.endsWith("/upload")) return jsonResponse({ code: 0, data: { image_token: "image-token-1" } });
 			if (url.endsWith("/task") && (body as { type?: string }).type === "import_model") {
 				return jsonResponse({ code: 0, data: { task_id: "import-task-1" } });
 			}
@@ -67,7 +68,7 @@ test("Tripo adapter maps balance, STS uploads, import, and exact standard PBR te
 		const modelFile = await provider.uploadModel({ path: modelPath });
 		const styleImage = await provider.uploadImage({ path: imagePath });
 		assert.deepEqual(modelFile, { type: "glb", object: { bucket: "tripo-data", key: "inputs/prepared.glb" } });
-		assert.deepEqual(styleImage, { type: "png", file_token: "image-token-1" });
+		assert.deepEqual(styleImage, { type: "jpg", file_token: "image-token-1" });
 		assert.equal(s3Calls.length, 1);
 		assert.equal(await provider.submitImport({ file: modelFile }), "import-task-1");
 		assert.equal(await provider.submitTexture({ importTaskId: "import-task-1", styleImage, seed: 13013 }), "texture-task-1");
@@ -135,8 +136,18 @@ test("Tripo adapter rejects expired tasks, provider errors, and stops locally on
 		task_id: "task-1", type: "texture_model", status: "expired", input: {}, output: {}, progress: 0, create_time: 1,
 	} }) });
 	await assert.rejects(() => expired.pollTask("task-1", { intervalMs: 0 }), (error: any) => error.code === "TRIPO_TASK_EXPIRED");
-	const providerError = createTripoProvider({ apiKey, baseUrl, fetchImpl: async () => jsonResponse({ code: 2002, message: `bad ${apiKey}` }, 400) });
-	await assert.rejects(() => providerError.getBalance(), (error: any) => error.code === "TRIPO_API_ERROR" && !error.message.includes(apiKey));
+	const providerError = createTripoProvider({ apiKey, baseUrl, fetchImpl: async () => jsonResponse({
+		code: 2002,
+		message: `bad ${apiKey}`,
+		suggestion: `replace Bearer ${apiKey}`,
+	}, 400) });
+	await assert.rejects(() => providerError.getBalance(), (error: any) => {
+		assert.equal(error.code, "TRIPO_API_ERROR");
+		assert.equal(error.message.includes(apiKey), false);
+		assert.equal(error.details.suggestion.includes(apiKey), false);
+		assert.match(error.details.suggestion, /REDACTED/);
+		return true;
+	});
 	const controller = new AbortController();
 	controller.abort();
 	await assert.rejects(() => expired.pollTask("task-1", { signal: controller.signal }), { name: "AbortError" });
@@ -192,4 +203,34 @@ test("paid task ledger resumes a persisted task without submitting a duplicate",
 test("provider router rejects unconfigured names and creates the Tripo boundary", () => {
 	assert.equal(createTexturingProvider("tripo", { apiKey, baseUrl }).name, "tripo");
 	assert.throws(() => createTexturingProvider("unknown", { apiKey }), /Unsupported texturing provider/);
+});
+
+test("Tripo live harness parses explicit spend gates and rejects unknown arguments", () => {
+	assert.deepEqual(parseTripoCliArgs([
+		"--accepted-glb", "accepted.glb",
+		"--reference-image", "reference.png",
+		"--result-dir", "result",
+		"--run-root", "runs",
+		"--max-credits", "15",
+		"--seed", "13013",
+		"--confirm-live",
+	]), {
+		acceptedGlb: "accepted.glb",
+		referenceImage: "reference.png",
+		resultDir: "result",
+		runRoot: "runs",
+		maxCredits: 15,
+		seed: 13013,
+		confirmLive: true,
+		dryRun: false,
+	});
+	assert.throws(() => parseTripoCliArgs(["--unknown"]), /Unknown argument/);
+});
+
+test("Tripo live harness reads dotenv syntax without evaluating or overwriting values", () => {
+	assert.deepEqual(parseEnvText("# local only\nTRIPO_API_KEY='secret value'\nELEVATION3D_LIVE_TRIPO=1\nEMPTY=\n"), {
+		TRIPO_API_KEY: "secret value",
+		ELEVATION3D_LIVE_TRIPO: "1",
+		EMPTY: "",
+	});
 });

@@ -41,7 +41,7 @@ For reusable appearance generation and future material/facade variants, also rea
 - Detailed-render stage: first photorealistic concrete/glass isometric variant generated and selected for the next SPAR3D comparison.
 - Detailed hosted-SPAR3D result: near-camera axonometric appearance passed, but held-out plan/elevation geometry failed; see `evaluation/detailed-render-spar3d-test-2026-08-03.md`.
 - Tripo credential: configured in ignored local `.env`.
-- Tripo API balance at last check: 0 credits.
+- Tripo API balance at last check: 100 credits on 2026-08-04; both rejected texture submissions created no texture task and consumed 0 credits.
 - Stability paid generation calls: two successful 4-credit SPAR3D tests; 17 credits remained after the detailed-image test.
 - Existing Hunyuan/Wan implementation: retained as superseded experimental work, not the current primary workflow.
 
@@ -93,3 +93,13 @@ Durable run and candidate events use the v2 memory schema. Each attempted versio
 - Fresh proof hashes: delivery manifest `0417e4285aab66be8a23f4e78bdbabf63b1fd9a5261b30cbfb367abd2bce226a`; validation `5c74517de5abb15d73f676788cdf8fbd607b25797dc18266639544fb16d82f55`; viewer config `10491d1031d50e00183f166b98b7c3e71637db18d020fb1b846aaf6e64cd7484`; viewer app `5e83c63c10a6c12d1628a515788af37c8819b21b56e52b4a51487d4ffd9fa87c`; browser report `e928e9f53cbaa606ba3911766257fa44f90fdb9077d27b4da1fc8004b9dc5daa`.
 - Stable-frame proof: three settled browser frames all hash to `f423c7989ca1ed8c47de7715a5b49f8b2195c14a8a4dad136246ca44d971d0fa`. The browser reported 2,143 meshes, 2,142 offset facade details, 971 transparent materials, zero transparent depth writers, and deterministic render order.
 - Regression evidence: the complete repository suite passes 231/231 tests; `npm run build` and syntax checks for the delivery flow, unified flow, and viewer app pass. One intermediate full-suite failure was a tool-description contract regression (`complete candidate package`); the phrase was restored without weakening the new automatic-delivery description.
+
+## Geometry-locked Tripo PBR checkpoint v1 — 2026-08-04
+
+- The accepted local GLB remains the only geometry authority. Tripo is restricted to optional UV/material evidence, and provider geometry is discarded before rebuilding the final GLB.
+- Live import succeeded once at 0 credits and is resumable from the ignored local ledger. Durable import task hash: `3cbd861bea3110c8a2f94e30e731365f2586bd146cbe42040ce5fc4ddf1a8e27`; no raw remote task ID is stored here.
+- Two texture submission attempts were rejected before task creation with provider code `1004` (`One or more of your parameter is invalid`). Texture task count and consumed credits remain zero; balance stayed at 100.
+- Attempt 1 used the undocumented `/upload/sts` multipart route. Attempt 2 used the official `/upload` route and failed identically, proving the route was not the sole cause.
+- The current unspent correction mirrors the official Python SDK's texture-prompt file descriptor (`type: "jpg"` even for an uploaded PNG). It is covered by a regression test but has not been submitted live because automatic repeated paid-task attempts are forbidden.
+- Procedural delivery remains untouched at `D:/Data/50_ELE/elevation-3d-e2e-results/autonomous/creative-013/automatic-allviews-flicker-v2-20260804/delivery`.
+- Detailed failure and verification record: `logs/2026-08-04-tripo-pbr-v1.md`.
