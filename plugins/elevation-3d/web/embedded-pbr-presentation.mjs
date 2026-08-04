@@ -26,7 +26,7 @@ export function createEmbeddedPbrPresentation({
 		toneMappingExposure: renderer.toneMappingExposure,
 		shadowEnabled: renderer.shadowMap.enabled,
 		shadowType: renderer.shadowMap.type,
-		clearColor: renderer.getClearColor().clone(),
+		clearColor: renderer.getClearColor(new THREE.Color()).clone(),
 		clearAlpha: renderer.getClearAlpha(),
 	};
 	const sceneState = { environment: scene.environment, environmentIntensity: scene.environmentIntensity };
