@@ -355,10 +355,11 @@ async function finalizeEnrichedSuccess({
 					const viewerConfig = JSON.parse(await readFile(join(delivery.run_dir, "viewer", "config.json"), "utf8"));
 					texturingResult.render = await renderTextured({
 					glbPath: texturingResult.outputGlb,
-					runDir: join(run.dir, "texturing", versionResult.version.id, "rendered-pbr"),
+					runDir: join(run.dir, "texturing", versionResult.version.id, "rendered-pbr-v7-competition-daylight"),
 					candidateId,
 					cameras: viewerConfig.cameras.views,
 					baselineRunDir: delivery.run_dir,
+					renderStyleId: texturing.renderStyleId,
 					signal,
 					lifecycle: texturingLifecycle,
 					});
