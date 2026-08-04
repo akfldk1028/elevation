@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -198,6 +199,72 @@ test("paid task ledger resumes a persisted task without submitting a duplicate",
 	} finally {
 		await rm(directory, { recursive: true, force: true });
 	}
+});
+
+test("independent paid ledgers reserve one submission and the loser resumes its persisted task", async () => {
+	const directory = await mkdtemp(join(tmpdir(), "tripo-ledger-race-"));
+	try {
+		const path = join(directory, "ledger.json"), key = "d".repeat(64);
+		let submissions = 0, release!: () => void;
+		const submitted = new Promise<void>((resolve) => { release = resolve; });
+		const submit = async () => { submissions++; await submitted; return "race-task-1"; };
+		const first = createPaidTaskLedger(path, { lockWaitMs: 2_000, lockPollMs: 5 });
+		const second = createPaidTaskLedger(path, { lockWaitMs: 2_000, lockPollMs: 5 });
+		const resultsPromise = Promise.all([
+			first.getOrSubmitTask({ key, kind: "texture", submit }),
+			second.getOrSubmitTask({ key, kind: "texture", submit }),
+		]);
+		const deadline = Date.now() + 2_000;
+		while (submissions === 0 && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 5));
+		assert.equal(submissions, 1, "only the filesystem reservation owner may call the paid provider");
+		release();
+		assert.deepEqual(await resultsPromise, ["race-task-1", "race-task-1"]);
+		assert.equal(submissions, 1);
+		assert.equal((await readFile(path, "utf8")).includes(apiKey), false);
+		assert.equal((await readFile(`${path}.lock`, "utf8").catch(() => "")).includes(apiKey), false);
+	} finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test("paid ledger reservation is abortable and recovers a stale lock only after its PID is dead", async () => {
+	const directory = await mkdtemp(join(tmpdir(), "tripo-ledger-locks-"));
+	try {
+		const path = join(directory, "ledger.json"), lockPath = `${path}.lock`, key = "e".repeat(64);
+		await writeFile(lockPath, JSON.stringify({ version: 1, token: "live-owner", pid: process.pid, created_at: new Date().toISOString() }));
+		const controller = new AbortController();
+		setTimeout(() => controller.abort(), 20);
+		await assert.rejects(() => createPaidTaskLedger(path, { lockWaitMs: 2_000, lockPollMs: 5 }).getOrSubmitTask({
+			key, kind: "import", signal: controller.signal, submit: async () => "must-not-submit",
+		}), { name: "AbortError" });
+		await writeFile(lockPath, JSON.stringify({ version: 1, token: "dead-owner", pid: 2_147_483_647, created_at: new Date(0).toISOString() }));
+		assert.equal(await createPaidTaskLedger(path).getOrSubmitTask({ key, kind: "import", submit: async () => "recovered-task" }), "recovered-task");
+	} finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test("two Node processes sharing one ledger execute exactly one paid callback", async () => {
+	const directory = await mkdtemp(join(tmpdir(), "tripo-ledger-process-race-"));
+	try {
+		const path = join(directory, "ledger.json"), marker = join(directory, "paid-callbacks.txt");
+		const moduleUrl = new URL("../plugins/elevation-3d/lib/texturing/paid-task-ledger.mjs", import.meta.url).href;
+		const source = `
+			import { appendFile } from "node:fs/promises";
+			import { setTimeout as delay } from "node:timers/promises";
+			import { createPaidTaskLedger } from ${JSON.stringify(moduleUrl)};
+			const task = await createPaidTaskLedger(process.argv[1], { lockWaitMs: 5000, lockPollMs: 5 }).getOrSubmitTask({
+				key: "${"f".repeat(64)}", kind: "texture", submit: async () => {
+					await appendFile(process.argv[2], process.pid + "\\n"); await delay(150); return "process-race-task";
+				},
+			});
+			process.stdout.write(task);
+		`;
+		const run = () => new Promise<string>((resolve, reject) => {
+			const child = spawn(process.execPath, ["--input-type=module", "-e", source, path, marker], { stdio: ["ignore", "pipe", "pipe"] });
+			let stdout = "", stderr = "";
+			child.stdout.on("data", (chunk) => { stdout += chunk; }); child.stderr.on("data", (chunk) => { stderr += chunk; });
+			child.on("error", reject); child.on("exit", (code) => code === 0 ? resolve(stdout) : reject(new Error(`child ${code}: ${stderr}`)));
+		});
+		assert.deepEqual(await Promise.all([run(), run()]), ["process-race-task", "process-race-task"]);
+		assert.equal((await readFile(marker, "utf8")).trim().split(/\r?\n/).length, 1);
+	} finally { await rm(directory, { recursive: true, force: true }); }
 });
 
 test("paid task ledger fails closed after a crash in the submission uncertainty window", async () => {

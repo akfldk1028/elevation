@@ -139,23 +139,25 @@ export async function deliverTexturedGlb(options) {
 		const importTaskId = await ledger.getOrSubmitTask({
 			key,
 			kind: "import",
+			signal,
 			submit: () => providerClient.submitImport({ file: modelFile, signal }),
 		});
 		activeTaskId = importTaskId;
 		await setState({ state: "import_submitted", importTaskHash: taskHash(importTaskId) });
 		const importTask = await providerClient.pollTask(importTaskId, { signal });
-		await ledger.recordStatus({ key, kind: "import", status: importTask.status, consumedCredits: consumedCredits(importTask) });
+		await ledger.recordStatus({ key, kind: "import", status: importTask.status, consumedCredits: consumedCredits(importTask), signal });
 		await setState({ state: "import_ready", importCredits: consumedCredits(importTask) });
 
 		const textureTaskId = await ledger.getOrSubmitTask({
 			key,
 			kind: "texture",
+			signal,
 			submit: () => providerClient.submitTexture({ importTaskId, styleImage, seed, signal }),
 		});
 		activeTaskId = textureTaskId;
 		await setState({ state: "texture_submitted", textureTaskHash: taskHash(textureTaskId) });
 		const textureTask = await providerClient.pollTask(textureTaskId, { signal });
-		await ledger.recordStatus({ key, kind: "texture", status: textureTask.status, consumedCredits: consumedCredits(textureTask) });
+		await ledger.recordStatus({ key, kind: "texture", status: textureTask.status, consumedCredits: consumedCredits(textureTask), signal });
 		await setState({ state: "texture_ready", textureCredits: consumedCredits(textureTask) });
 
 		const providerGlb = join(providerDirectory, "provider-textured.glb");

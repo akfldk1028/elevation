@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import sharp from "sharp";
-import { renderEmbeddedPbrViews, validateEmbeddedPbrRender } from "../plugins/elevation-3d/lib/texturing/render-validator.mjs";
+import { deriveExpectedCameraContract, loadPresentationBaseline, renderEmbeddedPbrViews, validateEmbeddedPbrRender } from "../plugins/elevation-3d/lib/texturing/render-validator.mjs";
 import { renderStyleHash, resolvePbrRenderStyle } from "../plugins/elevation-3d/lib/texturing/render-style.mjs";
 
 const names = ["front", "back", "left", "right", "plan", "top", "axon", "opposite-axon"];
@@ -26,15 +26,39 @@ function contractHash(value: unknown): string {
 
 function cameraContract(name: string) {
 	const orthographic = names.slice(0, 6).includes(name);
+	const orthographicPositions: Record<string, number[]> = {
+		front: [0, 40, 5], back: [0, -40, 5], left: [40, 0, 5], right: [-40, 0, 5], plan: [0, 0, 45], top: [0, 0, 45],
+	};
+	const axes: Record<string, any> = {
+		front: { horizontal: [1, 0, 0], vertical: [0, 0, 1], depth: [0, -1, 0] },
+		back: { horizontal: [-1, 0, 0], vertical: [0, 0, 1], depth: [0, 1, 0] },
+		left: { horizontal: [0, -1, 0], vertical: [0, 0, 1], depth: [-1, 0, 0] },
+		right: { horizontal: [0, 1, 0], vertical: [0, 0, 1], depth: [1, 0, 0] },
+		plan: { horizontal: [1, 0, 0], vertical: [0, 1, 0], depth: [0, 0, 1] },
+		top: { horizontal: [1, 0, 0], vertical: [0, 1, 0], depth: [0, 0, 1] },
+	};
 	return {
 		type: orthographic ? "orthographic" : "perspective",
-		position: orthographic ? [0, 0, name === "plan" || name === "top" ? 40 : -40] : [40, -40, 45],
-		target: [0, 0, 5], up: [0, 0, 1],
+		position: orthographic ? orthographicPositions[name] : [40, -40, 45],
+		target: [0, 0, 5], up: orthographic ? axes[name].vertical : [0, 0, 1],
 		perspective: orthographic ? null : { fov: 32, near: 1, far: 200, aspect: 1 },
 		orthographic: orthographic ? { left: -15, right: 15, top: 15, bottom: -15, near: 0.1, far: 300, zoom: 1 } : null,
-		configured: { projection_axes: orthographic ? { horizontal: [1, 0, 0], vertical: [0, 0, 1], depth: [0, -1, 0] } : null, depth: orthographic ? null : [0.707, -0.707, 0] },
+		configured: { projection_axes: orthographic ? axes[name] : null, depth: orthographic ? null : [0.707, -0.707, 0] },
 		clipping: name === "plan" ? { enabled: true, elevation_m: 1.2, plane_world: [0, 0, 1, -1.2] } : { enabled: false, elevation_m: null, plane_world: null },
 	};
+}
+
+function cameraPresets() {
+	return Object.fromEntries(names.map((name) => {
+		const contract = cameraContract(name);
+		return [name, contract.type === "orthographic" ? {
+			type: "orthographic", projection_axes: contract.configured.projection_axes, frustum: { ...contract.orthographic, zoom: undefined }, cut: contract.clipping,
+		} : {
+			type: "perspective", position: contract.position, target: contract.target, up: contract.up,
+			fov_degrees: contract.perspective.fov, near: contract.perspective.near, far: contract.perspective.far,
+			aspect: contract.perspective.aspect, depth: contract.configured.depth, cut: contract.clipping,
+		}];
+	}));
 }
 
 function validViews() {
@@ -172,6 +196,31 @@ test("competition daylight validation rejects every camera and plan-cut identity
 	nonfinite.front.cameraEvidence.expected_hash = contractHash(nonfinite.front.cameraEvidence.expected);
 	nonfinite.front.cameraEvidence.actual_hash = contractHash(nonfinite.front.cameraEvidence.actual);
 	assert.ok(validate(nonfinite).codes.includes("CAMERA_IDENTITY_MISMATCH"), "matching non-finite contracts must be rejected");
+	for (const name of names.filter((view) => view !== "plan")) {
+		const clipped: any = validViews();
+		for (const side of ["expected", "actual"] as const) {
+			clipped[name].cameraEvidence[side].clipping = { enabled: true, elevation_m: 1.2, plane_world: [0, 0, 1, -1.2] };
+			clipped[name].cameraEvidence[`${side}_hash`] = contractHash(clipped[name].cameraEvidence[side]);
+		}
+		assert.ok(validate(clipped).codes.includes("CAMERA_IDENTITY_MISMATCH"), `${name} must be explicitly uncut`);
+	}
+});
+
+test("expected camera contract is derived from persisted preset and bounds without a runtime camera", () => {
+	assert.deepEqual(deriveExpectedCameraContract({
+		name: "front",
+		preset: {
+			type: "orthographic", projection_axes: { horizontal: [1, 0, 0], vertical: [0, 0, 1], depth: [0, -1, 0] },
+			frustum: { left: -15, right: 15, top: 15, bottom: -15, near: 0.1, far: 300 },
+			cut: { enabled: false, elevation_m: null, plane_world: null },
+		},
+		buildingBounds: { center: [2, 3, 5], radius: 10 },
+	}), {
+		type: "orthographic", position: [2, 43, 5], target: [2, 3, 5], up: [0, 0, 1], perspective: null,
+		orthographic: { left: -15, right: 15, top: 15, bottom: -15, near: 0.1, far: 300, zoom: 1 },
+		configured: { projection_axes: { horizontal: [1, 0, 0], vertical: [0, 0, 1], depth: [0, -1, 0] }, depth: null },
+		clipping: { enabled: false, elevation_m: null, plane_world: null },
+	});
 });
 
 test("presentation gates do not alter existing geometry, camera, PBR, or stability failures", () => {
@@ -218,6 +267,81 @@ async function semanticRoleMaskPng() {
 	return sharp(data, { raw: { width, height, channels: 3 } }).png().toBuffer();
 }
 
+test("legacy semantic reuse requires exact GLB, dimensions, cameras, cuts, bounds, hashes, and containment", async (t) => {
+	const root = await mkdtemp(join(tmpdir(), "legacy-presentation-binding-"));
+	temporaryRoots.push(root);
+	const png = await presentationPng(0, true, false);
+	const cameras = Object.fromEntries(names.map((name) => [name, { name, contract: cameraContract(name) }]));
+	const currentViews = Object.fromEntries(names.map((name) => [name, {
+		width: 100, height: 100, projectedBoundsPx: { minX: 10, minY: 5, maxX: 89, maxY: 84 },
+	}]));
+	const report: any = {
+		schema_version: "arr.elevation3d.embedded-pbr-render.v1",
+		selected_glb: { sha256: selectedGlbSha256 }, validation: { accepted: true }, views: {},
+	};
+	await mkdir(join(root, "viewer"), { recursive: true });
+	await writeFile(join(root, "viewer", "config.json"), JSON.stringify({ cameras: { views: cameras } }));
+	for (const name of names) {
+		const directory = join(root, "views", name);
+		await mkdir(directory, { recursive: true });
+		const path = join(directory, `${name}.png`);
+		await writeFile(path, png);
+		report.views[name] = {
+			path, sha256: createHash("sha256").update(png).digest("hex"), selectedGlbSha256,
+			projectedBoundsPx: { minX: 10, minY: 5, maxX: 89, maxY: 84 },
+		};
+	}
+	const persist = async () => writeFile(join(root, "render-validation.json"), JSON.stringify(report));
+	await persist();
+	const binding = { selectedGlbSha256, cameras, currentViews };
+	const ready = await loadPresentationBaseline(root, binding);
+	assert.equal(ready.status, "legacy_reanalyzed");
+	assert.equal(ready.binding.selected_glb_sha256, selectedGlbSha256);
+	assert.deepEqual(Object.keys(ready.binding.views), names);
+
+	for (const [label, mutate, reason] of [
+		["GLB", () => { report.selected_glb.sha256 = "b".repeat(64); }, "baseline_legacy_glb_mismatch"],
+		["size", () => { currentViews.front.width = 101; }, "baseline_legacy_size_mismatch"],
+		["camera", async () => { const config = JSON.parse(await readFile(join(root, "viewer", "config.json"), "utf8")); config.cameras.views.front.contract.position[0] += 1; await writeFile(join(root, "viewer", "config.json"), JSON.stringify(config)); }, "baseline_legacy_camera_mismatch"],
+		["cut", async () => { const config = JSON.parse(await readFile(join(root, "viewer", "config.json"), "utf8")); config.cameras.views.top.contract.clipping = { enabled: true, elevation_m: 1.2, plane_world: [0, 0, 1, -1.2] }; await writeFile(join(root, "viewer", "config.json"), JSON.stringify(config)); }, "baseline_legacy_camera_mismatch"],
+		["bounds", () => { report.views.left.projectedBoundsPx.minX += 1; }, "baseline_legacy_bounds_mismatch"],
+		["hash", () => { report.views.right.sha256 = "c".repeat(64); }, "baseline_legacy_hash_invalid"],
+		["containment", () => { report.views.back.path = join(root, "..", "outside.png"); }, "baseline_legacy_path_invalid"],
+	] as const) await t.test(`${label} mismatch is not compared`, async () => {
+		const reportSnapshot = structuredClone(report), currentSnapshot = structuredClone(currentViews);
+		const configSnapshot = await readFile(join(root, "viewer", "config.json"));
+		try {
+			await mutate(); await persist();
+			assert.equal((await loadPresentationBaseline(root, binding)).reason, reason);
+		} finally {
+			Object.assign(report, reportSnapshot); Object.assign(currentViews, currentSnapshot);
+			await writeFile(join(root, "viewer", "config.json"), configSnapshot); await persist();
+		}
+	});
+});
+
+test("real rendered-pbr-v6 binds all eight legacy views to the accepted GLB and camera contract", async () => {
+	const root = "D:/Data/50_ELE/elevation-3d-e2e-results/autonomous/creative-013/tripo-pbr-v1-20260804";
+	const legacyDir = join(root, "rendered-pbr-v6"), canonicalDir = join(root, "rendered-pbr-v7-competition-daylight");
+	const [legacyReport, canonicalReport, baselineConfig] = await Promise.all([
+		readFile(join(legacyDir, "render-validation.json"), "utf8").then(JSON.parse),
+		readFile(join(canonicalDir, "render-validation.json"), "utf8").then(JSON.parse),
+		readFile(join(legacyDir, "viewer", "config.json"), "utf8").then(JSON.parse),
+	]);
+	const currentViews: Record<string, any> = {};
+	for (const name of names) {
+		const metadata = await sharp(canonicalReport.views[name].path).metadata();
+		currentViews[name] = { width: metadata.width, height: metadata.height, projectedBoundsPx: canonicalReport.views[name].projectedBoundsPx };
+	}
+	const baseline = await loadPresentationBaseline(legacyDir, {
+		selectedGlbSha256: canonicalReport.selected_glb.sha256, cameras: baselineConfig.cameras.views, currentViews,
+	});
+	assert.equal(baseline.status, "legacy_reanalyzed", JSON.stringify(baseline));
+	assert.equal(baseline.binding.selected_glb_sha256, legacyReport.selected_glb.sha256);
+	assert.equal(Object.keys(baseline.binding.views).length, 8);
+	assert.ok(Object.values(baseline.binding.views).every((view: any) => view.containment === "lexical_and_realpath" && view.transform.type === "identity"));
+});
+
 async function writeProceduralBaseline(root: string) {
 	const views: Record<string, unknown> = {};
 	for (const name of names) {
@@ -247,7 +371,8 @@ test("render-only v2 delivery persists resolved style, per-view evidence, baseli
 	const geometryTextured = await Promise.all(names.map((_, index) => presentationPng(index, false, false)));
 	const diagnostic = await Promise.all(names.map((_, index) => presentationPng(index, true, false)));
 	const roleMask = await semanticRoleMaskPng();
-	let activeView = "axon", embeddedMaps = true, presentationVisible = true;
+	const cameras = cameraPresets();
+	let activeView = "axon", embeddedMaps = true, presentationVisible = true, tamperRuntimeCamera = false;
 	const dataUrl = (bytes: Buffer) => `data:image/png;base64,${bytes.toString("base64")}`;
 	const page = {
 		on: () => {}, setViewport: async () => {}, goto: async () => {}, waitForFunction: async () => {}, close: async () => {},
@@ -255,13 +380,17 @@ test("render-only v2 delivery persists resolved style, per-view evidence, baseli
 			const source = callback.toString();
 			if (source.includes("activateView")) { activeView = argument!; return; }
 			if (source.includes("const first =")) return [dataUrl(textured[names.indexOf(activeView)]), dataUrl(textured[names.indexOf(activeView)])];
-			if (source.includes("__ELEVATION3D_VIEWER_STATE__")) return {
+			if (source.includes("__ELEVATION3D_VIEWER_STATE__")) {
+				const contract = cameraContract(activeView);
+				if (tamperRuntimeCamera && activeView === "front") contract.position[0] += 1;
+				return {
 				camera: {
 					type: names.slice(0, 6).includes(activeView) ? "orthographic" : "perspective",
-					contract: cameraContract(activeView), expected_contract: cameraContract(activeView),
+					contract, expected_contract: structuredClone(contract),
 				},
+				building_bounds: { center: [0, 0, 5], radius: 10 },
 				presentation: { style: { id: "competition-daylight-v1", hash: renderStyleHash(resolvePbrRenderStyle()) }, view: activeView },
-			};
+			}; }
 			if (source.includes("setEmbeddedMaps(false)")) { embeddedMaps = false; return; }
 			if (source.includes("setEmbeddedMaps(true)")) { embeddedMaps = true; return; }
 			if (source.includes("setPresentationObjectsVisible(false)")) { presentationVisible = false; return; }
@@ -278,14 +407,14 @@ test("render-only v2 delivery persists resolved style, per-view evidence, baseli
 	};
 	const browser = { newPage: async () => page, close: async () => {} };
 	const report = await renderEmbeddedPbrViews({
-		glbPath, runDir, candidateId: "creative-013", cameras: {}, baselineRunDir, presentationBaselineRunDir,
+		glbPath, runDir, candidateId: "creative-013", cameras, baselineRunDir, presentationBaselineRunDir,
 		outputSize: 100,
 		lifecycle: { startPreview: async () => "http://127.0.0.1:4173/", stopPreview: async () => {}, launchBrowser: async () => browser },
 	});
 
 	assert.equal(report.schema_version, "arr.elevation3d.embedded-pbr-render.v2");
 	assert.equal(report.provider_calls, 0); assert.equal(report.credits_consumed, 0);
-	assert.equal(report.validation.accepted, true, JSON.stringify(report.validation));
+	assert.equal(report.validation.accepted, true, JSON.stringify({ validation: report.validation, cameraEvidence: Object.fromEntries(names.map((name) => [name, report.views[name].cameraEvidence])) }));
 	assert.equal(report.views.axon.baselineProjectedExtentDelta, 0, "presentation-only pixels must not expand procedural geometry bounds");
 	assert.equal(report.semantic_role_evidence.front.roles.concrete.pixelCount, 1600);
 	assert.equal(report.semantic_role_evidence.front.roles.bronze.visibility.geometryTriangles, 6104);
@@ -316,36 +445,48 @@ test("render-only v2 delivery persists resolved style, per-view evidence, baseli
 		createHash("sha256").update(persistedBytes).digest("hex"),
 	);
 
+	await t.test("runtime camera self-reference cannot bless a tampered camera", async () => {
+		tamperRuntimeCamera = true;
+		const tampered = await renderEmbeddedPbrViews({
+			glbPath, runDir: join(root, "render-camera-tampered"), candidateId: "creative-013", cameras, baselineRunDir, outputSize: 100,
+			lifecycle: { startPreview: async () => "http://127.0.0.1:4173/", stopPreview: async () => {}, launchBrowser: async () => browser },
+		});
+		tamperRuntimeCamera = false;
+		assert.ok(tampered.validation.codes.includes("CAMERA_IDENTITY_MISMATCH"));
+	});
+
 	await t.test("legacy v6 PNGs are reanalyzed and must pass the improvement decision", async () => {
 		const legacyDir = join(root, "legacy-v6");
 		const legacyViews: Record<string, any> = {};
-		await mkdir(legacyDir, { recursive: true });
+		const glbSha256 = createHash("sha256").update("unchanged textured glb").digest("hex");
+		await mkdir(join(legacyDir, "viewer"), { recursive: true });
+		await writeFile(join(legacyDir, "viewer", "config.json"), JSON.stringify({ cameras: { views: cameras } }));
 		for (const name of names) {
 			const directory = join(legacyDir, "views", name);
 			await mkdir(directory, { recursive: true });
 			const path = join(directory, `${name}.png`);
 			const bytes = await presentationPng(0, true, false);
 			await writeFile(path, bytes);
-			legacyViews[name] = { path, sha256: createHash("sha256").update(bytes).digest("hex"), projectedBoundsPx: { minX: 10, minY: 5, maxX: 89, maxY: 84 } };
+			legacyViews[name] = { path, sha256: createHash("sha256").update(bytes).digest("hex"), selectedGlbSha256: glbSha256, projectedBoundsPx: { minX: 10, minY: 5, maxX: 89, maxY: 84 } };
 		}
 		await writeFile(join(legacyDir, "render-validation.json"), JSON.stringify({
-			schema_version: "arr.elevation3d.embedded-pbr-render.v1", validation: { accepted: true }, views: legacyViews,
+			schema_version: "arr.elevation3d.embedded-pbr-render.v1", selected_glb: { sha256: glbSha256 }, validation: { accepted: true }, views: legacyViews,
 		}));
 		const legacyCompared = await renderEmbeddedPbrViews({
-			glbPath, runDir: join(root, "render-legacy-v6"), candidateId: "creative-013", cameras: {}, baselineRunDir,
+			glbPath, runDir: join(root, "render-legacy-v6"), candidateId: "creative-013", cameras, baselineRunDir,
 			presentationBaselineRunDir: legacyDir, outputSize: 100,
 			lifecycle: { startPreview: async () => "http://127.0.0.1:4173/", stopPreview: async () => {}, launchBrowser: async () => browser },
 		});
-		assert.equal(legacyCompared.baseline_comparison.status, "compared_legacy_reanalyzed");
+		assert.equal(legacyCompared.baseline_comparison.status, "compared_legacy_reanalyzed", JSON.stringify(legacyCompared.baseline_comparison));
 		assert.equal(legacyCompared.baseline_comparison.legacy_semantic_roles.axon.roles.bronze.pixelCount, 1600);
 		assert.equal(legacyCompared.baseline_comparison.decision.views.axon.semanticMaterialScore.improved, true);
 		assert.equal(legacyCompared.baseline_comparison.decision.accepted, true, JSON.stringify(legacyCompared.baseline_comparison.decision));
 		assert.equal(legacyCompared.validation.accepted, true, JSON.stringify(legacyCompared.validation));
 
 		legacyViews.front.path = "https://example.invalid/front.png?signature=secret";
-		await writeFile(join(legacyDir, "render-validation.json"), JSON.stringify({ schema_version: "arr.elevation3d.embedded-pbr-render.v1", validation: { accepted: true }, views: legacyViews }));
+		await writeFile(join(legacyDir, "render-validation.json"), JSON.stringify({ schema_version: "arr.elevation3d.embedded-pbr-render.v1", selected_glb: { sha256: glbSha256 }, validation: { accepted: true }, views: legacyViews }));
 		const invalid = await renderEmbeddedPbrViews({
-			glbPath, runDir: join(root, "render-legacy-invalid"), candidateId: "creative-013", cameras: {}, baselineRunDir,
+			glbPath, runDir: join(root, "render-legacy-invalid"), candidateId: "creative-013", cameras, baselineRunDir,
 			presentationBaselineRunDir: legacyDir, outputSize: 100,
 			lifecycle: { startPreview: async () => "http://127.0.0.1:4173/", stopPreview: async () => {}, launchBrowser: async () => browser },
 		});
@@ -364,7 +505,7 @@ test("render-only v2 delivery persists resolved style, per-view evidence, baseli
 			await writeFile(join(baselineDir, "render-validation.json"), JSON.stringify(baselineReport));
 		}
 		const withoutBaseline = await renderEmbeddedPbrViews({
-			glbPath, runDir: join(root, `render-${label.replaceAll(" ", "-")}`), candidateId: "creative-013", cameras: {}, baselineRunDir,
+			glbPath, runDir: join(root, `render-${label.replaceAll(" ", "-")}`), candidateId: "creative-013", cameras, baselineRunDir,
 			presentationBaselineRunDir: baselineDir, outputSize: 100,
 			lifecycle: { startPreview: async () => "http://127.0.0.1:4173/", stopPreview: async () => {}, launchBrowser: async () => browser },
 		});
@@ -376,7 +517,7 @@ test("render-only v2 delivery persists resolved style, per-view evidence, baseli
 	await t.test("explicit canonical promotion requires successful legacy comparison", async () => {
 		const missingBaseline = join(root, "v6-required-missing");
 		const required = await renderEmbeddedPbrViews({
-			glbPath, runDir: join(root, "render-required-missing"), candidateId: "creative-013", cameras: {}, baselineRunDir,
+			glbPath, runDir: join(root, "render-required-missing"), candidateId: "creative-013", cameras, baselineRunDir,
 			presentationBaselineRunDir: missingBaseline, requirePresentationBaselineComparison: true, outputSize: 100,
 			lifecycle: { startPreview: async () => "http://127.0.0.1:4173/", stopPreview: async () => {}, launchBrowser: async () => browser },
 		});
