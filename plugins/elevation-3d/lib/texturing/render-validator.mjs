@@ -1,19 +1,54 @@
-import { copyFile, mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { copyFile, mkdir, readFile, realpath, rename, writeFile } from "node:fs/promises";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import puppeteer from "puppeteer-core";
 import sharp from "sharp";
 import { sha256 } from "../core.mjs";
 import { findChrome } from "../results.mjs";
 import { startPreview, stopPreview } from "../preview.mjs";
 import { buildViewerBundle } from "../viewer.mjs";
-import { analyzePresentationPng, comparePresentationEvidence, validatePresentationEvidence } from "./render-style-evidence.mjs";
+import { analyzePresentationPng, analyzeSemanticRolePng, comparePresentationEvidence, evaluatePresentationImprovement, validatePresentationEvidence, validateSemanticRoleEvidence } from "./render-style-evidence.mjs";
 import { renderStyleHash, resolvePbrRenderStyle } from "./render-style.mjs";
 
 const VIEW_NAMES = ["front", "back", "left", "right", "plan", "top", "axon", "opposite-axon"];
 
+function normalizeCameraValue(value) {
+	if (typeof value === "number") return Number.isFinite(value) ? Math.round(value * 1e12) / 1e12 : null;
+	if (Array.isArray(value)) return value.map(normalizeCameraValue);
+	if (value && typeof value === "object") return Object.fromEntries(Object.keys(value).sort().map((key) => [key, normalizeCameraValue(value[key])]));
+	return value;
+}
+
+function cameraContractHash(contract) {
+	return sha256(Buffer.from(JSON.stringify(normalizeCameraValue(contract))));
+}
+
+function cameraNumbersFinite(value) {
+	if (typeof value === "number") return Number.isFinite(value);
+	if (Array.isArray(value)) return value.every(cameraNumbersFinite);
+	if (value && typeof value === "object") return Object.values(value).every(cameraNumbersFinite);
+	return true;
+}
+
+function validCameraIdentity(views) {
+	if (!VIEW_NAMES.every((name) => views?.[name]?.cameraEvidence)) return false;
+	for (const name of VIEW_NAMES) {
+		const evidence = views[name].cameraEvidence;
+		if (!cameraNumbersFinite(evidence.expected) || !cameraNumbersFinite(evidence.actual)) return false;
+		const expected = normalizeCameraValue(evidence.expected);
+		const actual = normalizeCameraValue(evidence.actual);
+		if (cameraContractHash(expected) !== evidence.expected_hash || cameraContractHash(actual) !== evidence.actual_hash) return false;
+		if (JSON.stringify(expected) !== JSON.stringify(actual)) return false;
+	}
+	const plan = normalizeCameraValue(views.plan.cameraEvidence.actual.clipping);
+	const top = normalizeCameraValue(views.top.cameraEvidence.actual.clipping);
+	return JSON.stringify(plan) === JSON.stringify({ elevation_m: 1.2, enabled: true, plane_world: [0, 0, 1, -1.2] })
+		&& JSON.stringify(top) === JSON.stringify({ elevation_m: null, enabled: false, plane_world: null });
+}
+
 export function validateEmbeddedPbrRender({
 	views, selectedGlbSha256, consoleErrors, materialMode,
-	renderStyle, renderStyleSha256, presentationEvidence,
+	renderStyle, renderStyleSha256, presentationEvidence, presentationEnvironment, semanticRoleEvidence, baselineComparison,
+	requirePresentationBaselineComparison = false,
 }) {
 	const codes = [];
 	const records = VIEW_NAMES.map((name) => views?.[name]).filter(Boolean);
@@ -31,6 +66,16 @@ export function validateEmbeddedPbrRender({
 	if (materialMode !== "embedded-pbr") codes.push("MATERIAL_MODE_INVALID");
 	if (renderStyle !== undefined || renderStyleSha256 !== undefined || presentationEvidence !== undefined) {
 		codes.push(...validatePresentationEvidence({ views: presentationEvidence, style: renderStyle, styleHash: renderStyleSha256 }).codes);
+		if (!validCameraIdentity(views)) codes.push("CAMERA_IDENTITY_MISMATCH");
+		codes.push(...validateSemanticRoleEvidence({ views: semanticRoleEvidence }).codes);
+	}
+	if (presentationEnvironment?.status === "failed") codes.push("PBR_ENVIRONMENT_FAILED");
+	if (baselineComparison?.status === "compared_legacy_reanalyzed" && baselineComparison.decision?.accepted !== true) {
+		codes.push("PBR_BASELINE_IMPROVEMENT_MISSING");
+	}
+	if (requirePresentationBaselineComparison
+		&& !(baselineComparison?.status === "compared_legacy_reanalyzed" && baselineComparison.decision?.accepted === true)) {
+		codes.push("PBR_BASELINE_COMPARISON_REQUIRED");
 	}
 	const unique = [...new Set(codes)];
 	return { accepted: unique.length === 0, status: unique.length === 0 ? "accepted" : "rejected", codes: unique };
@@ -126,6 +171,32 @@ async function loadPresentationBaseline(runDir) {
 	if (!["arr.elevation3d.embedded-pbr-render.v1", "arr.elevation3d.embedded-pbr-render.v2"].includes(report.schema_version)) {
 		return { status: "not_compared", reason: "baseline_schema_invalid", run_dir: root, views: {} };
 	}
+	if (report.schema_version === "arr.elevation3d.embedded-pbr-render.v1"
+		&& report.validation?.accepted === true && !report.presentation_evidence) {
+		try {
+			const realRoot = await realpath(root);
+			const views = {};
+			for (const name of VIEW_NAMES) {
+				const record = report.views?.[name];
+				const specified = record?.path;
+				if (typeof specified !== "string" || /^[a-z]+:\/\//i.test(specified) || specified.includes("?")) throw new Error("path");
+				const candidate = resolve(specified);
+				const lexicalRelative = relative(root, candidate);
+				if (lexicalRelative.startsWith("..") || isAbsolute(lexicalRelative)) throw new Error("path");
+				const realCandidate = await realpath(candidate);
+				const realRelative = relative(realRoot, realCandidate);
+				if (realRelative.startsWith("..") || isAbsolute(realRelative)) throw new Error("path");
+				const bytes = await readFile(realCandidate);
+				if (!/^[a-f0-9]{64}$/i.test(record.sha256) || sha256(bytes) !== record.sha256.toLowerCase()) throw new Error("hash");
+				const bounds = record.projectedBoundsPx;
+				if (!bounds || ![bounds.minX, bounds.minY, bounds.maxX, bounds.maxY].every(Number.isFinite)) throw new Error("bounds");
+				views[name] = await analyzePresentationPng({ png: bytes, buildingBounds: bounds, background: "#fafaf7" });
+			}
+			return { status: "legacy_reanalyzed", run_dir: realRoot, views };
+		} catch (error) {
+			return { status: "not_compared", reason: error?.message === "path" ? "baseline_legacy_path_invalid" : error?.message === "hash" ? "baseline_legacy_hash_invalid" : "baseline_legacy_evidence_invalid", run_dir: root, views: {} };
+		}
+	}
 	if (report.validation?.accepted !== true || !report.presentation_evidence) {
 		return { status: "not_compared", reason: "baseline_not_accepted", run_dir: root, views: {} };
 	}
@@ -143,6 +214,7 @@ async function loadPresentationBaseline(runDir) {
 export async function renderEmbeddedPbrViews({
 	glbPath, runDir, candidateId, cameras, baselineRunDir, outputSize = 1600, signal, lifecycle = {},
 	renderStyleId = "competition-daylight-v1", renderStyleOverrides, presentationBaselineRunDir,
+	requirePresentationBaselineComparison = false, canonicalSelection,
 } = {}) {
 	const root = resolve(runDir);
 	await mkdir(root, { recursive: true });
@@ -187,6 +259,7 @@ export async function renderEmbeddedPbrViews({
 		await page.waitForFunction(() => globalThis.__ELEVATION3D_READY__ === true, { timeout: 60_000 });
 		const views = {};
 		const presentationEvidence = {};
+		const semanticRoleEvidence = {};
 		for (const name of VIEW_NAMES) {
 			signal?.throwIfAborted();
 			await page.evaluate((view) => globalThis.__ELEVATION3D_TEST_CONTROLS__.activateView(view), name);
@@ -198,6 +271,7 @@ export async function renderEmbeddedPbrViews({
 			const first = decodePng(firstUrl), second = decodePng(secondUrl);
 			const browserState = await page.evaluate(() => globalThis.__ELEVATION3D_VIEWER_STATE__);
 			const browserPresentation = await page.evaluate(() => globalThis.__ELEVATION3D_TEST_CONTROLS__.presentationEvidence());
+			const semanticRoleMask = decodePng(await page.evaluate(() => globalThis.__ELEVATION3D_TEST_CONTROLS__.semanticRolePng()));
 			await page.evaluate(() => globalThis.__ELEVATION3D_TEST_CONTROLS__.setPresentationObjectsVisible(false));
 			let geometryTextured, diagnostic;
 			try {
@@ -212,7 +286,9 @@ export async function renderEmbeddedPbrViews({
 			const directory = join(root, "views", name);
 			await mkdir(directory, { recursive: true });
 			const path = join(directory, `${name}.png`);
+			const semanticRoleMaskPath = join(directory, `${name}-semantic-roles.png`);
 			await writeFile(path, second);
+			await writeFile(semanticRoleMaskPath, semanticRoleMask);
 			const presentationBounds = proceduralBaseline?.[name] ? {
 				minX: proceduralBaseline[name].minX * outputSize, minY: proceduralBaseline[name].minY * outputSize,
 				maxX: proceduralBaseline[name].maxX * outputSize, maxY: proceduralBaseline[name].maxY * outputSize,
@@ -221,9 +297,17 @@ export async function renderEmbeddedPbrViews({
 				png: await readFile(path), buildingBounds: presentationBounds, background: renderStyle.background,
 			});
 			presentationEvidence[name] = { browser: browserPresentation ?? browserState.presentation, image: imagePresentation };
+			semanticRoleEvidence[name] = await analyzeSemanticRolePng({ finalPng: second, roleMaskPng: semanticRoleMask });
 			views[name] = {
 				path, sha256: sha256(second), settledHashes: [sha256(first), sha256(second)], selectedGlbSha256,
+				semanticRoleMaskPath, semanticRoleMaskSha256: sha256(semanticRoleMask),
 				cameraType: browserState.camera.type,
+				cameraEvidence: {
+					expected: normalizeCameraValue(browserState.camera.expected_contract),
+					actual: normalizeCameraValue(browserState.camera.contract),
+					expected_hash: cameraContractHash(browserState.camera.expected_contract),
+					actual_hash: cameraContractHash(browserState.camera.contract),
+				},
 				...evidence,
 				baselineProjectedExtentDelta: baselineExtentDelta(evidence.projectedBoundsPx, outputSize, outputSize, proceduralBaseline?.[name]),
 			};
@@ -232,13 +316,21 @@ export async function renderEmbeddedPbrViews({
 		const imageEvidence = Object.fromEntries(VIEW_NAMES.map((name) => [name, presentationEvidence[name].image]));
 		const presentationArtifact = await writeJsonAtomic(join(root, "presentation-evidence.json"), {
 			schema_version: "arr.elevation3d.presentation-evidence.v1", render_style_id: renderStyle.id,
-			render_style_sha256: renderStyleSha256, views: presentationEvidence,
+			render_style_sha256: renderStyleSha256, views: presentationEvidence, semantic_roles: semanticRoleEvidence,
+		});
+		const semanticRoleArtifact = await writeJsonAtomic(join(root, "semantic-role-evidence.json"), {
+			schema_version: "arr.elevation3d.semantic-role-evidence.v1", views: semanticRoleEvidence,
 		});
 		const baseline = await loadPresentationBaseline(presentationBaselineRunDir);
-		const baselineComparison = baseline.status === "ready" ? {
-			schema_version: "arr.elevation3d.presentation-baseline-comparison.v1", status: "compared",
+		const comparableBaseline = baseline.status === "ready" || baseline.status === "legacy_reanalyzed";
+		const comparisonViews = comparableBaseline
+			? Object.fromEntries(VIEW_NAMES.map((name) => [name, comparePresentationEvidence(imageEvidence[name], baseline.views[name])])) : {};
+		const baselineComparison = comparableBaseline ? {
+			schema_version: "arr.elevation3d.presentation-baseline-comparison.v1",
+			status: baseline.status === "legacy_reanalyzed" ? "compared_legacy_reanalyzed" : "compared",
 			baseline_run_dir: baseline.run_dir,
-			views: Object.fromEntries(VIEW_NAMES.map((name) => [name, comparePresentationEvidence(imageEvidence[name], baseline.views[name])])),
+			views: comparisonViews,
+			...(baseline.status === "legacy_reanalyzed" ? { decision: evaluatePresentationImprovement({ current: imageEvidence, baseline: baseline.views, semantic: semanticRoleEvidence }) } : {}),
 		} : {
 			schema_version: "arr.elevation3d.presentation-baseline-comparison.v1", status: baseline.status,
 			reason: baseline.reason, baseline_run_dir: baseline.run_dir, views: {},
@@ -247,6 +339,10 @@ export async function renderEmbeddedPbrViews({
 		const validation = validateEmbeddedPbrRender({
 			views, selectedGlbSha256, consoleErrors, materialMode: "embedded-pbr",
 			renderStyle, renderStyleSha256, presentationEvidence: imageEvidence,
+			presentationEnvironment: presentationEvidence.front?.browser?.environment,
+			semanticRoleEvidence,
+			baselineComparison,
+			requirePresentationBaselineComparison,
 		});
 		const thumbnails = await Promise.all(VIEW_NAMES.map((name) => sharp(views[name].path).resize(500, 500).png().toBuffer()));
 		const contactSheetPath = join(root, "contact-sheet.png");
@@ -258,15 +354,19 @@ export async function renderEmbeddedPbrViews({
 			selected_glb: { path: resolve(glbPath), sha256: selectedGlbSha256 }, material_mode: "embedded-pbr", views,
 			procedural_baseline: { run_dir: baselineRunDir ? resolve(baselineRunDir) : null, compared_views: proceduralBaseline ? VIEW_NAMES : [] },
 			render_style: renderStyle, render_style_sha256: renderStyleSha256,
+			presentation_environment: presentationEvidence.front?.browser?.environment ?? null,
 			presentation_evidence: imageEvidence, baseline_comparison: baselineComparison,
+			semantic_role_evidence: semanticRoleEvidence,
 			console_errors: consoleErrors,
 			pbr_evidence: pbrEvidence,
 			provider_calls: 0, credits_consumed: 0,
+			...(canonicalSelection ? { canonical_selection: canonicalSelection } : {}),
 			contact_sheet: { path: contactSheetPath, sha256: sha256(await readFile(contactSheetPath)) }, validation,
 			artifacts: {
-				render_style: styleArtifact, presentation_evidence: presentationArtifact, baseline_comparison: baselineArtifact,
+				render_style: styleArtifact, presentation_evidence: presentationArtifact, semantic_role_evidence: semanticRoleArtifact, baseline_comparison: baselineArtifact,
 				contact_sheet: { path: contactSheetPath, sha256: sha256(await readFile(contactSheetPath)) },
 				...Object.fromEntries(VIEW_NAMES.map((name) => [`view_${name}`, { path: views[name].path, sha256: views[name].sha256 }])),
+				...Object.fromEntries(VIEW_NAMES.map((name) => [`semantic_role_mask_${name}`, { path: views[name].semanticRoleMaskPath, sha256: views[name].semanticRoleMaskSha256 }])),
 			},
 		};
 		const reportArtifact = await writeJsonAtomic(join(root, "render-validation.json"), report);

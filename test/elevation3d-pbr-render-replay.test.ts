@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { access, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
@@ -8,6 +9,8 @@ import {
 	parseReplayArgs,
 	renderCompetitionDaylightReplay,
 } from "../scripts/render-competition-daylight-pbr.mjs";
+import * as replayModule from "../scripts/render-competition-daylight-pbr.mjs";
+import { renderStyleHash, resolvePbrRenderStyle } from "../plugins/elevation-3d/lib/texturing/render-style.mjs";
 
 const temporaryRoots: string[] = [];
 const viewNames = ["front", "back", "left", "right", "plan", "top", "axon", "opposite-axon"];
@@ -27,6 +30,7 @@ test("resolves replay paths from CLI arguments", () => {
 		"--cameras", "accepted/viewer/config.json",
 		"--procedural-baseline", "accepted/delivery",
 		"--presentation-baseline", "old/rendered-pbr-v6",
+		"--accepted-source", "accepted-primary/rendered-pbr-v7-competition-daylight",
 		"--output-root", "new",
 		"--output", "new/rendered-pbr-v7-competition-daylight",
 	], cwd), {
@@ -34,6 +38,7 @@ test("resolves replay paths from CLI arguments", () => {
 		camerasPath: join(cwd, "accepted/viewer/config.json"),
 		proceduralBaselineRunDir: join(cwd, "accepted/delivery"),
 		presentationBaselineRunDir: join(cwd, "old/rendered-pbr-v6"),
+		acceptedSourceDir: join(cwd, "accepted-primary/rendered-pbr-v7-competition-daylight"),
 		outputDir: join(cwd, "new/rendered-pbr-v7-competition-daylight"),
 		outputRoot: join(cwd, "new"),
 	});
@@ -75,7 +80,7 @@ test("replays the accepted cameras without provider access and appends presentat
 			calls.push(options);
 			return {
 				render_style: { id: "competition-daylight-v1" }, render_style_sha256: "a".repeat(64),
-				baseline_comparison: { status: "compared" },
+				baseline_comparison: { status: "compared_legacy_reanalyzed", decision: { accepted: true } },
 				validation: { accepted: true, status: "accepted", codes: [], metrics: { highlight_clip_fraction: 0 } },
 				provider_calls: 0, credits_consumed: 0,
 				artifacts: { contact_sheet: { path: join(outputDir, "contact-sheet.png"), sha256: "b".repeat(64) } },
@@ -90,6 +95,7 @@ test("replays the accepted cameras without provider access and appends presentat
 		cameras: acceptedCameras,
 		baselineRunDir: resolve(proceduralBaselineRunDir),
 		presentationBaselineRunDir: resolve(presentationBaselineRunDir),
+		requirePresentationBaselineComparison: true,
 		renderStyleId: "competition-daylight-v1",
 	});
 	assert.equal(await readFile(join(presentationBaselineRunDir, "sentinel.txt"), "utf8"), "v6 remains immutable");
@@ -207,7 +213,7 @@ test("atomically reserves the output directory for only one concurrent replay", 
 			await new Promise((done) => setImmediate(done));
 			return {
 				render_style: { id: "competition-daylight-v1" }, render_style_sha256: "a".repeat(64),
-				validation: { accepted: true, codes: [], metrics: {} }, artifacts: {},
+				validation: { accepted: true, codes: [], metrics: {} }, artifacts: {}, provider_calls: 0, credits_consumed: 0,
 			};
 		},
 	};
@@ -219,4 +225,35 @@ test("atomically reserves the output directory for only one concurrent replay", 
 	assert.equal(results.filter((result) => result.status === "rejected").length, 1);
 	assert.match((results.find((result) => result.status === "rejected") as PromiseRejectedResult).reason.message, /already exists|reserved/i);
 	assert.equal(renderCalls, 1);
+});
+
+test("preserves only a rejected canonical after accepted source identity verification", async () => {
+	const prepareCanonicalReplay = (replayModule as any).prepareCanonicalReplay;
+	assert.equal(typeof prepareCanonicalReplay, "function");
+	const root = await mkdtemp(join(tmpdir(), "elevation3d-canonical-prepare-"));
+	temporaryRoots.push(root);
+	const glbPath = join(root, "final", "textured.glb");
+	const camerasPath = join(root, "accepted-cameras.json");
+	const sourceDir = join(root, "accepted-primary", "rendered-pbr-v7-competition-daylight");
+	const canonicalDir = join(root, "rendered-pbr-v7-competition-daylight");
+	await mkdir(dirname(glbPath), { recursive: true });
+	await mkdir(join(sourceDir, "viewer"), { recursive: true });
+	await mkdir(canonicalDir, { recursive: true });
+	const glb = Buffer.from("immutable-glb");
+	const config = { candidate_id: "creative-013", all_views: { validation: { accepted: true } }, cameras: { views: acceptedCameras } };
+	await writeFile(glbPath, glb); await writeFile(camerasPath, JSON.stringify(config));
+	await writeFile(join(sourceDir, "viewer", "config.json"), JSON.stringify(config));
+	await writeFile(join(sourceDir, "render-validation.json"), JSON.stringify({
+		validation: { accepted: true }, selected_glb: { sha256: createHash("sha256").update(glb).digest("hex") },
+		render_style: resolvePbrRenderStyle(), render_style_sha256: renderStyleHash(resolvePbrRenderStyle()),
+	}));
+	await writeFile(join(canonicalDir, "render-validation.json"), JSON.stringify({ validation: { accepted: false } }));
+	await writeFile(join(canonicalDir, "rejected-sentinel.txt"), "preserve me");
+	const prepared = await prepareCanonicalReplay({ outputRoot: root, canonicalDir, acceptedSourceDir: sourceDir, glbPath, camerasPath });
+	assert.match(prepared.preservedAttempt, /[\\/]attempts[\\/]rendered-pbr-v7-competition-daylight-attempt-001$/);
+	assert.equal(await readFile(join(prepared.preservedAttempt, "rejected-sentinel.txt"), "utf8"), "preserve me");
+	await assert.rejects(() => access(canonicalDir), /ENOENT/);
+
+	await mkdir(canonicalDir); await writeFile(join(canonicalDir, "render-validation.json"), JSON.stringify({ validation: { accepted: true } }));
+	await assert.rejects(() => prepareCanonicalReplay({ outputRoot: root, canonicalDir, acceptedSourceDir: sourceDir, glbPath, camerasPath }), /accepted canonical/i);
 });

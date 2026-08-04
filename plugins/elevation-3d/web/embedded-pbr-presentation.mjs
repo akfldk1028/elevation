@@ -10,6 +10,13 @@ function evidenceNumber(value) {
 	return Math.round(value * 1_000_000) / 1_000_000;
 }
 
+function sanitizedEnvironmentMessage(error) {
+	return String(error?.message ?? error ?? "environment initialization failed")
+		.replace(/https?:\/\/\S+/gi, "[REDACTED_URL]")
+		.replace(/\b(token|api[_-]?key|secret|password)\s*[=:]\s*[^\s,;]+/gi, "$1=[REDACTED]")
+		.slice(0, 300);
+}
+
 function materialsFor(record) {
 	return record.currentMaterials ?? (Array.isArray(record.object.material) ? record.object.material : [record.object.material]);
 }
@@ -18,6 +25,50 @@ function markPresentationOnly(node, name) {
 	node.name = name;
 	node.userData = { ...node.userData, presentationOnly: true };
 	return node;
+}
+
+const SEMANTIC_ROLE_COLORS = Object.freeze({ concrete: 0xff0000, glass: 0x00ff00, bronze: 0x0000ff, opaque: 0xffff00 });
+
+export function renderSemanticRoleMask({ THREE, renderer, scene, camera, materialRecords }) {
+	const clearColor = renderer.getClearColor(new THREE.Color()).clone();
+	const clearAlpha = renderer.getClearAlpha();
+	const outputColorSpace = renderer.outputColorSpace;
+	const toneMapping = renderer.toneMapping;
+	const objectMaterials = materialRecords.map((record) => [record.object, record.object.material]);
+	const presentationVisibility = [];
+	const diagnosticMaterials = [];
+	scene.traverse((node) => {
+		if (node.userData?.presentationOnly === true) presentationVisibility.push([node, node.visible]);
+	});
+	try {
+		for (const record of materialRecords) {
+			const sourceMaterials = materialsFor(record);
+			const replacements = sourceMaterials.map((source, index) => {
+				const role = record.roles[index] ?? "opaque";
+				const material = new THREE.MeshBasicMaterial({
+					color: SEMANTIC_ROLE_COLORS[role] ?? SEMANTIC_ROLE_COLORS.opaque,
+					toneMapped: false, transparent: false, opacity: 1,
+					side: source.side, clippingPlanes: source.clippingPlanes,
+				});
+				diagnosticMaterials.push(material);
+				return material;
+			});
+			record.object.material = record.array ? replacements : replacements[0];
+		}
+		for (const [node] of presentationVisibility) node.visible = false;
+		renderer.outputColorSpace = THREE.SRGBColorSpace;
+		renderer.toneMapping = THREE.NoToneMapping;
+		renderer.setClearColor(0x000000, 1);
+		renderer.render(scene, camera);
+		return renderer.domElement.toDataURL("image/png");
+	} finally {
+		for (const [object, material] of objectMaterials) object.material = material;
+		for (const [node, visible] of presentationVisibility) node.visible = visible;
+		for (const material of diagnosticMaterials) material.dispose();
+		renderer.outputColorSpace = outputColorSpace;
+		renderer.toneMapping = toneMapping;
+		renderer.setClearColor(clearColor, clearAlpha);
+	}
 }
 
 export function createEmbeddedPbrPresentation({
@@ -50,11 +101,29 @@ export function createEmbeddedPbrPresentation({
 	renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 	renderer.setClearColor(style.background, 1);
 
-	const roomEnvironment = new RoomEnvironment();
-	const pmrem = new THREE.PMREMGenerator(renderer);
-	const environmentTarget = pmrem.fromScene(roomEnvironment, 0.04);
-	scene.environment = environmentTarget.texture;
-	scene.environmentIntensity = style.environment.intensity;
+	let roomEnvironment = null;
+	let pmrem = null;
+	let environmentTarget = null;
+	let environmentEvidence;
+	try {
+		roomEnvironment = new RoomEnvironment();
+		pmrem = new THREE.PMREMGenerator(renderer);
+		environmentTarget = pmrem.fromScene(roomEnvironment, 0.04);
+		scene.environment = environmentTarget.texture;
+		scene.environmentIntensity = style.environment.intensity;
+		environmentEvidence = { type: style.environment.type, intensity: style.environment.intensity, count: 1, status: "ready" };
+	} catch (error) {
+		environmentTarget?.dispose?.();
+		pmrem?.dispose?.();
+		roomEnvironment?.dispose?.();
+		environmentTarget = null;
+		pmrem = null;
+		roomEnvironment = null;
+		environmentEvidence = {
+			type: style.environment.type, intensity: style.environment.intensity, count: 0,
+			status: "failed", code: "PBR_ENVIRONMENT_FAILED", message: sanitizedEnvironmentMessage(error),
+		};
+	}
 
 	const hemisphere = markPresentationOnly(
 		new THREE.HemisphereLight(style.hemisphere.sky, style.hemisphere.ground, style.hemisphere.intensity),
@@ -175,7 +244,7 @@ export function createEmbeddedPbrPresentation({
 		return {
 			style: { id: style.id, hash: styleHash },
 			toneMapping: { mode: style.toneMapping, exposure: style.exposure, outputColorSpace: THREE.SRGBColorSpace },
-			environment: { type: style.environment.type, intensity: style.environment.intensity, count: 1 },
+			environment: environmentEvidence,
 			lights: { hemisphere: 1, sun: 1 },
 			shadows: {
 				enabled: true, type: THREE.PCFSoftShadowMap, casters: opaqueMeshes,
@@ -201,9 +270,9 @@ export function createEmbeddedPbrPresentation({
 		for (const [mesh, values] of meshShadowState) Object.assign(mesh, values);
 		scene.environment = sceneState.environment;
 		scene.environmentIntensity = sceneState.environmentIntensity;
-		environmentTarget.dispose();
-		roomEnvironment.dispose?.();
-		pmrem.dispose();
+		environmentTarget?.dispose?.();
+		roomEnvironment?.dispose?.();
+		pmrem?.dispose?.();
 		renderer.outputColorSpace = rendererState.outputColorSpace;
 		renderer.toneMapping = rendererState.toneMapping;
 		renderer.toneMappingExposure = rendererState.toneMappingExposure;

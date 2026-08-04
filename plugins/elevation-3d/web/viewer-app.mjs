@@ -3,7 +3,7 @@ import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { resolvePbrRenderStyle } from "../lib/texturing/render-style.mjs";
-import { createEmbeddedPbrPresentation } from "./embedded-pbr-presentation.mjs";
+import { createEmbeddedPbrPresentation, renderSemanticRoleMask } from "./embedded-pbr-presentation.mjs";
 
 const params = new URLSearchParams(location.search);
 const config = await fetch("config.json").then((response) => response.json());
@@ -103,7 +103,7 @@ function renderInteractiveAllViews(root) {
 		THREE, RoomEnvironment, renderer, scene, root, bounds, materialRecords,
 		style: resolvedStyle, styleHash: allViews.render_style_sha256,
 	}) : null;
-	let currentView = "axon", currentPalette = materialMode === "embedded-pbr" ? "embedded-pbr" : "warm", currentClipping = { enabled: false, elevation_m: null, plane_world: null }, fullscreenRequests = 0;
+	let currentView = "axon", currentPalette = materialMode === "embedded-pbr" ? "embedded-pbr" : "warm", currentClipping = { enabled: false, elevation_m: null, plane_world: null }, expectedCameraContract = null, fullscreenRequests = 0;
 	const glbLoadCount = 1;
 	function materialStability() {
 		let transparentMaterials = 0;
@@ -130,12 +130,24 @@ function renderInteractiveAllViews(root) {
 	}
 	function state() {
 		const presentationState = presentation?.evidence() ?? null;
+		const preset = config.cameras.views[currentView];
+		const cameraContract = {
+			type: camera?.isOrthographicCamera ? "orthographic" : "perspective",
+			position: camera?.position.toArray(), target: controls?.target.toArray(), up: camera?.up.toArray(),
+			perspective: camera?.isPerspectiveCamera ? { fov: camera.fov, near: camera.near, far: camera.far, aspect: camera.aspect } : null,
+			orthographic: camera?.isOrthographicCamera ? { left: camera.left, right: camera.right, top: camera.top, bottom: camera.bottom, near: camera.near, far: camera.far, zoom: camera.zoom } : null,
+			configured: { projection_axes: preset?.projection_axes ?? null, depth: preset?.depth ?? null },
+			clipping: currentClipping,
+		};
 		globalThis.__ELEVATION3D_VIEWER_STATE__ = {
 			view: currentView, palette: currentPalette, material_mode: materialMode, selected_glb_sha256: allViews.selected_glb.sha256,
 			render_style_id: presentationState?.style.id ?? null, render_style_sha256: presentationState?.style.hash ?? null,
 			glb_load_count: glbLoadCount, fullscreen_supported: typeof document.documentElement.requestFullscreen === "function",
 			fullscreen_active: Boolean(document.fullscreenElement), fullscreen_requests: fullscreenRequests,
-			camera: { type: camera?.isOrthographicCamera ? "orthographic" : "perspective", position: camera?.position.toArray(), target: controls?.target.toArray(), zoom: camera?.zoom, projection_axes: config.cameras.views[currentView]?.projection_axes, depth: config.cameras.views[currentView]?.depth },
+			camera: {
+				...cameraContract, zoom: camera?.zoom, projection_axes: preset?.projection_axes, depth: preset?.depth,
+				contract: cameraContract, expected_contract: expectedCameraContract ?? cameraContract,
+			},
 			clipping: currentClipping,
 			material_stability: materialStability(),
 			presentation: presentationState,
@@ -174,6 +186,14 @@ function renderInteractiveAllViews(root) {
 		controls.enableDamping = true; controls.enablePan = true; controls.enableZoom = true;
 		controls.target.copy(config.cameras.views[name].target ? new THREE.Vector3(...config.cameras.views[name].target) : center);
 		controls.addEventListener("change", state); controls.update(); currentView = name; applyClipping(name); presentation?.activateView(name);
+		const preset = config.cameras.views[name];
+		expectedCameraContract = {
+			type: camera.isOrthographicCamera ? "orthographic" : "perspective",
+			position: camera.position.toArray(), target: controls.target.toArray(), up: camera.up.toArray(),
+			perspective: camera.isPerspectiveCamera ? { fov: camera.fov, near: camera.near, far: camera.far, aspect: camera.aspect } : null,
+			orthographic: camera.isOrthographicCamera ? { left: camera.left, right: camera.right, top: camera.top, bottom: camera.bottom, near: camera.near, far: camera.far, zoom: camera.zoom } : null,
+			configured: { projection_axes: preset.projection_axes ?? null, depth: preset.depth ?? null }, clipping: currentClipping,
+		};
 		document.querySelectorAll("[data-view]").forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.view === name)));
 		state();
 	}
@@ -233,6 +253,7 @@ function renderInteractiveAllViews(root) {
 		rotateAndZoom() { controls.rotateLeft(0.25); controls.dollyIn(1.2); controls.update(); state(); },
 		reset() { activateView(currentView); }, toggleFullscreen, activateView,
 		presentationEvidence() { return presentation?.evidence() ?? null; },
+		semanticRolePng() { return renderSemanticRoleMask({ THREE, renderer, scene, camera, materialRecords }); },
 		setPresentationObjectsVisible(visible) { presentation?.setPresentationObjectsVisible(visible); },
 		async settledPng() {
 			await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));

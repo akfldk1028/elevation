@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createEmbeddedPbrPresentation } from "../plugins/elevation-3d/web/embedded-pbr-presentation.mjs";
+import * as embeddedPresentationModule from "../plugins/elevation-3d/web/embedded-pbr-presentation.mjs";
 import { renderStyleHash, resolvePbrRenderStyle } from "../plugins/elevation-3d/lib/texturing/render-style.mjs";
 
 class Vector3 {
@@ -129,6 +130,72 @@ test("configures one competition daylight rig while preserving embedded material
 	assert.equal(values.scene.children.filter((node) => node.userData.presentationOnly === true).length, 4);
 });
 
+test("continues with the deterministic light rig and records sanitized PMREM failures", () => {
+	for (const stage of ["room", "generator", "target"] as const) {
+		const values = fixture();
+		const resources = { roomDisposed: false, generatorDisposed: false };
+		class FailingRoomEnvironment {
+			constructor() { if (stage === "room") throw new Error("room failed token=room-secret"); }
+			dispose() { resources.roomDisposed = true; }
+		}
+		class FailingPMREMGenerator {
+			constructor(_renderer: unknown) { if (stage === "generator") throw new Error("generator failed api_key=generator-secret"); }
+			fromScene() { throw new Error("target failed https://example.invalid/?token=target-secret"); }
+			dispose() { resources.generatorDisposed = true; }
+		}
+		const presentation = createEmbeddedPbrPresentation({
+			THREE: { ...THREE, PMREMGenerator: FailingPMREMGenerator },
+			RoomEnvironment: FailingRoomEnvironment,
+			...values,
+		});
+		const evidence = presentation.evidence();
+		assert.equal(evidence.environment.status, "failed");
+		assert.equal(evidence.environment.code, "PBR_ENVIRONMENT_FAILED");
+		assert.match(evidence.environment.message, new RegExp(`${stage} failed`));
+		assert.doesNotMatch(evidence.environment.message, /secret|target-secret/);
+		assert.equal(values.scene.environment, "old-environment");
+		assert.equal(values.scene.children.filter((node) => node instanceof HemisphereLight).length, 1);
+		assert.equal(values.scene.children.filter((node) => node instanceof DirectionalLight).length, 1);
+		assert.equal(resources.roomDisposed, stage !== "room");
+		assert.equal(resources.generatorDisposed, stage === "target");
+		presentation.dispose();
+		assert.equal(values.scene.environment, "old-environment");
+	}
+});
+
+test("renders one deterministic semantic-role mask and restores all temporary state", () => {
+	const renderSemanticRoleMask = (embeddedPresentationModule as any).renderSemanticRoleMask;
+	assert.equal(typeof renderSemanticRoleMask, "function");
+	const values = fixture();
+	const helper = new Node(); helper.visible = false; helper.userData.presentationOnly = true; values.scene.add(helper);
+	const originalMaterials = values.materialRecords.map((record) => record.object.material);
+	const diagnosticMaterials: any[] = [];
+	class DiagnosticMaterial {
+		disposed = false;
+		options: any;
+		constructor(options: any) { this.options = options; diagnosticMaterials.push(this); }
+		dispose() { this.disposed = true; }
+	}
+	let renders = 0;
+	const renderer = {
+		...values.renderer, outputColorSpace: "srgb", toneMapping: "aces",
+		domElement: { toDataURL: () => "data:image/png;base64,role-mask" },
+		render: () => { renders++; },
+	};
+	const result = renderSemanticRoleMask({
+		THREE: { ...THREE, MeshBasicMaterial: DiagnosticMaterial, NoToneMapping: "none" },
+		renderer, scene: values.scene, camera: {}, materialRecords: values.materialRecords,
+	});
+	assert.equal(result, "data:image/png;base64,role-mask");
+	assert.equal(renders, 1);
+	assert.deepEqual(values.materialRecords.map((record) => record.object.material), originalMaterials);
+	assert.equal(helper.visible, false);
+	assert.equal(renderer.clearColor, "#123456"); assert.equal(renderer.clearAlpha, 0.4);
+	assert.equal(renderer.outputColorSpace, "srgb"); assert.equal(renderer.toneMapping, "aces");
+	assert.ok(diagnosticMaterials.length >= 3);
+	assert.ok(diagnosticMaterials.every((material) => material.disposed));
+});
+
 test("manages an authoritative-bounds receiver only for axon views", () => {
 	const values = fixture();
 	const presentation = createEmbeddedPbrPresentation({ THREE, RoomEnvironment, ...values });
@@ -207,7 +274,7 @@ test("emits serializable lifecycle evidence and restores every owned resource ex
 	assert.deepEqual(evidence, {
 		style: { id: "competition-daylight-v1", hash: values.styleHash },
 		toneMapping: { mode: "aces-filmic", exposure: 0.94, outputColorSpace: "srgb" },
-		environment: { type: "room-pmrem", intensity: 0.45, count: 1 },
+		environment: { type: "room-pmrem", intensity: 0.45, count: 1, status: "ready" },
 		lights: { hemisphere: 1, sun: 1 },
 		shadows: {
 			enabled: true, type: "pcf-soft", casters: 2, receivers: 3, bias: -0.0002, normalBias: 0.02,
