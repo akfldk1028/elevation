@@ -10,6 +10,13 @@ class Vector3 {
 	add(other: Vector3) { this.x += other.x; this.y += other.y; this.z += other.z; return this; }
 }
 
+class Color {
+	value: unknown;
+	constructor(value?: unknown) { this.value = value; }
+	copy(source: Color | unknown) { this.value = source instanceof Color ? source.value : source; return this; }
+	clone() { return new Color(this.value); }
+}
+
 class Node {
 	children: Node[] = [];
 	parent: Node | null = null;
@@ -53,7 +60,7 @@ class PMREMGenerator {
 
 const THREE = {
 	SRGBColorSpace: "srgb", ACESFilmicToneMapping: "aces", PCFSoftShadowMap: "pcf-soft",
-	Vector3, Group, PlaneGeometry, MeshStandardMaterial, Mesh, HemisphereLight, DirectionalLight, PMREMGenerator,
+	Color, Vector3, Group, PlaneGeometry, MeshStandardMaterial, Mesh, HemisphereLight, DirectionalLight, PMREMGenerator,
 };
 
 function fixture() {
@@ -61,8 +68,8 @@ function fixture() {
 	const renderer = {
 		outputColorSpace: "linear", toneMapping: "none", toneMappingExposure: 0.7,
 		shadowMap: { enabled: false, type: "basic" }, clearColor: "#123456", clearAlpha: 0.4,
-		setClearColor(color: unknown, alpha: number) { this.clearColor = color; this.clearAlpha = alpha; },
-		getClearColor() { return { clone: () => this.clearColor }; }, getClearAlpha() { return this.clearAlpha; },
+		setClearColor(color: unknown, alpha: number) { this.clearColor = color instanceof Color ? color.value as string : color as string; this.clearAlpha = alpha; },
+		getClearColor(target: Color) { return target.copy(this.clearColor); }, getClearAlpha() { return this.clearAlpha; },
 	};
 	const scene = new Scene();
 	const root = new Group();

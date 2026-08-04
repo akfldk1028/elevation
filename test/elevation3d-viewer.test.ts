@@ -10,8 +10,38 @@ import { resolveMaterialPalette } from "../plugins/elevation-3d/lib/material-pal
 import { resolveElevation3dAssets } from "./helpers/elevation3d-assets.ts";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import puppeteer from "puppeteer-core";
+import { findChrome } from "../plugins/elevation-3d/lib/results.mjs";
+import { renderStyleHash, resolvePbrRenderStyle } from "../plugins/elevation-3d/lib/texturing/render-style.mjs";
 
 const assets = resolveElevation3dAssets({ start: dirname(fileURLToPath(import.meta.url)), datasetOverride: process.env.ELEVATION3D_DATASET_ROOT, glbOverride: process.env.ELEVATION3D_SELECTED_GLB });
+
+async function presentationEvidence(runDir: string) {
+	const base = await startPreview(runDir, 0);
+	const port = Number(new URL(base).port);
+	const browser = await puppeteer.launch({ executablePath: await findChrome(), headless: true, args: ["--disable-gpu-sandbox", "--no-sandbox", "--use-angle=swiftshader"] });
+	try {
+		const page = await browser.newPage();
+		const pageErrors: string[] = [];
+		page.on("pageerror", (error) => pageErrors.push(error.stack ?? error.message));
+		page.on("console", (message) => { if (message.type() === "error") pageErrors.push(message.text()); });
+		await page.goto(base, { waitUntil: "networkidle0" });
+		try { await page.waitForFunction(() => globalThis.__ELEVATION3D_READY__ === true, { timeout: 60_000 }); }
+		catch (error) { throw new Error(`viewer did not become ready: ${pageErrors.join(" | ")}`, { cause: error }); }
+		const capture = () => page.evaluate(() => ({
+			state: globalThis.__ELEVATION3D_VIEWER_STATE__,
+			presentation: globalThis.__ELEVATION3D_TEST_CONTROLS__.presentationEvidence(),
+		}));
+		const axon = await capture();
+		await page.evaluate(() => globalThis.__ELEVATION3D_TEST_CONTROLS__.activateView("front"));
+		const front = await capture();
+		await page.evaluate(() => globalThis.__ELEVATION3D_TEST_CONTROLS__.activateView("opposite-axon"));
+		return { axon, front, oppositeAxon: await capture() };
+	} finally {
+		await browser.close();
+		await stopPreview(port);
+	}
+}
 
 test("builds a standalone Three.js viewer bundle with locked cameras", async () => {
 	const root = await mkdtemp(join(tmpdir(), "elevation3d-viewer-"));
@@ -90,6 +120,8 @@ test("interactive all-views viewer loads one GLB and exposes controls without re
 	const root = await mkdtemp(join(tmpdir(), "elevation3d-all-views-viewer-"));
 	try {
 		const palettes = Object.fromEntries(["warm", "neutral", "stone"].map((name) => [name, resolveMaterialPalette(`competition-${name}`)]));
+		const resolvedStyle = resolvePbrRenderStyle();
+		const styleHash = renderStyleHash(resolvedStyle);
 		const names = ["front", "back", "left", "right", "plan", "top", "axon", "opposite-axon"];
 		const orthographic = (depth, vertical = [0, 0, 1]) => ({ type: "orthographic", projection_axes: { horizontal: [1, 0, 0], vertical, depth }, frustum: { left: -15, right: 15, top: 15, bottom: -15, near: 0.1, far: 300 } });
 		const cameraViews = {
@@ -101,12 +133,20 @@ test("interactive all-views viewer loads one GLB and exposes controls without re
 		};
 		await buildViewerBundle({ runDir: root, config: {
 			candidate_id: "creative-013", strategies: { hunyuan: { glb: "../enriched.glb" } }, cameras: { views: cameraViews },
-			all_views: { selected_glb: { path: "../enriched.glb", sha256: "a".repeat(64) }, palettes, views: Object.fromEntries(names.map((name) => [name, {}])), validation: { accepted: true, codes: [] }, artifacts: [] },
+			all_views: { material_mode: "embedded-pbr", render_style: resolvedStyle, render_style_sha256: styleHash, selected_glb: { path: "../enriched.glb", sha256: "a".repeat(64) }, palettes, views: Object.fromEntries(names.map((name) => [name, {}])), validation: { accepted: true, codes: [] }, artifacts: [] },
 		} });
 		await copyFile(assets.selectedGlb, join(root, "enriched.glb"));
+		const presentation = await presentationEvidence(root);
+		assert.equal(presentation.axon.state.render_style_id, "competition-daylight-v1");
+		assert.equal(presentation.axon.state.render_style_sha256, styleHash);
+		assert.equal(presentation.axon.presentation.toneMapping.mode, "aces-filmic");
+		assert.equal(presentation.axon.presentation.shadows.enabled, true);
+		assert.equal(presentation.axon.presentation.presentationObjects.receivers, 1);
+		assert.equal(presentation.front.presentation.presentationObjects.receivers, 0);
+		assert.equal(presentation.oppositeAxon.presentation.presentationObjects.receivers, 1);
 		const verification = await verifyAllViewsViewer({ runDir: root });
 		assert.deepEqual(verification.activated_views.sort(), names.sort());
-		assert.deepEqual(verification.activated_palettes.sort(), ["neutral", "stone", "warm"]);
+		assert.deepEqual(verification.activated_palettes, ["embedded-pbr", "embedded-pbr", "embedded-pbr"]);
 		assert.equal(verification.validation_badge, "Accepted");
 		assert.match(verification.glb_download, /enriched\.glb$/);
 		assert.equal(verification.glb_load_count, 1);

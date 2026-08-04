@@ -2,6 +2,8 @@ import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { resolvePbrRenderStyle } from "../lib/texturing/render-style.mjs";
+import { createEmbeddedPbrPresentation } from "./embedded-pbr-presentation.mjs";
 
 const params = new URLSearchParams(location.search);
 const config = await fetch("config.json").then((response) => response.json());
@@ -18,7 +20,7 @@ renderer.setSize(outputSize, outputSize, false);
 renderer.setClearColor(competition?.background ?? 0xf7f7f5, 1);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 const scene = new THREE.Scene();
-if (!competition) {
+if (!competition && allViews?.material_mode !== "embedded-pbr") {
 	scene.add(new THREE.HemisphereLight(0xffffff, 0x777777, 2.2));
 	const sun = new THREE.DirectionalLight(0xffffff, 2.5); sun.position.set(10, -10, 20); scene.add(sun);
 }
@@ -61,6 +63,7 @@ function renderInteractiveAllViews(root) {
 	const bounds = new THREE.Box3().setFromObject(root);
 	const center = bounds.getCenter(new THREE.Vector3());
 	const radius = Math.max(bounds.getSize(new THREE.Vector3()).length() * 0.75, 1);
+	const resolvedStyle = materialMode === "embedded-pbr" ? resolvePbrRenderStyle(allViews.render_style) : null;
 	let camera, controls;
 	const materialRecords = [];
 	const embeddedMaps = new Map();
@@ -96,6 +99,10 @@ function renderInteractiveAllViews(root) {
 			object.renderOrder = materials.some((material) => material.transparent) ? 2 : facadeDetail ? 1 : 0;
 		}
 	});
+	const presentation = materialMode === "embedded-pbr" ? createEmbeddedPbrPresentation({
+		THREE, RoomEnvironment, renderer, scene, root, bounds, materialRecords,
+		style: resolvedStyle, styleHash: allViews.render_style_sha256,
+	}) : null;
 	let currentView = "axon", currentPalette = materialMode === "embedded-pbr" ? "embedded-pbr" : "warm", currentClipping = { enabled: false, elevation_m: null, plane_world: null }, fullscreenRequests = 0;
 	const glbLoadCount = 1;
 	function materialStability() {
@@ -122,13 +129,16 @@ function renderInteractiveAllViews(root) {
 		};
 	}
 	function state() {
+		const presentationState = presentation?.evidence() ?? null;
 		globalThis.__ELEVATION3D_VIEWER_STATE__ = {
 			view: currentView, palette: currentPalette, material_mode: materialMode, selected_glb_sha256: allViews.selected_glb.sha256,
+			render_style_id: presentationState?.style.id ?? null, render_style_sha256: presentationState?.style.hash ?? null,
 			glb_load_count: glbLoadCount, fullscreen_supported: typeof document.documentElement.requestFullscreen === "function",
 			fullscreen_active: Boolean(document.fullscreenElement), fullscreen_requests: fullscreenRequests,
 			camera: { type: camera?.isOrthographicCamera ? "orthographic" : "perspective", position: camera?.position.toArray(), target: controls?.target.toArray(), zoom: camera?.zoom, projection_axes: config.cameras.views[currentView]?.projection_axes, depth: config.cameras.views[currentView]?.depth },
 			clipping: currentClipping,
 			material_stability: materialStability(),
+			presentation: presentationState,
 		};
 		document.querySelector("[data-current-state]").textContent = `view=${currentView} · palette=${currentPalette} · sha256=${allViews.selected_glb.sha256}`;
 	}
@@ -163,7 +173,7 @@ function renderInteractiveAllViews(root) {
 		controls?.dispose(); camera = createPresetCamera(name); controls = new OrbitControls(camera, canvas);
 		controls.enableDamping = true; controls.enablePan = true; controls.enableZoom = true;
 		controls.target.copy(config.cameras.views[name].target ? new THREE.Vector3(...config.cameras.views[name].target) : center);
-		controls.addEventListener("change", state); controls.update(); currentView = name; applyClipping(name);
+		controls.addEventListener("change", state); controls.update(); currentView = name; applyClipping(name); presentation?.activateView(name);
 		document.querySelectorAll("[data-view]").forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.view === name)));
 		state();
 	}
@@ -222,6 +232,7 @@ function renderInteractiveAllViews(root) {
 	globalThis.__ELEVATION3D_TEST_CONTROLS__ = {
 		rotateAndZoom() { controls.rotateLeft(0.25); controls.dollyIn(1.2); controls.update(); state(); },
 		reset() { activateView(currentView); }, toggleFullscreen, activateView,
+		presentationEvidence() { return presentation?.evidence() ?? null; },
 		async settledPng() {
 			await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
 			renderer.render(scene, camera);
