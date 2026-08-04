@@ -16,7 +16,7 @@ const PRESET = {
 		bias: -0.0002,
 		normalBias: 0.02,
 	},
-	ground: { enabledFor: ["axon", "opposite-axon"], opacity: 0.12, padding: 0.16 },
+	ground: { enabledFor: ["axon", "opposite-axon"], opacity: 0.14, padding: 0.16 },
 	materialResponse: {
 		concrete: { maxRoughnessDelta: -0.08 },
 		glass: { maxEnvIntensity: 1.35, preserveTransparency: true },
