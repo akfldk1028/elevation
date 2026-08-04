@@ -102,13 +102,13 @@ test("configures one competition daylight rig while preserving embedded material
 	const presentation = createEmbeddedPbrPresentation({ THREE, RoomEnvironment, ...values });
 	assert.equal(values.renderer.outputColorSpace, "srgb");
 	assert.equal(values.renderer.toneMapping, "aces");
-	assert.equal(values.renderer.toneMappingExposure, 1.02);
+	assert.equal(values.renderer.toneMappingExposure, 0.94);
 	assert.deepEqual(values.renderer.shadowMap, { enabled: true, type: "pcf-soft" });
 	assert.equal(values.renderer.clearColor, "#fafaf7");
 	assert.equal(PMREMGenerator.instances.length, 1);
 	assert.equal(PMREMGenerator.instances[0].environments.length, 1);
 	assert.equal(values.scene.environment, PMREMGenerator.instances[0].target.texture);
-	assert.equal(values.scene.environmentIntensity, 0.55);
+	assert.equal(values.scene.environmentIntensity, 0.45);
 	assert.equal(values.scene.children.filter((node) => node instanceof HemisphereLight).length, 1);
 	assert.equal(values.scene.children.filter((node) => node instanceof DirectionalLight).length, 1);
 	const sun = values.scene.children.find((node) => node instanceof DirectionalLight) as DirectionalLight;
@@ -206,13 +206,13 @@ test("emits serializable lifecycle evidence and restores every owned resource ex
 	assert.doesNotThrow(() => JSON.stringify(evidence));
 	assert.deepEqual(evidence, {
 		style: { id: "competition-daylight-v1", hash: values.styleHash },
-		toneMapping: { mode: "aces-filmic", exposure: 1.02, outputColorSpace: "srgb" },
-		environment: { type: "room-pmrem", intensity: 0.55, count: 1 },
+		toneMapping: { mode: "aces-filmic", exposure: 0.94, outputColorSpace: "srgb" },
+		environment: { type: "room-pmrem", intensity: 0.45, count: 1 },
 		lights: { hemisphere: 1, sun: 1 },
 		shadows: {
 			enabled: true, type: "pcf-soft", casters: 2, receivers: 3, bias: -0.0002, normalBias: 0.02,
 			target: [1, 3, 7],
-			camera: { left: -13.492512, right: 13.492512, top: 13.492512, bottom: -13.492512, near: 27.726415, far: 54.71144 },
+			camera: { left: -13.492512, right: 13.492512, top: 13.492512, bottom: -13.492512, near: 41.743346, far: 68.72837 },
 		},
 		materialRoles: { bronze: 1, concrete: 1, glass: 1 },
 		presentationObjects: { helpers: 3, receivers: 1, total: 4 },
