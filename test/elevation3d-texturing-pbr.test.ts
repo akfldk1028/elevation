@@ -183,3 +183,27 @@ test("normalized PBR transfer identifies fully matched non-glass primitives in t
 	assert.equal(report.transfer.materials.bronze.areaCoverage >= 0.95, true);
 	assert.equal(report.transfer.materials.opaque.areaCoverage >= 0.95, true);
 });
+
+test("PBR rebuild transfers the real normalized provider maps onto authoritative geometry", async () => {
+	const sharedRoot = discoverElevation3dAssetRoot(process.cwd());
+	const authoritativeGlb = join(sharedRoot, "elevation-3d-e2e-results", "autonomous", "creative-013", "automatic-allviews-flicker-v2-20260804", "delivery", "enriched.glb");
+	const preparedUvGlb = join(sharedRoot, "elevation-3d-e2e-results", "autonomous", "creative-013", "tripo-pbr-v1-20260804", "provider", "prepared.glb");
+	const providerGlb = join(sharedRoot, "elevation-3d-e2e-results", "autonomous", "creative-013", "tripo-pbr-v1-20260804", "provider", "provider-textured.glb");
+	const directory = await mkdtemp(join(tmpdir(), "pbr-normalized-rebuild-"));
+	try {
+		const outputGlb = join(directory, "textured.glb");
+		const report = await rebuildTexturedGlb({ authoritativeGlb, preparedUvGlb, providerGlb, outputGlb });
+		assert.equal(report.geometry.accepted, true);
+		assert.equal(report.transfer.status, "review");
+		assert.equal(report.transfer.matchedPrimitives, 1166);
+		assert.equal((await surfaceFromGlb(authoritativeGlb)).surfaceHash, (await surfaceFromGlb(outputGlb)).surfaceHash);
+		const output = await new NodeIO().read(outputGlb);
+		const providerMaterial = output.getRoot().listMaterials().find((material) => material.getName() === "facade-details_material")!;
+		assert.ok(providerMaterial.getBaseColorTexture());
+		assert.ok(providerMaterial.getMetallicRoughnessTexture());
+		assert.ok(providerMaterial.getNormalTexture());
+		assert.equal(output.getRoot().listMaterials().find((material) => material.getName() === "glass")!.getAlphaMode(), "BLEND");
+	} finally {
+		await rm(directory, { recursive: true, force: true });
+	}
+});

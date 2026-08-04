@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
 import { NodeIO } from "@gltf-transform/core";
+import { copyToDocument, createDefaultPropertyResolver, unweld, weld } from "@gltf-transform/functions";
 import { TexturingError } from "./contract.mjs";
 import { canonicalSurfaceSignature, compareCanonicalSurfaces } from "./geometry-signature.mjs";
 import { isProtectedGlassMaterial } from "./material-validator.mjs";
@@ -176,6 +177,33 @@ function matchingProviderTriangle(points, providerIndex, quantizationMeters) {
 	return { matched: true, mode: "coplanar", record: candidates[0].record, candidates: [] };
 }
 
+function matchPrimitive(primitive, providerIndex, quantizationMeters) {
+	const position = primitive.getAttribute("POSITION");
+	if (!position) return { complete: false, area: 0, matches: [] };
+	const indices = primitiveIndices(primitive, position.getCount());
+	let area = 0;
+	const matches = [];
+	for (let index = 0; index + 2 < indices.length; index += 3) {
+		const corners = indices.slice(index, index + 3);
+		const points = corners.map((value) => position.getElement(value, [0, 0, 0]));
+		area += triangleArea(...points);
+		matches.push({ ...matchingProviderTriangle(points, providerIndex, quantizationMeters), corners, points });
+	}
+	const anchorUvs = matches.filter((match) => match.matched).flatMap((match) => match.record.uvs);
+	for (const match of matches.filter((candidate) => candidate.mode === "ambiguous")) {
+		if (anchorUvs.length === 0) continue;
+		const scored = match.candidates.map((candidate) => ({
+			...candidate,
+			score: Math.min(...anchorUvs.map((uv) => Math.hypot(uv[0] - candidate.centroidUv[0], uv[1] - candidate.centroidUv[1]))),
+		})).sort((a, b) => a.score - b.score);
+		if (scored.length > 1 && scored[1].score - scored[0].score <= 1e-6) continue;
+		match.matched = true;
+		match.mode = "contextual";
+		match.record = scored[0].record;
+	}
+	return { complete: matches.length > 0 && matches.every((match) => match.matched), area, matches };
+}
+
 function analyzeTransferMesh(mesh, providerIndex, quantizationMeters) {
 	const materials = {};
 	const matchModes = { exact: 0, coplanar: 0, contextual: 0, missing: 0, ambiguous: 0 };
@@ -188,29 +216,7 @@ function analyzeTransferMesh(mesh, providerIndex, quantizationMeters) {
 		if (!material || isProtectedGlassMaterial(material)) continue;
 		const name = material.getName() || "unnamed";
 		materials[name] ??= { totalArea: 0, matchedArea: 0, totalPrimitives: 0, matchedPrimitives: 0, areaCoverage: 0 };
-		const position = primitive.getAttribute("POSITION");
-		if (!position) continue;
-		const indices = primitiveIndices(primitive, position.getCount());
-		let primitiveArea = 0;
-		const matches = [];
-		for (let index = 0; index + 2 < indices.length; index += 3) {
-			const points = indices.slice(index, index + 3).map((value) => position.getElement(value, [0, 0, 0]));
-			primitiveArea += triangleArea(...points);
-			matches.push(matchingProviderTriangle(points, providerIndex, quantizationMeters));
-		}
-		const anchorUvs = matches.filter((match) => match.matched).flatMap((match) => match.record.uvs);
-		for (const match of matches.filter((candidate) => candidate.mode === "ambiguous")) {
-			if (anchorUvs.length === 0) continue;
-			const scored = match.candidates.map((candidate) => ({
-				...candidate,
-				score: Math.min(...anchorUvs.map((uv) => Math.hypot(uv[0] - candidate.centroidUv[0], uv[1] - candidate.centroidUv[1]))),
-			})).sort((a, b) => a.score - b.score);
-			if (scored.length > 1 && scored[1].score - scored[0].score <= 1e-6) continue;
-			match.matched = true;
-			match.mode = "contextual";
-			match.record = scored[0].record;
-		}
-		const complete = matches.every((match) => match.matched);
+		const { complete, area: primitiveArea, matches } = matchPrimitive(primitive, providerIndex, quantizationMeters);
 		for (const match of matches) matchModes[match.mode] += 1;
 		totalArea += primitiveArea;
 		totalPrimitives += 1;
@@ -238,6 +244,117 @@ function analyzeTransferMesh(mesh, providerIndex, quantizationMeters) {
 		matchModes,
 		status: reasons.length === 0 ? "accepted" : "review",
 		reasons,
+	};
+}
+
+function copyProviderExtensions(target, source) {
+	const targetNames = new Set(target.getRoot().listExtensionsUsed().map((extension) => extension.extensionName));
+	for (const extension of source.getRoot().listExtensionsUsed()) {
+		if (targetNames.has(extension.extensionName)) continue;
+		const copied = target.createExtension(extension.constructor);
+		if (extension.isRequired()) copied.setRequired(true);
+		targetNames.add(extension.extensionName);
+	}
+}
+
+export async function transferNormalizedProviderPbr({
+	prepared,
+	provider,
+	anchorMeshName = "exact-mass",
+	transferMeshName = "facade-details",
+	quantizationMeters = 0.0001,
+} = {}) {
+	const preparedAnchor = namedMesh(prepared, anchorMeshName);
+	const providerAnchor = namedMesh(provider, anchorMeshName);
+	const normalization = deriveNormalization(preparedAnchor, providerAnchor);
+	const preparedAnchorSignature = meshSurfaceSignature(preparedAnchor);
+	const providerAnchorSignature = meshSurfaceSignature(providerAnchor, (point) => denormalize(point, normalization));
+	const anchorSurface = compareCanonicalSurfaces(preparedAnchorSignature, providerAnchorSignature);
+	if (!normalization.accepted || !anchorSurface.accepted) {
+		throw new TexturingError("NORMALIZED_PROVIDER_GEOMETRY_MISMATCH", "Provider normalization does not preserve the authoritative anchor surface", {
+			normalization,
+			anchorSurface,
+		});
+	}
+
+	const providerTransferMesh = namedMesh(provider, transferMeshName);
+	const providerIndex = createProviderTriangleIndex(providerTransferMesh, normalization, quantizationMeters);
+	const analysis = analyzeTransferMesh(namedMesh(prepared, transferMeshName), providerIndex, quantizationMeters);
+	const sourceMaterial = providerTransferMesh.listPrimitives().map((primitive) => primitive.getMaterial()).find(Boolean);
+	if (!sourceMaterial) throw new TexturingError("PROVIDER_TRANSFER_MATERIAL_MISSING", `Provider mesh ${transferMeshName} has no material`);
+	copyProviderExtensions(prepared, provider);
+	const copied = copyToDocument(prepared, provider, [sourceMaterial], createDefaultPropertyResolver(prepared, provider));
+	const transferredMaterial = copied.get(sourceMaterial);
+	if (!transferredMaterial) throw new TexturingError("PROVIDER_TRANSFER_MATERIAL_COPY_FAILED", "Provider facade material could not be copied");
+
+	// UV seams require independent triangle corners. Re-index after assignment so the
+	// final GLB remains conventionally indexed while preserving incompatible seams.
+	await prepared.transform(unweld());
+	const transferMesh = namedMesh(prepared, transferMeshName);
+	const buffer = prepared.getRoot().listBuffers()[0] ?? prepared.createBuffer("pbr-transfer-buffer");
+	let transferredPrimitives = 0;
+	for (const primitive of transferMesh.listPrimitives()) {
+		const originalMaterial = primitive.getMaterial();
+		if (!originalMaterial || isProtectedGlassMaterial(originalMaterial)) continue;
+		const result = matchPrimitive(primitive, providerIndex, quantizationMeters);
+		if (!result.complete) continue;
+		const position = primitive.getAttribute("POSITION");
+		const uvArray = new Float32Array(position.getCount() * 2);
+		const uvAssigned = new Uint8Array(position.getCount());
+		for (const match of result.matches) {
+			for (let cornerIndex = 0; cornerIndex < 3; cornerIndex += 1) {
+				const point = match.points[cornerIndex];
+				const weights = barycentric(point, match.record.points);
+				let uv;
+				if (weights) {
+					uv = interpolate(match.record.uvs, weights);
+				} else {
+					const nearest = match.record.points.map((providerPoint, index) => ({
+						index,
+						distance: Math.hypot(...vectorSubtract(point, providerPoint)),
+					})).sort((a, b) => a.distance - b.distance)[0];
+					if (!nearest || nearest.distance > quantizationMeters) {
+						throw new TexturingError("PBR_UV_INTERPOLATION_FAILED", "Degenerate provider triangle lacks an exact vertex correspondence");
+					}
+					uv = match.record.uvs[nearest.index];
+				}
+				const vertexIndex = match.corners[cornerIndex];
+				if (uvAssigned[vertexIndex]) {
+					const difference = Math.hypot(uvArray[vertexIndex * 2] - uv[0], uvArray[vertexIndex * 2 + 1] - uv[1]);
+					if (difference > 1e-5) {
+						throw new TexturingError("PBR_UV_SEAM_CONFLICT", "A shared authoritative vertex maps to incompatible provider UV islands", {
+							mesh: transferMeshName,
+							vertexIndex,
+							difference,
+						});
+					}
+				}
+				uvArray[vertexIndex * 2] = uv[0];
+				uvArray[vertexIndex * 2 + 1] = uv[1];
+				uvAssigned[vertexIndex] = 1;
+			}
+		}
+		const uvAccessor = prepared.createAccessor(`${transferMeshName}-provider-uv-${transferredPrimitives}`)
+			.setBuffer(buffer)
+			.setType("VEC2")
+			.setArray(uvArray);
+		primitive.setAttribute("TEXCOORD_0", uvAccessor);
+		primitive.setMaterial(transferredMaterial);
+		transferredPrimitives += 1;
+	}
+	if (transferredPrimitives !== analysis.matchedPrimitives) {
+		throw new TexturingError("PBR_TRANSFER_COUNT_MISMATCH", "Transferred primitive count differs from the analyzed safe set", {
+			expected: analysis.matchedPrimitives,
+			actual: transferredPrimitives,
+		});
+	}
+	await prepared.transform(weld());
+	return {
+		...analysis,
+		transferredPrimitives,
+		normalization,
+		anchorSurface,
+		providerMaterial: sourceMaterial.getName(),
 	};
 }
 
