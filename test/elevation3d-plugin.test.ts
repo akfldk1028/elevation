@@ -4,8 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { register } from "../plugins/elevation-3d/index.mjs";
-import { createFacadeAgentDependencyFactory } from "../plugins/elevation-3d/lib/facade-agent/cli.mjs";
+import { createFacadeAgentDependencyFactory, executeFacadeAgentCommand, runFacadeAgentTool } from "../plugins/elevation-3d/lib/facade-agent/cli.mjs";
 import { createFacadeFixtureTransport } from "../plugins/elevation-3d/lib/facade-agent/fixture-transport.mjs";
+import { createProductionFacadeAgentDependencies } from "../plugins/elevation-3d/lib/facade-agent/production-dependencies.mjs";
 
 test("plugin exposes the autonomous production flow before legacy experimental tools", async () => {
 	const tools: any[] = [];
@@ -106,6 +107,65 @@ test("facade agent tool defaults to production preflight without dependency inje
 		const tool = tools.find((item) => item.name === "elevation_3d_facade_agent_run");
 		const response = await tool.handler({ run_id: "production-preflight", dataset_root: root, output_root: join(root, "output") }, new AbortController().signal);
 		assert.equal(JSON.parse(response.text).stage, "preflight");
+	} finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("facade agent tool rejects hostile input records before getters, factory, or harness", async () => {
+	const tools: any[] = [];
+	let factoryCalls = 0;
+	const facadeAgentDependencyFactory = createFacadeAgentDependencyFactory(async () => { factoryCalls += 1; throw new Error("factory must not run"); });
+	await register({ config: {}, facadeAgentDependencyFactory, registerTool: (tool: any) => tools.push(tool), addPrompt() {}, registerMemoryLayer() {}, logger: console });
+	const tool = tools.find((item) => item.name === "elevation_3d_facade_agent_run");
+	let getterCalls = 0;
+	const secret = "secret=plugin-getter-must-not-run";
+	const getterInput = {};
+	Object.defineProperty(getterInput, "run_id", { enumerable: true, get() { getterCalls += 1; throw new Error(secret); } });
+	const inherited = Object.create({ confirm_live: true, dry_run: false, image_budget_usd: { "gpt-image-2": 99, "nano-banana-pro": 99 }, grammar_budget_usd: 99 });
+	inherited.run_id = "inherited-controls";
+	const proxy = new Proxy({ run_id: "proxy-input" }, { get() { throw new Error(secret); } });
+	const providers = ["gpt-image-2", "nano-banana-pro"];
+	Object.defineProperty(providers, "00", { enumerable: true, value: "gpt-image-2" });
+	for (const input of [getterInput, inherited, proxy, { run_id: "unknown-field", extra: secret }, { providers }]) {
+		await assert.rejects(() => tool.handler(input), (error: any) => {
+			assert.doesNotMatch(`${error?.message}\n${error?.stack}`, /plugin-getter-must-not-run/);
+			return error?.code === "TOOL_INPUT_INVALID";
+		});
+	}
+	assert.equal(getterCalls, 0);
+	assert.equal(factoryCalls, 0);
+});
+
+test("plugin-created status verifies its persisted config before returning read-only state", async () => {
+	const root = await mkdtemp(join(tmpdir(), "elevation3d-plugin-status-"));
+	try {
+		const tools: any[] = [];
+		const transport = createFacadeFixtureTransport(async () => ({}));
+		const factory = createFacadeAgentDependencyFactory(async () => ({
+			loadCandidate: async () => ({ candidate: { candidate_id: "creative-020" }, identity: { geometry_hash: "fixture" } }),
+			buildEvidence: async () => ({}), extractGrammar: transport,
+			providers: { "gpt-image-2": transport, "nano-banana-pro": transport },
+			build: async () => ({}), validate: async () => ({}), renderDelivery: async () => ({}),
+		}));
+		await register({ config: {}, facadeAgentDependencyFactory: factory, registerTool: (tool: any) => tools.push(tool), addPrompt() {}, registerMemoryLayer() {}, logger: console });
+		const tool = tools.find((item) => item.name === "elevation_3d_facade_agent_run");
+		await tool.handler({ run_id: "plugin-status", dataset_root: root, output_root: join(root, "output") });
+		const runDir = join(root, "output", "creative-020", "plugin-status");
+		const configPath = join(runDir, "facade-agent-config.json");
+		const { readFile, writeFile } = await import("node:fs/promises");
+		const envelope = JSON.parse(await readFile(configPath, "utf8"));
+		envelope.config.grammarBudgetUsd = 7;
+		await writeFile(configPath, JSON.stringify(envelope));
+		await assert.rejects(() => executeFacadeAgentCommand(["status", "--run-dir", runDir]), (error: any) => error?.code === "FACADE_AGENT_STATE_UNCERTAIN");
+	} finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("production dependency construction requires an explicit fetch authority before filesystem or harness work", async () => {
+	const root = await mkdtemp(join(tmpdir(), "elevation3d-production-fetch-authority-"));
+	try {
+		await assert.rejects(() => createProductionFacadeAgentDependencies({ outputRoot: root, candidateId: "creative-020", runId: "missing-fetch" }), /explicit fetch/i);
+		await assert.rejects(() => access(join(root, "creative-020")), /ENOENT/);
+		await assert.rejects(() => runFacadeAgentTool({ run_id: "missing-fetch", dataset_root: root, output_root: root }), /explicit fetch/i);
+		await assert.rejects(() => access(join(root, "creative-020")), /ENOENT/);
 	} finally { await rm(root, { recursive: true, force: true }); }
 });
 
