@@ -1,10 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { lstat, mkdir, open, readFile, rename, rm, stat } from "node:fs/promises";
 import { dirname, isAbsolute, join, parse, relative, resolve, sep } from "node:path";
+import { NodeIO } from "@gltf-transform/core";
 
 import { redactSecrets, sha256, stableJson } from "../core.mjs";
 import { correctGrammar } from "../facade-grammar.mjs";
 import { facadeRequestFingerprint, FACADE_AGENT_STAGES, normalizeFacadeAgentConfig } from "./contract.mjs";
+import { isFacadeFixtureTransport } from "./fixture-transport.mjs";
+import { consumePaidOperationSubmissionCapability } from "./paid-operation-ledger.mjs";
 import { selectFacadeWinner } from "./score.mjs";
 
 const HEX_SHA256 = /^[a-f0-9]{64}$/;
@@ -23,6 +26,28 @@ const PROHIBITED_RETRY_CODES = new Set([
 	"GRAMMAR_TRANSPORT_FAILED",
 	"PAID_OPERATION_SUBMISSION_UNCERTAIN",
 ]);
+const grammarSubmissionCapabilities = new WeakMap();
+
+export function consumeFacadeGrammarSubmissionCapability(capability, expected) {
+	if ((!capability || typeof capability !== "object") || (!expected || typeof expected !== "object")) return false;
+	const record = grammarSubmissionCapabilities.get(capability);
+	if (!record || record.consumed) return false;
+	for (const key of ["requestKey", "proposalProvider", "proposalSha256", "evidenceSha256", "model"]) {
+		if (record[key] !== expected[key]) return false;
+	}
+	if (!consumePaidOperationSubmissionCapability(record.ledgerSubmission, {
+		requestKey: record.requestKey, provider: "openai", kind: "grammar-extraction",
+	})) return false;
+	record.consumed = true;
+	return true;
+}
+
+function issueGrammarSubmissionCapability(binding, ledgerSubmission) {
+	const capability = Object.freeze(Object.create(null));
+	const record = { ...binding, ledgerSubmission, consumed: false };
+	grammarSubmissionCapabilities.set(capability, record);
+	return { capability, record };
+}
 
 class LifecycleHookError extends Error {
 	constructor(error) {
@@ -292,14 +317,18 @@ function buildProviderRequest(entry, { provider, evidence, brief, output }) {
 		? entry.buildRequest({ evidence, brief, output })
 		: { provider, evidence, brief, output };
 	if (!request || typeof request !== "object") throw codedError("FACADE_PROVIDER_REQUEST_INVALID", `Provider ${provider} returned an invalid request`);
-	const fingerprint = request.fingerprint ?? facadeRequestFingerprint({
+	let fingerprint = Object.getOwnPropertyDescriptor(request, "fingerprint")?.value;
+	const requestProvider = Object.getOwnPropertyDescriptor(request, "provider")?.value;
+	if (requestProvider !== provider) throw codedError("FACADE_PROVIDER_REQUEST_INVALID", `Provider ${provider} request identity is invalid`);
+	if (fingerprint === undefined && typeof entry.buildRequest !== "function") fingerprint = facadeRequestFingerprint({
 		provider,
 		evidenceSha256: evidence.manifestSha256,
 		briefId: brief.id,
 		output: persistent(output),
 	});
 	if (!HEX_SHA256.test(fingerprint)) throw codedError("FACADE_PROVIDER_REQUEST_INVALID", `Provider ${provider} request is missing a SHA-256 fingerprint`);
-	return { ...request, provider, fingerprint };
+	if (Object.getOwnPropertyDescriptor(request, "fingerprint")?.value === undefined) request.fingerprint = fingerprint;
+	return request;
 }
 
 function imageLedger(deps) {
@@ -309,7 +338,9 @@ function imageLedger(deps) {
 }
 
 function grammarLedger(deps) {
-	return deps.ledger?.grammar ?? deps.ledger;
+	const ledger = deps.ledger?.grammar ?? deps.ledger;
+	if (!ledger || typeof ledger.executeOnce !== "function") throw codedError("FACADE_LEDGER_MISSING", "A grammar paid-operation ledger is required");
+	return ledger;
 }
 
 function proposalExtension(mimeType) {
@@ -451,17 +482,37 @@ async function extractProviderGrammar({ config, deps, runDir, run, state, provid
 	await writeProvider(runDir, run, config, provider, state, deps, { stage: "grammar", status: "submitting", provider });
 	try {
 		throwIfAborted(signal);
-		const extracted = await deps.extractGrammar({
-			provider,
-			proposal,
-			proposalPath: proposal,
-			providerResult: proposal.providerResult,
-			evidence,
-			config: { ...config, proposalProvider: provider, candidateId: config.candidateId },
-			ledger: grammarLedger(deps),
+		const requestKey = sha256(stableJson(stageInput));
+		let extracted = null;
+		const publicResult = await grammarLedger(deps).executeOnce({
+			requestKey, provider: "openai", kind: "grammar-extraction",
+			ceilingUsd: config.grammarBudgetUsd, estimateUsd: config.grammarEstimateUsd ?? config.grammarBudgetUsd,
 			signal,
+			operation: async (ledgerSubmission) => {
+				const binding = {
+					requestKey, proposalProvider: provider, proposalSha256: proposal.sha256,
+					evidenceSha256: evidence.manifestSha256, model: config.grammarModel,
+				};
+				const issued = issueGrammarSubmissionCapability(binding, ledgerSubmission);
+				const result = await deps.extractGrammar({
+					provider, proposal, proposalPath: proposal, providerResult: proposal.providerResult,
+					evidence, config: { ...config, proposalProvider: provider, candidateId: config.candidateId },
+					submission: issued.capability, requestKey, signal,
+				});
+				if (!issued.record.consumed) throw codedError("GRAMMAR_SUBMISSION_CAPABILITY_UNUSED", "Grammar transport did not consume its one-shot submission capability");
+				extracted = result?.grammar ?? result;
+				if (!extracted || typeof extracted !== "object" || Array.isArray(extracted)) throw codedError("GRAMMAR_OUTPUT_INVALID", "Grammar extraction returned an invalid value");
+				return {
+					remoteId: result?.remoteId,
+					artifactSha256: sha256(stableJson(persistent(extracted))),
+					actualUsd: result?.actualUsd ?? config.grammarEstimateUsd ?? config.grammarBudgetUsd,
+				};
+			},
 		});
+		await callLifecycle(deps, { stage: "grammar", status: "returned", provider, proposal_sha256: proposal.sha256 });
+		if (!extracted) throw codedError("GRAMMAR_RESULT_UNAVAILABLE", "Persisted grammar cannot be reconstructed without resubmission");
 		if (!extracted || typeof extracted !== "object" || Array.isArray(extracted)) throw codedError("GRAMMAR_OUTPUT_INVALID", "Grammar extraction returned an invalid value");
+		if (publicResult?.artifactSha256 !== sha256(stableJson(persistent(extracted)))) throw codedError("PAID_OPERATION_RESULT_MISMATCH", "Grammar ledger hash does not match extracted grammar");
 		const bytes = Buffer.from(`${JSON.stringify(persistent(extracted), null, 2)}\n`);
 		await atomicWrite(grammarPath, bytes, runDir);
 		const digest = sha256(bytes);
@@ -484,12 +535,42 @@ async function extractProviderGrammar({ config, deps, runDir, run, state, provid
 	}
 }
 
-function artifactRecord(runDir, built) {
+function artifactClaim(built) {
 	const artifact = built?.artifact ?? built;
-	if (!artifact || typeof artifact.path !== "string" || !HEX_SHA256.test(artifact.sha256 ?? "")) {
+	const path = artifact && typeof artifact === "object" ? Object.getOwnPropertyDescriptor(artifact, "path")?.value : null;
+	const digest = artifact && typeof artifact === "object" ? Object.getOwnPropertyDescriptor(artifact, "sha256")?.value : null;
+	if (typeof path !== "string" || !HEX_SHA256.test(digest ?? "")) {
 		throw codedError("FACADE_BUILD_ARTIFACT_INVALID", "Build stage must return a content-addressed artifact");
 	}
-	return { path: relativePath(runDir, artifact.path, "built GLB"), sha256: artifact.sha256 };
+	return { path, sha256: digest };
+}
+
+async function authorizeGlb(runDir, claimInput) {
+	const claim = artifactClaim(claimInput);
+	const path = containedPath(runDir, isAbsolute(claim.path) ? claim.path : join(runDir, claim.path), "built GLB");
+	await assertNoReparsePoints(path);
+	const handle = await open(path, "r");
+	let bytes;
+	try {
+		const stats = await handle.stat();
+		if (!stats.isFile()) throw codedError("FACADE_BUILD_ARTIFACT_INVALID", "Built GLB must be a regular file");
+		if (stats.size <= 0 || stats.size > 256 * 1024 * 1024) throw codedError("FACADE_BUILD_ARTIFACT_INVALID", "Built GLB size is invalid");
+		bytes = await handle.readFile();
+	} finally { await handle.close(); }
+	await assertNoReparsePoints(path);
+	const digest = sha256(bytes);
+	if (digest !== claim.sha256) throw codedError("FACADE_BUILD_ARTIFACT_HASH_MISMATCH", "Built GLB bytes do not match the claimed SHA-256");
+	try { await new NodeIO().readBinary(new Uint8Array(bytes)); }
+	catch (error) { throw codedError("FACADE_BUILD_ARTIFACT_INVALID", "Built artifact is not a structurally valid GLB", error); }
+	return Object.freeze({ path, sha256: digest, size_bytes: bytes.length });
+}
+
+function persistedArtifact(runDir, artifact) {
+	return Object.freeze({
+		path: relativePath(runDir, artifact.path, "built GLB"),
+		sha256: artifact.sha256,
+		size_bytes: artifact.size_bytes,
+	});
 }
 
 function validationRecord(validation, retryable) {
@@ -523,19 +604,14 @@ async function buildAndValidateProvider({ config, deps, runDir, run, state, prov
 			await writeProvider(runDir, run, config, provider, state, deps);
 		}
 		let artifact;
-		let rawBuilt;
 		try {
 			if (version.artifact) {
-				const absolute = containedPath(runDir, join(runDir, version.artifact.path), "built GLB");
-				const bytes = await safeRead(runDir, absolute, "built GLB");
-				if (sha256(bytes) !== version.artifact.sha256) throw codedError("FACADE_AGENT_STATE_UNCERTAIN", "Persisted build artifact hash mismatch");
-				artifact = { path: absolute, sha256: version.artifact.sha256 };
-				rawBuilt = { artifact };
+				artifact = await authorizeGlb(runDir, version.artifact);
 			} else {
 				throwIfAborted(signal);
-				rawBuilt = await deps.build({ provider, versionId, attempt, grammar: currentGrammar, input: run._candidate, candidate: run._candidate, evidence: run._evidence, runDir, signal });
-				artifact = rawBuilt?.artifact ?? rawBuilt;
-				version.artifact = artifactRecord(runDir, rawBuilt);
+				const built = await deps.build({ provider, versionId, attempt, grammar: currentGrammar, input: run._candidate, candidate: run._candidate, evidence: run._evidence, runDir, signal });
+				artifact = await authorizeGlb(runDir, built);
+				version.artifact = persistedArtifact(runDir, artifact);
 				version.status = "built";
 				const builtStage = await writeStage({
 					runDir, path: `providers/${provider}/stages/build-${versionId}.json`, stage: "build", status: "succeeded",
@@ -547,13 +623,24 @@ async function buildAndValidateProvider({ config, deps, runDir, run, state, prov
 			}
 			if (stopAfterStage === "build") return { state, scoreResult: null };
 			throwIfAborted(signal);
+			artifact = await authorizeGlb(runDir, version.artifact);
+			version.validation_execution = { status: "submitting", artifact_sha256: artifact.sha256 };
+			await writeProvider(runDir, run, config, provider, state, deps);
 			const validation = await deps.validate({
 				provider, versionId, attempt, grammar: currentGrammar, extractedGrammar,
-				artifact, build: rawBuilt, input: run._candidate, candidate: run._candidate, evidence: run._evidence, runDir, signal,
+				artifact, build: Object.freeze({ artifact }), input: run._candidate, candidate: run._candidate, evidence: run._evidence, runDir, signal,
 			});
+			await callLifecycle(deps, { stage: "validate", status: "returned", provider, version_id: versionId, artifact_sha256: artifact.sha256 });
 			const retryable = localRetryAllowed(validation, attempt);
 			version.validation = validationRecord(validation, retryable);
 			version.status = validation?.accepted === true ? "accepted" : "rejected";
+			version.validation_receipt = await writeReceipt(runDir, `providers/${provider}/receipts/validation-${versionId}.json`, {
+				schema_version: "arr.elevation3d.facade-validation-receipt.v1",
+				provider, version_id: versionId, artifact_sha256: version.artifact.sha256,
+				grammar_sha256: version.grammar_sha256, validation: version.validation,
+			});
+			version.validation_execution = { status: "succeeded", receipt_sha256: version.validation_receipt.receipt_sha256 };
+			await writeProvider(runDir, run, config, provider, state, deps, { stage: "validation-receipt", status: "succeeded", provider, version_id: versionId, receipt_sha256: version.validation_receipt.receipt_sha256 });
 			const validateStage = await writeStage({
 				runDir, path: `providers/${provider}/stages/validate-${versionId}.json`, stage: "validate", status: "succeeded",
 				input: { provider, version_id: versionId, artifact_sha256: version.artifact.sha256, grammar_sha256: version.grammar_sha256 },
@@ -565,11 +652,20 @@ async function buildAndValidateProvider({ config, deps, runDir, run, state, prov
 			if (validation?.accepted === true) {
 				const scoreCandidate = typeof deps.score === "function" ? deps.score : deps.score?.candidate;
 				if (typeof scoreCandidate !== "function") throw codedError("FACADE_SCORE_MISSING", "A score dependency is required");
+				state.score_execution = { status: "submitting", validation_receipt_sha256: version.validation_receipt.receipt_sha256 };
+				await writeProvider(runDir, run, config, provider, state, deps);
 				const scoreResult = await scoreCandidate({ provider, validation });
+				await callLifecycle(deps, { stage: "score", status: "returned", provider, validation_receipt_sha256: version.validation_receipt.receipt_sha256 });
 				state.score = persistent(scoreResult);
+				state.score_receipt = await writeReceipt(runDir, `providers/${provider}/receipts/score.json`, {
+					schema_version: "arr.elevation3d.facade-score-receipt.v1",
+					provider, validation_receipt_sha256: version.validation_receipt.receipt_sha256,
+					score: state.score,
+				});
+				state.score_execution = { status: "succeeded", receipt_sha256: state.score_receipt.receipt_sha256 };
 				state.status = scoreResult?.accepted === true ? "accepted" : "rejected";
 				if (state.status === "rejected") state.failure = { code: scoreResult?.reason ?? "SCORE_REJECTED", message: "Authorized scoring rejected the provider" };
-				await writeProvider(runDir, run, config, provider, state, deps);
+				await writeProvider(runDir, run, config, provider, state, deps, { stage: "score-receipt", status: "succeeded", provider, receipt_sha256: state.score_receipt.receipt_sha256 });
 				return { state, scoreResult: scoreResult?.accepted === true ? scoreResult : null, selectedArtifact: artifact };
 			}
 			if (!retryable || attempt === config.maxLocalAttempts) {
@@ -610,6 +706,77 @@ async function persistPublicRun(runDir, run) {
 	await writeRun(runDir, publicRun(run));
 }
 
+async function writeReceipt(runDir, path, receipt) {
+	const safe = persistent(receipt);
+	const absolute = containedPath(runDir, join(runDir, path), "durable receipt");
+	const written = await atomicJson(absolute, safe, runDir);
+	return Object.freeze({
+		path: relativePath(runDir, absolute, "durable receipt"),
+		sha256: written.sha256,
+		receipt_sha256: sha256(stableJson(safe)),
+	});
+}
+
+function durableReceiptRefs(run) {
+	const refs = [];
+	for (const [provider, state] of Object.entries(run.providers ?? {})) {
+		for (const version of state?.versions ?? []) {
+			if (version.validation_receipt) refs.push({ provider, kind: "validation", version_id: version.id, ...version.validation_receipt });
+			else if (version.validation_execution?.status === "submitting") refs.push({ provider, kind: "validation-uncertain", version_id: version.id });
+		}
+		if (state?.score_receipt) refs.push({ provider, kind: "score", ...state.score_receipt });
+		else if (state?.score_execution?.status === "submitting") refs.push({ provider, kind: "score-uncertain" });
+	}
+	return refs;
+}
+
+async function verifyDurableReceipt(runDir, ref) {
+	if (typeof ref.path !== "string" || !HEX_SHA256.test(ref.sha256 ?? "") || !HEX_SHA256.test(ref.receipt_sha256 ?? "")) {
+		throw codedError("FACADE_AGENT_STATE_UNCERTAIN", "Durable receipt reference is invalid");
+	}
+	let bytes;
+	try { bytes = await safeRead(runDir, join(runDir, ref.path), "durable receipt"); }
+	catch (error) { throw codedError("FACADE_AGENT_STATE_UNCERTAIN", "Durable receipt is unavailable", error); }
+	if (sha256(bytes) !== ref.sha256) throw codedError("FACADE_AGENT_STATE_UNCERTAIN", "Durable receipt file hash mismatch");
+	let receipt;
+	try { receipt = JSON.parse(bytes.toString("utf8")); }
+	catch (error) { throw codedError("FACADE_AGENT_STATE_UNCERTAIN", "Durable receipt is invalid", error); }
+	if (sha256(stableJson(receipt)) !== ref.receipt_sha256) throw codedError("FACADE_AGENT_STATE_UNCERTAIN", "Durable receipt content hash mismatch");
+}
+
+async function verifyProviderReceipts(runDir, state) {
+	for (const version of state?.versions ?? []) {
+		if (version.validation_receipt) {
+			await verifyDurableReceipt(runDir, version.validation_receipt);
+			if (version.validation_execution?.status === "succeeded"
+				&& version.validation_execution.receipt_sha256 !== version.validation_receipt.receipt_sha256) {
+				throw codedError("FACADE_AGENT_STATE_UNCERTAIN", "Validation receipt execution binding mismatch");
+			}
+		} else if (version.validation_execution?.status === "succeeded") {
+			throw codedError("FACADE_AGENT_STATE_UNCERTAIN", "Completed validation is missing its durable receipt");
+		}
+	}
+	if (state?.score_receipt) {
+		await verifyDurableReceipt(runDir, state.score_receipt);
+		if (state.score_execution?.status === "succeeded" && state.score_execution.receipt_sha256 !== state.score_receipt.receipt_sha256) {
+			throw codedError("FACADE_AGENT_STATE_UNCERTAIN", "Score receipt execution binding mismatch");
+		}
+	} else if (state?.score_execution?.status === "succeeded") {
+		throw codedError("FACADE_AGENT_STATE_UNCERTAIN", "Completed score is missing its durable receipt");
+	}
+}
+
+async function failClosedForDurableReceipts(runDir, run, refs) {
+	for (const ref of refs) if (ref.path) await verifyDurableReceipt(runDir, ref);
+	run.status = "blocked";
+	run.failure = { code: "DURABLE_RECEIPT_RECONCILIATION_REQUIRED", message: "Refusing to rerun or reinterpret durable validation or score receipts after process restart" };
+	run.final = { status: "blocked", failure: run.failure, receipts: refs.map(({ provider, kind, version_id, receipt_sha256 }) => ({ provider, kind, ...(version_id ? { version_id } : {}), receipt_sha256 })) };
+	const written = await atomicJson(join(runDir, "final.json"), run.final, runDir);
+	run.final_manifest = { path: "final.json", sha256: written.sha256 };
+	await writeRun(runDir, run);
+	return { run, terminal: true };
+}
+
 async function initialize(config, deps, signal) {
 	const normalized = normalizeFacadeAgentConfig(config);
 	const runDir = runDirectory(normalized);
@@ -626,6 +793,7 @@ async function initialize(config, deps, signal) {
 			throw codedError("FACADE_AGENT_RESUME_MISMATCH", "Persisted run does not match the requested configuration");
 		}
 		if (TERMINAL_RUN_STATES.has(run.status)) return { normalized, runDir, run, terminal: true };
+		if (run.final?.status === "blocked" && run.failure?.code === "DURABLE_RECEIPT_RECONCILIATION_REQUIRED") return { normalized, runDir, run, terminal: true };
 		if (["submitting", "succeeded"].includes(run.delivery?.status)) {
 			run.status = "delivery-failed";
 			run.final = {
@@ -638,6 +806,11 @@ async function initialize(config, deps, signal) {
 			run.final_manifest = { path: "final.json", sha256: written.sha256 };
 			await writeRun(runDir, run);
 			return { normalized, runDir, run, terminal: true };
+		}
+		const receiptRefs = durableReceiptRefs(run);
+		if (receiptRefs.length > 0) {
+			const terminal = await failClosedForDurableReceipts(runDir, run, receiptRefs);
+			return { normalized, runDir, ...terminal };
 		}
 	} else {
 		run = initialRun(normalized, runDir, inputSha256);
@@ -659,8 +832,8 @@ async function executeFacade(config, deps, stopAfterStage = null) {
 	try {
 		throwIfAborted(signal);
 		if (normalized.confirmLive !== true) {
-			const unconfirmed = normalized.providers.some((provider) => deps.providers?.[provider]?.transport !== "fixture")
-				|| deps.grammarTransport !== "fixture";
+			const unconfirmed = normalized.providers.some((provider) => !isFacadeFixtureTransport(deps.providers?.[provider]))
+				|| !isFacadeFixtureTransport(deps.extractGrammar);
 			if (unconfirmed) throw codedError("LIVE_CONFIRMATION_REQUIRED", "Live facade transports require explicit confirmation");
 		}
 		const candidate = await deps.loadCandidate({ datasetRoot: normalized.datasetRoot, candidateId: normalized.candidateId, config: normalized, signal });
@@ -780,12 +953,14 @@ async function executeFacade(config, deps, stopAfterStage = null) {
 		const decision = select(scores, normalized.scoreTieTolerance ?? 0.5);
 		let final;
 		if (decision?.status === "winner" && selectedArtifacts[decision.provider]) {
-			const artifact = selectedArtifacts[decision.provider];
+			let artifact = selectedArtifacts[decision.provider];
 			try {
 				throwIfAborted(signal);
+				artifact = await authorizeGlb(runDir, artifact);
 				run.delivery = { status: "submitting", provider: decision.provider, selected_glb_sha256: artifact.sha256 };
 				await persistPublicRun(runDir, run);
 				await callLifecycle(deps, { stage: "delivery", status: "submitting", provider: decision.provider, selected_glb_sha256: artifact.sha256 });
+				artifact = await authorizeGlb(runDir, artifact);
 				const delivery = await deps.renderDelivery({
 					runDir, candidateId: normalized.candidateId, provider: decision.provider,
 					artifact, input: candidate, signal, lifecycle: deps.lifecycle,
@@ -868,6 +1043,7 @@ export async function readFacadeAgentStatus(runDirInput) {
 		const state = JSON.parse(bytes.toString("utf8"));
 		if (state.provider !== provider || stableJson(state) !== stableJson(run.providers[provider])) throw codedError("FACADE_AGENT_STATE_UNCERTAIN", `Provider state binding mismatch: ${provider}`);
 		for (const stageRef of Object.values(state.stage_manifests ?? {})) await readStageRef(runDir, stageRef);
+		await verifyProviderReceipts(runDir, state);
 	}
 	if (run.final_manifest) {
 		const path = containedPath(runDir, join(runDir, run.final_manifest.path), "final manifest");
