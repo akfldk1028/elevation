@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { test } from "node:test";
 import { FacadeProviderError, normalizeProviderFailure } from "../plugins/elevation-3d/lib/facade-agent/provider.mjs";
+import { takeFacadeProviderRemoteIdForLedger } from "../plugins/elevation-3d/lib/facade-agent/provider-internal.mjs";
 import { createPaidOperationLedger } from "../plugins/elevation-3d/lib/facade-agent/paid-operation-ledger.mjs";
 
 async function withLedger(run: (root: string, path: string) => Promise<void>) {
@@ -87,10 +88,15 @@ test("a returned remote ID overrides a contradictory non-submission marker", asy
 				});
 			},
 		}), (error: any) => {
+			assert.ok(error instanceof FacadeProviderError);
 			assert.equal(error.code, "PROVIDER_REQUEST_FAILED");
 			assert.equal(Object.hasOwn(error, "remoteId"), false);
 			assert.doesNotMatch(error.message, new RegExp(rawRemoteId));
+			assert.doesNotMatch(error.stack, new RegExp(rawRemoteId));
 			assert.equal(JSON.stringify(error).includes(rawRemoteId), false);
+			assert.equal(error.details, undefined);
+			assert.equal(Object.getOwnPropertySymbols(error).length, 0);
+			assert.equal(takeFacadeProviderRemoteIdForLedger(error), null);
 			return true;
 		});
 		await assert.rejects(() => ledger.executeOnce({
