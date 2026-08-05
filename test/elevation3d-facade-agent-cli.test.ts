@@ -241,10 +241,18 @@ test("live intent without every exact ceiling and total confirmation fails befor
 
 test("normal CLI preflight constructs production dependencies without secrets or transport", async () => {
 	const root = await mkdtemp(join(tmpdir(), "elevation3d-cli-production-")); roots.push(root);
-	await minimalDataset(root);
-	const result = invokeProduction(["preflight", ...base(root, "production-preflight")]);
+	const datasetRoot = resolve("D:/Data/50_ELE/MAAS_ELEVATION_TEST_SET_20260730");
+	const result = invokeProduction(["preflight",
+		"--candidate", "creative-020", "--brief", "brick-punched-window-v1",
+		"--dataset-root", datasetRoot, "--output-root", join(root, "output"), "--run-id", "production-preflight",
+		"--image-budget-gpt-image-2", "1", "--image-budget-nano-banana-pro", "1", "--grammar-budget", "1",
+	]);
 	assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
 	assert.equal(JSON.parse(result.stdout).stage, "preflight");
+	const receipt = JSON.parse(await readFile(join(root, "output", "creative-020", "production-preflight", "stages", "preflight-receipt.json"), "utf8"));
+	assert.equal(receipt.capabilities["gpt-image-2"].code, "PROVIDER_CREDENTIALS_MISSING");
+	assert.equal(receipt.capabilities["nano-banana-pro"].code, "PROVIDER_CREDENTIALS_MISSING");
+	assert.equal(receipt.capabilities["openai-grammar"].code, "GRAMMAR_CREDENTIALS_MISSING");
 });
 
 test("resume fails closed when persisted normalized configuration is tampered", async () => {

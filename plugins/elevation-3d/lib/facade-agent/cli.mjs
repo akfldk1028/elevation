@@ -123,6 +123,10 @@ function persistedConfig(config) {
 		candidateId: config.candidateId, briefId: config.briefId, runId: config.runId,
 		datasetRoot: config.datasetRoot, outputRoot: config.outputRoot, providers: config.providers,
 		imageBudgetUsd: config.imageBudgetUsd, grammarBudgetUsd: config.grammarBudgetUsd,
+		grammarEstimateUsd: config.grammarEstimateUsd,
+		grammarBudgetAllocationUsd: config.grammarBudgetAllocationUsd,
+		grammarEstimateAllocationUsd: config.grammarEstimateAllocationUsd,
+		runBudgetUsd: config.runBudgetUsd, runEstimateUsd: config.runEstimateUsd,
 		grammarModel: config.grammarModel, maxLocalAttempts: config.maxLocalAttempts,
 		confirmLive: config.confirmLive,
 	};

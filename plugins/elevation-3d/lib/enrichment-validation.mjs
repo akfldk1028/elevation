@@ -21,10 +21,30 @@ const TYPED_KINDS = new Set(["corner-return", "brick-cladding", "window-reveal",
 const BOX_INDICES = [0, 2, 1, 0, 3, 2, 4, 5, 6, 4, 6, 7, 0, 1, 5, 0, 5, 4, 1, 2, 6, 1, 6, 5, 2, 3, 7, 2, 7, 6, 3, 0, 4, 3, 4, 7];
 const VERIFIED_FACADE_SCORE_AUTHORITIES = new WeakMap();
 
+function deepFreeze(value) {
+	if (!value || typeof value !== "object" || Object.isFrozen(value)) return value;
+	for (const item of Object.values(value)) deepFreeze(item);
+	return Object.freeze(value);
+}
+
 export function readVerifiedFacadeValidationAuthority(value) {
 	if (!value || typeof value !== "object") return null;
 	const authority = VERIFIED_FACADE_SCORE_AUTHORITIES.get(value);
 	return authority ? structuredClone(authority) : null;
+}
+
+export function rehydrateVerifiedFacadeValidationAuthority(value, authority) {
+	if (!value || typeof value !== "object" || Array.isArray(value) || value.accepted !== true
+		|| !authority || typeof authority !== "object" || Array.isArray(authority)
+		|| typeof authority.provider !== "string" || typeof authority.candidateId !== "string"
+		|| !authority.bindings || typeof authority.bindings !== "object"
+		|| !authority.grammar || typeof authority.grammar !== "object"
+		|| !authority.metrics || typeof authority.metrics !== "object"
+		|| !Number.isFinite(authority.visualScore)) throw new Error("VALIDATION_REHYDRATION_INVALID");
+	const frozenAuthority = deepFreeze(structuredClone(authority));
+	deepFreeze(value);
+	VERIFIED_FACADE_SCORE_AUTHORITIES.set(value, frozenAuthority);
+	return value;
 }
 
 function boundsOf(vertices) {

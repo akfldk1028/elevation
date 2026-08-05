@@ -81,6 +81,18 @@ export async function scoreFacadeCandidate({ provider, validation } = {}) {
 	}
 }
 
+export function rehydrateFacadeScoreResult(value) {
+	if (!value || typeof value !== "object" || Array.isArray(value) || value.status !== "scored" || value.accepted !== true
+		|| value.formula_version !== FORMULA_VERSION || !value.breakdown || value.breakdown.formula_version !== FORMULA_VERSION
+		|| value.provider !== value.breakdown.provider || value.score !== value.breakdown.score
+		|| value.serialized !== stableJson(value.breakdown) || value.sha256 !== sha256(value.serialized)) {
+		throw new Error("SCORE_REHYDRATION_INVALID");
+	}
+	deepFreeze(value);
+	SCORE_RESULTS.add(value);
+	return value;
+}
+
 export function selectFacadeWinner(candidates, tolerance = 0.5) {
 	if (!Array.isArray(candidates) || !finiteNonnegative(tolerance)) return { status: "no-winner", candidates: [] };
 	const scored = candidates.filter((candidate) => SCORE_RESULTS.has(candidate) && candidate.accepted === true)

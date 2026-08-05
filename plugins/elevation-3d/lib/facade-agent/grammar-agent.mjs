@@ -41,6 +41,59 @@ export function readVerifiedFacadeGrammarAuthority(value) {
 	return authority ? { ...authority } : null;
 }
 
+export function serializeVerifiedFacadeGrammarAuthority(value) {
+	const authority = readVerifiedFacadeGrammarAuthority(value);
+	if (!authority) throw failure("GRAMMAR_REHYDRATION_INVALID", "Only a verified grammar authority can be persisted", { definitiveNonSubmission: true });
+	return structuredClone(authority);
+}
+
+function grammarAuthorityFromEvidence(grammar, evidenceAuthority, provider, proposalSha256) {
+	return {
+		candidateId: evidenceAuthority.candidateId,
+		geometryHash: evidenceAuthority.geometryHash,
+		geometryContentSha256: evidenceAuthority.geometryContentSha256,
+		geometrySignedVolumeOrientation: evidenceAuthority.geometrySignedVolumeOrientation,
+		facadeSegmentAuthority: evidenceAuthority.facadeSegmentAuthority ? {
+			sha256: evidenceAuthority.facadeSegmentAuthority.sha256,
+			segmentIds: [...evidenceAuthority.facadeSegmentAuthority.segmentIds],
+		} : null,
+		provider,
+		evidenceManifestSha256: evidenceAuthority.manifestSha256,
+		camerasSha256: evidenceAuthority.camerasSha256,
+		floorGuides: [...evidenceAuthority.floorGuides],
+		facadeLengths: { ...evidenceAuthority.facadeLengths },
+		proposalSha256,
+		grammarSha256: sha256(stableJson(grammar)),
+	};
+}
+
+export async function rehydrateVerifiedFacadeGrammar(input = {}) {
+	try {
+		const { path, artifactSha256, authority, evidence, provider, proposalSha256 } = input;
+		if (typeof path !== "string" || !/^[a-f0-9]{64}$/.test(artifactSha256 ?? "")
+			|| typeof provider !== "string" || !/^[a-f0-9]{64}$/.test(proposalSha256 ?? "")) throw new Error();
+		const evidenceAuthority = readVerifiedFacadeEvidenceAuthority(evidence);
+		if (!evidenceAuthority) throw new Error();
+		const absolute = resolve(path);
+		const stats = await lstat(absolute);
+		if (!stats.isFile() || stats.isSymbolicLink() || stats.size <= 0 || stats.size > MAX_RESPONSE_BYTES
+			|| await realpath(absolute) !== absolute) throw new Error();
+		const bytes = await readFile(absolute);
+		if (sha256(bytes) !== artifactSha256) throw new Error();
+		const raw = JSON.parse(bytes.toString("utf8"));
+		const grammar = validatePunchedFacadeGrammar(raw, { floorGuides: { floor_guides_m: evidence.manifest.floor_guides_m } });
+		if (!bytes.equals(Buffer.from(`${JSON.stringify(grammar, null, 2)}\n`))) throw new Error();
+		const expected = grammarAuthorityFromEvidence(grammar, evidenceAuthority, provider, proposalSha256);
+		if (stableJson(authority) !== stableJson(expected)) throw new Error();
+		deepFreeze(grammar);
+		verifiedGrammarAuthorities.set(grammar, Object.freeze(structuredClone(expected)));
+		return grammar;
+	} catch (error) {
+		if (error?.code === "GRAMMAR_REHYDRATION_INVALID") throw error;
+		throw failure("GRAMMAR_REHYDRATION_INVALID", "Persisted grammar authority could not be verified", { definitiveNonSubmission: true });
+	}
+}
+
 export const FACADE_GRAMMAR_SCHEMA = Object.freeze({
 	type: "object",
 	additionalProperties: false,
@@ -241,6 +294,22 @@ function validateConfig(config) {
 		throw failure("GRAMMAR_PROPOSAL_INVALID", "An approved proposal provider identity is required", { definitiveNonSubmission: true });
 	}
 	return { candidateId: fields.candidateId, proposalProvider, ceilingUsd, estimateUsd, timeoutMs, apiKey };
+}
+
+export function preflightFacadeGrammar(input = {}) {
+	const fields = dataRecord(input, "grammar preflight input");
+	const config = fields.config && typeof fields.config === "object" ? {
+		...fields.config,
+		grammarModel: fields.model ?? fields.config.grammarModel,
+		grammarBudgetUsd: fields.ceilingUsd ?? fields.config.grammarBudgetUsd,
+		grammarEstimateUsd: fields.estimateUsd ?? fields.config.grammarEstimateUsd,
+		proposalProvider: fields.config.proposalProvider ?? "gpt-image-2",
+	} : fields;
+	if (typeof config.openAIApiKey !== "string" || !config.openAIApiKey.trim()) {
+		throw failure("GRAMMAR_CREDENTIALS_MISSING", "OPENAI_API_KEY is required", { definitiveNonSubmission: true });
+	}
+	const controls = validateConfig(config);
+	return Object.freeze({ provider: PROVIDER, model: MODEL, ceilingUsd: controls.ceilingUsd, estimateUsd: controls.estimateUsd });
 }
 
 function providerResultAuthority(providerResult) {
@@ -499,22 +568,8 @@ export async function extractFacadeGrammar(input) {
 	});
 	if (!parsedGrammar) throw failure("GRAMMAR_RESULT_UNAVAILABLE", "Persisted grammar result is unavailable without resubmission");
 	deepFreeze(parsedGrammar);
-	verifiedGrammarAuthorities.set(parsedGrammar, Object.freeze({
-		candidateId: controls.candidateId,
-		geometryHash: verified.authority.geometryHash,
-		geometryContentSha256: verified.authority.geometryContentSha256,
-		geometrySignedVolumeOrientation: verified.authority.geometrySignedVolumeOrientation,
-		facadeSegmentAuthority: verified.authority.facadeSegmentAuthority ? Object.freeze({
-			sha256: verified.authority.facadeSegmentAuthority.sha256,
-			segmentIds: Object.freeze([...verified.authority.facadeSegmentAuthority.segmentIds]),
-		}) : null,
-		provider: controls.proposalProvider,
-		evidenceManifestSha256: verified.authority.manifestSha256,
-		camerasSha256: verified.authority.camerasSha256,
-		floorGuides: Object.freeze([...verified.authority.floorGuides]),
-		facadeLengths: Object.freeze({ ...verified.authority.facadeLengths }),
-		proposalSha256: proposal.digest,
-		grammarSha256: sha256(stableJson(parsedGrammar)),
-	}));
+	verifiedGrammarAuthorities.set(parsedGrammar, Object.freeze(grammarAuthorityFromEvidence(
+		parsedGrammar, verified.authority, controls.proposalProvider, proposal.digest,
+	)));
 	return harnessMode ? { grammar: parsedGrammar, remoteId: transportReceipt.remoteId, actualUsd: transportReceipt.actualUsd } : parsedGrammar;
 }

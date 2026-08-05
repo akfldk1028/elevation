@@ -383,6 +383,7 @@ export async function appendFacadeAgentMemory(result, memoryRoot) {
 		retry_policy: "two-local-attempts-no-image-resubmit",
 		image_submissions: Object.fromEntries(Object.entries(result.image_submissions?.by_provider ?? {}).map(([provider, count]) => [provider, count])),
 		grammar_submissions: Object.fromEntries(Object.entries(result.providers ?? {}).map(([provider, state]) => [provider, state?.grammar?.status === "succeeded" ? 1 : 0])),
+		budget: result.budget ?? null,
 		costs: await facadeCosts(runDir),
 		providers,
 		delivery: facadeDelivery(runDir, result.selected_delivery ?? result.delivery?.memory_record),

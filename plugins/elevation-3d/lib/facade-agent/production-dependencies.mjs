@@ -8,12 +8,12 @@ import { correctGrammar } from "../facade-grammar.mjs";
 import { deliverSelectedAllViews } from "../final-delivery.mjs";
 import { renderUnifiedDrawings } from "../unified-render.mjs";
 import { buildFacadeEvidencePack, verifyFacadeEvidencePack } from "./evidence.mjs";
-import { extractFacadeGrammar, verifyFacadeProposal } from "./grammar-agent.mjs";
+import { extractFacadeGrammar, preflightFacadeGrammar, verifyFacadeProposal } from "./grammar-agent.mjs";
 import { createPaidOperationLedger } from "./paid-operation-ledger.mjs";
 import { deriveFacadeSegmentsFromMass } from "./punched-facade.mjs";
 import { buildRequest as buildGeminiRequest, createProvider as createGeminiProvider } from "./providers/gemini-image.mjs";
 import { buildRequest as buildOpenAIRequest, createProvider as createOpenAIProvider } from "./providers/openai-image.mjs";
-import { scoreFacadeCandidate, selectFacadeWinner } from "./score.mjs";
+import { rehydrateFacadeScoreResult, scoreFacadeCandidate, selectFacadeWinner } from "./score.mjs";
 
 function providerWithRequestBuilder(provider, buildRequest) {
 	return Object.freeze({ preflight: provider.preflight, generate: provider.generate, buildRequest });
@@ -42,6 +42,21 @@ export async function createProductionFacadeAgentDependencies(config, options = 
 	const gemini = createGeminiProvider({ GEMINI_API_KEY: env.GEMINI_API_KEY }, { fetchImpl });
 	const score = async (input) => scoreFacadeCandidate(input);
 	score.select = selectFacadeWinner;
+	score.rehydrate = (value) => rehydrateFacadeScoreResult(value);
+	const extractGrammar = async (input) => extractFacadeGrammar({
+		...input,
+		proposalPath: await verifyFacadeProposal({
+			proposalPath: input.proposal.path,
+			providerResult: input.providerResult,
+			evidence: input.evidence,
+			config: input.config,
+		}),
+		fetchImpl,
+		config: { ...input.config, openAIApiKey: env.OPENAI_API_KEY },
+	});
+	extractGrammar.preflight = (input) => preflightFacadeGrammar({
+		...input, config: { ...input.config, openAIApiKey: env.OPENAI_API_KEY },
+	});
 	return {
 		ledger,
 		providers: {
@@ -59,17 +74,7 @@ export async function createProductionFacadeAgentDependencies(config, options = 
 			const built = await buildFacadeEvidencePack({ input, runDir: target, signal });
 			return verifyFacadeEvidencePack({ manifestPath: built.manifestPath, input });
 		},
-		extractGrammar: async (input) => extractFacadeGrammar({
-			...input,
-			proposalPath: await verifyFacadeProposal({
-				proposalPath: input.proposal.path,
-				providerResult: input.providerResult,
-				evidence: input.evidence,
-				config: input.config,
-			}),
-			fetchImpl,
-			config: { ...input.config, openAIApiKey: env.OPENAI_API_KEY },
-		}),
+		extractGrammar,
 		build: async ({ provider, versionId, grammar, candidate, runDir: target }) => {
 			const outputDir = join(target, "providers", provider, "artifacts");
 			await mkdir(outputDir, { recursive: true });
