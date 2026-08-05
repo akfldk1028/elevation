@@ -32,7 +32,17 @@ function resolveRoot(value, label) {
 	if (typeof value !== "string" || !value) {
 		throw new FacadeAgentContractError("ROOT_INVALID", `${label} is required`);
 	}
+	const isWindowsDrivePath = /^[A-Za-z]:[\\/]/.test(value);
+	if (/^[A-Za-z][A-Za-z0-9+.-]*:/.test(value) && !isWindowsDrivePath) throw new FacadeAgentContractError("ROOT_INVALID", `${label} is required`);
 	return resolve(value);
+}
+
+function deepFreeze(value) {
+	if (value && typeof value === "object" && !Object.isFrozen(value)) {
+		for (const item of Object.values(value)) deepFreeze(item);
+		Object.freeze(value);
+	}
+	return value;
 }
 
 export function normalizeFacadeAgentConfig(input) {
@@ -49,7 +59,7 @@ export function normalizeFacadeAgentConfig(input) {
 		finiteNonnegative(input.imageBudgetUsd?.[provider], `imageBudgetUsd.${provider}`),
 	]));
 	const grammarBudgetUsd = finiteNonnegative(input.grammarBudgetUsd, "grammarBudgetUsd");
-	return Object.freeze(redactSecrets({
+	return deepFreeze(redactSecrets({
 		...input,
 		candidateId,
 		runId,
