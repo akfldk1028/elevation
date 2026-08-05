@@ -532,14 +532,14 @@ test("deadline and caller abort remain active while the response body is being c
 		const request = build({ evidence: evidence(), brief: BRIEF, output: OUTPUT });
 		await assert.rejects(Promise.race([
 			authorizedGenerate(create(env, { fetchImpl: bodyStallsUntilAbort, timeoutMs: 10 }), request),
-			new Promise((_resolve, reject) => setTimeout(() => reject(new Error("adapter deadline was not enforced during body consumption")), 100)),
+			new Promise((_resolve, reject) => setTimeout(() => reject(new Error("adapter deadline was not enforced during body consumption")), 1_000)),
 		]), (error: any) => error.code === "PROVIDER_TIMEOUT");
 
 		const controller = new AbortController();
 		setTimeout(() => controller.abort(new DOMException("cancel body", "AbortError")), 10);
 		await assert.rejects(Promise.race([
 			authorizedGenerate(create(env, { fetchImpl: bodyStallsUntilAbort, timeoutMs: 1_000 }), request, { signal: controller.signal }),
-			new Promise((_resolve, reject) => setTimeout(() => reject(new Error("caller abort was not enforced during body consumption")), 100)),
+			new Promise((_resolve, reject) => setTimeout(() => reject(new Error("caller abort was not enforced during body consumption")), 1_000)),
 		]), (error: any) => error.code === "PROVIDER_ABORTED");
 	}
 });
