@@ -5,6 +5,7 @@ import sharp from "sharp";
 export const FACADE_EVIDENCE_VIEW_NAMES = Object.freeze(["front", "right", "back", "left", "top", "axon", "opposite-axon"]);
 export const FACADE_EVIDENCE_PASS_NAMES = Object.freeze(["color", "depth", "normal", "edge", "surface-id"]);
 export const FACADE_EVIDENCE_SIZE = 1024;
+const PERSPECTIVE_NEAR = 1e-4;
 
 let temporarySequence = 0;
 
@@ -96,12 +97,46 @@ function projectedVertices(vertices, camera) {
 	return vertices.map((point) => {
 		const relative = subtract(point, camera.position);
 		const distance = dot(relative, depth);
+		const cameraX = dot(relative, right);
+		const cameraY = dot(relative, up);
 		return {
-			x: (dot(relative, right) / (distance * tangent) * 0.5 + 0.5) * edge,
-			y: (0.5 - dot(relative, up) / (distance * tangent) * 0.5) * edge,
+			x: (cameraX / (distance * tangent) * 0.5 + 0.5) * edge,
+			y: (0.5 - cameraY / (distance * tangent) * 0.5) * edge,
 			depth: distance,
+			cameraX,
+			cameraY,
+			tangent,
 		};
 	});
+}
+
+function clippedPerspectiveVertex(left, right) {
+	const amount = (PERSPECTIVE_NEAR - left.depth) / (right.depth - left.depth);
+	const cameraX = left.cameraX + (right.cameraX - left.cameraX) * amount;
+	const cameraY = left.cameraY + (right.cameraY - left.cameraY) * amount;
+	const edge = FACADE_EVIDENCE_SIZE - 1;
+	return {
+		x: (cameraX / (PERSPECTIVE_NEAR * left.tangent) * 0.5 + 0.5) * edge,
+		y: (0.5 - cameraY / (PERSPECTIVE_NEAR * left.tangent) * 0.5) * edge,
+		depth: PERSPECTIVE_NEAR,
+		cameraX,
+		cameraY,
+		tangent: left.tangent,
+	};
+}
+
+function clipPerspectiveTriangle(points) {
+	const polygon = [];
+	for (let index = 0; index < points.length; index++) {
+		const current = points[index], next = points[(index + 1) % points.length];
+		const currentInside = current.depth >= PERSPECTIVE_NEAR;
+		const nextInside = next.depth >= PERSPECTIVE_NEAR;
+		if (currentInside) polygon.push(current);
+		if (currentInside !== nextInside) polygon.push(clippedPerspectiveVertex(current, next));
+	}
+	const triangles = [];
+	for (let index = 1; index + 1 < polygon.length; index++) triangles.push([polygon[0], polygon[index], polygon[index + 1]]);
+	return triangles;
 }
 
 function signedEdge(a, b, x, y) {
@@ -124,29 +159,36 @@ function rasterize(mesh, camera, signal) {
 		if ((triangleId & 31) === 0) throwIfAborted(signal);
 		const indices = triangles[triangleId];
 		const worldA = vertices[indices[0]], worldB = vertices[indices[1]], worldC = vertices[indices[2]];
-		const normal = normalize(cross(subtract(worldB, worldA), subtract(worldC, worldA)), `triangle ${triangleId} normal`);
-		normals.push(normal);
+		const normalVector = cross(subtract(worldB, worldA), subtract(worldC, worldA));
+		if (vectorLength(normalVector) <= 1e-12) continue;
+		const normal = normalize(normalVector, `triangle ${triangleId} normal`);
+		normals[triangleId] = normal;
 		const intensity = 0.3 + 0.7 * Math.abs(dot(normal, light));
-		colors.push([202, 198, 190].map((channel) => Math.round(channel * intensity)));
-		const a = projected[indices[0]], b = projected[indices[1]], c = projected[indices[2]];
-		if (![a, b, c].every((point) => Number.isFinite(point.x) && Number.isFinite(point.y) && Number.isFinite(point.depth) && point.depth >= 0)) continue;
-		const area = signedEdge(a, b, c.x, c.y);
-		if (Math.abs(area) <= 1e-12) continue;
-		const minX = Math.max(0, Math.floor(Math.min(a.x, b.x, c.x)));
-		const maxX = Math.min(FACADE_EVIDENCE_SIZE - 1, Math.ceil(Math.max(a.x, b.x, c.x)));
-		const minY = Math.max(0, Math.floor(Math.min(a.y, b.y, c.y)));
-		const maxY = Math.min(FACADE_EVIDENCE_SIZE - 1, Math.ceil(Math.max(a.y, b.y, c.y)));
-		for (let y = minY; y <= maxY; y++) for (let x = minX; x <= maxX; x++) {
-			const px = x + 0.5, py = y + 0.5;
-			const weightA = signedEdge(b, c, px, py) / area;
-			const weightB = signedEdge(c, a, px, py) / area;
-			const weightC = 1 - weightA - weightB;
-			if (weightA < -1e-10 || weightB < -1e-10 || weightC < -1e-10) continue;
-			const pixelDepth = weightA * a.depth + weightB * b.depth + weightC * c.depth;
-			const offset = y * FACADE_EVIDENCE_SIZE + x;
-			if (pixelDepth < depths[offset] - 1e-10) {
-				depths[offset] = pixelDepth;
-				triangleIds[offset] = triangleId;
+		colors[triangleId] = [202, 198, 190].map((channel) => Math.round(channel * intensity));
+		const sourcePoints = indices.map((index) => projected[index]);
+		const projectedTriangles = camera.projection === "perspective" ? clipPerspectiveTriangle(sourcePoints) : [sourcePoints];
+		for (const [a, b, c] of projectedTriangles) {
+			if (![a, b, c].every((point) => Number.isFinite(point.x) && Number.isFinite(point.y) && Number.isFinite(point.depth) && point.depth >= 0)) continue;
+			const area = signedEdge(a, b, c.x, c.y);
+			if (Math.abs(area) <= 1e-12) continue;
+			const minX = Math.max(0, Math.floor(Math.min(a.x, b.x, c.x)));
+			const maxX = Math.min(FACADE_EVIDENCE_SIZE - 1, Math.ceil(Math.max(a.x, b.x, c.x)));
+			const minY = Math.max(0, Math.floor(Math.min(a.y, b.y, c.y)));
+			const maxY = Math.min(FACADE_EVIDENCE_SIZE - 1, Math.ceil(Math.max(a.y, b.y, c.y)));
+			for (let y = minY; y <= maxY; y++) for (let x = minX; x <= maxX; x++) {
+				const px = x + 0.5, py = y + 0.5;
+				const weightA = signedEdge(b, c, px, py) / area;
+				const weightB = signedEdge(c, a, px, py) / area;
+				const weightC = 1 - weightA - weightB;
+				if (weightA < -1e-10 || weightB < -1e-10 || weightC < -1e-10) continue;
+				const pixelDepth = camera.projection === "perspective"
+					? 1 / (weightA / a.depth + weightB / b.depth + weightC / c.depth)
+					: weightA * a.depth + weightB * b.depth + weightC * c.depth;
+				const offset = y * FACADE_EVIDENCE_SIZE + x;
+				if (pixelDepth < depths[offset] - 1e-10) {
+					depths[offset] = pixelDepth;
+					triangleIds[offset] = triangleId;
+				}
 			}
 		}
 	}
