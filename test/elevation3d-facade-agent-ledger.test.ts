@@ -488,6 +488,48 @@ test("fails closed on truncated, corrupt, and tampered ledgers without a callbac
 	});
 });
 
+test("enforces one run-wide grammar ceiling before a second network callback", async () => {
+	await withLedger(async (_root, path) => {
+		const ledger = createPaidOperationLedger(path);
+		let calls = 0;
+		for (const [index, key] of ["a".repeat(64), "b".repeat(64)].entries()) {
+			const execute = () => ledger.executeOnce({
+				requestKey: key, provider: "openai", kind: "grammar-extraction",
+				ceilingUsd: 1, estimateUsd: 1,
+				runCeilingUsd: 3, kindCeilingUsd: 1,
+				operation: async () => {
+					calls += 1;
+					return { remoteId: `grammar-${index}`, artifactSha256, actualUsd: 1 };
+				},
+			});
+			if (index === 0) await execute();
+			else await assert.rejects(execute, (error: any) => error.code === "PAID_OPERATION_AGGREGATE_BUDGET_EXCEEDED");
+		}
+		assert.equal(calls, 1, "the rejected reservation must not reach a paid callback");
+		const summary: any = await ledger.summary();
+		assert.equal(summary.costs.by_kind["grammar-extraction"].actual_usd, 1);
+		assert.equal(summary.costs.total.actual_usd, 1);
+	});
+});
+
+test("allows deterministic grammar splits whose reservations and actuals fit the run-wide ceiling", async () => {
+	await withLedger(async (_root, path) => {
+		const ledger = createPaidOperationLedger(path);
+		for (const [index, ceiling] of [0.4, 0.6].entries()) {
+			await ledger.executeOnce({
+				requestKey: `${index + 3}`.repeat(64), provider: "openai", kind: "grammar-extraction",
+				ceilingUsd: ceiling, estimateUsd: ceiling,
+				runCeilingUsd: 3, kindCeilingUsd: 1,
+				operation: async () => ({ remoteId: `grammar-split-${index}`, artifactSha256, actualUsd: ceiling }),
+			});
+		}
+		const summary: any = await ledger.summary();
+		assert.equal(summary.costs.by_kind["grammar-extraction"].reserved_ceiling_usd, 1);
+		assert.equal(summary.costs.by_kind["grammar-extraction"].actual_usd, 1);
+		assert.equal(summary.costs.total.actual_usd, 1);
+	});
+});
+
 test("normalizes provider failures with redacted metadata", () => {
 	const normalized = normalizeProviderFailure(
 		Object.assign(new Error("Authorization: Bearer secret-key-value"), { status: 503 }),

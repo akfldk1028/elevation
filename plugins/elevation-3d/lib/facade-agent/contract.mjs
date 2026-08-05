@@ -45,6 +45,15 @@ function deepFreeze(value) {
 	return value;
 }
 
+function deterministicAllocation(total, providers) {
+	let assigned = 0;
+	return Object.fromEntries(providers.map((provider, index) => {
+		const value = index === providers.length - 1 ? total - assigned : total / providers.length;
+		assigned += value;
+		return [provider, value];
+	}));
+}
+
 export function normalizeFacadeAgentConfig(input) {
 	const candidateId = safePathSegment(input?.candidateId, "candidate_id");
 	const runId = safePathSegment(input?.runId, "run_id");
@@ -59,6 +68,17 @@ export function normalizeFacadeAgentConfig(input) {
 		finiteNonnegative(input.imageBudgetUsd?.[provider], `imageBudgetUsd.${provider}`),
 	]));
 	const grammarBudgetUsd = finiteNonnegative(input.grammarBudgetUsd, "grammarBudgetUsd");
+	const grammarEstimateUsd = finiteNonnegative(input.grammarEstimateUsd ?? grammarBudgetUsd, "grammarEstimateUsd");
+	if (grammarEstimateUsd > grammarBudgetUsd) throw new FacadeAgentContractError("BUDGET_INVALID", "grammarEstimateUsd cannot exceed the run-wide grammarBudgetUsd");
+	const grammarBudgetAllocationUsd = deterministicAllocation(grammarBudgetUsd, providers);
+	const grammarEstimateAllocationUsd = deterministicAllocation(grammarEstimateUsd, providers);
+	const imageEstimateUsd = Object.fromEntries(providers.map((provider) => {
+		const estimate = finiteNonnegative(input.imageEstimateUsd?.[provider] ?? imageBudgetUsd[provider], `imageEstimateUsd.${provider}`);
+		if (estimate > imageBudgetUsd[provider]) throw new FacadeAgentContractError("BUDGET_INVALID", `imageEstimateUsd.${provider} cannot exceed its image budget`);
+		return [provider, estimate];
+	}));
+	const runBudgetUsd = Object.values(imageBudgetUsd).reduce((sum, value) => sum + value, 0) + grammarBudgetUsd;
+	const runEstimateUsd = Object.values(imageEstimateUsd).reduce((sum, value) => sum + value, 0) + grammarEstimateUsd;
 	return deepFreeze(redactSecrets({
 		...input,
 		candidateId,
@@ -67,7 +87,13 @@ export function normalizeFacadeAgentConfig(input) {
 		outputRoot: resolveRoot(input.outputRoot, "outputRoot"),
 		providers,
 		imageBudgetUsd,
+		imageEstimateUsd,
 		grammarBudgetUsd,
+		grammarEstimateUsd,
+		grammarBudgetAllocationUsd,
+		grammarEstimateAllocationUsd,
+		runBudgetUsd,
+		runEstimateUsd,
 		maxLocalAttempts: 2,
 		maxImageSubmissionsPerProvider: 1,
 		confirmLive: input.confirmLive === true,

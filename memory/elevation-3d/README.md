@@ -22,6 +22,13 @@ Hosted SPAR3D and Tripo are rejected as production geometry sources after the he
 
 The older single-image-to-3D instructions in this research history are historical, not the production path. Tripo remains optional research only. The production facade agent keeps the complete local MASS and authored cameras/floor guides as immutable authority, uses image models only for design evidence, derives the real `creative-020` perimeter as 16 outward exact-MASS-backed segments (8 cardinal and 8 oblique), and builds every scored and delivered view from that geometry-locked GLB.
 
+Final hardening on 2026-08-06 made the comparison durable across process restarts without weakening that geometry lock:
+
+- `grammarBudgetUsd` is one run-wide ceiling, deterministically divided between the two grammar calls. Image and grammar reservations share one ledger, which enforces per-call, per-kind, and run-wide ceilings and records exact actual totals.
+- Canonical grammar, v002 grammar/correction records, validation authority, and scoring authority are hash-bound durable receipts. Verified authorities are reconstructed only after their complete provider, proposal, evidence, candidate, geometry, camera, segment, artifact, and formula bindings pass; ambiguous paid submissions and deliveries still fail closed.
+- Dry preflight builds and hashes the real evidence and provider request manifests, checks non-network provider/credential capabilities, and writes a redacted canonical receipt without invoking fetch or any paid callback.
+- The production-shaped mocked E2E retained the exact 16-segment pipeline and produced 2,560 typed detail primitives, one selected 4,400,084-byte GLB (`5d593b4b69e7d1409bae8a6b3ca9223de2252a772556d19890314dd59f2d7463`), and eight delivery views. It made exactly one image request per provider and two grammar requests, with synthetic recorded cost USD 1.28 and zero unexpected or external delivery requests.
+
 ## Reading order
 
 1. `contract/problem-definition.md`

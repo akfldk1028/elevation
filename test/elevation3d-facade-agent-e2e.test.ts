@@ -231,6 +231,13 @@ test("runs the complete creative-020 comparison fixture without network or paid 
 	await (runMemory as any).appendFacadeAgentMemory(result, memoryRoot);
 	const memory = JSON.parse(await readFile(join(memoryRoot, "facade-agent-runs.jsonl"), "utf8"));
 	assert.equal(memory.final.selected_glb_sha256, result.final.selected_glb_sha256);
+	assert.deepEqual(memory.budget, result.budget);
+	assert.deepEqual(memory.budget, {
+		run_ceiling_usd: 3,
+		image_ceiling_usd: { "gpt-image-2": 1, "nano-banana-pro": 1 },
+		grammar_ceiling_usd: 1,
+		grammar_per_call_ceiling_usd: { "gpt-image-2": 0.5, "nano-banana-pro": 0.5 },
+	});
 	assert.deepEqual(memory.providers["gpt-image-2"].score.components, result.providers["gpt-image-2"].score.components);
 	assert.equal(Object.keys(memory.delivery.views).length, 8);
 	assert.deepEqual(memory.costs, {

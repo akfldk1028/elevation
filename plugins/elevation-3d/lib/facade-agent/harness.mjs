@@ -4,11 +4,13 @@ import { dirname, isAbsolute, join, parse, relative, resolve, sep } from "node:p
 import { NodeIO } from "@gltf-transform/core";
 
 import { redactSecrets, sha256, stableJson } from "../core.mjs";
+import { readVerifiedFacadeValidationAuthority, rehydrateVerifiedFacadeValidationAuthority } from "../enrichment-validation.mjs";
 import { correctGrammar } from "../facade-grammar.mjs";
 import { facadeRequestFingerprint, FACADE_AGENT_STAGES, normalizeFacadeAgentConfig } from "./contract.mjs";
 import { isFacadeFixtureTransport } from "./fixture-transport.mjs";
+import { readVerifiedFacadeGrammarAuthority, rehydrateVerifiedFacadeGrammar, serializeVerifiedFacadeGrammarAuthority } from "./grammar-agent.mjs";
 import { consumePaidOperationSubmissionCapability } from "./paid-operation-ledger.mjs";
-import { selectFacadeWinner } from "./score.mjs";
+import { rehydrateFacadeScoreResult, selectFacadeWinner } from "./score.mjs";
 
 const HEX_SHA256 = /^[a-f0-9]{64}$/;
 const TERMINAL_RUN_STATES = new Set(["winner", "no-winner", "human-review", "cancelled", "delivery-failed"]);
@@ -86,6 +88,14 @@ function safeError(error, fallback = "FACADE_STAGE_FAILED") {
 		name: isAbort(error) ? "AbortError" : "Error",
 		message: error instanceof Error ? error.message : "Facade stage failed",
 	});
+}
+
+function preflightCapability(callback) {
+	try { return persistent({ available: true, ...callback() }); }
+	catch (error) {
+		if (error?.definitiveNonSubmission !== true) throw error;
+		return { available: false, code: safeError(error, "PREFLIGHT_CAPABILITY_UNAVAILABLE").code };
+	}
 }
 
 function isAbort(error, signal) {
@@ -253,6 +263,12 @@ function initialRun(config, runDir, inputSha256) {
 		provider_manifests: {},
 		providers: {},
 		image_submissions: { total: 0, by_provider: Object.fromEntries(config.providers.map((provider) => [provider, 0])) },
+		budget: {
+			run_ceiling_usd: config.runBudgetUsd,
+			image_ceiling_usd: { ...config.imageBudgetUsd },
+			grammar_ceiling_usd: config.grammarBudgetUsd,
+			grammar_per_call_ceiling_usd: { ...config.grammarBudgetAllocationUsd },
+		},
 		final: null,
 	};
 }
@@ -343,6 +359,20 @@ function grammarLedger(deps) {
 	return ledger;
 }
 
+function assertSharedRunLedger(deps) {
+	const image = deps.ledger?.image ?? deps.ledger;
+	const grammar = deps.ledger?.grammar ?? deps.ledger;
+	if (!image || typeof image.executeOnce !== "function"
+		|| !grammar || typeof grammar.executeOnce !== "function"
+		|| image !== grammar) {
+		throw codedError(
+			"FACADE_LEDGER_AGGREGATE_UNAVAILABLE",
+			"One shared paid-operation ledger is required to enforce the run-wide budget",
+		);
+	}
+	return image;
+}
+
 function proposalExtension(mimeType) {
 	if (mimeType === "image/jpeg") return ".jpg";
 	if (mimeType === "image/webp") return ".webp";
@@ -403,6 +433,8 @@ async function generateProvider({ config, deps, runDir, run, state, provider, ev
 			kind: "image-generation",
 			ceilingUsd: config.imageBudgetUsd[provider],
 			estimateUsd: config.imageEstimateUsd?.[provider] ?? config.imageBudgetUsd[provider],
+			runCeilingUsd: config.runBudgetUsd,
+			kindCeilingUsd: Object.values(config.imageBudgetUsd).reduce((sum, value) => sum + value, 0),
 			signal,
 			operation: async (submission) => {
 				generated = await entry.generate({ request, submission, signal });
@@ -460,9 +492,20 @@ async function extractProviderGrammar({ config, deps, runDir, run, state, provid
 	}
 	if (state.grammar?.status === "succeeded") {
 		try {
-			const bytes = await safeRead(runDir, grammarPath, "grammar artifact");
+			const persistedPath = containedPath(runDir, join(runDir, state.grammar.path), "grammar artifact");
+			const bytes = await safeRead(runDir, persistedPath, "grammar artifact");
 			if (sha256(bytes) !== state.grammar.artifact_sha256) throw new Error();
-			return { state, grammar: JSON.parse(bytes.toString("utf8")) };
+			const grammar = state.grammar.authority
+				? await rehydrateVerifiedFacadeGrammar({
+					path: persistedPath, artifactSha256: state.grammar.artifact_sha256,
+					authority: state.grammar.authority, evidence, provider,
+					proposalSha256: proposal.sha256,
+				})
+				: JSON.parse(bytes.toString("utf8"));
+			if (!state.grammar.authority && !isFacadeFixtureTransport(deps.extractGrammar)) {
+				throw codedError("GRAMMAR_REHYDRATION_INVALID", "Persisted grammar is missing its durable authority binding");
+			}
+			return { state, grammar };
 		} catch {
 			state.status = "rejected";
 			state.failure = { code: "GRAMMAR_RESULT_UNAVAILABLE", message: "Persisted grammar is unavailable; refusing resubmission" };
@@ -486,7 +529,8 @@ async function extractProviderGrammar({ config, deps, runDir, run, state, provid
 		let extracted = null;
 		const publicResult = await grammarLedger(deps).executeOnce({
 			requestKey, provider: "openai", kind: "grammar-extraction",
-			ceilingUsd: config.grammarBudgetUsd, estimateUsd: config.grammarEstimateUsd ?? config.grammarBudgetUsd,
+			ceilingUsd: config.grammarBudgetAllocationUsd[provider], estimateUsd: config.grammarEstimateAllocationUsd[provider],
+			runCeilingUsd: config.runBudgetUsd, kindCeilingUsd: config.grammarBudgetUsd,
 			signal,
 			operation: async (ledgerSubmission) => {
 				const binding = {
@@ -496,7 +540,11 @@ async function extractProviderGrammar({ config, deps, runDir, run, state, provid
 				const issued = issueGrammarSubmissionCapability(binding, ledgerSubmission);
 				const result = await deps.extractGrammar({
 					provider, proposal, proposalPath: proposal, providerResult: proposal.providerResult,
-					evidence, config: { ...config, proposalProvider: provider, candidateId: config.candidateId },
+					evidence, config: {
+						...config, proposalProvider: provider, candidateId: config.candidateId,
+						grammarBudgetUsd: config.grammarBudgetAllocationUsd[provider],
+						grammarEstimateUsd: config.grammarEstimateAllocationUsd[provider],
+					},
 					submission: issued.capability, requestKey, signal,
 				});
 				if (!issued.record.consumed) throw codedError("GRAMMAR_SUBMISSION_CAPABILITY_UNUSED", "Grammar transport did not consume its one-shot submission capability");
@@ -505,7 +553,7 @@ async function extractProviderGrammar({ config, deps, runDir, run, state, provid
 				return {
 					remoteId: result?.remoteId,
 					artifactSha256: sha256(stableJson(persistent(extracted))),
-					actualUsd: result?.actualUsd ?? config.grammarEstimateUsd ?? config.grammarBudgetUsd,
+					actualUsd: result?.actualUsd ?? config.grammarEstimateAllocationUsd[provider],
 				};
 			},
 		});
@@ -520,7 +568,13 @@ async function extractProviderGrammar({ config, deps, runDir, run, state, provid
 			runDir, path: stagePath, stage: "grammar", status: "succeeded", input: stageInput,
 			output: { grammar_sha256: digest, grammar_path: relativePath(runDir, grammarPath, "grammar artifact") }, previous, provider, deps,
 		});
-		state.grammar = { status: "succeeded", proposal_sha256: proposal.sha256, artifact_sha256: digest, path: relativePath(runDir, grammarPath, "grammar artifact") };
+		let authority = null;
+		try { authority = serializeVerifiedFacadeGrammarAuthority(extracted); }
+		catch (error) { if (!isFacadeFixtureTransport(deps.extractGrammar)) throw error; }
+		state.grammar = {
+			status: "succeeded", proposal_sha256: proposal.sha256, artifact_sha256: digest,
+			path: relativePath(runDir, grammarPath, "grammar artifact"), ...(authority ? { authority } : {}),
+		};
 		state.stage_manifests.grammar = succeeded.ref;
 		state.status = "grammar-ready";
 		await writeProvider(runDir, run, config, provider, state, deps, { stage: "grammar", status: "succeeded", provider });
@@ -607,6 +661,120 @@ function localRetryAllowed(validation, attempt) {
 		&& !codes.some((code) => PROHIBITED_RETRY_CODES.has(code));
 }
 
+function assertValidationAuthorityBindings({ authority, provider, state, artifact, currentGrammar, extractedGrammar }) {
+	const grammarAuthority = readVerifiedFacadeGrammarAuthority(extractedGrammar);
+	const expected = {
+		provider,
+		candidateId: grammarAuthority?.candidateId,
+		bindings: {
+			geometry_hash: grammarAuthority?.geometryHash,
+			geometry_content_sha256: grammarAuthority?.geometryContentSha256,
+			geometry_signed_volume_orientation: grammarAuthority?.geometrySignedVolumeOrientation,
+			facade_segment_authority_sha256: grammarAuthority?.facadeSegmentAuthority?.sha256 ?? null,
+			glb_sha256: artifact.sha256,
+			evidence_sha256: grammarAuthority?.evidenceManifestSha256,
+			cameras_sha256: grammarAuthority?.camerasSha256,
+			proposal_sha256: state.proposal?.sha256,
+			grammar_sha256: sha256(stableJson(currentGrammar)),
+			extracted_grammar_sha256: grammarAuthority?.grammarSha256,
+		},
+	};
+	if (!grammarAuthority || authority?.provider !== expected.provider || authority?.candidateId !== expected.candidateId
+		|| Object.entries(expected.bindings).some(([key, value]) => authority?.bindings?.[key] !== value)
+		|| stableJson(authority?.grammar) !== stableJson(currentGrammar)) {
+		throw codedError("FACADE_AGENT_STATE_UNCERTAIN", "Validation authority does not match the current verified artifacts");
+	}
+}
+
+function assertScoreAuthorityBindings(scoreResult, validation) {
+	const authority = readVerifiedFacadeValidationAuthority(validation);
+	if (!authority) return;
+	if (scoreResult?.provider !== authority.provider
+		|| scoreResult?.breakdown?.candidate_id !== authority.candidateId
+		|| stableJson(scoreResult?.breakdown?.bindings) !== stableJson(authority.bindings)) {
+		throw codedError("FACADE_AGENT_STATE_UNCERTAIN", "Score authority does not match the current validation authority");
+	}
+}
+
+const CORRECTION_FIELDS = Object.freeze({
+	WINDOW_CROSSES_FLOOR_BAND: ["window_height_m"],
+	DETAIL_BOUNDS_EXCEEDED: ["cladding_depth_m", "reveal_depth_m"],
+	CORNER_DATUM_MISMATCH: ["corner_datum_m"],
+	PRIMITIVE_BUDGET_EXCEEDED: ["bay_width_m"],
+});
+const CORRECTION_DERIVED_BINDING_FIELDS = new Set(["wall_opacity", "curtain_wall_allowed", "floor_elevations_m", "facade_lengths_m"]);
+
+function changedGrammarFields(input, output) {
+	return [...new Set([...Object.keys(input), ...Object.keys(output)])]
+		.filter((field) => stableJson(input[field]) !== stableJson(output[field])).sort();
+}
+
+function correctionBindings({ provider, state, evidence, candidate, extractedGrammar }) {
+	const authority = readVerifiedFacadeGrammarAuthority(extractedGrammar);
+	return persistent({
+		provider,
+		proposal_sha256: state.proposal?.sha256,
+		evidence_sha256: evidence?.manifestSha256,
+		candidate_id: candidate?.candidate?.candidate_id ?? candidate?.candidate_id,
+		geometry_hash: authority?.geometryHash ?? candidate?.identity?.geometry_hash ?? null,
+		geometry_content_sha256: authority?.geometryContentSha256 ?? null,
+		geometry_signed_volume_orientation: authority?.geometrySignedVolumeOrientation ?? null,
+		cameras_sha256: authority?.camerasSha256 ?? null,
+		floor_guides_m: authority?.floorGuides ?? extractedGrammar?.floor_elevations_m ?? [],
+		facade_lengths_m: authority?.facadeLengths ?? extractedGrammar?.facade_lengths_m ?? {},
+		facade_segment_authority: authority?.facadeSegmentAuthority ?? null,
+	});
+}
+
+async function persistOrLoadCorrection({ runDir, run, config, deps, state, provider, inputGrammar, extractedGrammar, codes }) {
+	const grammarPath = join(runDir, "providers", provider, "grammar-v002.json");
+	const correctionPath = join(runDir, "providers", provider, "correction-v002.json");
+	if (state.correction_v002) {
+		const ref = state.correction_v002;
+		let grammarBytes;
+		let correctionBytes;
+		try {
+			grammarBytes = await safeRead(runDir, join(runDir, ref.grammar.path), "v002 grammar");
+			correctionBytes = await safeRead(runDir, join(runDir, ref.correction.path), "v002 correction");
+		} catch (error) { throw codedError("FACADE_AGENT_STATE_UNCERTAIN", "Persisted v002 correction artifacts are unavailable", error); }
+		if (sha256(grammarBytes) !== ref.grammar.sha256 || sha256(correctionBytes) !== ref.correction.sha256) {
+			throw codedError("FACADE_AGENT_STATE_UNCERTAIN", "Persisted v002 correction artifact hash mismatch");
+		}
+		const grammar = JSON.parse(grammarBytes.toString("utf8"));
+		const correction = JSON.parse(correctionBytes.toString("utf8"));
+		if (sha256(stableJson(grammar)) !== correction.output_grammar_sha256
+			|| correction.input_grammar_sha256 !== sha256(stableJson(inputGrammar))
+			|| stableJson(correction.correction_codes) !== stableJson(codes)
+			|| stableJson(correction.bindings) !== stableJson(correctionBindings({ provider, state, evidence: run._evidence, candidate: run._candidate, extractedGrammar }))) {
+			throw codedError("FACADE_AGENT_STATE_UNCERTAIN", "Persisted v002 correction bindings are invalid");
+		}
+		return { grammar, ref };
+	}
+	const grammar = typeof deps.correctGrammar === "function"
+		? deps.correctGrammar(inputGrammar, codes, run._candidate)
+		: correctGrammar(inputGrammar, codes);
+	const changedFields = changedGrammarFields(inputGrammar, grammar);
+	const correctedFields = changedFields.filter((field) => !CORRECTION_DERIVED_BINDING_FIELDS.has(field));
+	const allowedFields = [...new Set(codes.flatMap((code) => CORRECTION_FIELDS[code] ?? []))].sort();
+	if (stableJson(correctedFields) !== stableJson(allowedFields)) throw codedError("FACADE_CORRECTION_INVALID", "Correction changed fields outside its allowlist");
+	const grammarWritten = await atomicJson(grammarPath, grammar, runDir);
+	const correction = {
+		schema_version: "arr.elevation3d.facade-correction.v1",
+		input_grammar_sha256: sha256(stableJson(inputGrammar)),
+		output_grammar_sha256: sha256(stableJson(grammar)),
+		correction_codes: [...codes], changed_fields: correctedFields,
+		bindings: correctionBindings({ provider, state, evidence: run._evidence, candidate: run._candidate, extractedGrammar }),
+	};
+	const correctionWritten = await atomicJson(correctionPath, correction, runDir);
+	const ref = {
+		grammar: { path: relativePath(runDir, grammarPath, "v002 grammar"), sha256: grammarWritten.sha256, content_sha256: correction.output_grammar_sha256 },
+		correction: { path: relativePath(runDir, correctionPath, "v002 correction"), sha256: correctionWritten.sha256, content_sha256: sha256(stableJson(correction)) },
+	};
+	state.correction_v002 = ref;
+	await writeProvider(runDir, run, config, provider, state, deps, { stage: "correction", status: "succeeded", provider, version_id: "v002" });
+	return { grammar, ref };
+}
+
 async function buildAndValidateProvider({ config, deps, runDir, run, state, provider, extractedGrammar, previous, signal, stopAfterStage }) {
 	if (!extractedGrammar || state.status === "rejected" || state.status === "cancelled") return { state, scoreResult: null };
 	let currentGrammar = extractedGrammar;
@@ -615,7 +783,13 @@ async function buildAndValidateProvider({ config, deps, runDir, run, state, prov
 		const versionId = `v${String(attempt).padStart(3, "0")}`;
 		let version = state.versions.find((item) => item.id === versionId);
 		if (!version) {
-			version = { id: versionId, status: "building", grammar_sha256: sha256(stableJson(persistent(currentGrammar))) };
+			version = {
+				id: versionId, status: "building", grammar_sha256: sha256(stableJson(persistent(currentGrammar))),
+				...(attempt === 2 ? {
+					grammar_artifact: structuredClone(state.correction_v002?.grammar),
+					correction_record: structuredClone(state.correction_v002?.correction),
+				} : {}),
+			};
 			state.versions.push(version);
 			await writeProvider(runDir, run, config, provider, state, deps);
 		}
@@ -631,7 +805,10 @@ async function buildAndValidateProvider({ config, deps, runDir, run, state, prov
 				version.status = "built";
 				const builtStage = await writeStage({
 					runDir, path: `providers/${provider}/stages/build-${versionId}.json`, stage: "build", status: "succeeded",
-					input: { provider, version_id: versionId, grammar_sha256: version.grammar_sha256 },
+					input: {
+						provider, version_id: versionId, grammar_sha256: version.grammar_sha256,
+						...(version.grammar_artifact ? { grammar_artifact: version.grammar_artifact, correction_record: version.correction_record } : {}),
+					},
 					output: { artifact: version.artifact }, previous: localPrevious, provider, versionId, deps,
 				});
 				state.stage_manifests[`build-${versionId}`] = builtStage.ref;
@@ -640,23 +817,48 @@ async function buildAndValidateProvider({ config, deps, runDir, run, state, prov
 			if (stopAfterStage === "build") return { state, scoreResult: null };
 			throwIfAborted(signal);
 			artifact = await authorizeGlb(runDir, version.artifact);
-			version.validation_execution = { status: "submitting", artifact_sha256: artifact.sha256 };
-			await writeProvider(runDir, run, config, provider, state, deps);
-			const validation = await deps.validate({
-				provider, versionId, attempt, grammar: currentGrammar, extractedGrammar,
-				artifact, build: Object.freeze({ artifact }), input: run._candidate, candidate: run._candidate, evidence: run._evidence, runDir, signal,
-			});
-			await callLifecycle(deps, { stage: "validate", status: "returned", provider, version_id: versionId, artifact_sha256: artifact.sha256 });
-			const retryable = localRetryAllowed(validation, attempt);
-			version.validation = validationRecord(validation, retryable);
-			version.status = validation?.accepted === true ? "accepted" : "rejected";
-			version.validation_receipt = await writeReceipt(runDir, `providers/${provider}/receipts/validation-${versionId}.json`, {
-				schema_version: "arr.elevation3d.facade-validation-receipt.v1",
-				provider, version_id: versionId, artifact_sha256: version.artifact.sha256,
-				grammar_sha256: version.grammar_sha256, validation: version.validation,
-			});
-			version.validation_execution = { status: "succeeded", receipt_sha256: version.validation_receipt.receipt_sha256 };
-			await writeProvider(runDir, run, config, provider, state, deps, { stage: "validation-receipt", status: "succeeded", provider, version_id: versionId, receipt_sha256: version.validation_receipt.receipt_sha256 });
+			let validation;
+			let retryable;
+			if (version.validation_receipt) {
+				const receipt = await verifyDurableReceipt(runDir, version.validation_receipt);
+				if (receipt.schema_version !== "arr.elevation3d.facade-validation-receipt.v1" || receipt.provider !== provider
+					|| receipt.version_id !== versionId || receipt.artifact_sha256 !== artifact.sha256
+					|| receipt.grammar_sha256 !== version.grammar_sha256
+					|| stableJson(receipt.grammar_artifact ?? null) !== stableJson(version.grammar_artifact ?? null)
+					|| stableJson(receipt.correction_record ?? null) !== stableJson(version.correction_record ?? null)
+					|| stableJson(receipt.validation) !== stableJson(version.validation)) {
+					throw codedError("FACADE_AGENT_STATE_UNCERTAIN", "Validation receipt bindings do not match durable artifacts");
+				}
+				validation = receipt.validation;
+				if (receipt.validation_authority) {
+					assertValidationAuthorityBindings({
+						authority: receipt.validation_authority, provider, state, artifact, currentGrammar, extractedGrammar,
+					});
+					validation = rehydrateVerifiedFacadeValidationAuthority(validation, receipt.validation_authority);
+				}
+				retryable = localRetryAllowed(validation, attempt);
+			} else {
+				version.validation_execution = { status: "submitting", artifact_sha256: artifact.sha256 };
+				await writeProvider(runDir, run, config, provider, state, deps);
+				validation = await deps.validate({
+					provider, versionId, attempt, grammar: currentGrammar, extractedGrammar,
+					artifact, build: Object.freeze({ artifact }), input: run._candidate, candidate: run._candidate, evidence: run._evidence, runDir, signal,
+				});
+				await callLifecycle(deps, { stage: "validate", status: "returned", provider, version_id: versionId, artifact_sha256: artifact.sha256 });
+				retryable = localRetryAllowed(validation, attempt);
+				version.validation = validationRecord(validation, retryable);
+				version.status = validation?.accepted === true ? "accepted" : "rejected";
+				const validationAuthority = readVerifiedFacadeValidationAuthority(validation);
+				version.validation_receipt = await writeReceipt(runDir, `providers/${provider}/receipts/validation-${versionId}.json`, {
+					schema_version: "arr.elevation3d.facade-validation-receipt.v1",
+					provider, version_id: versionId, artifact_sha256: version.artifact.sha256,
+					grammar_sha256: version.grammar_sha256, validation: version.validation,
+					...(version.grammar_artifact ? { grammar_artifact: version.grammar_artifact, correction_record: version.correction_record } : {}),
+					...(validationAuthority ? { validation_authority: validationAuthority } : {}),
+				});
+				version.validation_execution = { status: "succeeded", receipt_sha256: version.validation_receipt.receipt_sha256 };
+				await writeProvider(runDir, run, config, provider, state, deps, { stage: "validation-receipt", status: "succeeded", provider, version_id: versionId, receipt_sha256: version.validation_receipt.receipt_sha256 });
+			}
 			const validateStage = await writeStage({
 				runDir, path: `providers/${provider}/stages/validate-${versionId}.json`, stage: "validate", status: "succeeded",
 				input: { provider, version_id: versionId, artifact_sha256: version.artifact.sha256, grammar_sha256: version.grammar_sha256 },
@@ -668,17 +870,31 @@ async function buildAndValidateProvider({ config, deps, runDir, run, state, prov
 			if (validation?.accepted === true) {
 				const scoreCandidate = typeof deps.score === "function" ? deps.score : deps.score?.candidate;
 				if (typeof scoreCandidate !== "function") throw codedError("FACADE_SCORE_MISSING", "A score dependency is required");
-				state.score_execution = { status: "submitting", validation_receipt_sha256: version.validation_receipt.receipt_sha256 };
-				await writeProvider(runDir, run, config, provider, state, deps);
-				const scoreResult = await scoreCandidate({ provider, validation });
-				await callLifecycle(deps, { stage: "score", status: "returned", provider, validation_receipt_sha256: version.validation_receipt.receipt_sha256 });
-				state.score = persistent(scoreResult);
-				state.score_receipt = await writeReceipt(runDir, `providers/${provider}/receipts/score.json`, {
-					schema_version: "arr.elevation3d.facade-score-receipt.v1",
-					provider, validation_receipt_sha256: version.validation_receipt.receipt_sha256,
-					score: state.score,
-				});
-				state.score_execution = { status: "succeeded", receipt_sha256: state.score_receipt.receipt_sha256 };
+				let scoreResult;
+				if (state.score_receipt) {
+					const receipt = await verifyDurableReceipt(runDir, state.score_receipt);
+					if (receipt.schema_version !== "arr.elevation3d.facade-score-receipt.v1" || receipt.provider !== provider
+						|| receipt.validation_receipt_sha256 !== version.validation_receipt.receipt_sha256
+						|| stableJson(receipt.score) !== stableJson(state.score)) {
+						throw codedError("FACADE_AGENT_STATE_UNCERTAIN", "Score receipt bindings do not match durable validation");
+					}
+					scoreResult = typeof deps.score?.rehydrate === "function"
+						? deps.score.rehydrate(receipt.score)
+						: rehydrateFacadeScoreResult(receipt.score);
+					assertScoreAuthorityBindings(scoreResult, validation);
+				} else {
+					state.score_execution = { status: "submitting", validation_receipt_sha256: version.validation_receipt.receipt_sha256 };
+					await writeProvider(runDir, run, config, provider, state, deps);
+					scoreResult = await scoreCandidate({ provider, validation });
+					await callLifecycle(deps, { stage: "score", status: "returned", provider, validation_receipt_sha256: version.validation_receipt.receipt_sha256 });
+					state.score = persistent(scoreResult);
+					state.score_receipt = await writeReceipt(runDir, `providers/${provider}/receipts/score.json`, {
+						schema_version: "arr.elevation3d.facade-score-receipt.v1",
+						provider, validation_receipt_sha256: version.validation_receipt.receipt_sha256,
+						score: state.score,
+					});
+					state.score_execution = { status: "succeeded", receipt_sha256: state.score_receipt.receipt_sha256 };
+				}
 				state.status = scoreResult?.accepted === true ? "accepted" : "rejected";
 				if (state.status === "rejected") state.failure = { code: scoreResult?.reason ?? "SCORE_REJECTED", message: "Authorized scoring rejected the provider" };
 				await writeProvider(runDir, run, config, provider, state, deps, { stage: "score-receipt", status: "succeeded", provider, receipt_sha256: state.score_receipt.receipt_sha256 });
@@ -693,9 +909,11 @@ async function buildAndValidateProvider({ config, deps, runDir, run, state, prov
 				await writeProvider(runDir, run, config, provider, state, deps);
 				return { state, scoreResult: null };
 			}
-			currentGrammar = typeof deps.correctGrammar === "function"
-				? deps.correctGrammar(currentGrammar, version.validation.codes, run._candidate)
-				: correctGrammar(currentGrammar, version.validation.codes);
+			const correction = await persistOrLoadCorrection({
+				runDir, run, config, deps, state, provider, inputGrammar: currentGrammar,
+				extractedGrammar, codes: version.validation.codes,
+			});
+			currentGrammar = correction.grammar;
 		} catch (error) {
 			if (error instanceof LifecycleHookError) throw error;
 			version.status = isAbort(error, signal) ? "cancelled" : "rejected";
@@ -763,9 +981,34 @@ async function verifyDurableReceipt(runDir, ref) {
 	try { receipt = JSON.parse(bytes.toString("utf8")); }
 	catch (error) { throw codedError("FACADE_AGENT_STATE_UNCERTAIN", "Durable receipt is invalid", error); }
 	if (sha256(stableJson(receipt)) !== ref.receipt_sha256) throw codedError("FACADE_AGENT_STATE_UNCERTAIN", "Durable receipt content hash mismatch");
+	return receipt;
 }
 
 async function verifyProviderReceipts(runDir, state) {
+	if (state?.correction_v002) {
+		const { grammar, correction } = state.correction_v002;
+		if (!grammar?.path || !HEX_SHA256.test(grammar.sha256 ?? "") || !correction?.path || !HEX_SHA256.test(correction.sha256 ?? "")) {
+			throw codedError("FACADE_AGENT_STATE_UNCERTAIN", "Persisted v002 correction references are invalid");
+		}
+		let grammarBytes;
+		let correctionBytes;
+		try {
+			grammarBytes = await safeRead(runDir, join(runDir, grammar.path), "v002 grammar");
+			correctionBytes = await safeRead(runDir, join(runDir, correction.path), "v002 correction");
+		} catch (error) { throw codedError("FACADE_AGENT_STATE_UNCERTAIN", "Persisted v002 correction artifacts are unavailable", error); }
+		if (sha256(grammarBytes) !== grammar.sha256 || sha256(correctionBytes) !== correction.sha256) {
+			throw codedError("FACADE_AGENT_STATE_UNCERTAIN", "Persisted v002 correction artifact hash mismatch");
+		}
+		let grammarValue;
+		let correctionValue;
+		try { grammarValue = JSON.parse(grammarBytes); correctionValue = JSON.parse(correctionBytes); }
+		catch (error) { throw codedError("FACADE_AGENT_STATE_UNCERTAIN", "Persisted v002 correction artifact is invalid", error); }
+		if (sha256(stableJson(grammarValue)) !== grammar.content_sha256
+			|| sha256(stableJson(correctionValue)) !== correction.content_sha256
+			|| correctionValue.output_grammar_sha256 !== grammar.content_sha256) {
+			throw codedError("FACADE_AGENT_STATE_UNCERTAIN", "Persisted v002 correction content binding mismatch");
+		}
+	}
 	for (const version of state?.versions ?? []) {
 		if (version.validation_receipt) {
 			await verifyDurableReceipt(runDir, version.validation_receipt);
@@ -829,8 +1072,9 @@ async function initialize(config, deps, signal) {
 			return { normalized, runDir, run, terminal: true };
 		}
 		const receiptRefs = durableReceiptRefs(run);
-		if (receiptRefs.length > 0) {
-			const terminal = await failClosedForDurableReceipts(runDir, run, receiptRefs);
+		const uncertainRefs = receiptRefs.filter((ref) => ref.kind.endsWith("-uncertain"));
+		if (uncertainRefs.length > 0) {
+			const terminal = await failClosedForDurableReceipts(runDir, run, uncertainRefs);
 			return { normalized, runDir, ...terminal };
 		}
 	} else {
@@ -856,22 +1100,83 @@ async function executeFacade(config, deps, stopAfterStage = null) {
 		const candidateSha256 = sha256(stableJson(persistent(candidate)));
 		let preflight = run.stage_manifests.preflight ? await readStageRef(runDir, run.stage_manifests.preflight) : null;
 		if (preflight && preflight.output?.candidate_sha256 !== candidateSha256) throw codedError("FACADE_AGENT_STATE_UNCERTAIN", "Candidate changed after preflight");
+		let evidenceStage = run.stage_manifests.evidence ? await readStageRef(runDir, run.stage_manifests.evidence) : null;
+		const evidenceManifestPath = evidenceStage?.output?.manifest_path ?? preflight?.output?.evidence_manifest_path;
+		const evidence = await deps.buildEvidence({
+			input: candidate, candidate, runDir, signal, resume: Boolean(evidenceManifestPath), manifestPath: evidenceManifestPath,
+		});
+		if (!evidence || !HEX_SHA256.test(evidence.manifestSha256 ?? "")) throw codedError("FACADE_EVIDENCE_INVALID", "Evidence stage must return a verified manifest SHA-256");
+		if ((preflight?.output?.evidence_sha256 && preflight.output.evidence_sha256 !== evidence.manifestSha256)
+			|| (evidenceStage?.output?.evidence_sha256 && evidenceStage.output.evidence_sha256 !== evidence.manifestSha256)) {
+			throw codedError("FACADE_AGENT_STATE_UNCERTAIN", "Evidence changed after persistence");
+		}
 		if (!preflight) {
+			const brief = persistent({ ...(normalized.brief ?? {}), id: normalized.briefId, brief_id: normalized.briefId, candidate_id: normalized.candidateId });
+			const requests = {};
+			const capabilities = {};
+			for (const provider of normalized.providers) {
+				const entry = providerEntry(deps, provider);
+				const request = buildProviderRequest(entry, {
+					provider, evidence, brief, output: { path: join(runDir, "providers", provider, "proposal"), count: 1 },
+				});
+				const requestManifest = {
+					schema_version: "arr.elevation3d.facade-request.v1", provider,
+					request_fingerprint: request.fingerprint, evidence_sha256: evidence.manifestSha256,
+					brief_id: normalized.briefId,
+					budget: { ceiling_usd: normalized.imageBudgetUsd[provider], estimate_usd: normalized.imageEstimateUsd?.[provider] ?? normalized.imageBudgetUsd[provider] },
+				};
+				const requestPath = join(runDir, "providers", provider, "request-manifest.json");
+				const written = await atomicJson(requestPath, requestManifest, runDir);
+				requests[provider] = { path: relativePath(runDir, requestPath, "provider request manifest"), sha256: written.sha256, fingerprint: request.fingerprint };
+				if (typeof entry.preflight === "function") capabilities[provider] = preflightCapability(() => entry.preflight({
+					request, ceilingUsd: normalized.imageBudgetUsd[provider],
+					estimateUsd: normalized.imageEstimateUsd?.[provider] ?? normalized.imageBudgetUsd[provider],
+				}));
+				else if (isFacadeFixtureTransport(entry)) capabilities[provider] = { available: true, provider, model: provider, fixture: true };
+				else throw codedError("PREFLIGHT_CAPABILITY_MISSING", `Provider ${provider} has no non-network preflight capability`);
+			}
+			if (typeof deps.extractGrammar.preflight === "function") {
+				capabilities["openai-grammar"] = preflightCapability(() => deps.extractGrammar.preflight({
+					model: normalized.grammarModel, ceilingUsd: normalized.grammarBudgetUsd, estimateUsd: normalized.grammarEstimateUsd,
+					config: normalized,
+				}));
+			} else if (isFacadeFixtureTransport(deps.extractGrammar)) {
+				capabilities["openai-grammar"] = { available: true, provider: "openai", model: normalized.grammarModel, fixture: true };
+			} else throw codedError("PREFLIGHT_CAPABILITY_MISSING", "Grammar transport has no non-network preflight capability");
+			const persistedEvidenceManifestPath = evidence.manifestPath && await exists(evidence.manifestPath)
+				? relativePath(runDir, evidence.manifestPath, "evidence manifest") : null;
+			const receiptValue = {
+				schema_version: "arr.elevation3d.facade-preflight-receipt.v1",
+				candidate_sha256: candidateSha256, evidence_sha256: evidence.manifestSha256,
+				evidence_manifest_path: persistedEvidenceManifestPath,
+				requests, capabilities,
+				budget: {
+					run: { ceiling_usd: normalized.runBudgetUsd, estimate_usd: normalized.runEstimateUsd },
+					images: Object.fromEntries(normalized.providers.map((provider) => [provider, {
+						ceiling_usd: normalized.imageBudgetUsd[provider], estimate_usd: normalized.imageEstimateUsd?.[provider] ?? normalized.imageBudgetUsd[provider],
+					}])),
+					grammar: {
+						ceiling_usd: normalized.grammarBudgetUsd, estimate_usd: normalized.grammarEstimateUsd,
+						per_call_ceiling_usd: normalized.grammarBudgetAllocationUsd,
+						per_call_estimate_usd: normalized.grammarEstimateAllocationUsd,
+					},
+				},
+			};
+			run.preflight_receipt = await writeReceipt(runDir, "stages/preflight-receipt.json", receiptValue);
 			const transition = await writeStage({
 				runDir, path: "stages/preflight.json", stage: "preflight", status: "succeeded",
-				input: { config_sha256: run.input_sha256 }, output: { candidate_sha256: candidateSha256 }, previous: null, deps,
+				input: { config_sha256: run.input_sha256 }, output: {
+					candidate_sha256: candidateSha256, evidence_sha256: evidence.manifestSha256,
+					evidence_manifest_path: receiptValue.evidence_manifest_path,
+					request_fingerprints: Object.fromEntries(Object.entries(requests).map(([provider, ref]) => [provider, ref.fingerprint])),
+					preflight_receipt_sha256: run.preflight_receipt.receipt_sha256,
+				}, previous: null, deps,
 			});
 			preflight = transition.manifest;
 			run.stage_manifests.preflight = transition.ref;
 			await persistPublicRun(runDir, run);
 		}
 		if (stopAfterStage === "preflight") return readFacadeAgentStatus(runDir);
-
-		let evidence;
-		let evidenceStage = run.stage_manifests.evidence ? await readStageRef(runDir, run.stage_manifests.evidence) : null;
-		evidence = await deps.buildEvidence({ input: candidate, candidate, runDir, signal, resume: Boolean(evidenceStage), manifestPath: evidenceStage?.output?.manifest_path });
-		if (!evidence || !HEX_SHA256.test(evidence.manifestSha256 ?? "")) throw codedError("FACADE_EVIDENCE_INVALID", "Evidence stage must return a verified manifest SHA-256");
-		if (evidenceStage && evidenceStage.output?.evidence_sha256 !== evidence.manifestSha256) throw codedError("FACADE_AGENT_STATE_UNCERTAIN", "Evidence changed after persistence");
 		if (!evidenceStage) {
 			const transition = await writeStage({
 				runDir, path: "stages/evidence.json", stage: "evidence", status: "succeeded",
@@ -886,6 +1191,7 @@ async function executeFacade(config, deps, stopAfterStage = null) {
 		if (stopAfterStage === "evidence") return readFacadeAgentStatus(runDir);
 		run._candidate = candidate;
 		run._evidence = evidence;
+		assertSharedRunLedger(deps);
 		if (normalized.confirmLive !== true) {
 			const unconfirmed = normalized.providers.some((provider) => !isFacadeFixtureTransport(deps.providers?.[provider]))
 				|| !isFacadeFixtureTransport(deps.extractGrammar);
@@ -1065,6 +1371,36 @@ export async function readFacadeAgentStatus(runDirInput) {
 	if (run?.schema_version !== "arr.elevation3d.facade-agent-run.v1" || !HEX_SHA256.test(run.input_sha256 ?? "")
 		|| !run.providers || !run.provider_manifests || !run.stage_manifests) {
 		throw codedError("FACADE_AGENT_STATE_UNCERTAIN", "Facade agent run manifest is invalid");
+	}
+	if (run.preflight_receipt) {
+		const receipt = await verifyDurableReceipt(runDir, run.preflight_receipt);
+		const stage = run.stage_manifests.preflight ? await readStageRef(runDir, run.stage_manifests.preflight) : null;
+		if (receipt.schema_version !== "arr.elevation3d.facade-preflight-receipt.v1" || !stage
+			|| stage.output?.preflight_receipt_sha256 !== run.preflight_receipt.receipt_sha256
+			|| stage.output?.candidate_sha256 !== receipt.candidate_sha256
+			|| stage.output?.evidence_sha256 !== receipt.evidence_sha256
+			|| run.budget?.run_ceiling_usd !== receipt.budget?.run?.ceiling_usd
+			|| run.budget?.grammar_ceiling_usd !== receipt.budget?.grammar?.ceiling_usd
+			|| stableJson(run.budget?.image_ceiling_usd) !== stableJson(Object.fromEntries(Object.entries(receipt.budget?.images ?? {}).map(([provider, value]) => [provider, value.ceiling_usd])))
+			|| stableJson(run.budget?.grammar_per_call_ceiling_usd) !== stableJson(receipt.budget?.grammar?.per_call_ceiling_usd)) {
+			throw codedError("FACADE_AGENT_STATE_UNCERTAIN", "Preflight receipt binding is invalid");
+		}
+		if (receipt.evidence_manifest_path) {
+			const evidenceBytes = await safeRead(runDir, join(runDir, receipt.evidence_manifest_path), "preflight evidence manifest");
+			if (sha256(evidenceBytes) !== receipt.evidence_sha256) throw codedError("FACADE_AGENT_STATE_UNCERTAIN", "Preflight evidence manifest hash mismatch");
+		}
+		for (const [provider, ref] of Object.entries(receipt.requests ?? {})) {
+			if (!ref?.path || !HEX_SHA256.test(ref.sha256 ?? "") || !HEX_SHA256.test(ref.fingerprint ?? "")) {
+				throw codedError("FACADE_AGENT_STATE_UNCERTAIN", "Preflight request manifest reference is invalid");
+			}
+			const bytes = await safeRead(runDir, join(runDir, ref.path), "preflight request manifest");
+			if (sha256(bytes) !== ref.sha256) throw codedError("FACADE_AGENT_STATE_UNCERTAIN", "Preflight request manifest hash mismatch");
+			const request = JSON.parse(bytes.toString("utf8"));
+			if (request.provider !== provider || request.request_fingerprint !== ref.fingerprint
+				|| request.evidence_sha256 !== receipt.evidence_sha256) throw codedError("FACADE_AGENT_STATE_UNCERTAIN", "Preflight request manifest binding mismatch");
+		}
+	} else if (run.stage_manifests.preflight) {
+		throw codedError("FACADE_AGENT_STATE_UNCERTAIN", "Completed preflight is missing its durable receipt");
 	}
 	for (const ref of Object.values(run.stage_manifests)) await readStageRef(runDir, ref);
 	for (const [provider, ref] of Object.entries(run.provider_manifests)) {

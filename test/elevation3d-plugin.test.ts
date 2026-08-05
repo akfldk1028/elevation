@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { access, mkdtemp, rm } from "node:fs/promises";
+import { access, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -70,10 +70,11 @@ test("facade agent tool forwards a safe dry-run into the approved preflight harn
 		const transport = createFacadeFixtureTransport(async () => ({}));
 		const facadeAgentDependencyFactory = createFacadeAgentDependencyFactory(async ({ signal }: any) => {
 			receivedSignal = signal;
+			const provider = createFacadeFixtureTransport({ generate: transport });
 			return {
 				signal, loadCandidate: async () => ({ candidate: { candidate_id: "creative-020" }, identity: { geometry_hash: "fixture" } }),
-				buildEvidence: async () => ({}), extractGrammar: transport,
-				providers: { "gpt-image-2": transport, "nano-banana-pro": transport },
+				buildEvidence: async ({ runDir }: any) => ({ manifestSha256: "e".repeat(64), manifestPath: join(runDir, "evidence", "manifest.json") }), extractGrammar: transport,
+				providers: { "gpt-image-2": provider, "nano-banana-pro": provider },
 				build: async () => ({}), validate: async () => ({}), renderDelivery: async () => ({}),
 			};
 		});
@@ -94,19 +95,14 @@ test("facade agent tool forwards a safe dry-run into the approved preflight harn
 test("facade agent tool defaults to production preflight without dependency injection or transport", async () => {
 	const root = await mkdtemp(join(tmpdir(), "elevation3d-plugin-production-facade-"));
 	try {
-		const { mkdir, writeFile } = await import("node:fs/promises");
-		const mass = join(root, "candidates", "creative-020", "mass");
-		await mkdir(join(mass, "mesh"), { recursive: true });
-		await mkdir(join(mass, "elevation-research"), { recursive: true });
-		await writeFile(join(root, "candidates", "creative-020", "candidate.json"), JSON.stringify({ candidate_id: "creative-020" }));
-		await writeFile(join(mass, "manifest.json"), JSON.stringify({ identity: { candidate_id: "creative-020", geometry_hash: "fixture" }, artifacts: {} }));
-		await writeFile(join(mass, "mesh", "indexed-mesh.json"), JSON.stringify({ identity: { geometry_hash: "fixture" }, vertices: [], triangles: [] }));
-		for (const name of ["camera-poses.json", "floor-guides.json", "facade-planes.json", "surface-normals.json"]) await writeFile(join(mass, "elevation-research", name), "{}");
 		const tools: any[] = [];
 		await register({ config: {}, registerTool: (tool: any) => tools.push(tool), addPrompt() {}, registerMemoryLayer() {}, logger: console });
 		const tool = tools.find((item) => item.name === "elevation_3d_facade_agent_run");
-		const response = await tool.handler({ run_id: "production-preflight", dataset_root: root, output_root: join(root, "output") }, new AbortController().signal);
+		const response = await tool.handler({ run_id: "production-preflight", dataset_root: "D:/Data/50_ELE/MAAS_ELEVATION_TEST_SET_20260730", output_root: join(root, "output") }, new AbortController().signal);
 		assert.equal(JSON.parse(response.text).stage, "preflight");
+		const receipt = JSON.parse(await readFile(join(root, "output", "creative-020", "production-preflight", "stages", "preflight-receipt.json"), "utf8"));
+		assert.equal(receipt.capabilities["gpt-image-2"].available, false);
+		assert.equal(receipt.capabilities["openai-grammar"].available, false);
 	} finally { await rm(root, { recursive: true, force: true }); }
 });
 
@@ -142,8 +138,8 @@ test("plugin-created status verifies its persisted config before returning read-
 		const transport = createFacadeFixtureTransport(async () => ({}));
 		const factory = createFacadeAgentDependencyFactory(async () => ({
 			loadCandidate: async () => ({ candidate: { candidate_id: "creative-020" }, identity: { geometry_hash: "fixture" } }),
-			buildEvidence: async () => ({}), extractGrammar: transport,
-			providers: { "gpt-image-2": transport, "nano-banana-pro": transport },
+			buildEvidence: async ({ runDir }: any) => ({ manifestSha256: "e".repeat(64), manifestPath: join(runDir, "evidence", "manifest.json") }), extractGrammar: transport,
+			providers: { "gpt-image-2": createFacadeFixtureTransport({ generate: transport }), "nano-banana-pro": createFacadeFixtureTransport({ generate: transport }) },
 			build: async () => ({}), validate: async () => ({}), renderDelivery: async () => ({}),
 		}));
 		await register({ config: {}, facadeAgentDependencyFactory: factory, registerTool: (tool: any) => tools.push(tool), addPrompt() {}, registerMemoryLayer() {}, logger: console });

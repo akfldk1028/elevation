@@ -10,7 +10,7 @@ import { sha256, stableJson } from "../plugins/elevation-3d/lib/core.mjs";
 import { FacadeProviderError } from "../plugins/elevation-3d/lib/facade-agent/provider.mjs";
 import { verifyFacadeEvidencePack } from "../plugins/elevation-3d/lib/facade-agent/evidence.mjs";
 import { createFacadeFixtureTransport } from "../plugins/elevation-3d/lib/facade-agent/fixture-transport.mjs";
-import { extractFacadeGrammar, verifyFacadeProposal } from "../plugins/elevation-3d/lib/facade-agent/grammar-agent.mjs";
+import { extractFacadeGrammar, preflightFacadeGrammar, verifyFacadeProposal } from "../plugins/elevation-3d/lib/facade-agent/grammar-agent.mjs";
 import { buildRequest as buildOpenAIRequest, createProvider as createOpenAIProvider } from "../plugins/elevation-3d/lib/facade-agent/providers/openai-image.mjs";
 import { buildRequest as buildGeminiRequest, createProvider as createGeminiProvider } from "../plugins/elevation-3d/lib/facade-agent/providers/gemini-image.mjs";
 import {
@@ -104,7 +104,7 @@ async function fixture(overrides: any = {}) {
 	const ledgerRoot = join(root, "ledger");
 	await mkdir(ledgerRoot, { recursive: true });
 	const ledger = createPaidOperationLedger(join(ledgerRoot, "paid.json"), { approvedRoot: ledgerRoot });
-	const calls: any = { generate: [], request: [], grammar: [], build: [], validate: [], delivery: [], score: [] };
+	const calls: any = { preflight: [], generate: [], request: [], grammar: [], build: [], validate: [], delivery: [], score: [] };
 	const validations = overrides.validations ?? {};
 	const scores = overrides.scores ?? { "gpt-image-2": 91, "nano-banana-pro": 95 };
 	const scoreAuthorities = new WeakSet<object>();
@@ -116,6 +116,7 @@ async function fixture(overrides: any = {}) {
 		scoreAuthorities.add(result);
 		return result;
 	};
+	score.rehydrate = (value: any) => { scoreAuthorities.add(value); return value; };
 	score.select = (candidates: any[], tolerance = 0.5) => {
 		const authorized = candidates.filter((candidate) => scoreAuthorities.has(candidate) && candidate.accepted === true)
 			.sort((left, right) => right.score - left.score || left.provider.localeCompare(right.provider));
@@ -126,6 +127,10 @@ async function fixture(overrides: any = {}) {
 	};
 
 	const providers = Object.fromEntries(PROVIDERS.map((provider) => [provider, createFacadeFixtureTransport({
+		preflight({ request, ceilingUsd, estimateUsd }: any) {
+			calls.preflight.push({ provider, fingerprint: request.fingerprint, ceilingUsd, estimateUsd });
+			return { provider, model: provider, requestBytes: 1, ceilingUsd, estimateUsd, fixture: true };
+		},
 		buildRequest({ evidence, brief }: any) {
 			calls.request.push({ provider, evidenceSha: evidence.manifestSha256, briefId: brief.id });
 			return {
@@ -153,6 +158,10 @@ async function fixture(overrides: any = {}) {
 		calls.grammar.push(provider);
 		return { grammar: grammar(), remoteId: `grammar-${provider}`, actualUsd: 0 };
 	});
+	(extractGrammar as any).preflight = ({ ceilingUsd, estimateUsd }: any) => {
+		calls.preflight.push({ provider: "openai-grammar", model: "gpt-5.6", ceilingUsd, estimateUsd });
+		return { provider: "openai", model: "gpt-5.6", ceilingUsd, estimateUsd, fixture: true };
+	};
 
 	const deps: any = {
 		loadCandidate: async () => ({ candidate: { candidate_id: "creative-020" }, identity: { geometry_hash: "geometry-fixture" } }),
@@ -211,7 +220,7 @@ test("submits each image and grammar exactly once, applies only v002 locally, an
 
 	assert.deepEqual(value.calls.generate, ["gpt-image-2", "nano-banana-pro"]);
 	assert.deepEqual(value.calls.grammar, ["gpt-image-2", "nano-banana-pro"]);
-	assert.deepEqual(value.calls.request, PROVIDERS.map((provider) => ({ provider, evidenceSha: EVIDENCE_SHA, briefId: "brick-punched-window-v1" })));
+	assert.deepEqual(value.calls.request, [...PROVIDERS, ...PROVIDERS].map((provider) => ({ provider, evidenceSha: EVIDENCE_SHA, briefId: "brick-punched-window-v1" })));
 	assert.deepEqual(result.providers["gpt-image-2"].versions.map((version: any) => version.id), ["v001", "v002"]);
 	assert.ok(value.calls.build[1].windowHeight < value.calls.build[0].windowHeight);
 	assert.equal(result.image_submissions.total, 2);
@@ -228,6 +237,37 @@ test("submits each image and grammar exactly once, applies only v002 locally, an
 	const v002Build = JSON.parse(await readFile(join(value.runDir, "providers", "gpt-image-2", "stages", "build-v002.json"), "utf8"));
 	assert.equal(v002Build.previous.stage, "validate");
 	assert.equal(v002Build.previous.status, "succeeded");
+	const v002Grammar = await readFile(join(value.runDir, "providers", "gpt-image-2", "grammar-v002.json"), "utf8");
+	const correction = JSON.parse(await readFile(join(value.runDir, "providers", "gpt-image-2", "correction-v002.json"), "utf8"));
+	assert.equal(correction.schema_version, "arr.elevation3d.facade-correction.v1");
+	assert.equal(correction.input_grammar_sha256, result.providers["gpt-image-2"].versions[0].grammar_sha256);
+	assert.equal(correction.output_grammar_sha256, sha256(stableJson(JSON.parse(v002Grammar))));
+	assert.deepEqual(correction.correction_codes, ["WINDOW_CROSSES_FLOOR_BAND"]);
+	assert.deepEqual(correction.changed_fields, ["window_height_m"]);
+	assert.equal(v002Build.input_sha256.length, 64);
+});
+
+test("missing or tampered v002 grammar artifacts fail closed before v002 build on resume", async (context) => {
+	for (const mode of ["missing", "tampered"] as const) await context.test(mode, async () => {
+		let crash = true;
+		const value = await fixture({
+			runId: `v002-artifact-${mode}`,
+			validations: { "gpt-image-2": { v001: { accepted: false, codes: ["WINDOW_CROSSES_FLOOR_BAND"], retryable: true } } },
+			lifecycle: { onTransition(event: any) {
+				if (crash && event.stage === "correction" && event.status === "succeeded") {
+					crash = false;
+					throw new Error("crash after correction persistence");
+				}
+			} },
+		});
+		await assert.rejects(() => runFacadeAgent(value.config, value.deps), /correction persistence/);
+		const path = join(value.runDir, "providers", "gpt-image-2", "grammar-v002.json");
+		if (mode === "missing") await rm(path);
+		else await writeFile(path, `${JSON.stringify({ ...grammar(), window_height_m: 0.9 }, null, 2)}\n`);
+		const before = value.calls.build.length;
+		await assert.rejects(() => runFacadeAgent(value.config, value.deps), (error: any) => error.code === "FACADE_AGENT_STATE_UNCERTAIN");
+		assert.equal(value.calls.build.length, before);
+	});
 });
 
 test("runFacadeStage stops after the requested durable stage", async () => {
@@ -255,7 +295,7 @@ test("refuses an unconfirmed non-fixture transport before any paid callback", as
 	assert.deepEqual(value.calls.grammar, []);
 });
 
-test("preflight and evidence stop before live confirmation or paid callbacks", async () => {
+test("preflight and evidence build verified request evidence and capability receipts without paid callbacks", async () => {
 	for (const stage of ["preflight", "evidence"] as const) {
 		const value = await fixture({ runId: `unconfirmed-local-${stage}` });
 		value.deps.providers["gpt-image-2"] = { ...value.deps.providers["gpt-image-2"], transport: "live" };
@@ -263,7 +303,22 @@ test("preflight and evidence stop before live confirmation or paid callbacks", a
 		assert.equal(result.stage_manifests[stage].status, "succeeded");
 		assert.deepEqual(value.calls.generate, []);
 		assert.deepEqual(value.calls.grammar, []);
+		assert.equal(value.calls.preflight.length, 3);
+		assert.equal(result.preflight_receipt.receipt_sha256.length, 64);
+		const receipt = JSON.parse(await readFile(join(value.runDir, result.preflight_receipt.path), "utf8"));
+		assert.equal(receipt.evidence_sha256, EVIDENCE_SHA);
+		assert.equal(receipt.budget.run.ceiling_usd, 3);
+		assert.equal(receipt.budget.grammar.ceiling_usd, 1);
+		assert.equal(Object.keys(receipt.requests).length, 2);
 	}
+});
+
+test("preflight fails deterministically on a missing non-network capability before fetch or ledger work", async () => {
+	const value = await fixture({ runId: "missing-preflight-capability" });
+	value.deps.providers["gpt-image-2"] = { generate: value.deps.providers["gpt-image-2"].generate, buildRequest: value.deps.providers["gpt-image-2"].buildRequest };
+	await assert.rejects(() => runFacadeStage("preflight", value.config, value.deps), (error: any) => error.code === "PREFLIGHT_CAPABILITY_MISSING");
+	assert.deepEqual(value.calls.generate, []);
+	assert.deepEqual(value.calls.grammar, []);
 });
 
 test("a caller-set fixture label cannot authorize an unconfirmed transport", async () => {
@@ -307,14 +362,13 @@ test("grammar submission capabilities are bound and consumable only once", async
 	assert.equal(result.final.status, "winner");
 });
 
-test("a missing grammar ledger fails closed before invoking the grammar callback", async () => {
+test("a missing shared grammar ledger fails closed before any paid callback", async () => {
 	const value = await fixture({ runId: "grammar-ledger-missing" });
 	value.deps.ledger = { image: value.deps.ledger, grammar: {} };
 
-	const result = await runFacadeAgent(value.config, value.deps);
+	await assert.rejects(() => runFacadeAgent(value.config, value.deps), (error: any) => error.code === "FACADE_LEDGER_AGGREGATE_UNAVAILABLE");
+	assert.deepEqual(value.calls.generate, []);
 	assert.deepEqual(value.calls.grammar, []);
-	assert.equal(result.providers["gpt-image-2"].failure.code, "FACADE_LEDGER_MISSING");
-	assert.equal(result.final.status, "no-winner");
 });
 
 test("a crash after grammar ledger success cannot repeat the grammar callback", async () => {
@@ -336,6 +390,27 @@ test("a crash after grammar ledger success cannot repeat the grammar callback", 
 	const resumed = await runFacadeAgent(value.config, value.deps);
 	assert.deepEqual(value.calls.grammar, ["gpt-image-2", "nano-banana-pro"]);
 	assert.equal(resumed.providers["gpt-image-2"].failure.code, "PAID_OPERATION_SUBMISSION_UNCERTAIN");
+});
+
+test("resume after canonical grammar persistence continues local work without paid calls", async () => {
+	let crash = true;
+	const value = await fixture({
+		runId: "grammar-persisted-crash",
+		lifecycle: { onTransition(event: any) {
+			if (crash && event.stage === "grammar" && event.status === "succeeded" && event.provider === "nano-banana-pro") {
+				crash = false;
+				throw new Error("crash after canonical grammar persistence");
+			}
+		} },
+	});
+	await assert.rejects(() => runFacadeAgent(value.config, value.deps), /canonical grammar persistence/);
+	assert.deepEqual(value.calls.generate, [...PROVIDERS]);
+	assert.deepEqual(value.calls.grammar, [...PROVIDERS]);
+	const resumed = await runFacadeAgent(value.config, value.deps);
+	assert.equal(resumed.final.status, "winner");
+	assert.deepEqual(value.calls.generate, [...PROVIDERS]);
+	assert.deepEqual(value.calls.grammar, [...PROVIDERS]);
+	assert.equal(value.calls.delivery.length, 1);
 });
 
 test("rejects false hashes and structurally invalid GLBs before validation or delivery", async (context) => {
@@ -452,7 +527,7 @@ test("validation receives only an immutable canonical artifact authority", async
 	assert.equal(result.final.status, "winner");
 });
 
-test("resume after a durable validation receipt fails closed without revalidation or scoring", async () => {
+test("resume after a rejected v001 validation receipt continues with v002 without revalidation", async () => {
 	let crash = true;
 	const value = await fixture({
 		runId: "validation-receipt-crash",
@@ -462,20 +537,20 @@ test("resume after a durable validation receipt fails closed without revalidatio
 				throw new Error("crash after validation receipt");
 			}
 		} },
+		validations: { "gpt-image-2": { v001: { accepted: false, codes: ["WINDOW_CROSSES_FLOOR_BAND"], retryable: true }, v002: { accepted: true, codes: [] } } },
 	});
 
 	await assert.rejects(() => runFacadeAgent(value.config, value.deps), /crash after validation receipt/);
 	assert.deepEqual(value.calls.validate, [{ provider: "gpt-image-2", versionId: "v001" }]);
 	assert.deepEqual(value.calls.score, []);
 	const resumed = await runFacadeAgent(value.config, value.deps);
-	assert.equal(resumed.final.status, "blocked");
-	assert.equal(resumed.final.failure.code, "DURABLE_RECEIPT_RECONCILIATION_REQUIRED");
-	assert.equal(value.calls.validate.length, 1);
-	assert.equal(value.calls.score.length, 0);
-	assert.equal(value.calls.delivery.length, 0);
+	assert.equal(resumed.final.status, "winner");
+	assert.equal(value.calls.validate.filter((call: any) => call.provider === "gpt-image-2" && call.versionId === "v001").length, 1);
+	assert.ok(value.calls.build.some((call: any) => call.provider === "gpt-image-2" && call.versionId === "v002"));
+	assert.equal(value.calls.delivery.length, 1);
 });
 
-test("resume after a durable score receipt never reinterprets or changes the winner", async () => {
+test("resume after a durable score receipt continues comparison and delivery without rescoring", async () => {
 	let crash = true;
 	const value = await fixture({
 		runId: "score-receipt-crash",
@@ -490,15 +565,10 @@ test("resume after a durable score receipt never reinterprets or changes the win
 	await assert.rejects(() => runFacadeAgent(value.config, value.deps), /crash after score receipt/);
 	assert.deepEqual(value.calls.validate, [{ provider: "gpt-image-2", versionId: "v001" }]);
 	assert.deepEqual(value.calls.score, ["gpt-image-2"]);
-	value.deps.score = Object.assign(async () => { throw new Error("must not rescore"); }, {
-		select() { throw new Error("must not reselect"); },
-	});
 	const resumed = await runFacadeAgent(value.config, value.deps);
-	assert.equal(resumed.final.status, "blocked");
-	assert.equal(resumed.final.failure.code, "DURABLE_RECEIPT_RECONCILIATION_REQUIRED");
-	assert.equal(value.calls.validate.length, 1);
-	assert.equal(value.calls.score.length, 1);
-	assert.equal(value.calls.delivery.length, 0);
+	assert.equal(resumed.final.status, "winner");
+	assert.equal(value.calls.score.filter((provider: string) => provider === "gpt-image-2").length, 1);
+	assert.equal(value.calls.delivery.length, 1);
 });
 
 test("in-flight markers prevent callback replay before validation and score receipt publication", async (context) => {
@@ -560,7 +630,7 @@ test("preserves request identity through actual provider factories with mocked f
 		"gpt-image-2": Object.freeze({ buildRequest: buildOpenAIRequest, preflight: openai.preflight, generate: openai.generate }),
 		"nano-banana-pro": Object.freeze({ buildRequest: buildGeminiRequest, preflight: gemini.preflight, generate: gemini.generate }),
 	};
-	value.deps.extractGrammar = async (input: any) => extractFacadeGrammar({
+	const actualExtractGrammar: any = async (input: any) => extractFacadeGrammar({
 		...input,
 		proposalPath: await verifyFacadeProposal({
 			proposalPath: input.proposal.path, providerResult: input.providerResult,
@@ -576,6 +646,10 @@ test("preserves request identity through actual provider factories with mocked f
 			});
 		},
 	});
+	actualExtractGrammar.preflight = (input: any) => preflightFacadeGrammar({
+		...input, config: { ...input.config, openAIApiKey: "sk-fixture" },
+	});
+	value.deps.extractGrammar = actualExtractGrammar;
 	value.config.confirmLive = true;
 
 	const result = await runFacadeAgent(value.config, value.deps);

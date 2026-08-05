@@ -38,6 +38,8 @@ test("locks the first comparison and rejects unsafe expansion", () => {
 	});
 	assert.equal(value.maxLocalAttempts, 2);
 	assert.equal(value.maxImageSubmissionsPerProvider, 1);
+	assert.deepEqual(value.grammarBudgetAllocationUsd, { "gpt-image-2": 0.5, "nano-banana-pro": 0.5 });
+	assert.equal(value.runBudgetUsd, 3);
 	assert.deepEqual(value.providers, ["gpt-image-2", "nano-banana-pro"]);
 	assert.throws(() => normalizeFacadeAgentConfig({ ...value, candidateId: "../escape" }), FacadeAgentContractError);
 	assert.throws(() => normalizeFacadeAgentConfig({ ...value, maxLocalAttempts: 3 }), /two local attempts/i);
@@ -56,6 +58,12 @@ test("rejects altered provider comparisons and invalid budget ceilings", () => {
 		assert.throws(() => normalizeFacadeAgentConfig(approvedConfig({ imageBudgetUsd: { "gpt-image-2": value, "nano-banana-pro": 1 } })), /finite nonnegative/i);
 		assert.throws(() => normalizeFacadeAgentConfig(approvedConfig({ grammarBudgetUsd: value })), /finite nonnegative/i);
 	}
+	assert.throws(() => normalizeFacadeAgentConfig(approvedConfig({
+		imageEstimateUsd: { "gpt-image-2": 1.01, "nano-banana-pro": 1 },
+	})), /cannot exceed/i);
+	assert.throws(() => normalizeFacadeAgentConfig(approvedConfig({
+		imageEstimateUsd: { "gpt-image-2": Number.NaN, "nano-banana-pro": 1 },
+	})), /finite nonnegative/i);
 });
 
 test("normalizes filesystem roots, coercion, and secrets", () => {

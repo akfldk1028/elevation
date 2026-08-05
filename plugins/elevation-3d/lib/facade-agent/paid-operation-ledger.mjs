@@ -94,7 +94,7 @@ function finiteNonnegative(value, label) {
 	return value;
 }
 
-function validateIdentity({ requestKey, provider, kind, ceilingUsd, estimateUsd, operation }) {
+function validateIdentity({ requestKey, provider, kind, ceilingUsd, estimateUsd, runCeilingUsd, kindCeilingUsd, operation }) {
 	if (typeof requestKey !== "string" || !HEX_SHA256.test(requestKey)) throw new TypeError("requestKey must be a lowercase SHA-256 digest");
 	if (typeof provider !== "string" || !PROVIDER.test(provider)) throw new TypeError("provider must be a safe identifier");
 	if (!ALLOWED_KINDS.has(kind)) throw new TypeError("kind must be image-generation or grammar-extraction");
@@ -102,6 +102,10 @@ function validateIdentity({ requestKey, provider, kind, ceilingUsd, estimateUsd,
 	finiteNonnegative(estimateUsd, "estimateUsd");
 	if (typeof operation !== "function") throw new TypeError("operation must be a function");
 	if (estimateUsd > ceilingUsd) throw codedError("PAID_OPERATION_BUDGET_EXCEEDED", "Estimated paid operation cost exceeds its approved ceiling");
+	if (runCeilingUsd !== undefined) finiteNonnegative(runCeilingUsd, "runCeilingUsd");
+	if (kindCeilingUsd !== undefined) finiteNonnegative(kindCeilingUsd, "kindCeilingUsd");
+	if (runCeilingUsd !== undefined && ceilingUsd > runCeilingUsd) throw codedError("PAID_OPERATION_AGGREGATE_BUDGET_EXCEEDED", "Paid operation ceiling exceeds the approved run budget");
+	if (kindCeilingUsd !== undefined && ceilingUsd > kindCeilingUsd) throw codedError("PAID_OPERATION_AGGREGATE_BUDGET_EXCEEDED", "Paid operation ceiling exceeds the approved kind budget");
 }
 
 function validRemoteId(value) {
@@ -118,6 +122,7 @@ function validateOperationRecord(requestKey, value) {
 	if (value.remoteId !== null && !validRemoteId(value.remoteId)) throw new Error("Invalid paid operation ledger");
 	if (value.artifactSha256 !== null && (typeof value.artifactSha256 !== "string" || !HEX_SHA256.test(value.artifactSha256))) throw new Error("Invalid paid operation ledger");
 	if (value.actualUsd !== null) finiteNonnegative(value.actualUsd, "persisted actualUsd");
+	if (value.actualUsd !== null && value.actualUsd > value.ceilingUsd) throw new Error("Invalid paid operation ledger");
 	if (value.status === "succeeded" && (!validRemoteId(value.remoteId) || !HEX_SHA256.test(value.artifactSha256) || value.actualUsd === null)) {
 		throw new Error("Invalid paid operation ledger");
 	}
@@ -246,6 +251,34 @@ function publicResult(record) {
 	return { remoteIdHash: sha256(record.remoteId), artifactSha256: record.artifactSha256, actualUsd: record.actualUsd };
 }
 
+function assertAggregateBudget(ledger, input) {
+	if (input.runCeilingUsd === undefined && input.kindCeilingUsd === undefined) return;
+	const operations = Object.values(ledger.operations);
+	const runReserved = operations.reduce((sum, operation) => sum + operation.ceilingUsd, 0);
+	const kindReserved = operations.filter((operation) => operation.kind === input.kind)
+		.reduce((sum, operation) => sum + operation.ceilingUsd, 0);
+	if (input.runCeilingUsd !== undefined && runReserved + input.ceilingUsd > input.runCeilingUsd + Number.EPSILON) {
+		throw codedError("PAID_OPERATION_AGGREGATE_BUDGET_EXCEEDED", "Paid operation reservations exceed the approved run budget");
+	}
+	if (input.kindCeilingUsd !== undefined && kindReserved + input.ceilingUsd > input.kindCeilingUsd + Number.EPSILON) {
+		throw codedError("PAID_OPERATION_AGGREGATE_BUDGET_EXCEEDED", "Paid operation reservations exceed the approved kind budget");
+	}
+}
+
+function costSummary(operations) {
+	const empty = () => ({ reserved_ceiling_usd: 0, estimated_usd: 0, actual_usd: 0 });
+	const total = empty();
+	const byKind = Object.fromEntries([...ALLOWED_KINDS].map((kind) => [kind, empty()]));
+	for (const operation of operations) {
+		for (const target of [total, byKind[operation.kind]]) {
+			target.reserved_ceiling_usd += operation.ceilingUsd;
+			target.estimated_usd += operation.estimateUsd;
+			target.actual_usd += operation.actualUsd ?? 0;
+		}
+	}
+	return { total, by_kind: byKind };
+}
+
 function uncertainError(kind) {
 	return codedError("PAID_OPERATION_SUBMISSION_UNCERTAIN", `Refusing to resubmit uncertain ${kind} operation; reconcile provider state manually`);
 }
@@ -295,6 +328,7 @@ export function createPaidOperationLedger(path, { approvedRoot, lockWaitMs = 5_0
 						if (existing.status === "succeeded") return publicResult(existing);
 						throw uncertainError(input.kind);
 					}
+					assertAggregateBudget(ledger, input);
 					ledger.operations[input.requestKey] = {
 						provider: input.provider,
 						kind: input.kind,
@@ -315,6 +349,9 @@ export function createPaidOperationLedger(path, { approvedRoot, lockWaitMs = 5_0
 					});
 					try {
 						const result = validateResult(await input.operation(submissionCapability));
+						if (result.actualUsd > input.ceilingUsd) {
+							throw codedError("PAID_OPERATION_ACTUAL_BUDGET_EXCEEDED", "Paid operation actual cost exceeds its reserved ceiling");
+						}
 						ledger.operations[input.requestKey] = {
 							...ledger.operations[input.requestKey], ...result, status: "succeeded",
 						};
@@ -347,19 +384,21 @@ export function createPaidOperationLedger(path, { approvedRoot, lockWaitMs = 5_0
 		async summary() {
 			await pending;
 			const ledger = await readLedger(ledgerPath, root);
+			const operations = Object.entries(ledger.operations).map(([key, operation]) => ({
+				requestKey: key,
+				provider: operation.provider,
+				kind: operation.kind,
+				status: operation.status,
+				estimateUsd: operation.estimateUsd,
+				ceilingUsd: operation.ceilingUsd,
+				remoteIdHash: operation.remoteId ? sha256(operation.remoteId) : null,
+				artifactSha256: operation.artifactSha256,
+				actualUsd: operation.actualUsd,
+			}));
 			return {
 				version: ledger.version,
-				operations: Object.entries(ledger.operations).map(([key, operation]) => ({
-					requestKey: key,
-					provider: operation.provider,
-					kind: operation.kind,
-					status: operation.status,
-					estimateUsd: operation.estimateUsd,
-					ceilingUsd: operation.ceilingUsd,
-					remoteIdHash: operation.remoteId ? sha256(operation.remoteId) : null,
-					artifactSha256: operation.artifactSha256,
-					actualUsd: operation.actualUsd,
-				})),
+				operations,
+				costs: costSummary(Object.values(ledger.operations)),
 			};
 		},
 	};

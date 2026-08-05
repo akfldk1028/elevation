@@ -56,6 +56,7 @@ test("persists one safe idempotent facade-agent comparison event with run-relati
 		input_sha256: "1".repeat(64),
 		status: "winner",
 		image_submissions: { total: 2, by_provider: { "gpt-image-2": 1, "nano-banana-pro": 1 } },
+		budget: { run_ceiling_usd: 3, image_ceiling_usd: { "gpt-image-2": 1, "nano-banana-pro": 1 }, grammar_ceiling_usd: 1, grammar_per_call_ceiling_usd: { "gpt-image-2": 0.5, "nano-banana-pro": 0.5 } },
 		providers: {
 			"gpt-image-2": {
 				status: "accepted",
@@ -95,6 +96,7 @@ test("persists one safe idempotent facade-agent comparison event with run-relati
 	assert.equal(event.image_submissions["gpt-image-2"], 1);
 	assert.equal(event.image_submissions["nano-banana-pro"], 1);
 	assert.equal(event.geometry_authority, "canonical-local-mass");
+	assert.deepEqual(event.budget, result.budget);
 	assert.equal(event.retry_policy, "two-local-attempts-no-image-resubmit");
 	assert.equal(event.providers["gpt-image-2"].attempts.length, 2);
 	assert.equal(event.providers["gpt-image-2"].attempts[1].artifact.path, "providers/gpt-image-2/artifacts/v002.glb");

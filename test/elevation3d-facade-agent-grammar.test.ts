@@ -7,7 +7,13 @@ import sharp from "sharp";
 
 import { sha256, stableJson } from "../plugins/elevation-3d/lib/core.mjs";
 import { verifyFacadeEvidencePack } from "../plugins/elevation-3d/lib/facade-agent/evidence.mjs";
-import { extractFacadeGrammar, verifyFacadeProposal } from "../plugins/elevation-3d/lib/facade-agent/grammar-agent.mjs";
+import {
+	extractFacadeGrammar,
+	readVerifiedFacadeGrammarAuthority,
+	rehydrateVerifiedFacadeGrammar,
+	serializeVerifiedFacadeGrammarAuthority,
+	verifyFacadeProposal,
+} from "../plugins/elevation-3d/lib/facade-agent/grammar-agent.mjs";
 import { createPaidOperationLedger } from "../plugins/elevation-3d/lib/facade-agent/paid-operation-ledger.mjs";
 import {
 	buildRequest as buildOpenAIRequest,
@@ -189,6 +195,29 @@ test("calls the pinned Responses structured-output contract and binds proposal a
 	assert.equal(ledger.calls[0].ceilingUsd, 0.1);
 	assert.equal(ledger.calls[0].estimateUsd, 0.05);
 	assert.doesNotMatch(stableJson({ extracted, ledger: ledger.calls.map(({ operation: _operation, ...call }) => call) }), /sk-fixture-secret|Authorization/i);
+});
+
+test("rehydrates a canonical persisted grammar only when every durable authority binding matches", async () => {
+	const extracted = await extractFacadeGrammar({
+		proposalPath: proposalAuthority, evidence, config: config(), ledger: fixtureLedger(),
+		fetchImpl: async () => Response.json(responseFixture(grammar)),
+	});
+	const path = join(root, "rehydrate-grammar.json");
+	const bytes = Buffer.from(`${JSON.stringify(extracted, null, 2)}\n`);
+	await writeFile(path, bytes);
+	const authority = serializeVerifiedFacadeGrammarAuthority(extracted);
+	const copied = JSON.parse(bytes.toString("utf8"));
+	assert.equal(readVerifiedFacadeGrammarAuthority(copied), null);
+	const restored = await rehydrateVerifiedFacadeGrammar({
+		path, artifactSha256: sha256(bytes), authority, evidence,
+		provider: "gpt-image-2", proposalSha256: sha256(proposalBytes),
+	});
+	assert.equal(Object.isFrozen(restored), true);
+	assert.equal(readVerifiedFacadeGrammarAuthority(restored)?.proposalSha256, sha256(proposalBytes));
+	await assert.rejects(() => rehydrateVerifiedFacadeGrammar({
+		path, artifactSha256: sha256(bytes), authority: { ...authority, camerasSha256: "f".repeat(64) }, evidence,
+		provider: "gpt-image-2", proposalSha256: sha256(proposalBytes),
+	}), (error: any) => error.code === "GRAMMAR_REHYDRATION_INVALID");
 });
 
 test("requires an unforgeable proposal authority bound to provider, candidate, evidence, path, and bytes", async () => {
