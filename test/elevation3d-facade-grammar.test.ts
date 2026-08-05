@@ -82,6 +82,7 @@ test("normalizes approved grammar against MASS floor guides and facade extents",
 	assert.equal(grammar.mullion_depth_m, 0.03);
 	assert.equal(grammar.glazing_recess_m, 0.2);
 	assert.equal(grammar.parapet_height_m, 0.15);
+	assert.equal(Object.hasOwn(grammar, "window_width_m"), false);
 });
 
 const grammar = {
@@ -115,4 +116,67 @@ test("keeps repeated corrections within approved grammar limits", () => {
 	assert.equal(corrected.bay_width_m, 2.25);
 	assert.equal(corrected.frame_depth_m, 0.05);
 	assert.equal(corrected.mullion_depth_m, 0.03);
+});
+
+const punchedGrammar = {
+	system: "brick-punched-window-v1",
+	surfaces: ["front", "right", "back", "left"],
+	bay_width_m: 2.4,
+	window_width_m: 1.2,
+	window_height_m: 1.65,
+	sill_height_m: 0.85,
+	reveal_depth_m: 0.22,
+	frame_width_m: 0.06,
+	lintel_height_m: 0.18,
+	sill_depth_m: 0.08,
+	cladding_depth_m: 0.12,
+	brick_module_m: [0.215, 0.065],
+	corner_datum_m: 0,
+	confidence: 0.92,
+	unresolved_surfaces: [],
+};
+
+const punchedFloorGuides = { floor_guides_m: [0, 3.3, 6.6, 9.9] };
+const punchedFacadePlanes = {
+	facade_planes: [
+		{ view: "front", extent_m: [24.361488, 9.9] },
+		{ view: "right", extent_m: [12.234058, 9.9] },
+		{ view: "back", extent_m: [24.361488, 9.9] },
+		{ view: "left", extent_m: [12.234058, 9.9] },
+	],
+};
+
+test("normalizes the typed opaque brick punched-window grammar", () => {
+	const normalized = normalizeFacadeGrammar({
+		approvedDesign: { facade_grammar: punchedGrammar },
+		floorGuides: punchedFloorGuides,
+		facadePlanes: punchedFacadePlanes,
+	});
+	assert.equal(normalized.system, "brick-punched-window-v1");
+	assert.equal(normalized.wall_opacity, "opaque");
+	assert.equal(normalized.curtain_wall_allowed, false);
+	assert.deepEqual(normalized.materials, ["brick", "precast", "window-frame", "glass"]);
+	assert.deepEqual(normalized.facade_lengths_m, { front: 24.361488, right: 12.234058, back: 24.361488, left: 12.234058 });
+});
+
+test("fails closed when a typed grammar leaves any canonical facade unresolved", () => {
+	assert.throws(() => normalizeFacadeGrammar({
+		approvedDesign: { facade_grammar: { ...punchedGrammar, unresolved_surfaces: ["back"] } },
+		floorGuides: punchedFloorGuides,
+		facadePlanes: punchedFacadePlanes,
+	}), /unresolved facade/i);
+});
+
+test("applies only allowlisted typed-grammar corrections", () => {
+	const typed = normalizeFacadeGrammar({
+		approvedDesign: { facade_grammar: punchedGrammar },
+		floorGuides: punchedFloorGuides,
+		facadePlanes: punchedFacadePlanes,
+	});
+	assert.equal(correctGrammar(typed, ["WINDOW_CROSSES_FLOOR_BAND"]).window_height_m < typed.window_height_m, true);
+	assert.equal(correctGrammar(typed, ["DETAIL_BOUNDS_EXCEEDED"]).cladding_depth_m, 0.09);
+	assert.equal(correctGrammar(typed, ["DETAIL_BOUNDS_EXCEEDED"]).reveal_depth_m, 0.165);
+	assert.equal(correctGrammar({ ...typed, corner_datum_m: 0.1 }, ["CORNER_DATUM_MISMATCH"]).corner_datum_m, 0);
+	assert.equal(correctGrammar(typed, ["PRIMITIVE_BUDGET_EXCEEDED"]).bay_width_m, 3);
+	assert.throws(() => correctGrammar(typed, ["CHANGE_MASSING"]), /unrecognized grammar failure code/i);
 });
