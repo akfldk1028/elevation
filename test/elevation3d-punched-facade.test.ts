@@ -44,10 +44,21 @@ const grammar = {
 
 function facadeBackingMesh(plane: { origin: number[]; normal: number[]; extent_m: number[] }) {
 	const tangent = [-plane.normal[1], plane.normal[0], 0];
-	const point = (u: number, v: number) => plane.origin.map((value, axis) => value + tangent[axis] * u + (axis === 2 ? v : 0));
+	const point = (u: number, v: number, depth: number) => plane.origin.map((value, axis) => (
+		value + tangent[axis] * u + (axis === 2 ? v : 0) - plane.normal[axis] * depth
+	));
+	const width = plane.extent_m[0];
+	const height = plane.extent_m[1];
 	return {
-		vertices: [point(0, 0), point(plane.extent_m[0], 0), point(plane.extent_m[0], plane.extent_m[1]), point(0, plane.extent_m[1])],
-		triangles: [[0, 1, 2], [0, 2, 3]],
+		vertices: [
+			point(0, 0, 0), point(width, 0, 0), point(width, height, 0), point(0, height, 0),
+			point(0, 0, 1), point(width, 0, 1), point(width, height, 1), point(0, height, 1),
+		],
+		triangles: [
+			[0, 1, 2], [0, 2, 3], [4, 6, 5], [4, 7, 6],
+			[0, 4, 5], [0, 5, 1], [3, 2, 6], [3, 6, 7],
+			[0, 3, 7], [0, 7, 4], [1, 5, 6], [1, 6, 2],
+		],
 	};
 }
 
@@ -189,11 +200,62 @@ test("rejects sparse typed geometry inputs and texture allocations beyond the de
 	assert.throws(() => createFacadePbrMaps({ grammar, resolution: 2049 }), /texture byte budget exceeded/i);
 });
 
+test("rejects high-incidence non-manifold MASS without overflowing the component walk", () => {
+	const frontTriangle = { vertices: [mesh.vertices[0], mesh.vertices[1], mesh.vertices[5]], triangles: Array.from({ length: 60_000 }, () => [0, 1, 2]) };
+	assert.throws(
+		() => buildPunchedFacadeDetails({ mesh: frontTriangle, floorGuides, facadePlanes: { facade_planes: [facadePlanes.facade_planes[0]] }, grammar }),
+		(error: Error) => {
+			assert.doesNotMatch(error.message, /Maximum call stack/i);
+			assert.match(error.message, /exact-MASS backing/i);
+			return true;
+		},
+	);
+});
+
 test("rejects procedural facade planes that have no positive-area exact-MASS backing", () => {
 	const detached = { ...facadePlanes.facade_planes[0], origin: [-4, -20, 0] };
 	assert.throws(
 		() => buildPunchedFacadeDetails({ mesh, floorGuides, facadePlanes: { facade_planes: [detached] }, grammar }),
 		/lacks exact-MASS backing/i,
+	);
+});
+
+test("rejects a facade plane whose outward normal points through opaque MASS", () => {
+	const inwardFront = {
+		...facadePlanes.facade_planes[0],
+		origin: [4, -2, 0],
+		normal: [0, 1, 0],
+		extent_m: [8, 6.6],
+	};
+	assert.throws(
+		() => buildPunchedFacadeDetails({ mesh, floorGuides, facadePlanes: { facade_planes: [inwardFront] }, grammar }),
+		/outward orientation/i,
+	);
+});
+
+test("rejects reversed facade orientation when the supporting MASS component is open", () => {
+	const openReversedMass = {
+		vertices: mesh.vertices.map((point) => [...point]),
+		triangles: mesh.triangles.filter((_, index) => index !== 2 && index !== 3).map((triangle) => [...triangle].reverse()),
+	};
+	const inwardFront = { ...facadePlanes.facade_planes[0], origin: [4, -2, 0], normal: [0, 1, 0] };
+	assert.throws(
+		() => buildPunchedFacadeDetails({ mesh: openReversedMass, floorGuides, facadePlanes: { facade_planes: [inwardFront] }, grammar }),
+		/(closed MASS|outward orientation)/i,
+	);
+});
+
+test("rejects inward facade orientation on an oppositely wound disconnected MASS component", () => {
+	const translatedVertices = mesh.vertices.map(([x, y, z]) => [x + 20, y + 20, z]);
+	const offset = mesh.vertices.length;
+	const mixedMass = {
+		vertices: mesh.vertices.concat(translatedVertices),
+		triangles: mesh.triangles.concat(mesh.triangles.map((triangle) => triangle.map((index) => index + offset).reverse())),
+	};
+	const inwardFront = { ...facadePlanes.facade_planes[0], origin: [24, 18, 0], normal: [0, 1, 0] };
+	assert.throws(
+		() => buildPunchedFacadeDetails({ mesh: mixedMass, floorGuides, facadePlanes: { facade_planes: [inwardFront] }, grammar }),
+		/outward orientation/i,
 	);
 });
 
