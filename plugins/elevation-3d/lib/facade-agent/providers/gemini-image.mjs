@@ -12,6 +12,8 @@ const MAX_REQUEST_BYTES = 32 * 1024 * 1024;
 const MAX_PROMPT_DATA_BYTES = 1024 * 1024;
 const MAX_BOUNDARY_DEPTH = 32;
 const MAX_BOUNDARY_ENTRIES = 4_096;
+const MAX_RESPONSE_NODES = 4_096;
+const MAX_RESPONSE_BYTES = Math.ceil(MAX_IMAGE_BYTES / 3) * 4 + 1024 * 1024;
 const DEFAULT_TIMEOUT_MS = 120_000;
 const requestAuthorities = new WeakMap();
 
@@ -29,6 +31,7 @@ function boundaryRecord(value) {
 	try {
 		if (!value || typeof value !== "object" || Array.isArray(value) || Object.getPrototypeOf(value) !== Object.prototype) throw new Error();
 		const descriptors = Object.getOwnPropertyDescriptors(value);
+		if (Reflect.ownKeys(descriptors).length > MAX_BOUNDARY_ENTRIES) throw new Error();
 		const record = Object.create(null);
 		for (const key of Reflect.ownKeys(descriptors)) {
 			const descriptor = descriptors[key];
@@ -82,6 +85,82 @@ function clonePlainData(value, seen = new Set(), depth = 0) {
 		return result;
 	} catch {
 		throw preflightFailure("PROVIDER_BOUNDARY_INVALID", "Provider boundary input must contain only plain data without accessors");
+	}
+}
+
+function cloneResponsePayload(value) {
+	const seen = new Set();
+	let nodes = 0;
+	function clone(item, depth) {
+		if (depth > MAX_BOUNDARY_DEPTH || ++nodes > MAX_RESPONSE_NODES) throw new Error();
+		if (item === null || typeof item === "string" || typeof item === "boolean"
+			|| (typeof item === "number" && Number.isFinite(item))) return item;
+		if (typeof item !== "object" || seen.has(item)) throw new Error();
+		seen.add(item);
+		const prototype = Object.getPrototypeOf(item);
+		if (Array.isArray(item)) {
+			if (prototype !== Array.prototype) throw new Error();
+			const descriptors = Object.getOwnPropertyDescriptors(item);
+			const length = descriptors.length?.value;
+			const keys = Reflect.ownKeys(descriptors).filter((key) => key !== "length");
+			if (!Number.isSafeInteger(length) || length < 0 || length > MAX_BOUNDARY_ENTRIES || keys.length !== length) throw new Error();
+			const result = new Array(length);
+			for (const key of keys) {
+				const descriptor = descriptors[key];
+				if (typeof key !== "string" || !/^(?:0|[1-9][0-9]*)$/.test(key)
+					|| descriptor.get || descriptor.set || !("value" in descriptor)) throw new Error();
+				const index = Number(key);
+				if (index >= length) throw new Error();
+				result[index] = clone(descriptor.value, depth + 1);
+			}
+			return result;
+		}
+		if (prototype !== Object.prototype && prototype !== null) throw new Error();
+		const descriptors = Object.getOwnPropertyDescriptors(item);
+		const keys = Reflect.ownKeys(descriptors);
+		if (keys.length > MAX_BOUNDARY_ENTRIES) throw new Error();
+		const result = Object.create(null);
+		for (const key of keys) {
+			const descriptor = descriptors[key];
+			if (typeof key !== "string" || ["__proto__", "prototype", "constructor"].includes(key)
+				|| descriptor.get || descriptor.set || !("value" in descriptor)) throw new Error();
+			result[key] = clone(descriptor.value, depth + 1);
+		}
+		return result;
+	}
+	try { return clone(value, 0); }
+	catch { throw failure("PROVIDER_RESPONSE_INVALID", "Provider returned an invalid JSON payload"); }
+}
+
+async function readBoundedJsonResponse(response) {
+	const declaredLength = response.headers.get("content-length");
+	if (declaredLength !== null && (!/^(?:0|[1-9][0-9]*)$/.test(declaredLength) || Number(declaredLength) > MAX_RESPONSE_BYTES)) {
+		throw failure("PROVIDER_RESPONSE_TOO_LARGE", "Provider response exceeds the configured size limit");
+	}
+	const reader = response.body?.getReader();
+	if (!reader) return { payload: Object.create(null), parseFailed: true };
+	const chunks = [];
+	let totalBytes = 0;
+	try {
+		while (true) {
+			const { done, value } = await reader.read();
+			if (done) break;
+			if (!(value instanceof Uint8Array)) throw failure("PROVIDER_RESPONSE_INVALID", "Provider returned an invalid response body");
+			totalBytes += value.byteLength;
+			if (totalBytes > MAX_RESPONSE_BYTES) {
+				await reader.cancel().catch(() => {});
+				throw failure("PROVIDER_RESPONSE_TOO_LARGE", "Provider response exceeds the configured size limit");
+			}
+			chunks.push(Buffer.from(value));
+		}
+	} finally { reader.releaseLock(); }
+	try {
+		return { payload: cloneResponsePayload(JSON.parse(Buffer.concat(chunks, totalBytes).toString("utf8"))), parseFailed: false };
+	} catch (error) {
+		if (error instanceof FacadeProviderError && error.code === "PROVIDER_RESPONSE_INVALID") {
+			return { payload: Object.create(null), parseFailed: true };
+		}
+		return { payload: Object.create(null), parseFailed: true };
 	}
 }
 
@@ -288,8 +367,12 @@ async function fetchWithDeadline(fetchImpl, url, init, callerSignal, timeoutMs, 
 	}
 }
 
-export function createProvider(env = {}, { fetchImpl, timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
+export function createProvider(envInput = {}, optionsInput = {}) {
+	const env = boundaryRecord(envInput);
+	const options = boundaryRecord(optionsInput);
 	const apiKey = env.GEMINI_API_KEY;
+	const fetchImpl = options.fetchImpl;
+	const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 	if (typeof fetchImpl !== "function") throw new TypeError("fetchImpl is required and must be a function");
 	if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new TypeError("timeoutMs must be a positive finite number");
 
@@ -326,8 +409,7 @@ export function createProvider(env = {}, { fetchImpl, timeoutMs = DEFAULT_TIMEOU
 					body,
 				}, signal, timeoutMs, async (response) => {
 					const headerRemoteId = response.headers.get("x-request-id");
-					try { return { response, payload: await response.json(), parseFailed: false, headerRemoteId }; }
-					catch { return { response, payload: {}, parseFailed: true, headerRemoteId }; }
+					return { response, ...await readBoundedJsonResponse(response), headerRemoteId };
 				});
 				const remoteId = headerRemoteId ?? payload?.responseId ?? null;
 				if (!response.ok) {
