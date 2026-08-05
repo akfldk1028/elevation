@@ -15,6 +15,7 @@ import { createPaidOperationLedger } from "../plugins/elevation-3d/lib/facade-ag
 import { buildRequest as buildOpenAIRequest, createProvider as createOpenAIProvider } from "../plugins/elevation-3d/lib/facade-agent/providers/openai-image.mjs";
 import { buildRequest as buildGeminiRequest, createProvider as createGeminiProvider } from "../plugins/elevation-3d/lib/facade-agent/providers/gemini-image.mjs";
 import { scoreFacadeCandidate, selectFacadeWinner } from "../plugins/elevation-3d/lib/facade-agent/score.mjs";
+import { deriveFacadeSegmentsFromMass } from "../plugins/elevation-3d/lib/facade-agent/punched-facade.mjs";
 
 const roots: string[] = [];
 const surfaces = ["front", "right", "back", "left"];
@@ -39,6 +40,7 @@ const sourceMesh = {
 		[1, 2, 6], [1, 6, 5], [2, 3, 7], [2, 7, 6], [3, 0, 4], [3, 4, 7],
 	],
 };
+const facadeSegmentAuthority = deriveFacadeSegmentsFromMass({ mesh: sourceMesh });
 const grammarOutput = {
 	system: "brick-punched-window-v1", surfaces,
 	materials: ["brick", "precast", "window-frame", "glass"], corner_datum_m: 0,
@@ -99,13 +101,15 @@ before(async () => {
 	await writeFile(join(evidenceRoot, "contact-sheet.png"), pixel);
 	const evidenceInput = {
 		candidate: { candidate_id: "creative-020" }, identity: { geometry_hash: "score-geometry" }, floor_guides: floorGuides,
-		facade_planes: facadePlanes, cameras: { views }, mesh: sourceMesh,
+		facade_planes: facadePlanes, facade_segment_authority: facadeSegmentAuthority, cameras: { views }, mesh: sourceMesh,
 		artifacts: [{ name: "source", path: "source.bin", sha256: sha256(sourceBytes), absolute_path: sourcePath }],
 	};
 	const manifest = {
 		schema_version: "arr.elevation3d.facade-evidence.v1", candidate_id: "creative-020", geometry_hash: "score-geometry",
 		geometry_content_sha256: sha256(stableJson({ vertices: sourceMesh.vertices, triangles: sourceMesh.triangles })),
-		floor_guides_m: floorGuides.floor_guides_m, facade_planes_sha256: sha256(stableJson(facadePlanes)),
+		floor_guides_m: floorGuides.floor_guides_m, facade_planes_sha256: sha256(stableJson(facadeSegmentAuthority)),
+		facade_segment_authority_sha256: facadeSegmentAuthority.sha256,
+		geometry_signed_volume_orientation: facadeSegmentAuthority.source_signed_volume_orientation,
 		cameras_sha256: sha256(stableJson(evidenceInput.cameras)),
 		source_artifacts: [{ name: "source", path: "source.bin", sha256: sha256(sourceBytes) }], artifacts,
 		contact_sheet: { path: "contact-sheet.png", sha256: sha256(pixel), width: 1, height: 1 },
@@ -166,7 +170,7 @@ async function realCandidate(provider: string, confidence = 0.92) {
 		}));
 		persistedRender = { artifact, drawings };
 	}
-	const validation = await validateEnrichment({ sourceMesh, ...persistedRender, grammar, extractedGrammar, requiredDrawings: persistedRender.drawings });
+	const validation = await validateEnrichment({ sourceMesh, ...persistedRender, grammar, extractedGrammar, requiredDrawings: persistedRender.drawings, facadeSegmentAuthority });
 	assert.equal(validation.accepted, true, JSON.stringify(validation.codes));
 	return { provider, validation, grammar, extractedGrammar };
 }

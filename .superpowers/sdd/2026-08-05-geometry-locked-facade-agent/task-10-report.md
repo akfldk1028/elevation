@@ -102,3 +102,39 @@ The requested broad secret/TODO scan is not zero-match on the baseline repositor
 Independent review initially found five issues: selected-GLB segment binding, delivery persistence, presentation-gate spoofing, browser network isolation, and ledger normalization. All were fixed. The reviewer then found and prompted closure of a zero-segment-ID bypass. Final rereview verdict: **no remaining Critical or Important issues**.
 
 No branch was pushed or merged.
+
+## External review cycle 1
+
+The four requested review findings were corrected under strict RED/GREEN coverage:
+
+- Canonical MASS derivation now requires the approved positive signed-volume winding. Reversing every triangle of real `creative-020` rejects instead of being normalized.
+- Segment authority now binds the exact source vertex/triangle content hash and signed orientation. Build and validation recompute the deterministic authority; one-segment self-cycles, omitted, extra, reordered, mutated, schema-downgraded, and reversed-shell inputs reject before detail allocation. Geometry-only legacy inputs remain compatible only when their complete ordered planes exactly equal the canonical derivation, after which the recomputed authority is used.
+- Presentation relaxation no longer trusts the node name or a caller boolean. It requires typed primitive metadata matching every canonical segment, the selected GLB/source hashes and positive winding, an accepted validation authority, and the canonical durable validation receipt. Curtain-wall and renamed/`facade-details` spoofs remain under the strict threshold. The typed path uses a `0.60` dark-pixel cap, below the requested maximum of `0.65`.
+- The fixture no longer mutates the production validation result. GPT `v001` genuinely fails local geometry validation with `DETAIL_BOUNDS_EXCEEDED` (`0.25m` outward versus `0.20m` allowed); the local `v002` correction passes at `0.1875m`. Floors, facade lengths, all 16 source segments, the source geometry binding, and provider call counts remain unchanged.
+
+Final cycle-1 E2E evidence:
+
+- `1/1` passed in `99.4s`
+- selected GLB SHA-256 `5d593b4b69e7d1409bae8a6b3ca9223de2252a772556d19890314dd59f2d7463`
+- selected GLB size `4,400,084` bytes
+- 16 segments and 2,560 typed detail primitives
+- grammar calls `2`; GPT image calls `1`; Nano image calls `1`; unexpected fetches `0`
+- blocked external requests `0`; actual live calls and actual spend `0`
+
+Verification after the final changes:
+
+```text
+Focused topology/validation/grammar/evidence/harness/delivery/memory: 108/108 PASS
+Presentation spoof regression: PASS
+Real creative-020 correction E2E: 1/1 PASS
+Score authority fixture: 6/6 PASS
+npm run build: PASS
+npm audit --offline --audit-level=high: 0 vulnerabilities
+git diff --check: PASS (line-ending notices only)
+Full serial suite: 538/539 PASS
+Isolated response-body deadline test: 1/1 PASS
+```
+
+The sole full-suite failure is the same timing-sensitive provider response-body deadline test already documented above; it passed immediately in isolation. It is outside the cycle-1 facade topology/presentation/E2E diff.
+
+Independent re-review first found a legacy schema-downgrade bypass. After the additional RED/GREEN fix, the reviewer independently reprobed partial, reordered, and reversed inputs plus complete legacy compatibility and returned **PASS with no Critical or Important findings**.

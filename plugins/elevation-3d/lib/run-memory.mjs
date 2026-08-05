@@ -284,6 +284,7 @@ function facadeArtifact(runDir, record, label) {
 const FACADE_METRICS = new Set([
 	"canonical_surface_match", "opaque_wall_coverage", "minimum_reveal_depth_m", "corner_max_gap_m",
 	"floor_alignment_max_error_m", "facade_orientation_coverage", "maximum_bounds_excess_m",
+	"maximum_outward_depth_m", "allowed_outward_depth_m",
 	"base_vertex_count", "base_triangle_count", "base_sha256", "primitive_count", "detail_primitive_count",
 	"materials", "drawing_dimensions", "segment_authority_match",
 ]);

@@ -4,6 +4,7 @@ import sharp from "sharp";
 
 import { sha256, stableJson } from "../core.mjs";
 import { deriveDeliveryCameras } from "../final-delivery.mjs";
+import { assertCanonicalFacadeSegmentAuthority } from "./punched-facade.mjs";
 import {
 	FACADE_EVIDENCE_PASS_NAMES,
 	FACADE_EVIDENCE_VIEW_NAMES,
@@ -14,7 +15,10 @@ let temporarySequence = 0;
 const verifiedEvidenceAuthorities = new WeakMap();
 
 function facadeAuthority(input) {
-	return input?.facade_segment_authority ?? input?.facade_planes;
+	if (input?.facade_segment_authority) return assertCanonicalFacadeSegmentAuthority({
+		mesh: input.mesh, facadeSegmentAuthority: input.facade_segment_authority,
+	});
+	return input?.facade_planes;
 }
 
 export function readVerifiedFacadeEvidenceAuthority(value) {
@@ -24,6 +28,11 @@ export function readVerifiedFacadeEvidenceAuthority(value) {
 		candidateId: authority.candidateId,
 		geometryHash: authority.geometryHash,
 		geometryContentSha256: authority.geometryContentSha256,
+		geometrySignedVolumeOrientation: authority.geometrySignedVolumeOrientation,
+		facadeSegmentAuthority: authority.facadeSegmentAuthority ? {
+			sha256: authority.facadeSegmentAuthority.sha256,
+			segmentIds: [...authority.facadeSegmentAuthority.segmentIds],
+		} : null,
 		manifestSha256: authority.manifestSha256,
 		camerasSha256: authority.camerasSha256,
 		floorGuides: [...authority.floorGuides],
@@ -269,6 +278,7 @@ async function verifyDecodedPixels(bytes, width, height, channels, label) {
 
 export async function buildFacadeEvidencePack({ input, runDir, renderPasses = renderFacadeEvidencePasses, signal }) {
 	throwIfAborted(signal);
+	const canonicalFacadeAuthority = facadeAuthority(input);
 	const runRoot = await ensureDirectoryTreeSafe(runDir);
 	const evidenceRoot = join(runRoot, "evidence");
 	if (await pathExists(evidenceRoot)) {
@@ -308,7 +318,11 @@ export async function buildFacadeEvidencePack({ input, runDir, renderPasses = re
 			geometry_hash: input.identity.geometry_hash,
 			geometry_content_sha256: geometryContentSha256(input),
 			floor_guides_m: [...input.floor_guides.floor_guides_m],
-			facade_planes_sha256: sha256(stableJson(facadeAuthority(input))),
+			facade_planes_sha256: sha256(stableJson(canonicalFacadeAuthority)),
+			...(canonicalFacadeAuthority?.schema_version === "arr.elevation3d.facade-segments.v1" ? {
+				facade_segment_authority_sha256: canonicalFacadeAuthority.sha256,
+				geometry_signed_volume_orientation: canonicalFacadeAuthority.source_signed_volume_orientation,
+			} : {}),
 			cameras_sha256: sha256(stableJson(input.cameras)),
 			source_artifacts: sourceArtifacts(input),
 			artifacts: manifestArtifacts,
@@ -336,6 +350,7 @@ export async function buildFacadeEvidencePack({ input, runDir, renderPasses = re
 }
 
 export async function verifyFacadeEvidencePack({ manifestPath: manifestFile, input }) {
+	const canonicalFacadeAuthority = facadeAuthority(input);
 	const manifestPath = resolve(manifestFile);
 	const root = dirname(manifestPath);
 	await assertNoLinks(root);
@@ -349,7 +364,11 @@ export async function verifyFacadeEvidencePack({ manifestPath: manifestFile, inp
 		candidate_id: input.candidate.candidate_id,
 		geometry_hash: input.identity.geometry_hash,
 		floor_guides_m: [...input.floor_guides.floor_guides_m],
-		facade_planes_sha256: sha256(stableJson(facadeAuthority(input))),
+		facade_planes_sha256: sha256(stableJson(canonicalFacadeAuthority)),
+		...(canonicalFacadeAuthority?.schema_version === "arr.elevation3d.facade-segments.v1" ? {
+			facade_segment_authority_sha256: canonicalFacadeAuthority.sha256,
+			geometry_signed_volume_orientation: canonicalFacadeAuthority.source_signed_volume_orientation,
+		} : {}),
 		cameras_sha256: sha256(stableJson(input.cameras)),
 		source_artifacts: sourceArtifacts(input),
 	};
@@ -398,6 +417,11 @@ export async function verifyFacadeEvidencePack({ manifestPath: manifestFile, inp
 		candidateId: manifest.candidate_id,
 		geometryHash: manifest.geometry_hash,
 		geometryContentSha256: manifest.geometry_content_sha256 ?? null,
+		geometrySignedVolumeOrientation: manifest.geometry_signed_volume_orientation ?? null,
+		facadeSegmentAuthority: canonicalFacadeAuthority?.schema_version === "arr.elevation3d.facade-segments.v1" ? Object.freeze({
+			sha256: canonicalFacadeAuthority.sha256,
+			segmentIds: Object.freeze(canonicalFacadeAuthority.facade_planes.map((segment) => segment.segment_id)),
+		}) : null,
 		manifestSha256: verified.manifestSha256,
 		camerasSha256: manifest.cameras_sha256,
 		floorGuides: Object.freeze([...input.floor_guides.floor_guides_m]),

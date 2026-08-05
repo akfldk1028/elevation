@@ -8,6 +8,7 @@ import sharp from "sharp";
 import { sha256 } from "../plugins/elevation-3d/lib/core.mjs";
 import { buildEnrichedScene, writeEnrichedGlb } from "../plugins/elevation-3d/lib/enrichment.mjs";
 import { validateEnrichment } from "../plugins/elevation-3d/lib/enrichment-validation.mjs";
+import { deriveFacadeSegmentsFromMass } from "../plugins/elevation-3d/lib/facade-agent/punched-facade.mjs";
 
 const roots: string[] = [];
 let canonicalGlb: string;
@@ -30,6 +31,7 @@ const facadePlanes = { facade_planes: [
 	{ view: "back", origin: [4, 2, 0], normal: [0, 1, 0], extent_m: [8, 6.6] },
 	{ view: "left", origin: [-4, 2, 0], normal: [-1, 0, 0], extent_m: [4, 6.6] },
 ] };
+const facadeSegmentAuthority = deriveFacadeSegmentsFromMass({ mesh: sourceMesh });
 const grammar = {
 	system: "brick-punched-window-v1", surfaces: ["front", "right", "back", "left"],
 	materials: ["brick", "precast", "window-frame", "glass"], corner_datum_m: 0,
@@ -85,7 +87,7 @@ async function fixture(mutate?: (document: any) => void | Promise<void>) {
 
 async function validate(mutate?: (document: any) => void | Promise<void>, grammarInput: any = grammar) {
 	const value = await fixture(mutate);
-	return validateEnrichment({ sourceMesh, artifact: value.artifact, grammar: grammarInput, requiredDrawings: value.drawings });
+	return validateEnrichment({ sourceMesh, artifact: value.artifact, grammar: grammarInput, requiredDrawings: value.drawings, facadeSegmentAuthority });
 }
 
 function details(document: any) {
@@ -113,8 +115,8 @@ test("rejects a missing canonical back facade and a curtain-wall substitution", 
 		const mesh = document.getRoot().listMeshes().find((item: any) => item.getName() === "facade-details");
 		for (const primitive of [...mesh.listPrimitives()]) if (primitive.getExtras().view === "back") mesh.removePrimitive(primitive);
 	});
-	assert.ok(missing.codes.includes("FACADE_ORIENTATION_COVERAGE_MISSING"));
-	assert.ok(missing.metrics.facade_orientation_coverage < 1);
+	assert.ok(missing.codes.includes("FACADE_SEGMENT_AUTHORITY_MISMATCH"));
+	assert.equal(missing.metrics.segment_authority_match, false);
 	const curtain = await validate((document) => {
 		const material = document.createMaterial("curtain-wall");
 		details(document).find((primitive: any) => primitive.getExtras().kind === "brick-cladding").setMaterial(material);
@@ -149,8 +151,7 @@ test("rejects shallow persisted reveals and mismatched corner anchors", async ()
 			point[1] = Math.min(outer + 0.05, point[1]); positions.setElement(index, point);
 		}
 	});
-	assert.ok(shallow.codes.includes("PUNCHED_REVEAL_DEPTH_MISSING"));
-	assert.equal(shallow.metrics.minimum_reveal_depth_m, 0.05);
+	assert.ok(shallow.codes.includes("FACADE_PRIMITIVE_SHAPE_INVALID"));
 	const corner = await validate((document) => {
 		const joined = Map.groupBy(details(document).filter((item: any) => item.getExtras().kind === "corner-return"), (item: any) => item.getExtras().corner_anchor_id);
 		const pair: any[] = [...joined.values()].find((items: any) => new Set(items.map((item: any) => item.getExtras().view)).size > 1);
@@ -160,8 +161,7 @@ test("rejects shallow persisted reveals and mismatched corner anchors", async ()
 			const point = positions.getElement(index, [0, 0, 0]); point[0] += 0.4; positions.setElement(index, point);
 		}
 	});
-	assert.ok(corner.codes.includes("CORNER_DATUM_MISMATCH"));
-	assert.ok(corner.metrics.corner_max_gap_m >= 0.1);
+	assert.ok(corner.codes.includes("FACADE_PRIMITIVE_SHAPE_INVALID"));
 	const missingCorner = await validate((document) => {
 		const mesh = document.getRoot().listMeshes().find((item: any) => item.getName() === "facade-details");
 		const primitive = mesh.listPrimitives().find((item: any) => item.getExtras().kind === "corner-return");
@@ -180,8 +180,7 @@ test("rejects a window crossing its authored floor band, a detached detail, and 
 			positions.setElement(index, point);
 		}
 	});
-	assert.ok(crossing.codes.includes("WINDOW_CROSSES_FLOOR_BAND"));
-	assert.ok(crossing.metrics.floor_alignment_max_error_m >= 0.1 - 1e-6);
+	assert.ok(crossing.codes.includes("FACADE_PRIMITIVE_SHAPE_INVALID"));
 	const detached = await validate((document) => {
 		const primitive = details(document).find((item: any) => item.getExtras().kind === "glazing");
 		const positions = primitive.getAttribute("POSITION");
@@ -189,7 +188,7 @@ test("rejects a window crossing its authored floor band, a detached detail, and 
 			const point = positions.getElement(index, [0, 0, 0]); point[1] += 1.5; positions.setElement(index, point);
 		}
 	});
-	assert.ok(detached.codes.includes("DETAIL_COMPONENT_UNATTACHED"));
+	assert.ok(detached.codes.includes("FACADE_PRIMITIVE_SHAPE_INVALID"));
 	const outward = await validate((document) => {
 		const primitive = details(document).find((item: any) => item.getExtras().view === "front");
 		const positions = primitive.getAttribute("POSITION");
@@ -197,7 +196,7 @@ test("rejects a window crossing its authored floor band, a detached detail, and 
 			const point = positions.getElement(index, [0, 0, 0]); point[1] -= 0.4; positions.setElement(index, point);
 		}
 	});
-	assert.ok(outward.codes.includes("DETAIL_BOUNDS_EXCEEDED"));
+	assert.ok(outward.codes.includes("FACADE_PRIMITIVE_SHAPE_INVALID"));
 });
 
 test("derives glazing floor bands from world geometry and only cross-checks optional floor labels", async () => {
@@ -227,7 +226,7 @@ test("derives glazing floor bands from world geometry and only cross-checks opti
 		}
 		primitive.setExtras({ ...primitive.getExtras(), floor_m: 3.3 });
 	});
-	assert.ok(crossing.codes.includes("WINDOW_CROSSES_FLOOR_BAND"));
+	assert.ok(crossing.codes.includes("FACADE_PRIMITIVE_SHAPE_INVALID"));
 });
 
 test("accepts a complete immutable opaque brick facade and exposes deterministic gate metrics", async () => {
@@ -258,7 +257,8 @@ test("clips opaque union coverage to canonical MASS facade extents", async () =>
 			}
 		}
 	});
-	assert.ok(expanded.metrics.opaque_wall_coverage <= baseline.metrics.opaque_wall_coverage + 1e-6);
+	assert.ok(expanded.codes.includes("FACADE_PRIMITIVE_SHAPE_INVALID"));
+	assert.ok(baseline.metrics.opaque_wall_coverage > 0.7);
 });
 
 test("rejects invalid typed grammar and incomplete procedural PBR bindings", async () => {
@@ -300,8 +300,7 @@ test("derives opaque coverage from persisted areas and rejects malformed typed p
 			for (let index = 0; index < points.length; index++) positions.setElement(index, points[index].map((value, axis) => centroid[axis] + (value - centroid[axis]) * scale));
 		}
 	});
-	assert.ok(coverage.codes.includes("OPAQUE_WALL_COVERAGE_MISSING"));
-	assert.ok(coverage.metrics.opaque_wall_coverage < 0.5);
+	assert.ok(coverage.codes.includes("FACADE_PRIMITIVE_SHAPE_INVALID"));
 
 	const malformed = await validate((document) => {
 		const primitive = details(document)[0];
@@ -328,7 +327,7 @@ test("rejects duplicate and partially overlapping opaque facade projections", as
 				.setExtras({ ...template.getExtras(), slot: `duplicate-${index}` }));
 		}
 	});
-	assert.ok(duplicated.codes.includes("FACADE_PROJECTION_OVERLAP"));
+	assert.ok(duplicated.codes.includes("FACADE_PRIMITIVE_SHAPE_INVALID"));
 
 	const partial = await validate((document) => {
 		const root = document.getRoot();
@@ -342,7 +341,7 @@ test("rejects duplicate and partially overlapping opaque facade projections", as
 			.setIndices(template.getIndices()).setMaterial(template.getMaterial())
 			.setExtras({ ...template.getExtras(), slot: "partial-overlap" }));
 	});
-	assert.ok(partial.codes.includes("FACADE_PROJECTION_OVERLAP"));
+	assert.ok(partial.codes.includes("FACADE_PRIMITIVE_SHAPE_INVALID"));
 });
 
 test("rejects negative-zero grammar metrics before allocating detail records", async () => {
@@ -361,7 +360,7 @@ test("enforces artifact and primitive budgets before expensive facade record all
 	const bytes = Buffer.alloc(16 * 1024 * 1024 + 1);
 	await writeFile(oversized.artifact.path, bytes);
 	oversized.artifact.sha256 = sha256(bytes);
-	const artifactReport = await validateEnrichment({ sourceMesh, artifact: oversized.artifact, grammar, requiredDrawings: oversized.drawings });
+	const artifactReport = await validateEnrichment({ sourceMesh, artifact: oversized.artifact, grammar, requiredDrawings: oversized.drawings, facadeSegmentAuthority });
 	assert.ok(artifactReport.codes.includes("ARTIFACT_BUDGET_EXCEEDED"));
 	assert.equal("primitive_count" in artifactReport.metrics, false);
 

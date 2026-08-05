@@ -4,7 +4,7 @@ import { getBounds, NodeIO } from "@gltf-transform/core";
 import sharp from "sharp";
 import { sha256, stableJson } from "./core.mjs";
 import { correctGrammar, PUNCHED_FACADE_MATERIALS, PUNCHED_FACADE_SYSTEM, validatePunchedFacadeGrammar } from "./facade-grammar.mjs";
-import { PUNCHED_FACADE_BUDGETS } from "./facade-agent/punched-facade.mjs";
+import { assertCanonicalFacadeSegmentAuthority, PUNCHED_FACADE_BUDGETS } from "./facade-agent/punched-facade.mjs";
 import { createFacadePbrMaps } from "./facade-agent/procedural-materials.mjs";
 import { readVerifiedFacadeGrammarAuthority } from "./facade-agent/grammar-agent.mjs";
 
@@ -14,6 +14,7 @@ const IDENTITY_MATRIX = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
 const DEFAULT_PRIMITIVE_BUDGET = 5000;
 const MAX_ARTIFACT_BYTES = 16 * 1024 * 1024;
 const MINIMUM_OPAQUE_COVERAGE = 0.5;
+const MAXIMUM_PUNCHED_FACADE_OUTWARD_DEPTH_M = 0.2;
 const PBR_DECODE_CACHE = new Map();
 const PBR_EXPECTED_HASH_CACHE = new Map();
 const TYPED_KINDS = new Set(["corner-return", "brick-cladding", "window-reveal", "window-frame", "glazing", "precast-lintel", "precast-sill"]);
@@ -424,6 +425,16 @@ export async function validateEnrichment({ sourceMesh, artifact, grammar, extrac
 	const metrics = { missing_drawings: [], drawing_dimensions: {} };
 	const artifacts = { glb: resolve(artifact.path), drawings: {} };
 	const punchedFacade = grammar?.system === PUNCHED_FACADE_SYSTEM && !safeFallback;
+	let canonicalFacadeSegmentAuthority = null;
+	if (facadeSegmentAuthority) {
+		try {
+			canonicalFacadeSegmentAuthority = assertCanonicalFacadeSegmentAuthority({ mesh: sourceMesh, facadeSegmentAuthority });
+			metrics.segment_authority_match = true;
+		} catch {
+			metrics.segment_authority_match = false;
+			codes.push("FACADE_SEGMENT_AUTHORITY_MISMATCH");
+		}
+	}
 	let typedGrammarValid = true;
 	if (punchedFacade) {
 		try {
@@ -465,7 +476,7 @@ export async function validateEnrichment({ sourceMesh, artifact, grammar, extrac
 
 	const sourceBounds = boundsOf(sourceMesh.vertices);
 	const allowedDetailExcess = rounded((punchedFacade
-		? Number(grammar.cladding_depth_m)
+		? Math.min(Number(grammar.cladding_depth_m), MAXIMUM_PUNCHED_FACADE_OUTWARD_DEPTH_M)
 		: Math.max(Number(grammar.frame_depth_m), Number(grammar.mullion_depth_m))) + 0.01);
 	const allowedAttachmentDistance = rounded((punchedFacade
 		? Math.max(Number(grammar.cladding_depth_m), Number(grammar.reveal_depth_m), Number(grammar.sill_depth_m))
@@ -518,6 +529,17 @@ export async function validateEnrichment({ sourceMesh, artifact, grammar, extrac
 		const detailNode = detailNodes.length === 1 ? detailNodes[0] : null;
 		const detailPrimitives = detailNode?.getMesh()?.listPrimitives() ?? [];
 		if (punchedFacade) {
+			const outwardDepths = detailPrimitives.flatMap((primitive) => {
+				const bounds = primitive.getExtras()?.local_bounds;
+				return [bounds?.n0, bounds?.n1].filter(Number.isFinite);
+			});
+			metrics.maximum_outward_depth_m = outwardDepths.length ? rounded(Math.max(...outwardDepths)) : null;
+			metrics.allowed_outward_depth_m = MAXIMUM_PUNCHED_FACADE_OUTWARD_DEPTH_M;
+			if (metrics.maximum_outward_depth_m > MAXIMUM_PUNCHED_FACADE_OUTWARD_DEPTH_M) {
+				codes.push("DETAIL_BOUNDS_EXCEEDED");
+			}
+		}
+		if (punchedFacade) {
 			const canonicalMeshes = new Set([baseNode?.getMesh(), detailNode?.getMesh()].filter(Boolean));
 			const nonCanonicalGeometry = basePrimitives.length !== 1 || detailNodes.length !== 1 || detailNode?.getMesh()?.getName() !== "facade-details"
 				|| root.listMeshes().some((mesh) => mesh.listPrimitives().length > 0 && !canonicalMeshes.has(mesh))
@@ -541,22 +563,21 @@ export async function validateEnrichment({ sourceMesh, artifact, grammar, extrac
 
 		const floorGuides = (grammar.floor_elevations_m ?? []).map(Number);
 		const detailMatrix = detailNode?.getWorldMatrix() ?? IDENTITY_MATRIX;
-		const authoritativeSegments = facadeSegmentAuthority?.schema_version === "arr.elevation3d.facade-segments.v1"
-			&& Array.isArray(facadeSegmentAuthority.facade_planes) ? facadeSegmentAuthority.facade_planes : [];
+		const authoritativeSegments = canonicalFacadeSegmentAuthority?.facade_planes ?? [];
 		const segmentById = new Map(authoritativeSegments.map((segment) => [segment.segment_id, segment]));
 		const primitiveSegmentIds = detailPrimitives.map((primitive) => primitive.getExtras()?.segment_id);
 		const usesSegments = primitiveSegmentIds.some((segmentId) => typeof segmentId === "string");
-		const expectsSegments = authoritativeSegments.length > 0;
+		const expectsSegments = Boolean(facadeSegmentAuthority);
 		const actualSegmentIds = new Set(primitiveSegmentIds);
 		const segmentAuthorityValid = expectsSegments
-			? segmentById.size === authoritativeSegments.length && segmentById.size > 0
+			? Boolean(canonicalFacadeSegmentAuthority) && segmentById.size === authoritativeSegments.length && segmentById.size > 0
 				&& primitiveSegmentIds.every((segmentId) => typeof segmentId === "string" && segmentById.has(segmentId))
 				&& actualSegmentIds.size === segmentById.size
 			: !usesSegments;
 		const typedShapesValid = !punchedFacade || (segmentAuthorityValid
 			&& detailPrimitives.every((primitive) => typedPrimitiveShapeValid(primitive, grammar.surfaces, segmentById)));
 		metrics.segment_authority_match = segmentAuthorityValid;
-		if (!segmentAuthorityValid) codes.push("FACADE_SEGMENT_AUTHORITY_MISMATCH");
+		if (!segmentAuthorityValid && !codes.includes("FACADE_SEGMENT_AUTHORITY_MISMATCH")) codes.push("FACADE_SEGMENT_AUTHORITY_MISMATCH");
 		if (!typedShapesValid) codes.push("FACADE_PRIMITIVE_SHAPE_INVALID");
 		const detailRecords = typedShapesValid ? detailPrimitives.map((primitive) => ({
 			extras: primitive.getExtras(),
@@ -702,7 +723,14 @@ export async function validateEnrichment({ sourceMesh, artifact, grammar, extrac
 		&& /^[a-f0-9]{64}$/.test(grammarAuthority.geometryContentSha256 ?? "")
 		&& sha256(stableJson({ vertices: sourceMesh.vertices, triangles: sourceMesh.triangles })) === grammarAuthority.geometryContentSha256;
 	if (grammarAuthority && !geometryBound) codes.push("EVIDENCE_GEOMETRY_MISMATCH");
+	const segmentEvidenceBound = !facadeSegmentAuthority || Boolean(canonicalFacadeSegmentAuthority
+		&& grammarAuthority?.geometrySignedVolumeOrientation === 1
+		&& grammarAuthority?.facadeSegmentAuthority?.sha256 === canonicalFacadeSegmentAuthority.sha256
+		&& stableJson(grammarAuthority.facadeSegmentAuthority.segmentIds)
+			=== stableJson(canonicalFacadeSegmentAuthority.facade_planes.map((segment) => segment.segment_id)));
+	if (grammarAuthority && !segmentEvidenceBound && !codes.includes("EVIDENCE_GEOMETRY_MISMATCH")) codes.push("EVIDENCE_GEOMETRY_MISMATCH");
 	const grammarBound = grammarAuthority && geometryBound
+		&& segmentEvidenceBound
 		&& grammarAuthority.grammarSha256 === sha256(stableJson(extractedGrammar))
 		&& authorizedGrammarVariants.some((variant) => stableJson(normalizedBaseGrammar) === stableJson(variant))
 		&& stableJson(grammar.floor_elevations_m) === stableJson(grammarAuthority.floorGuides)
@@ -721,6 +749,8 @@ export async function validateEnrichment({ sourceMesh, artifact, grammar, extrac
 			bindings: {
 				geometry_hash: grammarAuthority.geometryHash,
 				geometry_content_sha256: grammarAuthority.geometryContentSha256,
+				geometry_signed_volume_orientation: grammarAuthority.geometrySignedVolumeOrientation,
+				facade_segment_authority_sha256: grammarAuthority.facadeSegmentAuthority?.sha256 ?? null,
 				glb_sha256: glbHash,
 				evidence_sha256: grammarAuthority.evidenceManifestSha256,
 				cameras_sha256: grammarAuthority.camerasSha256,

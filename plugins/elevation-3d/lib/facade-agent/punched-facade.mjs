@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { stableJson } from "../core.mjs";
 import { validatePunchedFacadeGrammar } from "../facade-grammar.mjs";
 
 const EPSILON = 1e-9;
@@ -575,7 +576,8 @@ function closedShellOrientation(mesh) {
 		signedVolume += dot(a, cross(b, c)) / 6;
 	}
 	if (Math.abs(signedVolume) <= EPSILON) throw new TypeError("invalid facade topology: MASS shell volume is zero");
-	return Math.sign(signedVolume);
+	if (signedVolume < 0) throw new TypeError("invalid facade orientation: MASS shell winding is not the approved positive orientation");
+	return 1;
 }
 
 function roundedPoint(point) {
@@ -675,16 +677,52 @@ export function deriveFacadeSegmentsFromMass({ mesh } = {}) {
 		front: Math.max(...xs) - Math.min(...xs), back: Math.max(...xs) - Math.min(...xs),
 		right: Math.max(...ys) - Math.min(...ys), left: Math.max(...ys) - Math.min(...ys),
 	};
-	const value = { schema_version: "arr.elevation3d.facade-segments.v1", facade_planes: segments, segments, facade_lengths_m: facadeLengths };
-	return { ...value, sha256: sha256(JSON.stringify(value)) };
+	const value = {
+		schema_version: "arr.elevation3d.facade-segments.v1",
+		source_geometry_sha256: sha256(stableJson({ vertices: mesh.vertices, triangles: mesh.triangles })),
+		source_signed_volume_orientation: 1,
+		facade_planes: segments,
+		segments,
+		facade_lengths_m: facadeLengths,
+	};
+	return { ...value, sha256: sha256(stableJson(value)) };
+}
+
+export function assertCanonicalFacadeSegmentAuthority({ mesh, facadeSegmentAuthority } = {}) {
+	const expected = deriveFacadeSegmentsFromMass({ mesh });
+	if (stableJson(facadeSegmentAuthority) !== stableJson(expected)) {
+		throw new TypeError("invalid facade segment authority: supplied authority does not exactly match canonical MASS derivation");
+	}
+	return expected;
+}
+
+function verifiedFacadeSegmentAuthority(mesh, supplied) {
+	const expected = deriveFacadeSegmentsFromMass({ mesh });
+	if (supplied?.schema_version === "arr.elevation3d.facade-segments.v1") {
+		if (stableJson(supplied) !== stableJson(expected)) {
+			throw new TypeError("invalid facade segment authority: supplied authority does not exactly match canonical MASS derivation");
+		}
+		return expected;
+	}
+	const geometry = (plane) => ({
+		view: plane?.view, origin: plane?.origin, normal: plane?.normal, extent_m: plane?.extent_m,
+	});
+	const suppliedPlanes = supplied?.facade_planes;
+	if (!Array.isArray(suppliedPlanes)
+		|| suppliedPlanes.some((plane, index) => !Object.hasOwn(suppliedPlanes, index) || !plane)
+		|| stableJson(suppliedPlanes.map(geometry)) !== stableJson(expected.facade_planes.map(geometry))) {
+		throw new TypeError("invalid facade segment authority: legacy planes do not exactly match canonical MASS derivation");
+	}
+	return expected;
 }
 
 export function buildPunchedFacadeDetails({ mesh, floorGuides, facadePlanes, grammar }) {
 	const floors = validateFloorGuideBudget(floorGuides);
 	validateSourceMesh(mesh);
+	const verifiedFacadePlanes = verifiedFacadeSegmentAuthority(mesh, facadePlanes);
 	const componentOrientations = massComponentOrientations(mesh);
 	const canonical = validatePunchedFacadeGrammar(grammar, { floorGuides, allowDerived: true });
-	const planes = validatePlanes(facadePlanes, canonical);
+	const planes = validatePlanes(verifiedFacadePlanes, canonical);
 	assertFloat32Separation(floors, planes);
 	validateProjectedDetailBudget(mesh, planes, floors, canonical);
 	const details = [];

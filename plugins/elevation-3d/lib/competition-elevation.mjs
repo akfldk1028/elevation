@@ -437,7 +437,7 @@ async function classifyAndCleanDarkArtifacts(base) {
 }
 
 export async function renderCompetitionElevation({
-	runDir, glbPath, sourceMesh, floorGuides, facadePlanes, camera, palette, dimensions, view, candidateId, pixelsPerMetre, signal, lifecycle,
+	runDir, glbPath, sourceMesh, floorGuides, facadePlanes, facadeSegmentAuthority, facadeValidation, facadeValidationReceipt, camera, palette, dimensions, view, candidateId, pixelsPerMetre, signal, lifecycle,
 }) {
 	const base = await renderCompetitionElevationBase({ runDir, glbPath, sourceMesh, camera, palette, dimensions, view, pixelsPerMetre, signal, lifecycle });
 	const outputDir = join(resolve(runDir), "competition-elevation", view);
@@ -512,7 +512,10 @@ export async function renderCompetitionElevation({
 		displayed_dimensions: displayedDimensions,
 		presentation: { authored_dark_geometry: presentationBase.report },
 	};
-	const validation = await validateCompetitionElevation({ artifacts: draft, sourceMesh, facadePlanes, floorGuides, view: camera, selectedGlbPath: glbPath });
+	const validation = await validateCompetitionElevation({
+		artifacts: draft, sourceMesh, facadePlanes, facadeSegmentAuthority, facadeValidation, facadeValidationReceipt,
+		floorGuides, view: camera, selectedGlbPath: glbPath,
+	});
 	const validationPath = join(outputDir, `${view}-validation.json`);
 	await writeFile(validationPath, JSON.stringify(validation, null, 2));
 	return {
