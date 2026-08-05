@@ -11,6 +11,7 @@ import {
 	validatePunchedFacadeGrammar,
 } from "../facade-grammar.mjs";
 import { readVerifiedFacadeEvidenceAuthority } from "./evidence.mjs";
+import { consumeFacadeGrammarSubmissionCapability } from "./harness.mjs";
 import { consumePaidOperationSubmissionCapability } from "./paid-operation-ledger.mjs";
 import { FacadeProviderError } from "./provider.mjs";
 import { readVerifiedProposalResultAuthority as readOpenAIProposalResultAuthority } from "./providers/openai-image.mjs";
@@ -421,11 +422,12 @@ async function fetchWithDeadline(fetchImpl, body, apiKey, signal, timeoutMs) {
 
 export async function extractFacadeGrammar(input) {
 	const fields = dataRecord(input, "extractFacadeGrammar input");
-	const { proposalPath, evidence, config, fetchImpl, ledger, signal } = fields;
+	const { proposalPath, evidence, config, fetchImpl, ledger, signal, submission, requestKey: harnessRequestKey } = fields;
+	const harnessMode = submission !== undefined;
 	authenticSignal(signal);
 	throwIfAborted(signal, true);
 	if (typeof fetchImpl !== "function") throw failure("GRAMMAR_BOUNDARY_INVALID", "fetchImpl is required", { definitiveNonSubmission: true });
-	if (!ledger || typeof ledger !== "object" || typeof ledger.executeOnce !== "function") {
+	if (!harnessMode && (!ledger || typeof ledger !== "object" || typeof ledger.executeOnce !== "function")) {
 		throw failure("GRAMMAR_BOUNDARY_INVALID", "A paid operation ledger is required", { definitiveNonSubmission: true });
 	}
 	const controls = validateConfig(config);
@@ -441,46 +443,59 @@ export async function extractFacadeGrammar(input) {
 		schema: FACADE_GRAMMAR_SCHEMA,
 	})));
 	let parsedGrammar = null;
-	await ledger.executeOnce({
+	let transportReceipt = null;
+	const operation = async (submissionCapability, facadeMode = false) => {
+		const authorized = facadeMode
+			? consumeFacadeGrammarSubmissionCapability(submissionCapability, {
+				requestKey: harnessRequestKey, proposalProvider: controls.proposalProvider,
+				proposalSha256: proposal.digest, evidenceSha256: verified.authority.manifestSha256,
+				model: config.grammarModel,
+			})
+			: consumePaidOperationSubmissionCapability(submissionCapability, {
+				requestKey, provider: PROVIDER, kind: "grammar-extraction",
+			});
+		if (!authorized) {
+			throw failure("GRAMMAR_SUBMISSION_UNAUTHORIZED", "A one-shot paid-operation submission authorization is required", {
+				definitiveNonSubmission: true,
+			});
+		}
+		const { response, payload } = await fetchWithDeadline(fetchImpl, body, controls.apiKey, signal, controls.timeoutMs);
+		const headerRemoteId = response?.headers?.get?.("x-request-id") ?? null;
+		const payloadRemoteId = typeof payload?.id === "string" ? payload.id : null;
+		const remoteId = headerRemoteId ?? payloadRemoteId;
+		if (!response || typeof response.ok !== "boolean" || !response.ok) {
+			throw failure("GRAMMAR_REQUEST_REJECTED", "Grammar extraction request was rejected", {
+				status: Number.isInteger(response?.status) ? response.status : null,
+				remoteId,
+			});
+		}
+		try { parsedGrammar = parseGrammar(outputText(payload), { floor_guides_m: evidence.manifest.floor_guides_m }); }
+		catch (error) {
+			if (error instanceof FacadeProviderError) throw failure(error.code, error.message, { remoteId, status: response.status });
+			throw error;
+		}
+		const artifactSha256 = sha256(stableJson(parsedGrammar));
+		const stableRemoteId = typeof remoteId === "string" && remoteId.length > 0 && remoteId.length <= 4_096 && !/[\r\n\0]/.test(remoteId)
+			? remoteId : `openai-${artifactSha256}`;
+		const reportedCost = payload?.usage?.cost_usd;
+		const actualUsd = reportedCost === undefined ? controls.estimateUsd : reportedCost;
+		if (!Number.isFinite(actualUsd) || actualUsd < 0 || actualUsd > controls.ceilingUsd) {
+			throw failure("GRAMMAR_RESPONSE_INVALID", "Grammar response reported an invalid cost", { remoteId: stableRemoteId });
+		}
+		transportReceipt = { remoteId: stableRemoteId, artifactSha256, actualUsd };
+		return transportReceipt;
+	};
+	if (harnessMode) {
+		if (typeof harnessRequestKey !== "string") throw failure("GRAMMAR_BOUNDARY_INVALID", "Harness request key is required", { definitiveNonSubmission: true });
+		await operation(submission, true);
+	} else await ledger.executeOnce({
 		requestKey,
 		provider: PROVIDER,
 		kind: "grammar-extraction",
 		ceilingUsd: controls.ceilingUsd,
 		estimateUsd: controls.estimateUsd,
 		signal,
-		operation: async (submission) => {
-			if (!consumePaidOperationSubmissionCapability(submission, {
-				requestKey, provider: PROVIDER, kind: "grammar-extraction",
-			})) {
-				throw failure("GRAMMAR_SUBMISSION_UNAUTHORIZED", "A one-shot paid-operation submission authorization is required", {
-					definitiveNonSubmission: true,
-				});
-			}
-			const { response, payload } = await fetchWithDeadline(fetchImpl, body, controls.apiKey, signal, controls.timeoutMs);
-			const headerRemoteId = response?.headers?.get?.("x-request-id") ?? null;
-			const payloadRemoteId = typeof payload?.id === "string" ? payload.id : null;
-			const remoteId = headerRemoteId ?? payloadRemoteId;
-			if (!response || typeof response.ok !== "boolean" || !response.ok) {
-				throw failure("GRAMMAR_REQUEST_REJECTED", "Grammar extraction request was rejected", {
-					status: Number.isInteger(response?.status) ? response.status : null,
-					remoteId,
-				});
-			}
-			try { parsedGrammar = parseGrammar(outputText(payload), { floor_guides_m: evidence.manifest.floor_guides_m }); }
-			catch (error) {
-				if (error instanceof FacadeProviderError) throw failure(error.code, error.message, { remoteId, status: response.status });
-				throw error;
-			}
-			const artifactSha256 = sha256(stableJson(parsedGrammar));
-			const stableRemoteId = typeof remoteId === "string" && remoteId.length > 0 && remoteId.length <= 4_096 && !/[\r\n\0]/.test(remoteId)
-				? remoteId : `openai-${artifactSha256}`;
-			const reportedCost = payload?.usage?.cost_usd;
-			const actualUsd = reportedCost === undefined ? controls.estimateUsd : reportedCost;
-			if (!Number.isFinite(actualUsd) || actualUsd < 0 || actualUsd > controls.ceilingUsd) {
-				throw failure("GRAMMAR_RESPONSE_INVALID", "Grammar response reported an invalid cost", { remoteId: stableRemoteId });
-			}
-			return { remoteId: stableRemoteId, artifactSha256, actualUsd };
-		},
+		operation,
 	});
 	if (!parsedGrammar) throw failure("GRAMMAR_RESULT_UNAVAILABLE", "Persisted grammar result is unavailable without resubmission");
 	deepFreeze(parsedGrammar);
@@ -496,5 +511,5 @@ export async function extractFacadeGrammar(input) {
 		proposalSha256: proposal.digest,
 		grammarSha256: sha256(stableJson(parsedGrammar)),
 	}));
-	return parsedGrammar;
+	return harnessMode ? { grammar: parsedGrammar, remoteId: transportReceipt.remoteId, actualUsd: transportReceipt.actualUsd } : parsedGrammar;
 }

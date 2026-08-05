@@ -3,14 +3,22 @@ import { after, test } from "node:test";
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { Document, NodeIO } from "@gltf-transform/core";
+import sharp from "sharp";
 
 import { sha256, stableJson } from "../plugins/elevation-3d/lib/core.mjs";
 import { FacadeProviderError } from "../plugins/elevation-3d/lib/facade-agent/provider.mjs";
+import { verifyFacadeEvidencePack } from "../plugins/elevation-3d/lib/facade-agent/evidence.mjs";
+import { createFacadeFixtureTransport } from "../plugins/elevation-3d/lib/facade-agent/fixture-transport.mjs";
+import { extractFacadeGrammar, verifyFacadeProposal } from "../plugins/elevation-3d/lib/facade-agent/grammar-agent.mjs";
+import { buildRequest as buildOpenAIRequest, createProvider as createOpenAIProvider } from "../plugins/elevation-3d/lib/facade-agent/providers/openai-image.mjs";
+import { buildRequest as buildGeminiRequest, createProvider as createGeminiProvider } from "../plugins/elevation-3d/lib/facade-agent/providers/gemini-image.mjs";
 import {
 	consumePaidOperationSubmissionCapability,
 	createPaidOperationLedger,
 } from "../plugins/elevation-3d/lib/facade-agent/paid-operation-ledger.mjs";
 import {
+	consumeFacadeGrammarSubmissionCapability,
 	readFacadeAgentStatus,
 	runFacadeAgent,
 	runFacadeStage,
@@ -21,6 +29,47 @@ after(async () => Promise.all(roots.map((root) => rm(root, { recursive: true, fo
 
 const PROVIDERS = ["gpt-image-2", "nano-banana-pro"] as const;
 const EVIDENCE_SHA = "e".repeat(64);
+const GLB_DOCUMENT = new Document();
+GLB_DOCUMENT.createScene("Scene");
+const GLB_BYTES = Buffer.from(await new NodeIO().writeBinary(GLB_DOCUMENT));
+const REPLACEMENT_GLB_DOCUMENT = new Document();
+REPLACEMENT_GLB_DOCUMENT.createScene("Replacement");
+const REPLACEMENT_GLB_BYTES = Buffer.from(await new NodeIO().writeBinary(REPLACEMENT_GLB_DOCUMENT));
+const PROVIDER_PNG = await sharp({ create: { width: 1, height: 1, channels: 3, background: { r: 7, g: 8, b: 9 } } }).png().toBuffer();
+const VIEW_NAMES = ["front", "right", "back", "left", "top", "axon", "opposite-axon"];
+const PASS_NAMES = ["color", "depth", "normal", "edge", "surface-id"];
+
+async function verifiedEvidenceFixture(root: string) {
+	const evidenceRoot = join(root, "verified-evidence");
+	await mkdir(evidenceRoot, { recursive: true });
+	const sourceBytes = Buffer.from("geometry authority fixture");
+	const sourcePath = join(root, "source.bin");
+	await writeFile(sourcePath, sourceBytes);
+	const artifacts: Record<string, any> = {};
+	for (const mode of PASS_NAMES) {
+		await mkdir(join(evidenceRoot, mode), { recursive: true });
+		for (const view of VIEW_NAMES) {
+			await writeFile(join(evidenceRoot, mode, `${view}.png`), PROVIDER_PNG);
+			artifacts[`${mode}:${view}`] = { path: `${mode}/${view}.png`, sha256: sha256(PROVIDER_PNG), width: 1, height: 1, mode, view };
+		}
+	}
+	await writeFile(join(evidenceRoot, "contact-sheet.png"), PROVIDER_PNG);
+	const input = {
+		candidate: { candidate_id: "creative-020" }, identity: { geometry_hash: "geometry-fixture" },
+		floor_guides: { floor_guides_m: [0, 3] }, facade_planes: { planes: [] }, cameras: { views: [] },
+		artifacts: [{ name: "source", path: "source.bin", sha256: sha256(sourceBytes), absolute_path: sourcePath }],
+	};
+	const manifest = {
+		schema_version: "arr.elevation3d.facade-evidence.v1", candidate_id: "creative-020",
+		geometry_hash: input.identity.geometry_hash, floor_guides_m: input.floor_guides.floor_guides_m,
+		facade_planes_sha256: sha256(stableJson(input.facade_planes)), cameras_sha256: sha256(stableJson(input.cameras)),
+		source_artifacts: [{ name: "source", path: "source.bin", sha256: sha256(sourceBytes) }], artifacts,
+		contact_sheet: { path: "contact-sheet.png", sha256: sha256(PROVIDER_PNG), width: 1, height: 1 },
+	};
+	const manifestPath = join(evidenceRoot, "evidence-manifest.json");
+	await writeFile(manifestPath, `${stableJson(manifest)}\n`);
+	return verifyFacadeEvidencePack({ manifestPath, input });
+}
 
 function grammar() {
 	return {
@@ -76,8 +125,7 @@ async function fixture(overrides: any = {}) {
 		return { status: "winner", provider: authorized[0].provider, candidate: authorized[0], score: authorized[0].score };
 	};
 
-	const providers = Object.fromEntries(PROVIDERS.map((provider) => [provider, {
-		transport: "fixture",
+	const providers = Object.fromEntries(PROVIDERS.map((provider) => [provider, createFacadeFixtureTransport({
 		buildRequest({ evidence, brief }: any) {
 			calls.request.push({ provider, evidenceSha: evidence.manifestSha256, briefId: brief.id });
 			return {
@@ -96,7 +144,15 @@ async function fixture(overrides: any = {}) {
 			const bytes = Buffer.from(`fixture-proposal:${provider}`);
 			return { bytes, mimeType: "image/png", remoteId: `fixture-${provider}`, usage: { fixture: true } };
 		},
-	}]));
+	})]));
+	const extractGrammar = createFacadeFixtureTransport(async ({ provider, proposal, evidence, submission, requestKey, config }: any) => {
+		assert.equal(consumeFacadeGrammarSubmissionCapability(submission, {
+			requestKey, proposalProvider: provider, proposalSha256: proposal.sha256,
+			evidenceSha256: evidence.manifestSha256, model: config.grammarModel,
+		}), true);
+		calls.grammar.push(provider);
+		return { grammar: grammar(), remoteId: `grammar-${provider}`, actualUsd: 0 };
+	});
 
 	const deps: any = {
 		loadCandidate: async () => ({ candidate: { candidate_id: "creative-020" }, identity: { geometry_hash: "geometry-fixture" } }),
@@ -105,35 +161,19 @@ async function fixture(overrides: any = {}) {
 			manifestSha256: EVIDENCE_SHA, contactSheetBytes: Buffer.from("fixture-evidence"),
 		}),
 		providers,
-		grammarTransport: "fixture",
-		extractGrammar: async ({ provider, proposal, evidence, ledger: paidLedger, signal }: any) => {
-			const requestKey = sha256(stableJson({ provider, proposal: proposal.sha256, evidence: evidence.manifestSha256, model: "gpt-5.6" }));
-			let extracted: any = null;
-			await paidLedger.executeOnce({
-				requestKey, provider: `openai-grammar-${provider}`, kind: "grammar-extraction", ceilingUsd: 1, estimateUsd: 0, signal,
-				operation: async (submission: any) => {
-					assert.equal(consumePaidOperationSubmissionCapability(submission, {
-						requestKey, provider: `openai-grammar-${provider}`, kind: "grammar-extraction",
-					}), true);
-					calls.grammar.push(provider);
-					extracted = grammar();
-					return { remoteId: `grammar-${provider}`, artifactSha256: sha256(stableJson(extracted)), actualUsd: 0 };
-				},
-			});
-			if (!extracted) throw Object.assign(new Error("persisted grammar cannot be re-authorized"), { code: "GRAMMAR_RESULT_UNAVAILABLE" });
-			return extracted;
-		},
-		build: async ({ provider, versionId, grammar: value, runDir: target }: any) => {
+		extractGrammar,
+		build: overrides.build ?? (async ({ provider, versionId, grammar: value, runDir: target }: any) => {
 			calls.build.push({ provider, versionId, windowHeight: value.window_height_m });
 			const directory = join(target, "fixture-artifacts", provider);
 			await mkdir(directory, { recursive: true });
 			const path = join(directory, `${versionId}.glb`);
-			const bytes = Buffer.from(`fixture-glb:${provider}:${versionId}:${value.window_height_m}`);
+			const bytes = GLB_BYTES;
 			await writeFile(path, bytes);
 			return { artifact: { path, sha256: sha256(bytes) } };
-		},
+		}),
 		validate: async ({ provider, versionId, artifact }: any) => {
 			calls.validate.push({ provider, versionId });
+			if (overrides.validate) return overrides.validate({ provider, versionId, artifact });
 			const scripted = validations[provider]?.[versionId];
 			if (scripted instanceof Error) throw scripted;
 			return scripted ?? { accepted: true, codes: [], metrics: {}, artifacts: { glb: artifact.path, glb_sha256: artifact.sha256 } };
@@ -209,10 +249,328 @@ test("build stage cannot invent v002 before v001 validation authorizes a correct
 
 test("refuses an unconfirmed non-fixture transport before any paid callback", async () => {
 	const value = await fixture({ runId: "unconfirmed-live" });
-	value.deps.providers["gpt-image-2"].transport = "live";
+	value.deps.providers["gpt-image-2"] = { ...value.deps.providers["gpt-image-2"], transport: "live" };
 	await assert.rejects(() => runFacadeAgent(value.config, value.deps), (error: any) => error.code === "LIVE_CONFIRMATION_REQUIRED");
 	assert.deepEqual(value.calls.generate, []);
 	assert.deepEqual(value.calls.grammar, []);
+});
+
+test("a caller-set fixture label cannot authorize an unconfirmed transport", async () => {
+	const value = await fixture({ runId: "forged-fixture-label" });
+	value.deps.providers["gpt-image-2"] = { ...value.deps.providers["gpt-image-2"], transport: "fixture" };
+	await assert.rejects(() => runFacadeAgent(value.config, value.deps), (error: any) => error.code === "LIVE_CONFIRMATION_REQUIRED");
+	assert.deepEqual(value.calls.generate, []);
+});
+
+test("grammar extraction must consume the harness-owned one-shot submission capability", async () => {
+	const value = await fixture({ runId: "grammar-capability-ignored" });
+	let callbacks = 0;
+	value.deps.extractGrammar = createFacadeFixtureTransport(async () => {
+		callbacks += 1;
+		return grammar();
+	});
+
+	const first = await runFacadeAgent(value.config, value.deps);
+	assert.equal(callbacks, 2);
+	assert.equal(first.providers["gpt-image-2"].failure.code, "PAID_OPERATION_SUBMISSION_UNCERTAIN");
+
+	const resumed = await runFacadeAgent(value.config, value.deps);
+	assert.equal(callbacks, 2);
+	assert.equal(resumed.providers["gpt-image-2"].failure.code, "PAID_OPERATION_SUBMISSION_UNCERTAIN");
+});
+
+test("grammar submission capabilities are bound and consumable only once", async () => {
+	const value = await fixture({ runId: "grammar-capability-once" });
+	value.deps.extractGrammar = createFacadeFixtureTransport(async ({ provider, proposal, evidence, submission, requestKey, config }: any) => {
+		const expected = {
+			requestKey, proposalProvider: provider, proposalSha256: proposal.sha256,
+			evidenceSha256: evidence.manifestSha256, model: config.grammarModel,
+		};
+		assert.equal(consumeFacadeGrammarSubmissionCapability(submission, { ...expected, proposalProvider: "forged" }), false);
+		assert.equal(consumeFacadeGrammarSubmissionCapability(submission, expected), true);
+		assert.equal(consumeFacadeGrammarSubmissionCapability(submission, expected), false);
+		return { grammar: grammar(), remoteId: `grammar-${provider}`, actualUsd: 0 };
+	});
+
+	const result = await runFacadeAgent(value.config, value.deps);
+	assert.equal(result.final.status, "winner");
+});
+
+test("a missing grammar ledger fails closed before invoking the grammar callback", async () => {
+	const value = await fixture({ runId: "grammar-ledger-missing" });
+	value.deps.ledger = { image: value.deps.ledger, grammar: {} };
+
+	const result = await runFacadeAgent(value.config, value.deps);
+	assert.deepEqual(value.calls.grammar, []);
+	assert.equal(result.providers["gpt-image-2"].failure.code, "FACADE_LEDGER_MISSING");
+	assert.equal(result.final.status, "no-winner");
+});
+
+test("a crash after grammar ledger success cannot repeat the grammar callback", async () => {
+	let crash = true;
+	const value = await fixture({
+		runId: "grammar-returned-crash",
+		lifecycle: {
+			onTransition(event: any) {
+				if (crash && event.stage === "grammar" && event.status === "returned") {
+					crash = false;
+					throw new Error("crash after grammar ledger success");
+				}
+			},
+		},
+	});
+
+	await assert.rejects(() => runFacadeAgent(value.config, value.deps), /crash after grammar ledger success/);
+	assert.deepEqual(value.calls.grammar, ["gpt-image-2"]);
+	const resumed = await runFacadeAgent(value.config, value.deps);
+	assert.deepEqual(value.calls.grammar, ["gpt-image-2", "nano-banana-pro"]);
+	assert.equal(resumed.providers["gpt-image-2"].failure.code, "PAID_OPERATION_SUBMISSION_UNCERTAIN");
+});
+
+test("rejects false hashes and structurally invalid GLBs before validation or delivery", async (context) => {
+	for (const scenario of ["false-hash", "invalid-glb"]) await context.test(scenario, async () => {
+		const value = await fixture({
+			runId: `bad-artifact-${scenario}`,
+			async build({ provider, versionId, runDir }: any) {
+				const directory = join(runDir, "bad-artifacts", provider);
+				await mkdir(directory, { recursive: true });
+				const path = join(directory, `${versionId}.glb`);
+				const bytes = scenario === "false-hash" ? GLB_BYTES : Buffer.from("not-a-glb");
+				await writeFile(path, bytes);
+				return { artifact: { path, sha256: scenario === "false-hash" ? "f".repeat(64) : sha256(bytes) } };
+			},
+		});
+
+		const result = await runFacadeAgent(value.config, value.deps);
+		assert.deepEqual(value.calls.validate, []);
+		assert.deepEqual(value.calls.delivery, []);
+		assert.match(result.providers["gpt-image-2"].versions[0].failure.code, /FACADE_BUILD_ARTIFACT_(HASH_MISMATCH|INVALID)/);
+	});
+});
+
+test("re-reads and re-hashes the canonical GLB immediately before validation", async () => {
+	let value: any;
+	value = await fixture({
+		runId: "artifact-replaced-before-validation",
+		lifecycle: {
+			async onTransition(event: any) {
+				if (event.stage === "build" && event.status === "succeeded") {
+					const artifact = value.calls.build.at(-1);
+					await writeFile(join(value.runDir, "fixture-artifacts", event.provider, `${event.version_id}.glb`), REPLACEMENT_GLB_BYTES);
+					assert.ok(artifact);
+				}
+			},
+		},
+	});
+
+	const result = await runFacadeAgent(value.config, value.deps);
+	assert.deepEqual(value.calls.validate, []);
+	assert.deepEqual(value.calls.delivery, []);
+	assert.equal(result.providers["gpt-image-2"].versions[0].failure.code, "FACADE_BUILD_ARTIFACT_HASH_MISMATCH");
+});
+
+test("rejects a GLB path routed through a junction before validation", async () => {
+	let value: any;
+	value = await fixture({
+		runId: "artifact-junction",
+		async build({ provider, versionId, runDir }: any) {
+			const outside = join(value.root, "outside-artifacts", provider);
+			const links = join(runDir, "artifact-links");
+			await mkdir(outside, { recursive: true });
+			await mkdir(links, { recursive: true });
+			const link = join(links, provider);
+			await symlink(outside, link, "junction");
+			const path = join(link, `${versionId}.glb`);
+			await writeFile(join(outside, `${versionId}.glb`), GLB_BYTES);
+			return { artifact: { path, sha256: sha256(GLB_BYTES) } };
+		},
+	});
+	const result = await runFacadeAgent(value.config, value.deps);
+	assert.deepEqual(value.calls.validate, []);
+	assert.deepEqual(value.calls.delivery, []);
+	assert.equal(result.providers["gpt-image-2"].versions[0].failure.code, "FACADE_AGENT_PATH_UNSAFE");
+});
+
+test("re-hashes the selected GLB immediately before delivery", async () => {
+	let value: any;
+	value = await fixture({
+		runId: "artifact-replaced-before-delivery",
+		lifecycle: { async onTransition(event: any) {
+			if (event.stage === "score-receipt" && event.status === "succeeded" && event.provider === "nano-banana-pro") {
+				await writeFile(join(value.runDir, "fixture-artifacts", event.provider, "v001.glb"), REPLACEMENT_GLB_BYTES);
+			}
+		} },
+	});
+	const result = await runFacadeAgent(value.config, value.deps);
+	assert.deepEqual(value.calls.delivery, []);
+	assert.equal(result.final.status, "delivery-failed");
+	assert.equal(result.final.failure.code, "FACADE_BUILD_ARTIFACT_HASH_MISMATCH");
+});
+
+test("re-authorizes the GLB after the delivery checkpoint hook", async () => {
+	let value: any;
+	value = await fixture({
+		runId: "artifact-replaced-in-delivery-hook",
+		lifecycle: { async onTransition(event: any) {
+			if (event.stage === "delivery" && event.status === "submitting") {
+				await writeFile(join(value.runDir, "fixture-artifacts", event.provider, "v001.glb"), REPLACEMENT_GLB_BYTES);
+			}
+		} },
+	});
+	const result = await runFacadeAgent(value.config, value.deps);
+	assert.deepEqual(value.calls.delivery, []);
+	assert.equal(result.final.status, "delivery-failed");
+	assert.equal(result.final.failure.code, "FACADE_BUILD_ARTIFACT_HASH_MISMATCH");
+});
+
+test("validation receives only an immutable canonical artifact authority", async () => {
+	let validations = 0;
+	const value = await fixture({
+		runId: "canonical-artifact-authority",
+		validate({ artifact }: any) {
+			validations += 1;
+			assert.equal(Object.isFrozen(artifact), true);
+			assert.equal(artifact.sha256, sha256(GLB_BYTES));
+			assert.equal(artifact.size_bytes, GLB_BYTES.length);
+			assert.equal(Object.getPrototypeOf(artifact), Object.prototype);
+			return { accepted: true, codes: [], metrics: {}, artifacts: { glb: artifact.path, glb_sha256: artifact.sha256 } };
+		},
+	});
+	const result = await runFacadeAgent(value.config, value.deps);
+	assert.equal(validations, 2);
+	assert.equal(result.final.status, "winner");
+});
+
+test("resume after a durable validation receipt fails closed without revalidation or scoring", async () => {
+	let crash = true;
+	const value = await fixture({
+		runId: "validation-receipt-crash",
+		lifecycle: { onTransition(event: any) {
+			if (crash && event.stage === "validation-receipt" && event.status === "succeeded") {
+				crash = false;
+				throw new Error("crash after validation receipt");
+			}
+		} },
+	});
+
+	await assert.rejects(() => runFacadeAgent(value.config, value.deps), /crash after validation receipt/);
+	assert.deepEqual(value.calls.validate, [{ provider: "gpt-image-2", versionId: "v001" }]);
+	assert.deepEqual(value.calls.score, []);
+	const resumed = await runFacadeAgent(value.config, value.deps);
+	assert.equal(resumed.final.status, "blocked");
+	assert.equal(resumed.final.failure.code, "DURABLE_RECEIPT_RECONCILIATION_REQUIRED");
+	assert.equal(value.calls.validate.length, 1);
+	assert.equal(value.calls.score.length, 0);
+	assert.equal(value.calls.delivery.length, 0);
+});
+
+test("resume after a durable score receipt never reinterprets or changes the winner", async () => {
+	let crash = true;
+	const value = await fixture({
+		runId: "score-receipt-crash",
+		lifecycle: { onTransition(event: any) {
+			if (crash && event.stage === "score-receipt" && event.status === "succeeded") {
+				crash = false;
+				throw new Error("crash after score receipt");
+			}
+		} },
+	});
+
+	await assert.rejects(() => runFacadeAgent(value.config, value.deps), /crash after score receipt/);
+	assert.deepEqual(value.calls.validate, [{ provider: "gpt-image-2", versionId: "v001" }]);
+	assert.deepEqual(value.calls.score, ["gpt-image-2"]);
+	value.deps.score = Object.assign(async () => { throw new Error("must not rescore"); }, {
+		select() { throw new Error("must not reselect"); },
+	});
+	const resumed = await runFacadeAgent(value.config, value.deps);
+	assert.equal(resumed.final.status, "blocked");
+	assert.equal(resumed.final.failure.code, "DURABLE_RECEIPT_RECONCILIATION_REQUIRED");
+	assert.equal(value.calls.validate.length, 1);
+	assert.equal(value.calls.score.length, 1);
+	assert.equal(value.calls.delivery.length, 0);
+});
+
+test("in-flight markers prevent callback replay before validation and score receipt publication", async (context) => {
+	for (const boundary of ["validate", "score"]) await context.test(boundary, async () => {
+		let crash = true;
+		const value = await fixture({
+			runId: `${boundary}-returned-before-receipt`,
+			lifecycle: { onTransition(event: any) {
+				if (crash && event.stage === boundary && event.status === "returned") {
+					crash = false;
+					throw new Error(`crash after ${boundary} returned`);
+				}
+			} },
+		});
+		await assert.rejects(() => runFacadeAgent(value.config, value.deps), new RegExp(`crash after ${boundary} returned`));
+		const validateCount = value.calls.validate.length;
+		const scoreCount = value.calls.score.length;
+		const resumed = await runFacadeAgent(value.config, value.deps);
+		assert.equal(resumed.final.status, "blocked");
+		assert.equal(resumed.final.failure.code, "DURABLE_RECEIPT_RECONCILIATION_REQUIRED");
+		assert.equal(value.calls.validate.length, validateCount);
+		assert.equal(value.calls.score.length, scoreCount);
+		assert.equal(value.calls.delivery.length, 0);
+	});
+});
+
+test("terminal status rejects a missing durable receipt", async () => {
+	const value = await fixture({ runId: "terminal-missing-receipt" });
+	const result = await runFacadeAgent(value.config, value.deps);
+	const ref = result.providers["gpt-image-2"].versions[0].validation_receipt;
+	await rm(join(value.runDir, ref.path));
+	await assert.rejects(() => readFacadeAgentStatus(value.runDir), (error: any) => error.code === "FACADE_AGENT_STATE_UNCERTAIN");
+});
+
+test("preserves request identity through actual provider factories with mocked fetch", async () => {
+	const value = await fixture({ runId: "actual-provider-request-identity" });
+	const verifiedEvidence = await verifiedEvidenceFixture(value.runDir);
+	const fetchCalls = { openai: 0, gemini: 0, grammar: 0 };
+	const openai = createOpenAIProvider({ OPENAI_API_KEY: "sk-fixture" }, {
+		fetchImpl: async () => {
+			fetchCalls.openai += 1;
+			return Response.json({ id: "openai-fixture-id", data: [{ b64_json: PROVIDER_PNG.toString("base64") }], usage: { input_tokens: 1, output_tokens: 1 } });
+		},
+		timeoutMs: 1_000,
+	});
+	const gemini = createGeminiProvider({ GEMINI_API_KEY: "gemini-fixture" }, {
+		fetchImpl: async () => {
+			fetchCalls.gemini += 1;
+			return Response.json({
+				responseId: "gemini-fixture-id", modelVersion: "gemini-3-pro-image",
+				candidates: [{ finishReason: "STOP", content: { parts: [{ inlineData: { mimeType: "image/png", data: PROVIDER_PNG.toString("base64") } }] } }],
+				usageMetadata: { promptTokenCount: 1, candidatesTokenCount: 1 },
+			});
+		},
+		timeoutMs: 1_000,
+	});
+	value.deps.buildEvidence = async () => verifiedEvidence;
+	value.deps.providers = {
+		"gpt-image-2": Object.freeze({ buildRequest: buildOpenAIRequest, preflight: openai.preflight, generate: openai.generate }),
+		"nano-banana-pro": Object.freeze({ buildRequest: buildGeminiRequest, preflight: gemini.preflight, generate: gemini.generate }),
+	};
+	value.deps.extractGrammar = async (input: any) => extractFacadeGrammar({
+		...input,
+		proposalPath: await verifyFacadeProposal({
+			proposalPath: input.proposal.path, providerResult: input.providerResult,
+			evidence: input.evidence, config: input.config,
+		}),
+		fetchImpl: async () => {
+			fetchCalls.grammar += 1;
+			const { floor_elevations_m: _floors, facade_lengths_m: _lengths, ...value } = grammar();
+			return Response.json({
+				id: `grammar-${fetchCalls.grammar}`, status: "completed",
+				output: [{ type: "message", role: "assistant", content: [{ type: "output_text", text: JSON.stringify(value) }] }],
+				usage: { input_tokens: 1, output_tokens: 1, cost_usd: 0.04 },
+			});
+		},
+	});
+	value.config.confirmLive = true;
+
+	const result = await runFacadeAgent(value.config, value.deps);
+	assert.deepEqual(fetchCalls, { openai: 1, gemini: 1, grammar: 2 });
+	assert.equal(result.image_submissions.total, 2);
+	assert.equal(result.final.status, "winner");
 });
 
 test("a crash after delivery returns persists uncertainty and never invokes delivery again", async () => {
