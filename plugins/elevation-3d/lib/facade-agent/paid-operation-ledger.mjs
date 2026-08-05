@@ -296,6 +296,7 @@ export function createPaidOperationLedger(path, { approvedRoot, lockWaitMs = 5_0
 						const internalRemoteId = takeFacadeProviderRemoteIdForLedger(error)
 							?? (validRemoteId(error?.remoteId) ? error.remoteId : null);
 						const failure = normalizeProviderFailure(error, input.provider, input.kind === "image-generation" ? "generate" : "grammar");
+						takeFacadeProviderRemoteIdForLedger(failure);
 						if (internalRemoteId) {
 							ledger.operations[input.requestKey].remoteId = internalRemoteId;
 							await atomicWrite(ledgerPath, ledger, root);
