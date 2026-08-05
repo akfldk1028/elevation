@@ -128,6 +128,31 @@ function geminiSuccess(secret = "gemini-secret") {
 	return { calls, provider };
 }
 
+function openAIResponsePayload(extra: Record<string, unknown> = {}) {
+	return { id: "openai-image-fixture-id", data: [{ b64_json: PNG.toString("base64") }], ...extra };
+}
+
+function geminiResponsePayload(extra: Record<string, unknown> = {}) {
+	return {
+		responseId: "gemini-image-fixture-id",
+		candidates: [{ finishReason: "STOP", content: { parts: [{ inlineData: {
+			mimeType: "image/png", data: PNG.toString("base64"),
+		} }] } }],
+		...extra,
+	};
+}
+
+function injectParsedPayload(payload: unknown) {
+	const originalParse = JSON.parse;
+	const response = new Response("{}", { headers: { "content-type": "application/json" } });
+	Object.defineProperty(response, "json", { value: async () => payload });
+	JSON.parse = ((..._args: any[]) => {
+		JSON.parse = originalParse;
+		return payload;
+	}) as typeof JSON.parse;
+	return { response, restore: () => { JSON.parse = originalParse; } };
+}
+
 test("OpenAI sends the fixed GPT Image 2 multipart edit contract and decodes one PNG", async () => {
 	const request = buildOpenAIRequest({ evidence: evidence(), brief: BRIEF, output: OUTPUT });
 	const { calls, provider } = openAISuccess();
@@ -382,6 +407,68 @@ test("exported boundaries reject hostile getters, proxies, and inherited inputs 
 	}
 });
 
+test("provider constructors reject hostile environment and option boundaries without reading or leaking traps", () => {
+	const marker = "ULTRAPRIVATE_CONSTRUCTOR_TRAP_24680";
+	for (const [create, apiKeyName] of [
+		[createOpenAIProvider, "OPENAI_API_KEY"],
+		[createGeminiProvider, "GEMINI_API_KEY"],
+	] as const) {
+		const assertBoundaryError = (error: any) => {
+			assert.equal(error.code, "PROVIDER_BOUNDARY_INVALID");
+			assert.doesNotMatch(`${error.message}\n${error.stack}\n${JSON.stringify(error)}`, new RegExp(marker));
+			return true;
+		};
+		let envGetterReads = 0;
+		const accessorEnv = Object.defineProperty({}, apiKeyName, { enumerable: true, get() {
+			envGetterReads += 1;
+			throw new Error(marker);
+		} });
+		assert.throws(() => create(accessorEnv, { fetchImpl: async () => Response.json({}) }), assertBoundaryError);
+		assert.equal(envGetterReads, 0);
+
+		let optionsGetterReads = 0;
+		const accessorOptions = Object.defineProperty({}, "fetchImpl", { enumerable: true, get() {
+			optionsGetterReads += 1;
+			throw new Error(marker);
+		} });
+		assert.throws(() => create({ [apiKeyName]: "fixture-secret" }, accessorOptions), assertBoundaryError);
+		assert.equal(optionsGetterReads, 0);
+
+		for (const hostile of [
+			new Proxy({}, { getPrototypeOf() { throw new Error(marker); }, get() { throw new Error(marker); } }),
+			Object.create({ [apiKeyName]: "inherited-secret" }),
+		]) {
+			assert.throws(() => create(hostile, { fetchImpl: async () => Response.json({}) }), assertBoundaryError);
+		}
+		for (const hostile of [
+			new Proxy({}, { getPrototypeOf() { throw new Error(marker); }, get() { throw new Error(marker); } }),
+			Object.create({ fetchImpl: async () => Response.json({}) }),
+		]) {
+			assert.throws(() => create({ [apiKeyName]: "fixture-secret" }, hostile), assertBoundaryError);
+		}
+	}
+});
+
+test("build, preflight, and generate reject oversized top-level records before authorization or transport", async () => {
+	for (const [create, env, build] of [
+		[createOpenAIProvider, { OPENAI_API_KEY: "sk-openai-secret" }, buildOpenAIRequest],
+		[createGeminiProvider, { GEMINI_API_KEY: "gemini-secret" }, buildGeminiRequest],
+	] as const) {
+		let calls = 0;
+		const provider = create(env, { fetchImpl: async () => { calls += 1; return Response.json({}); } });
+		const request = build({ evidence: evidence(), brief: BRIEF, output: OUTPUT });
+		const oversized: Record<string, unknown> = {};
+		for (let index = 0; index < 5_000; index += 1) oversized[`field_${index}`] = index;
+		assert.throws(() => build({ ...oversized, evidence: evidence(), brief: BRIEF, output: OUTPUT }),
+			(error: any) => error.code === "PROVIDER_BOUNDARY_INVALID");
+		assert.throws(() => provider.preflight({ ...oversized, request, ceilingUsd: 1, estimateUsd: 0.2 }),
+			(error: any) => error.code === "PROVIDER_BOUNDARY_INVALID");
+		await assert.rejects(() => provider.generate({ ...oversized, request }),
+			(error: any) => error.code === "PROVIDER_BOUNDARY_INVALID");
+		assert.equal(calls, 0);
+	}
+});
+
 test("401 and 429 responses normalize to stable redacted codes", async () => {
 	for (const [name, create, env, build] of [
 		["openai", createOpenAIProvider, { OPENAI_API_KEY: "sk-openai-secret" }, buildOpenAIRequest],
@@ -435,10 +522,13 @@ test("deadline and caller abort remain active while the response body is being c
 		[createOpenAIProvider, { OPENAI_API_KEY: "sk-openai-secret" }, buildOpenAIRequest],
 		[createGeminiProvider, { GEMINI_API_KEY: "gemini-secret" }, buildGeminiRequest],
 	] as const) {
-		const bodyStallsUntilAbort = async (_url: string, init: any) => ({
-			ok: true, status: 200, headers: new Headers(),
-			json: async () => new Promise((_resolve, reject) => init.signal.addEventListener("abort", () => reject(init.signal.reason), { once: true })),
-		});
+		const bodyStallsUntilAbort = async (_url: string, init: any) => new Response(new ReadableStream({
+			start(controller) {
+				const abort = () => controller.error(init.signal.reason);
+				if (init.signal.aborted) abort();
+				else init.signal.addEventListener("abort", abort, { once: true });
+			},
+		}), { status: 200 });
 		const request = build({ evidence: evidence(), brief: BRIEF, output: OUTPUT });
 		await assert.rejects(Promise.race([
 			authorizedGenerate(create(env, { fetchImpl: bodyStallsUntilAbort, timeoutMs: 10 }), request),
@@ -451,6 +541,72 @@ test("deadline and caller abort remain active while the response body is being c
 			authorizedGenerate(create(env, { fetchImpl: bodyStallsUntilAbort, timeoutMs: 1_000 }), request, { signal: controller.signal }),
 			new Promise((_resolve, reject) => setTimeout(() => reject(new Error("caller abort was not enforced during body consumption")), 100)),
 		]), (error: any) => error.code === "PROVIDER_ABORTED");
+	}
+});
+
+test("provider JSON payloads are safely cloned before any field is read", async () => {
+	const marker = "ULTRAPRIVATE_RESPONSE_TRAP_13579";
+	for (const [create, env, build, validPayload, idKey] of [
+		[createOpenAIProvider, { OPENAI_API_KEY: "sk-openai-secret" }, buildOpenAIRequest, openAIResponsePayload, "id"],
+		[createGeminiProvider, { GEMINI_API_KEY: "gemini-secret" }, buildGeminiRequest, geminiResponsePayload, "responseId"],
+	] as const) {
+		let getterReads = 0;
+		const accessorPayload = validPayload();
+		Object.defineProperty(accessorPayload, idKey, { enumerable: true, get() {
+			getterReads += 1;
+			throw new Error(marker);
+		} });
+		const proxyPayload = new Proxy(validPayload(), { getPrototypeOf() { throw new Error(marker); } });
+		let deep: any = { value: "leaf" };
+		for (let depth = 0; depth < 40; depth += 1) deep = { child: deep };
+		const dense = Array.from({ length: 5_000 }, (_, index) => index);
+		const manyNodes = Array.from({ length: 100 }, () => Array.from({ length: 100 }, () => null));
+		const shared = { value: "shared" };
+		for (const payload of [
+			accessorPayload,
+			proxyPayload,
+			validPayload({ deep }),
+			validPayload({ dense }),
+			validPayload({ manyNodes }),
+			validPayload({ repeated: { left: shared, right: shared } }),
+		]) {
+			let restore = () => {};
+			const provider = create(env, { fetchImpl: async () => {
+				const injected = injectParsedPayload(payload);
+				restore = injected.restore;
+				return injected.response;
+			} });
+			try {
+				await assert.rejects(() => authorizedGenerate(provider, build({ evidence: evidence(), brief: BRIEF, output: OUTPUT })), (error: any) => {
+					assert.equal(error.code, "PROVIDER_RESPONSE_INVALID");
+					assert.doesNotMatch(`${error.message}\n${error.stack}\n${JSON.stringify(error)}`, new RegExp(marker));
+					return true;
+				});
+			} finally { restore(); }
+		}
+		assert.equal(getterReads, 0);
+	}
+});
+
+test("provider JSON response bodies are size-limited while streaming", async () => {
+	const chunkBytes = 1024 * 1024;
+	for (const [create, env, build] of [
+		[createOpenAIProvider, { OPENAI_API_KEY: "sk-openai-secret" }, buildOpenAIRequest],
+		[createGeminiProvider, { GEMINI_API_KEY: "gemini-secret" }, buildGeminiRequest],
+	] as const) {
+		const provider = create(env, { fetchImpl: async () => {
+			let remainingChunks = 46;
+			const chunk = new Uint8Array(chunkBytes).fill(0x20);
+			return new Response(new ReadableStream({
+				pull(controller) {
+					if (remainingChunks <= 0) return controller.close();
+					remainingChunks -= 1;
+					controller.enqueue(chunk);
+				},
+			}), { headers: { "content-type": "application/json" } });
+		} });
+		await assert.rejects(() => authorizedGenerate(provider, build({ evidence: evidence(), brief: BRIEF, output: OUTPUT })),
+			(error: any) => error.code === "PROVIDER_RESPONSE_TOO_LARGE");
 	}
 });
 
