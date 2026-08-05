@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { NodeIO } from "@gltf-transform/core";
+import sharp from "sharp";
 import { Triangle, Vector3 } from "three";
 import { buildEnrichedScene, writeEnrichedGlb } from "../plugins/elevation-3d/lib/enrichment.mjs";
 
@@ -40,6 +41,25 @@ const grammar = {
 	mullion_depth_m: 0.08,
 	glazing_recess_m: 0.12,
 	parapet_height_m: 0.35,
+};
+
+const punchedGrammar = {
+	system: "brick-punched-window-v1",
+	surfaces: ["front", "right", "back", "left"],
+	materials: ["brick", "precast", "window-frame", "glass"],
+	corner_datum_m: 0,
+	bay_width_m: 2.4,
+	window_width_m: 1.2,
+	window_height_m: 1.65,
+	sill_height_m: 0.85,
+	reveal_depth_m: 0.22,
+	frame_width_m: 0.06,
+	lintel_height_m: 0.18,
+	sill_depth_m: 0.08,
+	cladding_depth_m: 0.12,
+	brick_module_m: [0.215, 0.065],
+	confidence: 0.92,
+	unresolved_surfaces: [],
 };
 
 test("preserves every source vertex and triangle in the base primitive", () => {
@@ -99,6 +119,44 @@ test("exports a parseable GLB containing the immutable base and all detail mater
 	assert.deepEqual([...artifact.materials].sort(), ["bronze", "concrete", "glass", "opaque"]);
 	assert.match(artifact.sha256, /^[a-f0-9]{64}$/);
 	assert.deepEqual(artifact.bounds, { min: [-4.18, -2.18, 0], max: [4.18, 2.18, 6.6] });
+});
+
+test("embeds UV-bound deterministic 2K PBR textures while round-tripping exact MASS", async () => {
+	const root = await mkdtemp(join(tmpdir(), "elevation3d-punched-pbr-"));
+	temporaryRoots.push(root);
+	const output = join(root, "punched.glb");
+	const repeatedOutput = join(root, "punched-repeated.glb");
+	const scene = buildEnrichedScene({ mesh, floorGuides, facadePlanes, grammar: punchedGrammar, safeFallback: false });
+	const artifact = await writeEnrichedGlb(scene, output);
+	const repeatedArtifact = await writeEnrichedGlb(scene, repeatedOutput);
+	assert.equal(repeatedArtifact.sha256, artifact.sha256);
+	const parsed = await new NodeIO().read(output);
+	const base = parsed.getRoot().listMeshes().find((item) => item.getName() === "exact-mass")?.listPrimitives()[0];
+	assert.deepEqual(Array.from(base?.getAttribute("POSITION")?.getArray() ?? []), Array.from(new Float32Array(mesh.vertices.flat())));
+	assert.deepEqual(Array.from(base?.getIndices()?.getArray() ?? []), mesh.triangles.flat());
+	const textures = parsed.getRoot().listTextures();
+	assert.equal(textures.length, 6);
+	for (const texture of textures) {
+		assert.deepEqual(texture.getSize(), [2048, 2048]);
+		assert.match(texture.getExtras().sha256, /^[a-f0-9]{64}$/);
+		assert.match(texture.getExtras().grammar_sha256, /^[a-f0-9]{64}$/);
+		assert.equal(texture.getExtras().generator, "elevation-3d-procedural-pbr-v1");
+		const metadata = await sharp(texture.getImage()).metadata();
+		assert.deepEqual([metadata.width, metadata.height], [2048, 2048]);
+		assert.equal(metadata.format, "png");
+	}
+	for (const name of ["brick", "precast"]) {
+		const material = parsed.getRoot().listMaterials().find((candidate) => candidate.getName() === name);
+		assert.ok(material?.getBaseColorTexture());
+		assert.ok(material?.getNormalTexture());
+		assert.ok(material?.getMetallicRoughnessTexture());
+	}
+	const texturedPrimitives = parsed.getRoot().listMeshes().flatMap((item) => item.listPrimitives())
+		.filter((primitive) => ["brick", "precast"].includes(primitive.getMaterial()?.getName() ?? ""));
+	assert.ok(texturedPrimitives.length > 0);
+	assert.ok(texturedPrimitives.every((primitive) => primitive.getAttribute("TEXCOORD_0")));
+	assert.equal(artifact.texture_provenance.length, 6);
+	assert.ok(artifact.texture_provenance.every((entry) => /^[a-f0-9]{64}$/.test(entry.sha256)));
 });
 
 test("safe fallback exports only exact base geometry with conservative material", async () => {
