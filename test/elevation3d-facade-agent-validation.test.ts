@@ -92,6 +92,14 @@ function details(document: any) {
 	return document.getRoot().listMeshes().find((mesh: any) => mesh.getName() === "facade-details").listPrimitives();
 }
 
+function pngHeaderOnly(width = 2048, height = 2048) {
+	const bytes = Buffer.alloc(24);
+	Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).copy(bytes);
+	bytes.writeUInt32BE(13, 8); bytes.write("IHDR", 12, "ascii");
+	bytes.writeUInt32BE(width, 16); bytes.writeUInt32BE(height, 20);
+	return bytes;
+}
+
 test("rejects a changed exact-MASS index with the canonical surface code", async () => {
 	const report = await validate((document) => {
 		const primitive = document.getRoot().listMeshes().find((mesh: any) => mesh.getName() === "exact-mass").listPrimitives()[0];
@@ -118,7 +126,13 @@ test("rejects a missing canonical back facade and a curtain-wall substitution", 
 test("rejects shallow persisted reveals and mismatched corner anchors", async () => {
 	const shallow = await validate((document) => {
 		const primitive = details(document).find((item: any) => item.getExtras().kind === "window-reveal");
-		primitive.setExtras({ ...primitive.getExtras(), depth_m: 0.05 });
+		const positions = primitive.getAttribute("POSITION");
+		const ys = Array.from({ length: positions.getCount() }, (_, index) => positions.getElement(index, [0, 0, 0])[1]);
+		const outer = Math.min(...ys);
+		for (let index = 0; index < positions.getCount(); index++) {
+			const point = positions.getElement(index, [0, 0, 0]);
+			point[1] = Math.min(outer + 0.05, point[1]); positions.setElement(index, point);
+		}
 	});
 	assert.ok(shallow.codes.includes("PUNCHED_REVEAL_DEPTH_MISSING"));
 	assert.equal(shallow.metrics.minimum_reveal_depth_m, 0.05);
@@ -126,11 +140,13 @@ test("rejects shallow persisted reveals and mismatched corner anchors", async ()
 		const joined = Map.groupBy(details(document).filter((item: any) => item.getExtras().kind === "corner-return"), (item: any) => item.getExtras().corner_anchor_id);
 		const pair: any[] = [...joined.values()].find((items: any) => new Set(items.map((item: any) => item.getExtras().view)).size > 1);
 		const primitive = pair[0];
-		const extras = primitive.getExtras();
-		primitive.setExtras({ ...extras, anchor_position: [extras.anchor_position[0] + 0.02, ...extras.anchor_position.slice(1)] });
+		const positions = primitive.getAttribute("POSITION");
+		for (let index = 0; index < positions.getCount(); index++) {
+			const point = positions.getElement(index, [0, 0, 0]); point[0] += 0.4; positions.setElement(index, point);
+		}
 	});
 	assert.ok(corner.codes.includes("CORNER_DATUM_MISMATCH"));
-	assert.ok(corner.metrics.corner_max_gap_m >= 0.02 - 1e-6);
+	assert.ok(corner.metrics.corner_max_gap_m >= 0.1);
 	const missingCorner = await validate((document) => {
 		const mesh = document.getRoot().listMeshes().find((item: any) => item.getName() === "facade-details");
 		const primitive = mesh.listPrimitives().find((item: any) => item.getExtras().kind === "corner-return");
@@ -155,7 +171,7 @@ test("rejects a window crossing its authored floor band, a detached detail, and 
 		const primitive = details(document).find((item: any) => item.getExtras().kind === "glazing");
 		const positions = primitive.getAttribute("POSITION");
 		for (let index = 0; index < positions.getCount(); index++) {
-			const point = positions.getElement(index, [0, 0, 0]); point[1] = 0; positions.setElement(index, point);
+			const point = positions.getElement(index, [0, 0, 0]); point[1] += 1.5; positions.setElement(index, point);
 		}
 	});
 	assert.ok(detached.codes.includes("DETAIL_COMPONENT_UNATTACHED"));
@@ -174,7 +190,7 @@ test("accepts a complete immutable opaque brick facade and exposes deterministic
 	assert.equal(valid.accepted, true);
 	assert.deepEqual(valid.codes, []);
 	assert.equal(valid.metrics.canonical_surface_match, 1);
-	assert.equal(valid.metrics.opaque_wall_coverage, 1);
+	assert.ok(valid.metrics.opaque_wall_coverage > 0.8 && valid.metrics.opaque_wall_coverage <= 1);
 	assert.equal(valid.metrics.minimum_reveal_depth_m, 0.22);
 	assert.ok(valid.metrics.corner_max_gap_m <= 1e-5);
 	assert.ok(valid.metrics.floor_alignment_max_error_m <= 1e-5);
@@ -194,4 +210,82 @@ test("rejects invalid typed grammar and incomplete procedural PBR bindings", asy
 		texture.setExtras({ ...texture.getExtras(), sha256: "0".repeat(64) });
 	});
 	assert.ok(forgedPbr.codes.includes("PBR_MATERIAL_INVALID"));
+	const malformedPbr = await validate((document) => {
+		const texture = document.getRoot().listMaterials().find((material: any) => material.getName() === "brick").getBaseColorTexture();
+		const bytes = pngHeaderOnly();
+		texture.setImage(bytes).setMimeType("image/png").setExtras({ ...texture.getExtras(), sha256: sha256(bytes) });
+	});
+	assert.ok(malformedPbr.codes.includes("PBR_MATERIAL_INVALID"));
+	const substitutedPbr = await validate(async (document) => {
+		const texture = document.getRoot().listMaterials().find((material: any) => material.getName() === "brick").getBaseColorTexture();
+		const bytes = await sharp({ create: { width: 2048, height: 2048, channels: 4, background: "#ff0000" } }).png().toBuffer();
+		texture.setImage(bytes).setMimeType("image/png").setExtras({ ...texture.getExtras(), sha256: sha256(bytes) });
+	});
+	assert.ok(substitutedPbr.codes.includes("PBR_MATERIAL_INVALID"));
+});
+
+test("derives opaque coverage from persisted areas and rejects malformed typed primitive shapes", async () => {
+	const coverage = await validate((document) => {
+		for (const primitive of details(document)) {
+			const kind = primitive.getExtras().kind;
+			if (kind !== "brick-cladding" && kind !== "glazing") continue;
+			const positions = primitive.getAttribute("POSITION");
+			const points = Array.from({ length: positions.getCount() }, (_, index) => positions.getElement(index, [0, 0, 0]));
+			const centroid = [0, 1, 2].map((axis) => points.reduce((sum, point) => sum + point[axis], 0) / points.length);
+			const scale = kind === "brick-cladding" ? 0.01 : 4;
+			for (let index = 0; index < points.length; index++) positions.setElement(index, points[index].map((value, axis) => centroid[axis] + (value - centroid[axis]) * scale));
+		}
+	});
+	assert.ok(coverage.codes.includes("OPAQUE_WALL_COVERAGE_MISSING"));
+	assert.ok(coverage.metrics.opaque_wall_coverage < 0.5);
+
+	const malformed = await validate((document) => {
+		const primitive = details(document)[0];
+		primitive.getIndices().setArray(new Uint16Array([0, 1, 2]));
+	});
+	assert.ok(malformed.codes.includes("FACADE_PRIMITIVE_SHAPE_INVALID"));
+});
+
+test("rejects negative-zero grammar metrics before allocating detail records", async () => {
+	const report = await validate(undefined, { ...grammar, corner_datum_m: -0 });
+	assert.ok(report.codes.includes("FACADE_GRAMMAR_INVALID"));
+	assert.equal("detail_component_distances_m" in report.metrics, false);
+	const excessiveFloors = await validate(undefined, {
+		...grammar, floor_elevations_m: Array.from({ length: 66 }, (_, index) => index * 3.3),
+	});
+	assert.ok(excessiveFloors.codes.includes("FACADE_GRAMMAR_INVALID"));
+	assert.equal("detail_component_distances_m" in excessiveFloors.metrics, false);
+});
+
+test("enforces artifact and primitive budgets before expensive facade record allocation", async () => {
+	const oversized = await fixture();
+	const bytes = Buffer.alloc(16 * 1024 * 1024 + 1);
+	await writeFile(oversized.artifact.path, bytes);
+	oversized.artifact.sha256 = sha256(bytes);
+	const artifactReport = await validateEnrichment({ sourceMesh, artifact: oversized.artifact, grammar, requiredDrawings: oversized.drawings });
+	assert.ok(artifactReport.codes.includes("ARTIFACT_BUDGET_EXCEEDED"));
+	assert.equal("primitive_count" in artifactReport.metrics, false);
+
+	const primitiveReport = await validate((document) => {
+		const mesh = document.getRoot().listMeshes().find((item: any) => item.getName() === "facade-details");
+		const template = mesh.listPrimitives()[0];
+		for (let index = mesh.listPrimitives().length; index <= 5000; index++) {
+			mesh.addPrimitive(document.createPrimitive()
+				.setAttribute("POSITION", template.getAttribute("POSITION"))
+				.setIndices(template.getIndices()).setMaterial(template.getMaterial())
+				.setExtras({ ...template.getExtras(), slot: `budget-${index}` }));
+		}
+	});
+	assert.ok(primitiveReport.codes.includes("ARTIFACT_BUDGET_EXCEEDED"));
+	assert.equal("detail_component_distances_m" in primitiveReport.metrics, false);
+
+	const accessorReport = await validate((document) => {
+		const root = document.getRoot();
+		const buffer = root.listBuffers()[0];
+		for (let index = root.listAccessors().length; index <= 15002; index++) {
+			document.createAccessor(`budget-accessor-${index}`, buffer).setType("SCALAR").setArray(new Float32Array([index]));
+		}
+	});
+	assert.ok(accessorReport.codes.includes("ARTIFACT_BUDGET_EXCEEDED"));
+	assert.equal("detail_component_distances_m" in accessorReport.metrics, false);
 });

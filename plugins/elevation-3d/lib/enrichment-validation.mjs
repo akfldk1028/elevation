@@ -1,14 +1,22 @@
-import { readFile, realpath } from "node:fs/promises";
+import { readFile, realpath, stat } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { getBounds, NodeIO } from "@gltf-transform/core";
 import sharp from "sharp";
 import { sha256 } from "./core.mjs";
 import { PUNCHED_FACADE_MATERIALS, PUNCHED_FACADE_SYSTEM, validatePunchedFacadeGrammar } from "./facade-grammar.mjs";
+import { PUNCHED_FACADE_BUDGETS } from "./facade-agent/punched-facade.mjs";
+import { createFacadePbrMaps } from "./facade-agent/procedural-materials.mjs";
 
 const DRAWING_NAMES = ["plan", "front", "back", "left", "right", "top", "axon"];
 const REQUIRED_MATERIALS = ["bronze", "concrete", "glass", "opaque"];
 const IDENTITY_MATRIX = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
 const DEFAULT_PRIMITIVE_BUDGET = 5000;
+const MAX_ARTIFACT_BYTES = 16 * 1024 * 1024;
+const MINIMUM_OPAQUE_COVERAGE = 0.5;
+const PBR_DECODE_CACHE = new Map();
+const PBR_EXPECTED_HASH_CACHE = new Map();
+const TYPED_KINDS = new Set(["corner-return", "brick-cladding", "window-reveal", "window-frame", "glazing", "precast-lintel", "precast-sill"]);
+const BOX_INDICES = [0, 2, 1, 0, 3, 2, 4, 5, 6, 4, 6, 7, 0, 1, 5, 0, 5, 4, 1, 2, 6, 1, 6, 5, 2, 3, 7, 2, 7, 6, 3, 0, 4, 3, 4, 7];
 
 function boundsOf(vertices) {
 	const min = [Infinity, Infinity, Infinity];
@@ -24,42 +32,107 @@ function rounded(value) {
 	return Number(value.toFixed(12));
 }
 
-function distance(left, right) {
-	return Math.hypot(...left.map((value, axis) => value - right[axis]));
+function boundsDistance(left, right) {
+	return Math.hypot(...[0, 1, 2].map((axis) => Math.max(0, left.min[axis] - right.max[axis], right.min[axis] - left.max[axis])));
 }
 
-function typedPbrValid(root, grammar) {
+async function decodedPngValid(image, hash) {
+	if (PBR_DECODE_CACHE.has(hash)) return PBR_DECODE_CACHE.get(hash);
+	let valid = false;
+	try {
+		const { data, info } = await sharp(image, { failOn: "error", limitInputPixels: 2048 * 2048 }).raw().toBuffer({ resolveWithObject: true });
+		valid = info.format === "raw" && info.width === 2048 && info.height === 2048 && info.channels === 4
+			&& data.length === 2048 * 2048 * 4;
+	} catch { valid = false; }
+	if (PBR_DECODE_CACHE.size >= 64) PBR_DECODE_CACHE.delete(PBR_DECODE_CACHE.keys().next().value);
+	PBR_DECODE_CACHE.set(hash, valid);
+	return valid;
+}
+
+async function typedPbrValid(root, grammar) {
 	try {
 		const grammarHash = sha256(JSON.stringify(validatePunchedFacadeGrammar(grammar, { allowDerived: true })));
+		let expectedHashes = PBR_EXPECTED_HASH_CACHE.get(grammarHash);
+		if (!expectedHashes) {
+			const maps = createFacadePbrMaps({ grammar, resolution: 2048 });
+			expectedHashes = Object.fromEntries(Object.values(maps).flatMap((channels) => Object.values(channels).map((map) => [map.name, map.sha256])));
+			if (PBR_EXPECTED_HASH_CACHE.size >= 16) PBR_EXPECTED_HASH_CACHE.delete(PBR_EXPECTED_HASH_CACHE.keys().next().value);
+			PBR_EXPECTED_HASH_CACHE.set(grammarHash, expectedHashes);
+		}
 		for (const name of ["brick", "precast"]) {
 			const material = root.listMaterials().find((candidate) => candidate.getName() === name);
-			const textures = [material?.getBaseColorTexture(), material?.getNormalTexture(), material?.getMetallicRoughnessTexture()];
-			if (textures.some((texture) => !texture)) return false;
-			if (textures.some((texture) => {
+			const textures = [
+				[material?.getBaseColorTexture(), `${name}-base-color`],
+				[material?.getNormalTexture(), `${name}-normal`],
+				[material?.getMetallicRoughnessTexture(), `${name}-metallic-roughness`],
+			];
+			if (textures.some(([texture]) => !texture)) return false;
+			for (const [texture, expectedName] of textures) {
 				const extras = texture.getExtras();
-				return extras?.generator !== "elevation-3d-procedural-pbr-v1" || extras?.grammar_sha256 !== grammarHash
+				const image = texture.getImage();
+				if (texture.getName() !== expectedName || extras?.generator !== "elevation-3d-procedural-pbr-v1" || extras?.grammar_sha256 !== grammarHash
 					|| !/^[a-f0-9]{64}$/.test(extras?.sha256 ?? "") || extras.sha256 !== sha256(texture.getImage())
-					|| texture.getMimeType() !== "image/png" || JSON.stringify(texture.getSize()) !== JSON.stringify([2048, 2048]);
-			})) return false;
+					|| extras.sha256 !== expectedHashes[expectedName]
+					|| texture.getMimeType() !== "image/png" || JSON.stringify(texture.getSize()) !== JSON.stringify([2048, 2048])
+					|| !await decodedPngValid(image, extras.sha256)) return false;
+			}
 		}
 		return true;
 	} catch { return false; }
 }
 
+function typedPrimitiveShapeValid(primitive, surfaces) {
+	const positions = primitive.getAttribute("POSITION"), indices = primitive.getIndices(), extras = primitive.getExtras();
+	if (!positions || positions.getCount() !== 8 || !indices || indices.getCount() !== 36
+		|| !TYPED_KINDS.has(extras?.kind) || !surfaces.includes(extras?.view)) return false;
+	const positionValues = positions.getArray(), indexValues = indices.getArray();
+	if (!Array.from(positionValues).every((value) => Number.isFinite(value))
+		|| JSON.stringify(Array.from(indexValues)) !== JSON.stringify(BOX_INDICES)) return false;
+	const axes = [0, 1, 2].map((axis) => [...new Set(Array.from({ length: 8 }, (_, index) => positionValues[index * 3 + axis]))]);
+	if (axes.some((values) => values.length !== 2)) return false;
+	const expectedCorners = new Set(axes[0].flatMap((x) => axes[1].flatMap((y) => axes[2].map((z) => `${x},${y},${z}`))));
+	return new Set(Array.from({ length: 8 }, (_, index) => `${positionValues[index * 3]},${positionValues[index * 3 + 1]},${positionValues[index * 3 + 2]}`)).size === 8
+		&& Array.from({ length: 8 }, (_, index) => `${positionValues[index * 3]},${positionValues[index * 3 + 1]},${positionValues[index * 3 + 2]}`)
+			.every((key) => expectedCorners.has(key));
+}
+
+function documentWithinBudget(root, primitiveBudget) {
+	if (root.listAccessors().length > primitiveBudget * 3 + 2) return false;
+	let primitives = 0, vertices = 0, indices = 0;
+	for (const mesh of root.listMeshes()) for (const primitive of mesh.listPrimitives()) {
+		primitives++;
+		if (primitives > primitiveBudget + 1) return false;
+		vertices += primitive.getAttribute("POSITION")?.getCount() ?? 0;
+		indices += primitive.getIndices()?.getCount() ?? 0;
+		if (vertices > PUNCHED_FACADE_BUDGETS.maxTotalVertices || indices > PUNCHED_FACADE_BUDGETS.maxTotalIndices) return false;
+	}
+	return true;
+}
+
+function projectedArea(record) {
+	const horizontalAxis = record.extras.view === "front" || record.extras.view === "back" ? 0 : 1;
+	return Math.max(0, record.bounds.max[horizontalAxis] - record.bounds.min[horizontalAxis])
+		* Math.max(0, record.bounds.max[2] - record.bounds.min[2]);
+}
+
 function typedFacadeMetrics(detailRecords, surfaces, floorGuides) {
 	const recordsByView = Map.groupBy(detailRecords.filter((record) => surfaces.includes(record.extras?.view)), (record) => record.extras.view);
-	const coveredViews = surfaces.filter((view) => {
+	const viewOpaqueCoverage = surfaces.map((view) => {
 		const records = recordsByView.get(view) ?? [];
-		const cladding = records.filter((record) => record.extras?.kind === "brick-cladding");
-		return cladding.length > 0 && cladding.every((record) => record.material === "brick");
+		const opaqueArea = records.filter((record) => ["brick-cladding", "corner-return"].includes(record.extras?.kind) && record.material === "brick")
+			.reduce((sum, record) => sum + projectedArea(record), 0);
+		const glazingArea = records.filter((record) => record.extras?.kind === "glazing" && record.material === "glass")
+			.reduce((sum, record) => sum + projectedArea(record), 0);
+		return opaqueArea > 0 ? opaqueArea / (opaqueArea + glazingArea) : 0;
 	});
+	const opaqueMaterialsValid = detailRecords.every((record) => !["brick-cladding", "corner-return", "window-reveal"].includes(record.extras?.kind)
+		|| record.material === "brick") && detailRecords.every((record) => record.extras?.kind !== "glazing" || record.material === "glass");
 	const viewsPresent = surfaces.filter((view) => (recordsByView.get(view)?.length ?? 0) > 0);
 	const reveals = detailRecords.filter((record) => record.extras?.kind === "window-reveal");
 	const revealDepths = reveals.map((record) => {
 		const view = record.extras.view;
 		const depthAxis = view === "front" || view === "back" ? 1 : 0;
-		const persistedDepth = record.bounds.max[depthAxis] - record.bounds.min[depthAxis];
-		return Math.min(Number(record.extras.depth_m), persistedDepth);
+		return record.bounds.max[depthAxis] - record.bounds.min[depthAxis];
 	}).filter(Number.isFinite);
 	const corners = Map.groupBy(detailRecords.filter((record) => record.extras?.kind === "corner-return"), (record) => record.extras.corner_anchor_id);
 	const floorStarts = floorGuides.slice(0, -1);
@@ -73,11 +146,9 @@ function typedFacadeMetrics(detailRecords, surfaces, floorGuides) {
 	))));
 	let cornerMaxGap = 0;
 	let cornerInvalid = false;
-	for (const group of corners.values()) for (let left = 0; left < group.length; left++) for (let right = left + 1; right < group.length; right++) {
-		const a = group[left].extras.anchor_position, b = group[right].extras.anchor_position;
-		if (Array.isArray(a) && Array.isArray(b) && a.length === 3 && b.length === 3 && [...a, ...b].every(Number.isFinite)) {
-			cornerMaxGap = Math.max(cornerMaxGap, distance(a, b));
-		} else cornerInvalid = true;
+	for (const group of corners.values()) {
+		if (group.length !== 2) { cornerInvalid = true; continue; }
+		cornerMaxGap = Math.max(cornerMaxGap, boundsDistance(group[0].bounds, group[1].bounds));
 	}
 	let floorError = 0;
 	let floorInvalid = false;
@@ -89,13 +160,14 @@ function typedFacadeMetrics(detailRecords, surfaces, floorGuides) {
 		floorError = Math.max(floorError, floorGuides[floorIndex] - record.bounds.min[2], record.bounds.max[2] - floorGuides[floorIndex + 1], 0);
 	}
 	return {
-		opaque_wall_coverage: surfaces.length ? coveredViews.length / surfaces.length : 0,
+		opaque_wall_coverage: viewOpaqueCoverage.length ? Math.min(...viewOpaqueCoverage) : 0,
 		minimum_reveal_depth_m: revealDepths.length ? Math.min(...revealDepths) : 0,
 		corner_max_gap_m: cornerInvalid ? null : cornerMaxGap,
 		floor_alignment_max_error_m: floorInvalid ? null : floorError,
 		facade_orientation_coverage: surfaces.length ? viewsPresent.length / surfaces.length : 0,
 		corner_keys_complete: cornerKeysComplete,
 		floor_keys_complete: floorKeysComplete,
+		opaque_materials_valid: opaqueMaterialsValid,
 	};
 }
 
@@ -242,12 +314,16 @@ export async function validateEnrichment({ sourceMesh, artifact, grammar, requir
 	const metrics = { missing_drawings: [], drawing_dimensions: {} };
 	const artifacts = { glb: resolve(artifact.path), drawings: {} };
 	const punchedFacade = grammar?.system === PUNCHED_FACADE_SYSTEM && !safeFallback;
+	let typedGrammarValid = true;
 	if (punchedFacade) {
 		try {
+			if (!Array.isArray(grammar.floor_elevations_m) || grammar.floor_elevations_m.length > PUNCHED_FACADE_BUDGETS.maxFloorGuides) {
+				throw new RangeError("floor guide budget exceeded");
+			}
 			validatePunchedFacadeGrammar(grammar, {
 				floorGuides: { floor_guides_m: grammar.floor_elevations_m }, allowDerived: true,
 			});
-		} catch { codes.push("FACADE_GRAMMAR_INVALID"); }
+		} catch { typedGrammarValid = false; codes.push("FACADE_GRAMMAR_INVALID"); }
 	}
 	let glbBytes;
 	let glbHash;
@@ -256,15 +332,25 @@ export async function validateEnrichment({ sourceMesh, artifact, grammar, requir
 	try {
 		artifactRealPath = await realpath(artifact.path);
 		artifacts.glb = artifactRealPath;
-		glbBytes = await readFile(artifact.path);
-		glbHash = sha256(glbBytes);
-		artifacts.glb_sha256 = glbHash;
-		metrics.glb_size_bytes = glbBytes.length;
-		if (glbHash !== String(artifact.sha256 ?? "").toLowerCase()) codes.push("ARTIFACT_HASH_MISMATCH");
-		try { document = await new NodeIO().read(artifact.path); }
-		catch { codes.push("GLB_INVALID"); }
+		const artifactStat = await stat(artifactRealPath);
+		metrics.glb_size_bytes = artifactStat.size;
+		if (!artifactStat.isFile() || artifactStat.size > MAX_ARTIFACT_BYTES) codes.push("ARTIFACT_BUDGET_EXCEEDED");
+		else {
+			glbBytes = await readFile(artifactRealPath);
+			glbHash = sha256(glbBytes);
+			artifacts.glb_sha256 = glbHash;
+			if (glbHash !== String(artifact.sha256 ?? "").toLowerCase()) codes.push("ARTIFACT_HASH_MISMATCH");
+			try { document = await new NodeIO().read(artifactRealPath); }
+			catch { codes.push("GLB_INVALID"); }
+		}
 	} catch {
 		codes.push("ARTIFACT_MISSING");
+	}
+	if (document && punchedFacade) {
+		if (!typedGrammarValid || !documentWithinBudget(document.getRoot(), DEFAULT_PRIMITIVE_BUDGET)) {
+			if (typedGrammarValid) codes.push("ARTIFACT_BUDGET_EXCEEDED");
+			document = undefined;
+		}
 	}
 
 	const sourceBounds = boundsOf(sourceMesh.vertices);
@@ -330,18 +416,20 @@ export async function validateEnrichment({ sourceMesh, artifact, grammar, requir
 			? detailPrimitives.length > 0 && JSON.stringify(materials) === JSON.stringify(expectedPunchedMaterials)
 			: detailPrimitives.length > 0 && REQUIRED_MATERIALS.every((name) => materials.includes(name));
 		if (safeFallback ? !fallbackMaterialValid : !enrichedMaterialsValid) codes.push("MATERIAL_SET_INVALID");
-		if (punchedFacade && !typedPbrValid(root, grammar)) codes.push("PBR_MATERIAL_INVALID");
+		if (punchedFacade && !await typedPbrValid(root, grammar)) codes.push("PBR_MATERIAL_INVALID");
 		const primitiveBudget = Number.isFinite(Number(grammar.primitive_budget)) ? Number(grammar.primitive_budget) : DEFAULT_PRIMITIVE_BUDGET;
 		metrics.primitive_budget = primitiveBudget;
 		if (primitives.length > primitiveBudget) codes.push("PRIMITIVE_BUDGET_EXCEEDED");
 
 		const floorGuides = (grammar.floor_elevations_m ?? []).map(Number);
 		const detailMatrix = detailNode?.getWorldMatrix() ?? IDENTITY_MATRIX;
-		const detailRecords = detailPrimitives.map((primitive) => ({
+		const typedShapesValid = !punchedFacade || detailPrimitives.every((primitive) => typedPrimitiveShapeValid(primitive, grammar.surfaces));
+		if (!typedShapesValid) codes.push("FACADE_PRIMITIVE_SHAPE_INVALID");
+		const detailRecords = typedShapesValid ? detailPrimitives.map((primitive) => ({
 			extras: primitive.getExtras(),
 			material: primitive.getMaterial()?.getName() ?? null,
 			bounds: primitiveWorldBounds(primitive, detailMatrix),
-		}));
+		})) : [];
 		const sourceRegions = componentRegions(sourceMesh);
 		const attachmentDistances = detailRecords.map((record) => sourceRegions.map((region) => (
 				overlaps(record.bounds, region, allowedAttachmentDistance) ? detailComponentDistance(record, region) : Infinity
@@ -350,8 +438,8 @@ export async function validateEnrichment({ sourceMesh, artifact, grammar, requir
 		metrics.source_component_regions = sourceRegions.map(({ min, max }) => ({ min, max }));
 		metrics.detail_component_distances_m = attachmentDistances.map((distances) => distances.map((distance) => Number.isFinite(distance) ? rounded(distance) : null));
 		metrics.detail_component_attachment_counts = attachmentCounts;
-		if (attachmentCounts.some((count) => count === 0)) codes.push("DETAIL_COMPONENT_UNATTACHED");
-		if (attachmentCounts.some((count) => count > 1)) codes.push("DETAIL_COMPONENT_BRIDGE");
+		if (typedShapesValid && attachmentCounts.some((count) => count === 0)) codes.push("DETAIL_COMPONENT_UNATTACHED");
+		if (typedShapesValid && attachmentCounts.some((count) => count > 1)) codes.push("DETAIL_COMPONENT_BRIDGE");
 		const detailExtras = detailRecords.map((record) => record.extras);
 		const facadeViews = Object.keys(grammar.facade_lengths_m ?? {});
 		if (!safeFallback && !punchedFacade && facadeViews.some((view) => !detailExtras.some((extras) => extras?.kind === "mullion" && extras.view === view))) codes.push("DETAIL_COVERAGE_MISSING");
@@ -372,15 +460,18 @@ export async function validateEnrichment({ sourceMesh, artifact, grammar, requir
 			if (coverageMissing) codes.push("FLOOR_GUIDE_COVERAGE_MISSING");
 			if (elevations.some((value) => value < sourceBounds.min[2] - 1e-5 || value > sourceBounds.max[2] + 1e-5 || !floorGuides.some((guide) => Math.abs(value - guide) <= 1e-5))) codes.push("NEW_STOREY_DETECTED");
 		}
-		if (punchedFacade) {
+		if (punchedFacade && typedShapesValid) {
 			const surfaces = Array.isArray(grammar.surfaces) ? grammar.surfaces : [];
 			const typedMetrics = typedFacadeMetrics(detailRecords, surfaces, floorGuides);
-			const { corner_keys_complete: cornerKeysComplete, floor_keys_complete: floorKeysComplete, ...publicMetrics } = typedMetrics;
+			const {
+				corner_keys_complete: cornerKeysComplete, floor_keys_complete: floorKeysComplete,
+				opaque_materials_valid: opaqueMaterialsValid, ...publicMetrics
+			} = typedMetrics;
 			Object.assign(metrics, Object.fromEntries(Object.entries(publicMetrics).map(([name, value]) => (
 				[name, Number.isFinite(value) ? Number(value.toFixed(6)) : null]
 			))));
 			if (metrics.facade_orientation_coverage !== 1) codes.push("FACADE_ORIENTATION_COVERAGE_MISSING");
-			if (metrics.opaque_wall_coverage !== 1) codes.push("OPAQUE_WALL_COVERAGE_MISSING");
+			if (!opaqueMaterialsValid || metrics.opaque_wall_coverage < MINIMUM_OPAQUE_COVERAGE) codes.push("OPAQUE_WALL_COVERAGE_MISSING");
 			if (metrics.minimum_reveal_depth_m < Number(grammar.reveal_depth_m) - 1e-5) codes.push("PUNCHED_REVEAL_DEPTH_MISSING");
 			if (!cornerKeysComplete || metrics.corner_max_gap_m === null || metrics.corner_max_gap_m > 1e-5) codes.push("CORNER_DATUM_MISMATCH");
 			if (!floorKeysComplete || metrics.floor_alignment_max_error_m === null || metrics.floor_alignment_max_error_m > 1e-5) codes.push("WINDOW_CROSSES_FLOOR_BAND");

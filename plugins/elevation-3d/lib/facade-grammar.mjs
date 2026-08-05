@@ -56,7 +56,7 @@ function exactUniqueStrings(value, expected, label) {
 
 function boundedNumber(value, field) {
 	const limits = LIMITS[field];
-	if (!Number.isFinite(value) || value < limits[0] || value > limits[1]) {
+	if (!Number.isFinite(value) || Object.is(value, -0) || value < limits[0] || value > limits[1]) {
 		throw grammarError(`${field} must be finite and within the candidate-safe range`);
 	}
 	return value;
@@ -64,7 +64,7 @@ function boundedNumber(value, field) {
 
 function floorHeights(floorGuides) {
 	const guides = floorGuides?.floor_guides_m;
-	if (!Array.isArray(guides) || guides.length < 2 || guides.some((value) => !Number.isFinite(value))) {
+	if (!Array.isArray(guides) || guides.length < 2 || guides.some((value) => !Number.isFinite(value) || Object.is(value, -0))) {
 		throw grammarError("finite floor guides are required for punched facade validation");
 	}
 	const heights = guides.slice(1).map((value, index) => value - guides[index]);
