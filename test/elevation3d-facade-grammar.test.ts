@@ -212,3 +212,28 @@ test("validates typed grammar before and after every correction", () => {
 	};
 	assert.throws(() => correctGrammar(narrowFacade, ["PRIMITIVE_BUDGET_EXCEEDED"]), /bay.*facade|facade.*bay/i);
 });
+
+test("requires authoritative floor and facade feasibility for direct typed corrections", () => {
+	const typed = normalizeFacadeGrammar({
+		approvedDesign: { facade_grammar: punchedGrammar },
+		floorGuides: punchedFloorGuides,
+		facadePlanes: punchedFacadePlanes,
+	});
+	const { floor_elevations_m: _floors, facade_lengths_m: _lengths, ...withoutAuthority } = typed;
+	assert.throws(() => correctGrammar(withoutAuthority, ["DETAIL_BOUNDS_EXCEEDED"]), /authoritative.*floor|floor.*authority/i);
+	assert.throws(() => correctGrammar({ ...typed, facade_lengths_m: undefined }, ["DETAIL_BOUNDS_EXCEEDED"]), /facade.*authority|authoritative.*facade/i);
+	assert.throws(() => correctGrammar({
+		...typed,
+		sill_height_m: 0.85,
+		window_height_m: 2.3,
+		lintel_height_m: 0.25,
+	}, ["DETAIL_BOUNDS_EXCEEDED"]), /floor band/i);
+	assert.throws(() => correctGrammar({
+		...typed,
+		bay_width_m: 2.4,
+		facade_lengths_m: { front: 2, right: 2, back: 2, left: 2 },
+	}, ["DETAIL_BOUNDS_EXCEEDED"]), /bay.*facade|facade.*bay/i);
+	const corrected = correctGrammar(typed, ["DETAIL_BOUNDS_EXCEEDED"]);
+	assert.deepEqual(corrected.floor_elevations_m, typed.floor_elevations_m);
+	assert.deepEqual(corrected.facade_lengths_m, typed.facade_lengths_m);
+});
