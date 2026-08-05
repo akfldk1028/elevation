@@ -4,6 +4,7 @@ import { dirname, isAbsolute, parse, relative, resolve, sep } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { sha256 } from "../core.mjs";
 import { normalizeProviderFailure } from "./provider.mjs";
+import { takeFacadeProviderRemoteIdForLedger } from "./provider-internal.mjs";
 
 const ALLOWED_KINDS = new Set(["image-generation", "grammar-extraction"]);
 const HEX_SHA256 = /^[a-f0-9]{64}$/;
@@ -292,7 +293,8 @@ export function createPaidOperationLedger(path, { approvedRoot, lockWaitMs = 5_0
 						await atomicWrite(ledgerPath, ledger, root);
 						return publicResult(ledger.operations[input.requestKey]);
 					} catch (error) {
-						const internalRemoteId = validRemoteId(error?.remoteId) ? error.remoteId : null;
+						const internalRemoteId = takeFacadeProviderRemoteIdForLedger(error)
+							?? (validRemoteId(error?.remoteId) ? error.remoteId : null);
 						const failure = normalizeProviderFailure(error, input.provider, input.kind === "image-generation" ? "generate" : "grammar");
 						if (internalRemoteId) {
 							ledger.operations[input.requestKey].remoteId = internalRemoteId;
