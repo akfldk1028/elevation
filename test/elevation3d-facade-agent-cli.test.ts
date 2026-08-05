@@ -199,6 +199,46 @@ test("dry-run cannot confirm live and makes zero provider calls", async () => {
 	assert.equal(unsafe.status, 30);
 });
 
+test("documented cost-ceiling aliases drive zero-fetch preflight and reject mixed aliases before persistence", async () => {
+	const root = await mkdtemp(join(tmpdir(), "elevation3d-cli-cost-aliases-")); roots.push(root);
+	const log = join(root, "calls.log");
+	const aliases = [
+		"--candidate", "creative-020", "--brief", "brick-punched-window-v1",
+		"--dataset-root", root, "--output-root", join(root, "output"), "--run-id", "alias-dry",
+		"--providers", "gpt-image-2,nano-banana-pro",
+		"--gpt-image-max-usd", "1", "--nano-banana-max-usd", "1", "--grammar-max-usd", "1", "--dry-run",
+	];
+	const dry = invoke(["preflight", ...aliases], { FACADE_TEST_CALL_LOG: log });
+	assert.equal(dry.status, 0, `${dry.stderr}\n${dry.stdout}`);
+	assert.equal(JSON.parse(dry.stdout).stage, "preflight");
+	await assert.rejects(() => readFile(log), /ENOENT/);
+	const envelope = JSON.parse(await readFile(join(root, "output", "creative-020", "alias-dry", "facade-agent-config.json"), "utf8"));
+	assert.deepEqual(envelope.config.imageBudgetUsd, { "gpt-image-2": 1, "nano-banana-pro": 1 });
+	assert.equal(envelope.config.grammarBudgetUsd, 1);
+
+	const mixedRun = "mixed-aliases";
+	const mixed = invoke(["preflight", ...base(root, mixedRun), "--gpt-image-max-usd", "2", "--dry-run"], { FACADE_TEST_CALL_LOG: log });
+	assert.equal(mixed.status, 30);
+	await assert.rejects(() => readFile(join(root, "output", "creative-020", mixedRun, "facade-agent-config.json")), /ENOENT/);
+	await assert.rejects(() => readFile(log), /ENOENT/);
+});
+
+test("live intent without every exact ceiling and total confirmation fails before transport", async () => {
+	const root = await mkdtemp(join(tmpdir(), "elevation3d-cli-live-gate-")); roots.push(root);
+	const log = join(root, "calls.log");
+	const args = [
+		"run", "--candidate", "creative-020", "--brief", "brick-punched-window-v1",
+		"--dataset-root", root, "--output-root", join(root, "output"), "--run-id", "unapproved-live",
+		"--providers", "gpt-image-2,nano-banana-pro", "--gpt-image-max-usd", "1", "--nano-banana-max-usd", "1",
+		"--grammar-max-usd", "1", "--confirm-live",
+	];
+	const rejected = invoke(args, { FACADE_TEST_CALL_LOG: log });
+	assert.equal(rejected.status, 30);
+	assert.equal(JSON.parse(rejected.stdout).category, "configuration");
+	await assert.rejects(() => readFile(log), /ENOENT/);
+	await assert.rejects(() => readFile(join(root, "output", "creative-020", "unapproved-live", "facade-agent-config.json")), /ENOENT/);
+});
+
 test("normal CLI preflight constructs production dependencies without secrets or transport", async () => {
 	const root = await mkdtemp(join(tmpdir(), "elevation3d-cli-production-")); roots.push(root);
 	await minimalDataset(root);

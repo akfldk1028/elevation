@@ -17,7 +17,7 @@ const assets = resolveElevation3dAssets({
 	glbOverride: process.env.ELEVATION3D_SELECTED_GLB,
 });
 const massRoot = join(assets.datasetRoot, "candidates", "creative-013", "mass");
-const runDir = join(dirname(assets.datasetRoot), "elevation-3d-e2e-results", "creative-013", "competition-all-views-20260803-001");
+const runDir = join(dirname(assets.datasetRoot), "elevation-3d-e2e-results", "creative-013", "competition-all-views-20260806-facade-semantics-v1");
 
 async function realInputs() {
 	const [sourceMesh, floorGuides, facadePlanes, cameraManifest] = await Promise.all([

@@ -16,6 +16,7 @@ import {
 	recordVersionCheckpoint,
 	selectFinal,
 } from "../plugins/elevation-3d/lib/run-memory.mjs";
+import * as runMemory from "../plugins/elevation-3d/lib/run-memory.mjs";
 
 const temporaryRoots: string[] = [];
 
@@ -37,6 +38,71 @@ const approvedDesign = {
 const grammar = {
 	bay_width_m: 2.25,
 };
+
+test("persists one safe idempotent facade-agent comparison event with run-relative artifacts", async () => {
+	const runRoot = await mkdtemp(join(tmpdir(), "elevation3d-facade-agent-memory-"));
+	const memoryRoot = await mkdtemp(join(tmpdir(), "elevation3d-facade-agent-memory-root-"));
+	temporaryRoots.push(runRoot, memoryRoot);
+	const runDir = join(runRoot, "creative-020", "fixture-comparison-001");
+	await mkdir(join(runDir, "providers", "gpt-image-2", "artifacts"), { recursive: true });
+	await mkdir(join(runDir, "delivery", "viewer"), { recursive: true });
+	const credentialPrefix = String.fromCharCode(115, 107, 45);
+	const result = {
+		schema_version: "arr.elevation3d.facade-agent-run.v1",
+		run_id: "fixture-comparison-001",
+		candidate_id: "creative-020",
+		brief_id: "brick-punched-window-v1",
+		run_dir: runDir,
+		input_sha256: "1".repeat(64),
+		status: "winner",
+		image_submissions: { total: 2, by_provider: { "gpt-image-2": 1, "nano-banana-pro": 1 } },
+		providers: {
+			"gpt-image-2": {
+				status: "accepted",
+				generation: { status: "succeeded", request_sha256: "2".repeat(64), artifact_sha256: "3".repeat(64), api_key: `${credentialPrefix}memory-must-drop` },
+				grammar: { status: "succeeded", path: "providers/gpt-image-2/grammar.json", artifact_sha256: "4".repeat(64), actual_usd: 0.04 },
+				versions: [{ id: "v001", status: "rejected", artifact: { path: "providers/gpt-image-2/artifacts/v001.glb", sha256: "5".repeat(64) }, validation: { accepted: false, codes: ["DETAIL_BOUNDS_EXCEEDED"], retryable: true, metrics: { maximum_bounds_excess_m: 0.2 } } }, { id: "v002", status: "accepted", artifact: { path: join(runDir, "providers", "gpt-image-2", "artifacts", "v002.glb"), sha256: "6".repeat(64) }, validation: { accepted: true, codes: [], retryable: false, metrics: { canonical_surface_match: 1, minimum_reveal_depth_m: 0.15, detail_primitive_count: 120 } } }],
+				score: { status: "scored", score: 97.4, components: { implementability: 100, multiview: 100, grammar: 97, visual: 86 }, sha256: "7".repeat(64) },
+			},
+			"nano-banana-pro": {
+				status: "accepted",
+				generation: { status: "succeeded", request_sha256: "8".repeat(64), artifact_sha256: "9".repeat(64), signedUrl: "https://fixture.invalid/private" },
+				grammar: { status: "succeeded", path: "providers/nano-banana-pro/grammar.json", artifact_sha256: "a".repeat(64), actual_usd: 0.04 },
+				versions: [{ id: "v001", status: "accepted", artifact: { path: "providers/nano-banana-pro/artifacts/v001.glb", sha256: "b".repeat(64) }, validation: { accepted: true, codes: [], retryable: false, metrics: { canonical_surface_match: 1, minimum_reveal_depth_m: 0.2, detail_primitive_count: 110 } } }],
+				score: { status: "scored", score: 94.8, components: { implementability: 100, multiview: 100, grammar: 90, visual: 83 }, sha256: "c".repeat(64) },
+			},
+		},
+		selected_delivery: {
+			manifest: { path: join(runDir, "delivery", "all-views-manifest.json"), sha256: "d".repeat(64) },
+			validation: { path: join(runDir, "delivery", "all-views-validation.json"), sha256: "e".repeat(64) },
+			viewer: { path: join(runDir, "delivery", "viewer", "index.html"), config_sha256: "f".repeat(64) },
+			browser_verification: { path: join(runDir, "delivery", "browser-verification", "browser-verification.json"), sha256: "0".repeat(64) },
+		},
+		final: { status: "winner", selected_provider: "gpt-image-2", selected_version: "v002", selected_glb_sha256: "6".repeat(64), score_sha256: "7".repeat(64) },
+	};
+
+	assert.equal(typeof (runMemory as any).appendFacadeAgentMemory, "function", "facade-agent memory writer must exist");
+	await Promise.all([
+		(runMemory as any).appendFacadeAgentMemory(result, memoryRoot),
+		(runMemory as any).appendFacadeAgentMemory(result, memoryRoot),
+	]);
+	const lines = (await readFile(join(memoryRoot, "facade-agent-runs.jsonl"), "utf8")).trim().split(/\r?\n/);
+	assert.equal(lines.length, 1);
+	const event = JSON.parse(lines[0]);
+	assert.equal(event.schema_version, "arr.elevation3d.facade-agent-memory.v1");
+	assert.equal(event.candidate_id, "creative-020");
+	assert.equal(event.brief_id, "brick-punched-window-v1");
+	assert.equal(event.image_submissions["gpt-image-2"], 1);
+	assert.equal(event.image_submissions["nano-banana-pro"], 1);
+	assert.equal(event.geometry_authority, "canonical-local-mass");
+	assert.equal(event.retry_policy, "two-local-attempts-no-image-resubmit");
+	assert.equal(event.providers["gpt-image-2"].attempts.length, 2);
+	assert.equal(event.providers["gpt-image-2"].attempts[1].artifact.path, "providers/gpt-image-2/artifacts/v002.glb");
+	assert.equal(event.delivery.viewer.path, "delivery/viewer/index.html");
+	assert.equal(JSON.stringify(event).includes(credentialPrefix), false);
+	assert.equal(JSON.stringify(event).includes("signedUrl"), false);
+	assert.equal(JSON.stringify(event).includes(runRoot.replaceAll("\\", "/")), false);
+});
 
 test("normalizes a redacted presentation-only version memory record", async () => {
 	const runRoot = await mkdtemp(join(tmpdir(), "elevation3d-presentation-memory-"));

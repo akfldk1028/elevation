@@ -17,7 +17,10 @@ export async function buildMultiElevationManifest(views) {
 		|| Object.values(views).some((view) => !view.palette?.preset || !view.palette?.sha256)) fail("all views must use one resolved palette SHA-256");
 	if (new Set(Object.values(views).map((view) => `${view.palette.preset}:${view.palette.sha256}`)).size !== 1) fail("all views must use one resolved palette identity");
 	const levelSignatures = new Set(Object.values(views).map((view) => JSON.stringify(view.displayed_dimensions?.levels)));
-	if (levelSignatures.size !== 1 || Object.values(views).some((view) => view.displayed_dimensions?.levels?.length !== 4)) fail("all views must display the same four levels");
+	if (levelSignatures.size !== 1 || Object.values(views).some((view) => !Array.isArray(view.displayed_dimensions?.levels)
+		|| view.displayed_dimensions.levels.length < 2 || view.displayed_dimensions.levels.some((level) => !Number.isFinite(level)))) {
+		fail("all views must display the same four levels or the same authored multi-level sequence");
+	}
 	const verifiedViews = {};
 	for (const name of ELEVATION_NAMES) {
 		const view = views[name];

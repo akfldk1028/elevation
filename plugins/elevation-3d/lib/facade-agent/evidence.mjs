@@ -13,6 +13,10 @@ import {
 let temporarySequence = 0;
 const verifiedEvidenceAuthorities = new WeakMap();
 
+function facadeAuthority(input) {
+	return input?.facade_segment_authority ?? input?.facade_planes;
+}
+
 export function readVerifiedFacadeEvidenceAuthority(value) {
 	if (!value || typeof value !== "object") return null;
 	const authority = verifiedEvidenceAuthorities.get(value);
@@ -304,7 +308,7 @@ export async function buildFacadeEvidencePack({ input, runDir, renderPasses = re
 			geometry_hash: input.identity.geometry_hash,
 			geometry_content_sha256: geometryContentSha256(input),
 			floor_guides_m: [...input.floor_guides.floor_guides_m],
-			facade_planes_sha256: sha256(stableJson(input.facade_planes)),
+			facade_planes_sha256: sha256(stableJson(facadeAuthority(input))),
 			cameras_sha256: sha256(stableJson(input.cameras)),
 			source_artifacts: sourceArtifacts(input),
 			artifacts: manifestArtifacts,
@@ -345,7 +349,7 @@ export async function verifyFacadeEvidencePack({ manifestPath: manifestFile, inp
 		candidate_id: input.candidate.candidate_id,
 		geometry_hash: input.identity.geometry_hash,
 		floor_guides_m: [...input.floor_guides.floor_guides_m],
-		facade_planes_sha256: sha256(stableJson(input.facade_planes)),
+		facade_planes_sha256: sha256(stableJson(facadeAuthority(input))),
 		cameras_sha256: sha256(stableJson(input.cameras)),
 		source_artifacts: sourceArtifacts(input),
 	};
@@ -397,7 +401,9 @@ export async function verifyFacadeEvidencePack({ manifestPath: manifestFile, inp
 		manifestSha256: verified.manifestSha256,
 		camerasSha256: manifest.cameras_sha256,
 		floorGuides: Object.freeze([...input.floor_guides.floor_guides_m]),
-		facadeLengths: Object.freeze(Object.fromEntries((input.facade_planes?.facade_planes ?? []).map((plane) => [plane.view, plane.extent_m?.[0]]))),
+		facadeLengths: Object.freeze(facadeAuthority(input)?.facade_lengths_m
+			? { ...facadeAuthority(input).facade_lengths_m }
+			: Object.fromEntries((facadeAuthority(input)?.facade_planes ?? []).map((plane) => [plane.view, plane.extent_m?.[0]]))),
 		contactSheetSha256: manifest.contact_sheet.sha256,
 		contactSheetBytes: Buffer.from(contactSheetBytes),
 	}));

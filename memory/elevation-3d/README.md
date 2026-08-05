@@ -18,6 +18,10 @@ This is not per-elevation image generation and not image-only mesh reconstructio
 
 Hosted SPAR3D and Tripo are rejected as production geometry sources after the held-out-view failure. They remain optional research baselines.
 
+## Production facade agent
+
+The older single-image-to-3D instructions in this research history are historical, not the production path. Tripo remains optional research only. The production facade agent keeps the complete local MASS and authored cameras/floor guides as immutable authority, uses image models only for design evidence, derives the real `creative-020` perimeter as 16 outward exact-MASS-backed segments (8 cardinal and 8 oblique), and builds every scored and delivered view from that geometry-locked GLB.
+
 ## Reading order
 
 1. `contract/problem-definition.md`
