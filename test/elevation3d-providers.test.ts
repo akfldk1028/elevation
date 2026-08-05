@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
-import { buildHunyuanRequest, normalizeHunyuanStatus } from "../plugins/elevation-3d/lib/providers/hunyuan.mjs";
+import { buildHunyuanRequest, createHunyuanProvider, normalizeHunyuanStatus } from "../plugins/elevation-3d/lib/providers/hunyuan.mjs";
 import { buildWanRequest, normalizeWanStatus } from "../plugins/elevation-3d/lib/providers/wan.mjs";
 import { createStabilityProvider } from "../plugins/elevation-3d/lib/providers/stability.mjs";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
@@ -27,6 +27,34 @@ describe("Hunyuan provider contract", () => {
 	test("normalizes DONE files and FAIL errors", () => {
 		assert.deepEqual(normalizeHunyuanStatus({ Status: "DONE", ResultFile3Ds: [{ Type: "GLB", Url: "https://x/a.glb?sig=x" }] }), { status: "succeeded", files: [{ type: "GLB", url: "https://x/a.glb?sig=x" }] });
 		assert.deepEqual(normalizeHunyuanStatus({ Status: "FAIL", ErrorCode: "Bad", ErrorMessage: "no" }), { status: "failed", code: "Bad", message: "no", files: [] });
+	});
+
+	test("preserves submit and normalized status behavior through the JSON client", async () => {
+		const seenActions = [];
+		const provider = await createHunyuanProvider({
+			TENCENTCLOUD_SECRET_ID: "AKIDEXAMPLE",
+			TENCENTCLOUD_SECRET_KEY: "SECRETKEYEXAMPLE",
+			TENCENT_COS_BUCKET: "test-bucket",
+		}, {
+			now: () => new Date("2019-02-25T16:44:25.000Z"),
+			fetchImpl: async (_url, init) => {
+				const action = init.headers["X-TC-Action"];
+				seenActions.push(action);
+				if (action === "SubmitTextureTo3DJob") {
+					return Response.json({ Response: { JobId: "h-1", RequestId: "submit-request" } });
+				}
+				return Response.json({ Response: {
+					JobId: "h-1",
+					Status: "DONE",
+					ResultFile3Ds: [{ Type: "GLB", Url: "https://result.test/model.glb" }],
+					RequestId: "describe-request",
+				} });
+			},
+		});
+
+		assert.deepEqual(await provider.submit({ Model: "3.1" }), { JobId: "h-1", RequestId: "submit-request" });
+		assert.deepEqual(await provider.status("h-1"), { status: "succeeded", files: [{ type: "GLB", url: "https://result.test/model.glb" }] });
+		assert.deepEqual(seenActions, ["SubmitTextureTo3DJob", "DescribeTextureTo3DJob"]);
 	});
 });
 
