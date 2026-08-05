@@ -44,6 +44,7 @@
     "dev": "tsc --watch",
     "start": "node dist/index.js",
     "test": "node --test test/*.test.ts --experimental-strip-types",
+    "facade:agent": "node scripts/elevation-3d-facade.mjs",
     "test:tripo-pbr": "node scripts/test-tripo-pbr-texturing.mjs",
     "render:pbr-daylight": "node scripts/render-competition-daylight-pbr.mjs"
   },

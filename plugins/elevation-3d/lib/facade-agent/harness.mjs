@@ -831,11 +831,6 @@ async function executeFacade(config, deps, stopAfterStage = null) {
 	const { normalized, runDir, run } = initialized;
 	try {
 		throwIfAborted(signal);
-		if (normalized.confirmLive !== true) {
-			const unconfirmed = normalized.providers.some((provider) => !isFacadeFixtureTransport(deps.providers?.[provider]))
-				|| !isFacadeFixtureTransport(deps.extractGrammar);
-			if (unconfirmed) throw codedError("LIVE_CONFIRMATION_REQUIRED", "Live facade transports require explicit confirmation");
-		}
 		const candidate = await deps.loadCandidate({ datasetRoot: normalized.datasetRoot, candidateId: normalized.candidateId, config: normalized, signal });
 		const candidateSha256 = sha256(stableJson(persistent(candidate)));
 		let preflight = run.stage_manifests.preflight ? await readStageRef(runDir, run.stage_manifests.preflight) : null;
@@ -870,6 +865,11 @@ async function executeFacade(config, deps, stopAfterStage = null) {
 		if (stopAfterStage === "evidence") return readFacadeAgentStatus(runDir);
 		run._candidate = candidate;
 		run._evidence = evidence;
+		if (normalized.confirmLive !== true) {
+			const unconfirmed = normalized.providers.some((provider) => !isFacadeFixtureTransport(deps.providers?.[provider]))
+				|| !isFacadeFixtureTransport(deps.extractGrammar);
+			if (unconfirmed) throw codedError("LIVE_CONFIRMATION_REQUIRED", "Live facade transports require explicit confirmation");
+		}
 
 		const states = {};
 		const proposals = {};

@@ -255,6 +255,17 @@ test("refuses an unconfirmed non-fixture transport before any paid callback", as
 	assert.deepEqual(value.calls.grammar, []);
 });
 
+test("preflight and evidence stop before live confirmation or paid callbacks", async () => {
+	for (const stage of ["preflight", "evidence"] as const) {
+		const value = await fixture({ runId: `unconfirmed-local-${stage}` });
+		value.deps.providers["gpt-image-2"] = { ...value.deps.providers["gpt-image-2"], transport: "live" };
+		const result = await runFacadeStage(stage, value.config, value.deps);
+		assert.equal(result.stage_manifests[stage].status, "succeeded");
+		assert.deepEqual(value.calls.generate, []);
+		assert.deepEqual(value.calls.grammar, []);
+	}
+});
+
 test("a caller-set fixture label cannot authorize an unconfirmed transport", async () => {
 	const value = await fixture({ runId: "forged-fixture-label" });
 	value.deps.providers["gpt-image-2"] = { ...value.deps.providers["gpt-image-2"], transport: "fixture" };
