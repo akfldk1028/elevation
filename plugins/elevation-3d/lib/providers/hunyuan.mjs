@@ -35,10 +35,20 @@ export async function createHunyuanProvider(env = process.env, { fetchImpl, now,
 	const callCos = (method, params) => new Promise((resolve, reject) => cos[method](params, (error, data) => error ? reject(error) : resolve(data)));
 	return {
 		async stageFile(localPath, key) {
-			await callCos("putObject", { Bucket: bucket, Region: region, Key: key, Body: createReadStream(localPath) });
-			return cos.getObjectUrl({ Bucket: bucket, Region: region, Key: key, Sign: true, Expires: 86400 });
+			try {
+				await callCos("putObject", { Bucket: bucket, Region: region, Key: key, Body: createReadStream(localPath) });
+				return cos.getObjectUrl({ Bucket: bucket, Region: region, Key: key, Sign: true, Expires: 86400 });
+			} catch {
+				throw new Error("Tencent COS stageFile failed");
+			}
 		},
-		async cleanup(key) { await callCos("deleteObject", { Bucket: bucket, Region: region, Key: key }); },
+		async cleanup(key) {
+			try {
+				await callCos("deleteObject", { Bucket: bucket, Region: region, Key: key });
+			} catch {
+				throw new Error("Tencent COS cleanup failed");
+			}
+		},
 		async submit(request) { return client.call("SubmitTextureTo3DJob", request); },
 		async status(jobId) { return normalizeHunyuanStatus(await client.call("DescribeTextureTo3DJob", { JobId: jobId })); },
 	};
