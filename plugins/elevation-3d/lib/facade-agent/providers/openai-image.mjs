@@ -1,4 +1,7 @@
 import { redactSecrets, sha256, stableJson } from "../../core.mjs";
+import sharp from "sharp";
+import { readVerifiedFacadeEvidenceAuthority } from "../evidence.mjs";
+import { consumePaidOperationSubmissionCapability } from "../paid-operation-ledger.mjs";
 import { FacadeProviderError, normalizeProviderFailure } from "../provider.mjs";
 
 const PROVIDER = "gpt-image-2";
@@ -6,7 +9,11 @@ const MODEL = "gpt-image-2";
 const ENDPOINT = "https://api.openai.com/v1/images/edits";
 const MAX_IMAGE_BYTES = 32 * 1024 * 1024;
 const MAX_REQUEST_BYTES = 32 * 1024 * 1024;
+const MAX_PROMPT_DATA_BYTES = 1024 * 1024;
+const MAX_BOUNDARY_DEPTH = 32;
+const MAX_BOUNDARY_ENTRIES = 4_096;
 const DEFAULT_TIMEOUT_MS = 120_000;
+const requestAuthorities = new WeakMap();
 
 function failure(code, message, options = {}) {
 	return new FacadeProviderError(code, message, { provider: PROVIDER, stage: "generate", ...options });
@@ -18,25 +25,94 @@ function preflightFailure(code, message) {
 	});
 }
 
-function bytesFromEvidence(evidence) {
-	const value = evidence?.contactSheetBytes ?? evidence?.contact_sheet_bytes ?? evidence?.evidenceBytes ?? evidence?.bytes;
-	if (!Buffer.isBuffer(value) && !(value instanceof Uint8Array)) {
-		throw preflightFailure("PROVIDER_REQUEST_INVALID", "Verified evidence contact sheet bytes are required");
+function boundaryRecord(value) {
+	try {
+		if (!value || typeof value !== "object" || Array.isArray(value) || Object.getPrototypeOf(value) !== Object.prototype) throw new Error();
+		const descriptors = Object.getOwnPropertyDescriptors(value);
+		const record = Object.create(null);
+		for (const key of Reflect.ownKeys(descriptors)) {
+			const descriptor = descriptors[key];
+			if (typeof key !== "string" || ["__proto__", "prototype", "constructor"].includes(key)
+				|| descriptor.get || descriptor.set || !("value" in descriptor)) throw new Error();
+			record[key] = descriptor.value;
+		}
+		return record;
+	} catch {
+		throw preflightFailure("PROVIDER_BOUNDARY_INVALID", "Provider boundary input must be a plain data object without accessors");
 	}
-	const bytes = Buffer.from(value);
-	if (!bytes.length) throw preflightFailure("PROVIDER_REQUEST_INVALID", "Verified evidence contact sheet bytes are required");
-	if (imageType(bytes) !== "image/png") throw preflightFailure("PROVIDER_EVIDENCE_INVALID", "Evidence contact sheet must be a PNG image");
-	const expected = evidence?.contactSheetSha256 ?? evidence?.contact_sheet_sha256 ?? evidence?.manifest?.contact_sheet?.sha256;
-	if (expected !== undefined && (typeof expected !== "string" || sha256(bytes) !== expected.toLowerCase())) {
-		throw preflightFailure("PROVIDER_EVIDENCE_MISMATCH", "Evidence contact sheet does not match its verified manifest");
-	}
-	return bytes;
 }
 
-function canonicalPrompt(evidence, brief, output) {
-	const candidateId = brief?.candidate_id ?? brief?.candidateId ?? evidence?.manifest?.candidate_id ?? "creative-020";
+function clonePlainData(value, seen = new Set(), depth = 0) {
+	if (depth > MAX_BOUNDARY_DEPTH) throw preflightFailure("PROVIDER_BOUNDARY_INVALID", "Provider boundary input exceeds the nesting limit");
+	if (value === null || value === undefined || typeof value === "string" || typeof value === "boolean"
+		|| (typeof value === "number" && Number.isFinite(value))) return value;
+	try {
+		if (typeof value !== "object" || seen.has(value)) throw new Error();
+		seen.add(value);
+		const prototype = Object.getPrototypeOf(value);
+		if (Array.isArray(value)) {
+			if (prototype !== Array.prototype) throw new Error();
+			const descriptors = Object.getOwnPropertyDescriptors(value);
+			const length = descriptors.length?.value;
+			const keys = Reflect.ownKeys(descriptors).filter((key) => key !== "length");
+			if (!Number.isSafeInteger(length) || length < 0 || length > MAX_BOUNDARY_ENTRIES || keys.length !== length) throw new Error();
+			const result = new Array(length);
+			for (const key of Reflect.ownKeys(descriptors)) {
+				const descriptor = descriptors[key];
+				if (typeof key !== "string" || descriptor.get || descriptor.set || !("value" in descriptor)) throw new Error();
+				if (key !== "length") {
+					if (!/^(?:0|[1-9][0-9]*)$/.test(key)) throw new Error();
+					const index = Number(key);
+					if (index >= length) throw new Error();
+					result[index] = clonePlainData(descriptor.value, seen, depth + 1);
+				}
+			}
+			return result;
+		}
+		if (prototype !== Object.prototype && prototype !== null) throw new Error();
+		const descriptors = Object.getOwnPropertyDescriptors(value);
+		if (Reflect.ownKeys(descriptors).length > MAX_BOUNDARY_ENTRIES) throw new Error();
+		const result = Object.create(null);
+		for (const key of Reflect.ownKeys(descriptors)) {
+			const descriptor = descriptors[key];
+			if (typeof key !== "string" || ["__proto__", "prototype", "constructor"].includes(key)
+				|| descriptor.get || descriptor.set || !("value" in descriptor)) throw new Error();
+			result[key] = clonePlainData(descriptor.value, seen, depth + 1);
+		}
+		return result;
+	} catch {
+		throw preflightFailure("PROVIDER_BOUNDARY_INVALID", "Provider boundary input must contain only plain data without accessors");
+	}
+}
+
+function validateAbortSignal(signal) {
+	if (signal === undefined) return;
+	try {
+		if (Object.getPrototypeOf(signal) !== AbortSignal.prototype) throw new Error();
+		const descriptors = Object.getOwnPropertyDescriptors(signal);
+		if (Reflect.ownKeys(descriptors).some((key) => typeof key === "string")) throw new Error();
+		Object.getOwnPropertyDescriptor(AbortSignal.prototype, "aborted").get.call(signal);
+	} catch {
+		throw preflightFailure("PROVIDER_BOUNDARY_INVALID", "Provider signal must be an authentic AbortSignal without overrides");
+	}
+}
+
+function verifiedEvidence(evidence) {
+	const authority = readVerifiedFacadeEvidenceAuthority(evidence);
+	if (!authority) throw preflightFailure("PROVIDER_EVIDENCE_UNVERIFIED", "Evidence must come from the verified facade evidence authority");
+	const bytes = authority.contactSheetBytes;
+	if (!/^[a-f0-9]{64}$/.test(authority.manifestSha256)) throw preflightFailure("PROVIDER_EVIDENCE_UNVERIFIED", "Verified evidence manifest digest is required");
+	if (imageType(bytes) !== "image/png") throw preflightFailure("PROVIDER_EVIDENCE_INVALID", "Evidence contact sheet must be a PNG image");
+	if (sha256(bytes) !== authority.contactSheetSha256) {
+		throw preflightFailure("PROVIDER_EVIDENCE_MISMATCH", "Evidence contact sheet does not match its verified manifest");
+	}
+	return { ...authority, contactSheetBytes: bytes };
+}
+
+function canonicalPrompt(evidenceAuthority, brief, output) {
+	const candidateId = brief?.candidate_id ?? brief?.candidateId ?? evidenceAuthority.candidateId;
 	const briefId = brief?.brief_id ?? brief?.briefId ?? brief?.id ?? "brick-punched-window-v1";
-	const evidenceDigest = evidence?.manifestSha256 ?? evidence?.manifest_sha256 ?? evidence?.manifest?.contact_sheet?.sha256 ?? "unavailable";
+	const evidenceDigest = evidenceAuthority.manifestSha256;
 	return [
 		`Geometry-locked facade image for candidate ${candidateId}.`,
 		`Approved brief: ${briefId}.`,
@@ -47,20 +123,38 @@ function canonicalPrompt(evidence, brief, output) {
 	].join("\n");
 }
 
-export function buildRequest({ evidence, brief, output } = {}) {
-	const evidenceBytes = bytesFromEvidence(evidence);
-	return Object.freeze({
+export function buildRequest(input) {
+	const fields = boundaryRecord(input);
+	const evidence = fields.evidence;
+	const brief = clonePlainData(fields.brief ?? {});
+	const output = clonePlainData(fields.output ?? {});
+	if (Buffer.byteLength(stableJson({ brief, output }), "utf8") > MAX_PROMPT_DATA_BYTES) {
+		throw preflightFailure("PROVIDER_REQUEST_TOO_LARGE", "Provider prompt data exceeds the configured size limit");
+	}
+	const evidenceAuthority = verifiedEvidence(evidence);
+	const evidenceBytes = evidenceAuthority.contactSheetBytes;
+	const request = {
 		provider: PROVIDER,
 		model: MODEL,
-		prompt: canonicalPrompt(evidence, brief, output),
+		prompt: canonicalPrompt(evidenceAuthority, brief, output),
 		evidenceBytes,
 		evidenceSha256: sha256(evidenceBytes),
-		evidenceManifestSha256: evidence?.manifestSha256 ?? evidence?.manifest_sha256 ?? null,
+		evidenceManifestSha256: evidenceAuthority.manifestSha256,
 		output: redactSecrets(output ?? {}),
-	});
+	};
+	request.fingerprint = sha256(stableJson({
+		provider: request.provider, model: request.model, prompt: request.prompt,
+		evidenceSha256: request.evidenceSha256, evidenceManifestSha256: request.evidenceManifestSha256,
+		output: request.output,
+	}));
+	const authorizedRequest = Object.freeze(request);
+	requestAuthorities.set(authorizedRequest, Object.freeze({ fingerprint: request.fingerprint }));
+	return authorizedRequest;
 }
 
 function validateRequest(request) {
+	const authority = request && typeof request === "object" ? requestAuthorities.get(request) : null;
+	if (!authority) throw preflightFailure("PROVIDER_REQUEST_UNAUTHORIZED", "Provider request must come from the verified request builder");
 	if (!request || request.model !== MODEL) throw preflightFailure("PROVIDER_MODEL_NOT_ALLOWED", `Only ${MODEL} is allowed`);
 	if (typeof request.prompt !== "string" || !request.prompt) throw preflightFailure("PROVIDER_REQUEST_INVALID", "Provider prompt is required");
 	if (!Buffer.isBuffer(request.evidenceBytes) && !(request.evidenceBytes instanceof Uint8Array)) {
@@ -75,7 +169,7 @@ function validateRequest(request) {
 	if (request.evidenceSha256 && sha256(request.evidenceBytes) !== request.evidenceSha256) {
 		throw preflightFailure("PROVIDER_EVIDENCE_MISMATCH", "Evidence bytes changed after request construction");
 	}
-	return requestBytes;
+	return { requestBytes, authority };
 }
 
 function validateBudget(config) {
@@ -103,7 +197,7 @@ function validBase64(value, padding) {
 	return true;
 }
 
-function decodeImage(value, remoteId) {
+async function decodeImage(value, remoteId) {
 	if (typeof value !== "string" || !value.length) {
 		throw failure("PROVIDER_RESPONSE_INVALID", "Provider returned malformed image encoding", { remoteId });
 	}
@@ -118,6 +212,21 @@ function decodeImage(value, remoteId) {
 	const bytes = Buffer.from(value, "base64");
 	const mimeType = imageType(bytes);
 	if (!mimeType) throw failure("PROVIDER_RESPONSE_INVALID", "Provider image has an unsupported signature", { remoteId });
+	let metadata;
+	try { metadata = await sharp(bytes, { limitInputPixels: MAX_IMAGE_BYTES }).metadata(); }
+	catch { throw failure("PROVIDER_RESPONSE_INVALID", "Provider image did not fully decode", { remoteId }); }
+	if (!Number.isInteger(metadata.width) || metadata.width <= 0 || !Number.isInteger(metadata.height) || metadata.height <= 0
+		|| !Number.isInteger(metadata.channels) || metadata.channels < 1 || metadata.channels > 4
+		|| metadata.width * metadata.height * metadata.channels > MAX_IMAGE_BYTES) {
+		throw failure("PROVIDER_RESPONSE_INVALID", "Provider image dimensions are invalid", { remoteId });
+	}
+	let decoded;
+	try { decoded = await sharp(bytes, { limitInputPixels: MAX_IMAGE_BYTES }).raw().toBuffer({ resolveWithObject: true }); }
+	catch { throw failure("PROVIDER_RESPONSE_INVALID", "Provider image did not fully decode", { remoteId }); }
+	if (decoded.info.width !== metadata.width || decoded.info.height !== metadata.height || decoded.info.channels !== metadata.channels
+		|| decoded.data.length !== metadata.width * metadata.height * metadata.channels) {
+		throw failure("PROVIDER_RESPONSE_INVALID", "Provider decoded image payload is inconsistent", { remoteId });
+	}
 	return { bytes, mimeType };
 }
 
@@ -171,22 +280,31 @@ async function fetchWithDeadline(fetchImpl, url, init, callerSignal, timeoutMs, 
 	}
 }
 
-export function createProvider(env = {}, { fetchImpl = globalThis.fetch, timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
+export function createProvider(env = {}, { fetchImpl, timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
 	const apiKey = env.OPENAI_API_KEY;
-	if (typeof fetchImpl !== "function") throw new TypeError("fetchImpl must be a function");
+	if (typeof fetchImpl !== "function") throw new TypeError("fetchImpl is required and must be a function");
 	if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new TypeError("timeoutMs must be a positive finite number");
 
 	return Object.freeze({
 		preflight(config) {
 			if (typeof apiKey !== "string" || !apiKey.trim()) throw preflightFailure("PROVIDER_CREDENTIALS_MISSING", "OPENAI_API_KEY is required");
-			const requestBytes = validateRequest(config?.request ?? config);
-			validateBudget(config);
-			return { provider: PROVIDER, model: MODEL, requestBytes, ceilingUsd: config.ceilingUsd };
+			const fields = boundaryRecord(config);
+			if (fields.model !== undefined && fields.model !== MODEL) throw preflightFailure("PROVIDER_MODEL_NOT_ALLOWED", `Only ${MODEL} is allowed`);
+			const request = Object.hasOwn(fields, "request") ? fields.request : config;
+			const { requestBytes } = validateRequest(request);
+			validateBudget(fields);
+			return { provider: PROVIDER, model: MODEL, requestBytes, ceilingUsd: fields.ceilingUsd };
 		},
-		async generate({ request, signal } = {}) {
+		async generate(input) {
 			try {
+				const fields = boundaryRecord(input);
+				const { request, signal, submission } = fields;
+				validateAbortSignal(signal);
 				if (typeof apiKey !== "string" || !apiKey.trim()) throw preflightFailure("PROVIDER_CREDENTIALS_MISSING", "OPENAI_API_KEY is required");
-				validateRequest(request);
+				const { authority } = validateRequest(request);
+				if (!consumePaidOperationSubmissionCapability(submission, {
+					requestKey: authority.fingerprint, provider: PROVIDER, kind: "image-generation",
+				})) throw preflightFailure("PROVIDER_SUBMISSION_UNAUTHORIZED", "A one-shot paid-operation submission authorization is required");
 				const form = new FormData();
 				form.set("model", MODEL);
 				form.set("prompt", request.prompt);
@@ -217,7 +335,7 @@ export function createProvider(env = {}, { fetchImpl = globalThis.fetch, timeout
 				if (!outputs[0] || typeof outputs[0] !== "object" || !("b64_json" in outputs[0])) {
 					throw failure("PROVIDER_IMAGE_MISSING", "Provider response did not contain inline image bytes", { status: response.status, remoteId });
 				}
-				const decoded = decodeImage(outputs[0].b64_json, remoteId);
+				const decoded = await decodeImage(outputs[0].b64_json, remoteId);
 				const stableRemoteId = remoteId ?? `openai-${sha256(decoded.bytes)}`;
 				const usage = sanitized(payload?.usage ?? null, apiKey);
 				return {

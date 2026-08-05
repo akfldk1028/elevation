@@ -11,6 +11,18 @@ import {
 } from "./evidence-renderer.mjs";
 
 let temporarySequence = 0;
+const verifiedEvidenceAuthorities = new WeakMap();
+
+export function readVerifiedFacadeEvidenceAuthority(value) {
+	if (!value || typeof value !== "object") return null;
+	const authority = verifiedEvidenceAuthorities.get(value);
+	return authority ? {
+		candidateId: authority.candidateId,
+		manifestSha256: authority.manifestSha256,
+		contactSheetSha256: authority.contactSheetSha256,
+		contactSheetBytes: Buffer.from(authority.contactSheetBytes),
+	} : null;
+}
 
 export class FacadeEvidenceError extends Error {
 	constructor(code, message) {
@@ -364,5 +376,12 @@ export async function verifyFacadeEvidencePack({ manifestPath: manifestFile, inp
 		fail("EVIDENCE_ARTIFACT_HASH_MISMATCH", "contact sheet metadata mismatch");
 	}
 	await verifyDecodedPixels(contactSheetBytes, manifest.contact_sheet.width, manifest.contact_sheet.height, contactSheetMetadata.channels, "contact sheet");
-	return { manifest, manifestPath, manifestSha256: sha256(manifestBytes), contactSheetPath };
+	const verified = Object.freeze({ manifest, manifestPath, manifestSha256: sha256(manifestBytes), contactSheetPath });
+	verifiedEvidenceAuthorities.set(verified, Object.freeze({
+		candidateId: manifest.candidate_id,
+		manifestSha256: verified.manifestSha256,
+		contactSheetSha256: manifest.contact_sheet.sha256,
+		contactSheetBytes: Buffer.from(contactSheetBytes),
+	}));
+	return verified;
 }
