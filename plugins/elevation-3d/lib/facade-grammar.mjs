@@ -205,9 +205,14 @@ export function correctGrammar(grammar, failureCodes) {
 		throw grammarError("grammar failure codes must be a unique string array");
 	}
 	if (grammar?.system === PUNCHED_FACADE_SYSTEM) {
-		const floorGuides = Object.hasOwn(grammar, "floor_elevations_m")
-			? { floor_guides_m: grammar.floor_elevations_m }
-			: undefined;
+		if (!Object.hasOwn(grammar, "floor_elevations_m") || !Array.isArray(grammar.floor_elevations_m)) {
+			throw grammarError("authoritative floor elevations are required for typed grammar correction");
+		}
+		if (!Object.hasOwn(grammar, "facade_lengths_m") || !grammar.facade_lengths_m
+			|| typeof grammar.facade_lengths_m !== "object" || Array.isArray(grammar.facade_lengths_m)) {
+			throw grammarError("authoritative facade lengths are required for typed grammar correction");
+		}
+		const floorGuides = { floor_guides_m: grammar.floor_elevations_m };
 		const canonical = validatePunchedFacadeGrammar(grammar, { floorGuides, allowDerived: true });
 		const derived = Object.fromEntries([...PUNCHED_DERIVED_FIELDS]
 			.filter((field) => Object.hasOwn(grammar, field))
