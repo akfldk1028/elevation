@@ -6,7 +6,8 @@ const cancel = () => controller.abort(new DOMException("Facade agent command can
 process.once("SIGINT", cancel);
 process.once("SIGTERM", cancel);
 try {
-	process.exitCode = await runFacadeAgentCli(process.argv.slice(2), { signal: controller.signal });
+	const fetchImpl = globalThis.fetch?.bind(globalThis);
+	process.exitCode = await runFacadeAgentCli(process.argv.slice(2), { signal: controller.signal, fetchImpl });
 } finally {
 	process.removeListener("SIGINT", cancel);
 	process.removeListener("SIGTERM", cancel);

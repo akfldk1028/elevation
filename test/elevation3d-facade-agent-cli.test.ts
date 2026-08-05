@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdtemp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -20,11 +20,22 @@ before(async () => {
 	const glb = Buffer.from(await new NodeIO().writeBinary(document)).toString("base64");
 	const moduleUrl = (path: string) => pathToFileURL(join(projectRoot, path)).href;
 	preload = join(root, "facade-cli-entry.mjs");
+	const shim = join(root, "facade-cli-shim.mjs");
+	const cliUrl = moduleUrl("plugins/elevation-3d/lib/facade-agent/cli.mjs");
+	const scriptUrl = moduleUrl("scripts/elevation-3d-facade.mjs");
+	const preloadUrl = pathToFileURL(preload).href;
+	const shimUrl = pathToFileURL(shim).href;
+	await writeFile(shim, `
+import { runFacadeAgentCli as runFacadeAgentCliOriginal } from ${JSON.stringify(cliUrl)};
+import { fixtureFactory } from ${JSON.stringify(preloadUrl)};
+export async function runFacadeAgentCli(argv, io = {}) { return runFacadeAgentCliOriginal(argv, { ...io, dependencyFactory: fixtureFactory }); }
+`);
 	await writeFile(preload, `
 import { appendFile, mkdir, writeFile } from "node:fs/promises";
+import { registerHooks } from "node:module";
 import { join } from "node:path";
 import { sha256, stableJson } from ${JSON.stringify(moduleUrl("plugins/elevation-3d/lib/core.mjs"))};
-import { createFacadeAgentDependencyFactory, installFacadeAgentDependencyFactory } from ${JSON.stringify(moduleUrl("plugins/elevation-3d/lib/facade-agent/cli.mjs"))};
+import { createFacadeAgentDependencyFactory } from ${JSON.stringify(cliUrl)};
 import { createFacadeFixtureTransport } from ${JSON.stringify(moduleUrl("plugins/elevation-3d/lib/facade-agent/fixture-transport.mjs"))};
 import { FacadeProviderError } from ${JSON.stringify(moduleUrl("plugins/elevation-3d/lib/facade-agent/provider.mjs"))};
 import { createPaidOperationLedger, consumePaidOperationSubmissionCapability } from ${JSON.stringify(moduleUrl("plugins/elevation-3d/lib/facade-agent/paid-operation-ledger.mjs"))};
@@ -32,7 +43,7 @@ import { consumeFacadeGrammarSubmissionCapability } from ${JSON.stringify(module
 const GLB = Buffer.from(${JSON.stringify(glb)}, "base64");
 const grammar = { system: "brick-punched-window-v1", surfaces: ["front", "right", "back", "left"], materials: ["brick", "precast", "window-frame", "glass"], corner_datum_m: 0, bay_width_m: 2.4, window_width_m: 1.4, window_height_m: 1.8, sill_height_m: 0.8, reveal_depth_m: 0.2, frame_width_m: 0.06, lintel_height_m: 0.15, sill_depth_m: 0.1, cladding_depth_m: 0.1, brick_module_m: [0.22, 0.07], confidence: 0.92, unresolved_surfaces: [], floor_elevations_m: [0, 3, 6], facade_lengths_m: { front: 8, right: 6, back: 8, left: 6 } };
 const note = async (value) => { if (process.env.FACADE_TEST_CALL_LOG) await appendFile(process.env.FACADE_TEST_CALL_LOG, value + "\\n"); };
-installFacadeAgentDependencyFactory(createFacadeAgentDependencyFactory(async (config) => {
+export const fixtureFactory = createFacadeAgentDependencyFactory(async (config) => {
   const failure = process.env.FACADE_TEST_FAILURE;
   if (failure) { const error = new Error("injected boundary failure"); error.code = failure; throw error; }
   const ledgerRoot = join(config.outputRoot, ".fixture-ledger", config.runId);
@@ -57,7 +68,8 @@ installFacadeAgentDependencyFactory(createFacadeAgentDependencyFactory(async (co
     validate: async ({ provider, artifact }) => { await note("validate:" + provider); return { accepted: true, codes: [], metrics: {}, artifacts: { glb: artifact.path, glb_sha256: artifact.sha256 } }; },
     renderDelivery: async ({ provider }) => ({ provider })
   };
-}));
+});
+registerHooks({ resolve(specifier, context, nextResolve) { const resolved = nextResolve(specifier, context); if (resolved.url === ${JSON.stringify(cliUrl)} && context.parentURL === ${JSON.stringify(scriptUrl)}) return { url: ${JSON.stringify(shimUrl)}, shortCircuit: true }; return resolved; } });
 `);
 });
 
@@ -87,6 +99,21 @@ async function minimalDataset(root: string) {
 	for (const name of ["camera-poses.json", "floor-guides.json", "facade-planes.json", "surface-normals.json"]) {
 		await writeFile(join(mass, "elevation-research", name), "{}");
 	}
+}
+
+async function snapshotTree(root: string): Promise<any> {
+	const entries: any[] = [];
+	async function visit(directory: string, prefix = "") {
+		for (const name of (await readdir(directory)).sort()) {
+			const path = join(directory, name);
+			const relative = prefix ? `${prefix}/${name}` : name;
+			const info = await stat(path);
+			if (info.isDirectory()) { entries.push({ path: relative, type: "directory", mtimeMs: info.mtimeMs }); await visit(path, relative); }
+			else entries.push({ path: relative, type: "file", mtimeMs: info.mtimeMs, bytes: (await readFile(path)).toString("base64") });
+		}
+	}
+	await visit(root);
+	return entries;
 }
 
 function base(root: string, runId: string) {
@@ -190,4 +217,37 @@ test("resume fails closed when persisted normalized configuration is tampered", 
 	config.config.grammarBudgetUsd = 999;
 	await writeFile(configPath, JSON.stringify(config));
 	assert.equal(invoke(["resume", "--run-dir", runDir]).status, 50);
+});
+
+test("status verifies config integrity and remains byte-for-byte read-only", async () => {
+	const root = await mkdtemp(join(tmpdir(), "elevation3d-cli-status-integrity-")); roots.push(root);
+	const runId = "status-integrity";
+	assert.equal(invoke(["preflight", ...base(root, runId)]).status, 0);
+	const runDir = join(root, "output", "creative-020", runId);
+	const before = await snapshotTree(runDir);
+	const status = invoke(["status", "--run-dir", runDir]);
+	assert.equal(status.status, 0, status.stderr);
+	assert.deepEqual(await snapshotTree(runDir), before);
+
+	const configPath = join(runDir, "facade-agent-config.json");
+	const envelope = JSON.parse(await readFile(configPath, "utf8"));
+	envelope.config.grammarBudgetUsd = 999;
+	await writeFile(configPath, JSON.stringify(envelope));
+	const tampered = invoke(["status", "--run-dir", runDir]);
+	assert.equal(tampered.status, 50);
+	assert.deepEqual(JSON.parse(tampered.stdout), { state: "error", category: "security", code: "FACADE_AGENT_STATE_UNCERTAIN" });
+});
+
+test("status rejects missing and relocated config envelopes before reading run status", async () => {
+	const root = await mkdtemp(join(tmpdir(), "elevation3d-cli-status-binding-")); roots.push(root);
+	assert.equal(invoke(["preflight", ...base(root, "status-missing")]).status, 0);
+	const missingRun = join(root, "output", "creative-020", "status-missing");
+	await rm(join(missingRun, "facade-agent-config.json"));
+	assert.equal(invoke(["status", "--run-dir", missingRun]).status, 50);
+
+	assert.equal(invoke(["preflight", ...base(root, "status-source")]).status, 0);
+	const sourceRun = join(root, "output", "creative-020", "status-source");
+	const relocatedRun = join(root, "output", "creative-020", "status-relocated");
+	await cp(sourceRun, relocatedRun, { recursive: true });
+	assert.equal(invoke(["status", "--run-dir", relocatedRun]).status, 50);
 });

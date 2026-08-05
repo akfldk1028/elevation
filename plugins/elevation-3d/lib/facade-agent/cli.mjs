@@ -1,5 +1,6 @@
 import { access, lstat, mkdir, open, readFile, rename, rm } from "node:fs/promises";
 import { dirname, isAbsolute, join, parse, relative, resolve, sep } from "node:path";
+import { types as utilTypes } from "node:util";
 
 import { redactSecrets, sha256, stableJson } from "../core.mjs";
 import {
@@ -12,8 +13,9 @@ import { readFacadeAgentStatus, runFacadeAgent, runFacadeStage } from "./harness
 import { createProductionFacadeAgentDependencies } from "./production-dependencies.mjs";
 
 const CONFIG_FILE = "facade-agent-config.json";
+const TOOL_FIELDS = new Set(["candidate_id", "dataset_root", "output_root", "run_id", "providers", "brief_id", "dry_run", "confirm_live", "image_budget_usd", "grammar_budget_usd"]);
+const BUDGET_FIELDS = new Set(FACADE_AGENT_PROVIDERS);
 const factoryCapabilities = new WeakSet();
-let installedFactory = null;
 
 function codedError(code, message) {
 	const error = new Error(message);
@@ -25,11 +27,6 @@ export function createFacadeAgentDependencyFactory(factory) {
 	if (typeof factory !== "function") throw new TypeError("Facade agent dependency factory must be a function");
 	factoryCapabilities.add(factory);
 	return factory;
-}
-
-export function installFacadeAgentDependencyFactory(factory) {
-	if (!factoryCapabilities.has(factory)) throw new TypeError("Facade agent dependency factory capability is invalid");
-	installedFactory = factory;
 }
 
 function throwIfAborted(signal) {
@@ -195,6 +192,7 @@ async function loadPersistedConfig(runDir) {
 	try {
 		const path = containedPath(runDir, join(runDir, CONFIG_FILE));
 		await assertNoReparsePoints(runDir); await assertNoReparsePoints(path);
+		if (!(await lstat(path)).isFile()) throw codedError("FACADE_AGENT_STATE_UNCERTAIN", "Persisted facade agent configuration is not a regular file");
 		input = verifyConfigEnvelope(JSON.parse(await readFile(path, "utf8")));
 	}
 	catch (error) { throw codedError("FACADE_AGENT_STATE_UNCERTAIN", "Persisted facade agent configuration is unavailable", error); }
@@ -205,12 +203,62 @@ async function loadPersistedConfig(runDir) {
 	return config;
 }
 
-async function dependencies(config, signal, factory = installedFactory) {
+function validateDependencyAuthority(factory, fetchImpl) {
 	if (factory !== null && factory !== undefined && !factoryCapabilities.has(factory)) throw codedError("FACADE_AGENT_DEPENDENCIES_UNAVAILABLE", "Facade agent dependency capability is invalid");
-	const selectedFactory = factory ?? createProductionFacadeAgentDependencies;
-	const deps = await selectedFactory({ ...config, signal });
+	if ((factory === null || factory === undefined) && typeof fetchImpl !== "function") throw new TypeError("An explicit fetch implementation is required for facade providers");
+}
+
+async function dependencies(config, signal, factory, fetchImpl) {
+	validateDependencyAuthority(factory, fetchImpl);
+	const deps = factory
+		? await factory({ ...config, signal })
+		: await createProductionFacadeAgentDependencies({ ...config, signal }, { fetchImpl });
 	if (!deps || typeof deps !== "object") throw codedError("FACADE_AGENT_DEPENDENCIES_UNAVAILABLE", "Facade agent dependencies are not configured");
 	return { ...deps, signal };
+}
+
+function inputFailure() {
+	return new FacadeAgentContractError("TOOL_INPUT_INVALID", "Facade agent tool input must contain only plain own data fields");
+}
+
+function plainDataRecord(value, allowed) {
+	if (!value || typeof value !== "object" || Array.isArray(value) || utilTypes.isProxy(value)) throw inputFailure();
+	let prototype, descriptors;
+	try { prototype = Object.getPrototypeOf(value); descriptors = Object.getOwnPropertyDescriptors(value); }
+	catch { throw inputFailure(); }
+	if (prototype !== Object.prototype && prototype !== null) throw inputFailure();
+	const output = Object.create(null);
+	for (const key of Reflect.ownKeys(descriptors)) {
+		const descriptor = descriptors[key];
+		if (typeof key !== "string" || !allowed.has(key) || descriptor.get || descriptor.set || !Object.hasOwn(descriptor, "value") || descriptor.enumerable !== true) throw inputFailure();
+		output[key] = descriptor.value;
+	}
+	return output;
+}
+
+function plainProviderArray(value) {
+	if (!Array.isArray(value) || utilTypes.isProxy(value) || Object.getPrototypeOf(value) !== Array.prototype) throw inputFailure();
+	let descriptors;
+	try { descriptors = Object.getOwnPropertyDescriptors(value); }
+	catch { throw inputFailure(); }
+	const length = descriptors.length?.value;
+	if (!Number.isSafeInteger(length) || length < 0 || length > FACADE_AGENT_PROVIDERS.length) throw inputFailure();
+	const output = [];
+	const allowedKeys = new Set(["length", ...Array.from({ length }, (_, index) => String(index))]);
+	for (let index = 0; index < length; index += 1) {
+		const descriptor = descriptors[String(index)];
+		if (!descriptor || descriptor.get || descriptor.set || !Object.hasOwn(descriptor, "value") || typeof descriptor.value !== "string") throw inputFailure();
+		output.push(descriptor.value);
+	}
+	if (Reflect.ownKeys(descriptors).some((key) => typeof key !== "string" || !allowedKeys.has(key))) throw inputFailure();
+	return output;
+}
+
+function safeToolInput(value) {
+	const input = plainDataRecord(value, TOOL_FIELDS);
+	if (Object.hasOwn(input, "providers")) input.providers = plainProviderArray(input.providers);
+	if (Object.hasOwn(input, "image_budget_usd")) input.image_budget_usd = plainDataRecord(input.image_budget_usd, BUDGET_FIELDS);
+	return input;
 }
 
 export function summarizeFacadeAgentResult(result, stage = null) {
@@ -251,16 +299,20 @@ function errorCategory(error) {
 	return { category: "internal", exitCode: 70 };
 }
 
-export async function executeFacadeAgentCommand(input, { signal, dependencyFactory } = {}) {
+export async function executeFacadeAgentCommand(input, { signal, dependencyFactory, fetchImpl } = {}) {
 	throwIfAborted(signal);
 	const parsed = Array.isArray(input) ? parseOptions(input) : input;
-	if (parsed.command === "status") return { summary: summarizeFacadeAgentResult(await readFacadeAgentStatus(parsed.runDir)), exitCode: 0 };
+	if (parsed.command === "status") {
+		await loadPersistedConfig(parsed.runDir);
+		return { summary: summarizeFacadeAgentResult(await readFacadeAgentStatus(parsed.runDir)), exitCode: 0 };
+	}
+	validateDependencyAuthority(dependencyFactory, fetchImpl);
 	let config = parsed.config;
 	if (parsed.command === "resume") config = await loadPersistedConfig(parsed.runDir);
 	const runPath = join(config.outputRoot, config.candidateId, config.runId, "run.json");
 	if (parsed.command === "run" && await fileExists(runPath)) throw codedError("FACADE_AGENT_RUN_EXISTS", "Run already exists; use status or resume");
 	await persistConfig(config);
-	const deps = await dependencies(config, signal, dependencyFactory ?? installedFactory);
+	const deps = await dependencies(config, signal, dependencyFactory, fetchImpl);
 	const stage = parsed.dryRun ? "preflight" : FACADE_AGENT_STAGES.includes(parsed.command) ? parsed.command : null;
 	const result = stage ? await runFacadeStage(stage, config, deps) : await runFacadeAgent(config, deps);
 	const summary = summarizeFacadeAgentResult(result, stage);
@@ -273,7 +325,7 @@ export async function runFacadeAgentCli(argv, io = {}) {
 	try {
 		const command = argv[0] ?? "";
 		stderr.write(`[facade-agent] ${command || "invalid"} started\n`);
-		const outcome = await executeFacadeAgentCommand(argv, { signal: io.signal, dependencyFactory: io.dependencyFactory });
+		const outcome = await executeFacadeAgentCommand(argv, { signal: io.signal, dependencyFactory: io.dependencyFactory, fetchImpl: io.fetchImpl });
 		stdout.write(`${JSON.stringify(outcome.summary)}\n`);
 		stderr.write(`[facade-agent] ${command} finished with ${outcome.summary.state}\n`);
 		return outcome.exitCode;
@@ -302,21 +354,22 @@ export function facadeAgentToolSchema() {
 	};
 }
 
-export async function runFacadeAgentTool(args, signal, defaults = {}, dependencyFactory = installedFactory) {
+export async function runFacadeAgentTool(args, signal, defaults = {}, dependencyFactory, fetchImpl) {
 	throwIfAborted(signal);
-	const dryRun = args?.dry_run !== false;
-	if (dryRun && args?.confirm_live === true) throw new FacadeAgentContractError("LIVE_CONFIRMATION_INVALID", "Dry-run cannot confirm live execution");
-	if (!dryRun && args?.confirm_live === true && (args?.image_budget_usd === undefined || args?.grammar_budget_usd === undefined)) {
+	const input = safeToolInput(args);
+	const dryRun = input.dry_run !== false;
+	if (dryRun && input.confirm_live === true) throw new FacadeAgentContractError("LIVE_CONFIRMATION_INVALID", "Dry-run cannot confirm live execution");
+	if (!dryRun && input.confirm_live === true && (input.image_budget_usd === undefined || input.grammar_budget_usd === undefined)) {
 		throw new FacadeAgentContractError("LIVE_COST_CONFIRMATION_INVALID", "Live execution requires explicit provider cost ceilings");
 	}
 	const config = normalizeFacadeAgentConfig({
-		candidateId: args?.candidate_id ?? "creative-020", briefId: args?.brief_id ?? "brick-punched-window-v1",
-		runId: args?.run_id, datasetRoot: args?.dataset_root ?? defaults.datasetRoot,
-		outputRoot: args?.output_root ?? defaults.outputRoot, providers: args?.providers ?? [...FACADE_AGENT_PROVIDERS],
-		imageBudgetUsd: args?.image_budget_usd ?? Object.fromEntries(FACADE_AGENT_PROVIDERS.map((provider) => [provider, 0])),
-		grammarBudgetUsd: args?.grammar_budget_usd ?? 0, grammarModel: "gpt-5.6", maxLocalAttempts: 2,
-		confirmLive: dryRun ? false : args?.confirm_live === true,
+		candidateId: input.candidate_id ?? "creative-020", briefId: input.brief_id ?? "brick-punched-window-v1",
+		runId: input.run_id, datasetRoot: input.dataset_root ?? defaults.datasetRoot,
+		outputRoot: input.output_root ?? defaults.outputRoot, providers: input.providers ?? [...FACADE_AGENT_PROVIDERS],
+		imageBudgetUsd: input.image_budget_usd ?? Object.fromEntries(FACADE_AGENT_PROVIDERS.map((provider) => [provider, 0])),
+		grammarBudgetUsd: input.grammar_budget_usd ?? 0, grammarModel: "gpt-5.6", maxLocalAttempts: 2,
+		confirmLive: dryRun ? false : input.confirm_live === true,
 	});
-	const outcome = await executeFacadeAgentCommand({ command: dryRun ? "preflight" : "run", dryRun, config }, { signal, dependencyFactory });
+	const outcome = await executeFacadeAgentCommand({ command: dryRun ? "preflight" : "run", dryRun, config }, { signal, dependencyFactory, fetchImpl });
 	return redactSecrets(outcome.summary);
 }

@@ -19,8 +19,8 @@ function providerWithRequestBuilder(provider, buildRequest) {
 
 export async function createProductionFacadeAgentDependencies(config, options = {}) {
 	const env = options.env ?? process.env;
-	const fetchImpl = options.fetchImpl ?? globalThis.fetch?.bind(globalThis);
-	if (typeof fetchImpl !== "function") throw new TypeError("A fetch implementation is required for facade providers");
+	const fetchImpl = options.fetchImpl;
+	if (typeof fetchImpl !== "function") throw new TypeError("An explicit fetch implementation is required for facade providers");
 	const runDir = resolve(config.outputRoot, config.candidateId, config.runId);
 	const ledgerRoot = join(runDir, "ledger");
 	await mkdir(ledgerRoot, { recursive: true });
