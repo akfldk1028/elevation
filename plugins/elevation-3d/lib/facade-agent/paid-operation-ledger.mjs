@@ -9,6 +9,27 @@ import { takeFacadeProviderRemoteIdForLedger } from "./provider-internal.mjs";
 const ALLOWED_KINDS = new Set(["image-generation", "grammar-extraction"]);
 const HEX_SHA256 = /^[a-f0-9]{64}$/;
 const PROVIDER = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+const submissionCapabilities = new WeakMap();
+
+function issueSubmissionCapability(record) {
+	const capability = Object.freeze(Object.create(null));
+	submissionCapabilities.set(capability, Object.freeze({ ...record }));
+	return capability;
+}
+
+function revokeSubmissionCapability(capability) {
+	if (capability && typeof capability === "object") submissionCapabilities.delete(capability);
+}
+
+export function consumePaidOperationSubmissionCapability(capability, expected) {
+	if (!capability || typeof capability !== "object") return false;
+	const record = submissionCapabilities.get(capability);
+	submissionCapabilities.delete(capability);
+	return Boolean(record
+		&& record.requestKey === expected?.requestKey
+		&& record.provider === expected?.provider
+		&& record.kind === expected?.kind);
+}
 
 function codedError(code, message) {
 	const error = new Error(message);
@@ -285,8 +306,15 @@ export function createPaidOperationLedger(path, { approvedRoot, lockWaitMs = 5_0
 						actualUsd: null,
 					};
 					await atomicWrite(ledgerPath, ledger, root);
+					const submissionCapability = issueSubmissionCapability({
+						requestKey: input.requestKey,
+						provider: input.provider,
+						kind: input.kind,
+						estimateUsd: input.estimateUsd,
+						ceilingUsd: input.ceilingUsd,
+					});
 					try {
-						const result = validateResult(await input.operation());
+						const result = validateResult(await input.operation(submissionCapability));
 						ledger.operations[input.requestKey] = {
 							...ledger.operations[input.requestKey], ...result, status: "succeeded",
 						};
@@ -308,6 +336,8 @@ export function createPaidOperationLedger(path, { approvedRoot, lockWaitMs = 5_0
 							throw failure;
 						}
 						throw uncertainError(input.kind);
+					} finally {
+						revokeSubmissionCapability(submissionCapability);
 					}
 				} finally {
 					await releaseReservation(lockPath, token, root);
