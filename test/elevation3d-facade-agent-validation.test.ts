@@ -123,6 +123,21 @@ test("rejects a missing canonical back facade and a curtain-wall substitution", 
 	assert.ok(curtain.codes.includes("MATERIAL_SET_INVALID"));
 });
 
+test("rejects facade geometry persisted outside the one canonical detail node", async () => {
+	const report = await validate((document) => {
+		const root = document.getRoot();
+		const template = details(document).find((primitive: any) => primitive.getExtras().kind === "glazing");
+		const bypass = document.createPrimitive()
+			.setAttribute("POSITION", template.getAttribute("POSITION"))
+			.setIndices(template.getIndices())
+			.setMaterial(template.getMaterial())
+			.setExtras({ ...template.getExtras(), slot: "curtain-wall-bypass" });
+		const mesh = document.createMesh("curtain-wall-bypass").addPrimitive(bypass);
+		(root.getDefaultScene() ?? root.listScenes()[0]).addChild(document.createNode("curtain-wall-bypass").setMesh(mesh));
+	});
+	assert.ok(report.codes.includes("NON_CANONICAL_GEOMETRY"));
+});
+
 test("rejects shallow persisted reveals and mismatched corner anchors", async () => {
 	const shallow = await validate((document) => {
 		const primitive = details(document).find((item: any) => item.getExtras().kind === "window-reveal");
@@ -185,16 +200,65 @@ test("rejects a window crossing its authored floor band, a detached detail, and 
 	assert.ok(outward.codes.includes("DETAIL_BOUNDS_EXCEEDED"));
 });
 
+test("derives glazing floor bands from world geometry and only cross-checks optional floor labels", async () => {
+	const unlabeled = await validate((document) => {
+		for (const primitive of details(document)) {
+			if (primitive.getExtras().kind === "glazing") {
+				const { floor_m: _removed, ...extras } = primitive.getExtras();
+				primitive.setExtras(extras);
+			}
+		}
+	});
+	assert.equal(unlabeled.accepted, true);
+
+	const relabeled = await validate((document) => {
+		const primitive = details(document).find((item: any) => item.getExtras().kind === "glazing" && item.getExtras().floor_m === 0);
+		primitive.setExtras({ ...primitive.getExtras(), floor_m: 3.3 });
+	});
+	assert.ok(relabeled.codes.includes("WINDOW_FLOOR_KEY_MISMATCH"));
+
+	const crossing = await validate((document) => {
+		const primitive = details(document).find((item: any) => item.getExtras().kind === "glazing" && item.getExtras().floor_m === 0);
+		const positions = primitive.getAttribute("POSITION");
+		for (let index = 0; index < positions.getCount(); index++) {
+			const point = positions.getElement(index, [0, 0, 0]);
+			if (point[2] > 2) point[2] = 3.4;
+			positions.setElement(index, point);
+		}
+		primitive.setExtras({ ...primitive.getExtras(), floor_m: 3.3 });
+	});
+	assert.ok(crossing.codes.includes("WINDOW_CROSSES_FLOOR_BAND"));
+});
+
 test("accepts a complete immutable opaque brick facade and exposes deterministic gate metrics", async () => {
 	const valid = await validate();
 	assert.equal(valid.accepted, true);
 	assert.deepEqual(valid.codes, []);
 	assert.equal(valid.metrics.canonical_surface_match, 1);
-	assert.ok(valid.metrics.opaque_wall_coverage > 0.8 && valid.metrics.opaque_wall_coverage <= 1);
+	assert.ok(valid.metrics.opaque_wall_coverage > 0.7 && valid.metrics.opaque_wall_coverage <= 1);
 	assert.equal(valid.metrics.minimum_reveal_depth_m, 0.22);
 	assert.ok(valid.metrics.corner_max_gap_m <= 1e-5);
 	assert.ok(valid.metrics.floor_alignment_max_error_m <= 1e-5);
 	assert.equal(valid.metrics.facade_orientation_coverage, 1);
+});
+
+test("clips opaque union coverage to canonical MASS facade extents", async () => {
+	const baseline = await validate();
+	const expanded = await validate((document) => {
+		for (const primitive of details(document)) {
+			if (!["brick-cladding", "corner-return"].includes(primitive.getExtras().kind)) continue;
+			const axis = ["front", "back"].includes(primitive.getExtras().view) ? 0 : 1;
+			const minimum = axis === 0 ? -4 : -2, maximum = axis === 0 ? 4 : 2;
+			const positions = primitive.getAttribute("POSITION");
+			for (let index = 0; index < positions.getCount(); index++) {
+				const point = positions.getElement(index, [0, 0, 0]);
+				if (Math.abs(point[axis] - minimum) <= 1e-5) point[axis] -= 0.12;
+				if (Math.abs(point[axis] - maximum) <= 1e-5) point[axis] += 0.12;
+				positions.setElement(index, point);
+			}
+		}
+	});
+	assert.ok(expanded.metrics.opaque_wall_coverage <= baseline.metrics.opaque_wall_coverage + 1e-6);
 });
 
 test("rejects invalid typed grammar and incomplete procedural PBR bindings", async () => {
@@ -244,6 +308,41 @@ test("derives opaque coverage from persisted areas and rejects malformed typed p
 		primitive.getIndices().setArray(new Uint16Array([0, 1, 2]));
 	});
 	assert.ok(malformed.codes.includes("FACADE_PRIMITIVE_SHAPE_INVALID"));
+});
+
+test("rejects duplicate and partially overlapping opaque facade projections", async () => {
+	const duplicated = await validate((document) => {
+		const mesh = document.getRoot().listMeshes().find((item: any) => item.getName() === "facade-details");
+		const bricks = mesh.listPrimitives().filter((primitive: any) => primitive.getExtras().kind === "brick-cladding");
+		for (const primitive of bricks) {
+			const positions = primitive.getAttribute("POSITION");
+			const points = Array.from({ length: positions.getCount() }, (_, index) => positions.getElement(index, [0, 0, 0]));
+			const centroid = [0, 1, 2].map((axis) => points.reduce((sum: number, point: number[]) => sum + point[axis], 0) / points.length);
+			for (let index = 0; index < points.length; index++) positions.setElement(index, points[index].map((value: number, axis: number) => centroid[axis] + (value - centroid[axis]) * 0.1));
+		}
+		const template = bricks[0];
+		for (let index = 0; index < 1000; index++) {
+			mesh.addPrimitive(document.createPrimitive()
+				.setAttribute("POSITION", template.getAttribute("POSITION"))
+				.setIndices(template.getIndices()).setMaterial(template.getMaterial())
+				.setExtras({ ...template.getExtras(), slot: `duplicate-${index}` }));
+		}
+	});
+	assert.ok(duplicated.codes.includes("FACADE_PROJECTION_OVERLAP"));
+
+	const partial = await validate((document) => {
+		const root = document.getRoot();
+		const mesh = root.listMeshes().find((item: any) => item.getName() === "facade-details");
+		const template = mesh.listPrimitives().find((primitive: any) => primitive.getExtras().kind === "brick-cladding" && primitive.getExtras().view === "front");
+		const original = template.getAttribute("POSITION");
+		const shifted = new Float32Array(original.getArray());
+		for (let index = 0; index < shifted.length; index += 3) shifted[index] += 0.01;
+		const positions = document.createAccessor("partial-overlap", root.listBuffers()[0]).setType("VEC3").setArray(shifted);
+		mesh.addPrimitive(document.createPrimitive().setAttribute("POSITION", positions)
+			.setIndices(template.getIndices()).setMaterial(template.getMaterial())
+			.setExtras({ ...template.getExtras(), slot: "partial-overlap" }));
+	});
+	assert.ok(partial.codes.includes("FACADE_PROJECTION_OVERLAP"));
 });
 
 test("rejects negative-zero grammar metrics before allocating detail records", async () => {

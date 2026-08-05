@@ -18,7 +18,12 @@ export function readVerifiedFacadeEvidenceAuthority(value) {
 	const authority = verifiedEvidenceAuthorities.get(value);
 	return authority ? {
 		candidateId: authority.candidateId,
+		geometryHash: authority.geometryHash,
+		geometryContentSha256: authority.geometryContentSha256,
 		manifestSha256: authority.manifestSha256,
+		camerasSha256: authority.camerasSha256,
+		floorGuides: [...authority.floorGuides],
+		facadeLengths: { ...authority.facadeLengths },
 		contactSheetSha256: authority.contactSheetSha256,
 		contactSheetBytes: Buffer.from(authority.contactSheetBytes),
 	} : null;
@@ -34,6 +39,11 @@ export class FacadeEvidenceError extends Error {
 
 function fail(code, message) {
 	throw new FacadeEvidenceError(code, message);
+}
+
+function geometryContentSha256(input) {
+	return Array.isArray(input?.mesh?.vertices) && Array.isArray(input?.mesh?.triangles)
+		? sha256(stableJson({ vertices: input.mesh.vertices, triangles: input.mesh.triangles })) : null;
 }
 
 function throwIfAborted(signal) {
@@ -292,6 +302,7 @@ export async function buildFacadeEvidencePack({ input, runDir, renderPasses = re
 			schema_version: "arr.elevation3d.facade-evidence.v1",
 			candidate_id: input.candidate.candidate_id,
 			geometry_hash: input.identity.geometry_hash,
+			geometry_content_sha256: geometryContentSha256(input),
 			floor_guides_m: [...input.floor_guides.floor_guides_m],
 			facade_planes_sha256: sha256(stableJson(input.facade_planes)),
 			cameras_sha256: sha256(stableJson(input.cameras)),
@@ -338,6 +349,8 @@ export async function verifyFacadeEvidencePack({ manifestPath: manifestFile, inp
 		cameras_sha256: sha256(stableJson(input.cameras)),
 		source_artifacts: sourceArtifacts(input),
 	};
+	const expectedGeometryContent = geometryContentSha256(input);
+	if (expectedGeometryContent !== null) expectedAuthority.geometry_content_sha256 = expectedGeometryContent;
 	for (const [field, expected] of Object.entries(expectedAuthority)) {
 		if (stableJson(manifest[field]) !== stableJson(expected)) fail("EVIDENCE_INPUT_HASH_MISMATCH", `evidence authority mismatch: ${field}`);
 	}
@@ -379,7 +392,12 @@ export async function verifyFacadeEvidencePack({ manifestPath: manifestFile, inp
 	const verified = Object.freeze({ manifest, manifestPath, manifestSha256: sha256(manifestBytes), contactSheetPath });
 	verifiedEvidenceAuthorities.set(verified, Object.freeze({
 		candidateId: manifest.candidate_id,
+		geometryHash: manifest.geometry_hash,
+		geometryContentSha256: manifest.geometry_content_sha256 ?? null,
 		manifestSha256: verified.manifestSha256,
+		camerasSha256: manifest.cameras_sha256,
+		floorGuides: Object.freeze([...input.floor_guides.floor_guides_m]),
+		facadeLengths: Object.freeze(Object.fromEntries((input.facade_planes?.facade_planes ?? []).map((plane) => [plane.view, plane.extent_m?.[0]]))),
 		contactSheetSha256: manifest.contact_sheet.sha256,
 		contactSheetBytes: Buffer.from(contactSheetBytes),
 	}));

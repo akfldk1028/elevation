@@ -25,7 +25,20 @@ const MAX_PROPOSAL_BYTES = 32 * 1024 * 1024;
 const MAX_MANIFEST_BYTES = 1024 * 1024;
 const MAX_RESPONSE_BYTES = 1024 * 1024;
 const verifiedProposalAuthorities = new WeakMap();
+const verifiedGrammarAuthorities = new WeakMap();
 const claimedProviderResults = new WeakSet();
+
+function deepFreeze(value) {
+	if (!value || typeof value !== "object" || Object.isFrozen(value)) return value;
+	for (const item of Object.values(value)) deepFreeze(item);
+	return Object.freeze(value);
+}
+
+export function readVerifiedFacadeGrammarAuthority(value) {
+	if (!value || typeof value !== "object") return null;
+	const authority = verifiedGrammarAuthorities.get(value);
+	return authority ? { ...authority } : null;
+}
 
 export const FACADE_GRAMMAR_SCHEMA = Object.freeze({
 	type: "object",
@@ -470,5 +483,18 @@ export async function extractFacadeGrammar(input) {
 		},
 	});
 	if (!parsedGrammar) throw failure("GRAMMAR_RESULT_UNAVAILABLE", "Persisted grammar result is unavailable without resubmission");
+	deepFreeze(parsedGrammar);
+	verifiedGrammarAuthorities.set(parsedGrammar, Object.freeze({
+		candidateId: controls.candidateId,
+		geometryHash: verified.authority.geometryHash,
+		geometryContentSha256: verified.authority.geometryContentSha256,
+		provider: controls.proposalProvider,
+		evidenceManifestSha256: verified.authority.manifestSha256,
+		camerasSha256: verified.authority.camerasSha256,
+		floorGuides: Object.freeze([...verified.authority.floorGuides]),
+		facadeLengths: Object.freeze({ ...verified.authority.facadeLengths }),
+		proposalSha256: proposal.digest,
+		grammarSha256: sha256(stableJson(parsedGrammar)),
+	}));
 	return parsedGrammar;
 }
