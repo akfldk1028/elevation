@@ -122,6 +122,64 @@ test("public provider errors redact known remote IDs from properties, messages, 
 	assert.equal(JSON.stringify(normalized).includes(rawRemoteId), false);
 });
 
+test("persists a FacadeProviderError remote ID privately without leaking it when rethrown", async () => {
+	await withLedger(async (_root, path) => {
+		const rawRemoteId = "private-provider-remote-456";
+		const ledger = createPaidOperationLedger(path);
+		await assert.rejects(() => ledger.executeOnce({
+			requestKey, provider: "gpt-image-2", kind: "image-generation",
+			ceilingUsd: 1, estimateUsd: 0.2,
+			operation: async () => {
+				throw new FacadeProviderError("PROVIDER_RESPONSE_INVALID", `invalid response for ${rawRemoteId}`, {
+					provider: "gpt-image-2", stage: "generate", status: 502, retryable: true,
+					definitiveNonSubmission: true, remoteId: rawRemoteId,
+				});
+			},
+		}), (error: any) => {
+			assert.ok(error instanceof FacadeProviderError);
+			assert.equal(error.code, "PROVIDER_RESPONSE_INVALID");
+			assert.equal(Object.hasOwn(error, "remoteId"), false);
+			assert.equal(error.remoteId, undefined);
+			assert.equal(error.details, undefined);
+			assert.equal(Object.getOwnPropertySymbols(error).length, 0);
+			assert.doesNotMatch(error.message, new RegExp(rawRemoteId));
+			assert.doesNotMatch(error.stack, new RegExp(rawRemoteId));
+			assert.equal(JSON.stringify(error).includes(rawRemoteId), false);
+			return true;
+		});
+		const persisted = await readFile(path, "utf8");
+		assert.equal(persisted.includes(rawRemoteId), true);
+		const summary = await ledger.summary();
+		assert.equal(summary.operations[0].remoteIdHash?.length, 64);
+		assert.equal(JSON.stringify(summary).includes(rawRemoteId), false);
+	});
+});
+
+test("preserves private reconciliation data through public failure normalization", async () => {
+	await withLedger(async (_root, path) => {
+		const rawRemoteId = "normalized-private-remote-789";
+		const ledger = createPaidOperationLedger(path);
+		await assert.rejects(() => ledger.executeOnce({
+			requestKey, provider: "gpt-image-2", kind: "image-generation",
+			ceilingUsd: 1, estimateUsd: 0.2,
+			operation: async () => {
+				const source = new FacadeProviderError("PROVIDER_RESPONSE_INVALID", `bad ${rawRemoteId}`, {
+					provider: "gpt-image-2", stage: "generate", remoteId: rawRemoteId,
+				});
+				throw normalizeProviderFailure(source, "gpt-image-2", "generate");
+			},
+		}), (error: any) => {
+			assert.ok(error instanceof FacadeProviderError);
+			assert.equal(error.code, "PROVIDER_RESPONSE_INVALID");
+			assert.equal(Object.hasOwn(error, "remoteId"), false);
+			assert.equal(Object.getOwnPropertySymbols(error).length, 0);
+			assert.doesNotMatch(`${error.message}\n${error.stack}\n${JSON.stringify(error)}`, new RegExp(rawRemoteId));
+			return true;
+		});
+		assert.equal((await readFile(path, "utf8")).includes(rawRemoteId), true);
+	});
+});
+
 test("refuses a crash-left submitting operation without invoking it", async () => {
 	await withLedger(async (_root, path) => {
 		await writeFile(path, `${JSON.stringify({ version: 1, operations: {

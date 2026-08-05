@@ -1,4 +1,5 @@
 import { redactSecrets } from "../core.mjs";
+import { storeFacadeProviderRemoteId, transferFacadeProviderRemoteId } from "./provider-internal.mjs";
 
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const ERROR_CODE = /^[A-Z][A-Z0-9_]{0,127}$/;
@@ -37,6 +38,7 @@ export class FacadeProviderError extends Error {
 		this.status = safeStatus(status);
 		this.retryable = retryable === true;
 		this.definitiveNonSubmission = definitiveNonSubmission === true && !knownRemoteId(remoteId);
+		storeFacadeProviderRemoteId(this, remoteId);
 	}
 }
 
@@ -46,7 +48,7 @@ export function normalizeProviderFailure(error, provider, stage) {
 	const code = error instanceof FacadeProviderError
 		? error.code
 		: aborted ? "PROVIDER_ABORTED" : "PROVIDER_REQUEST_FAILED";
-	return new FacadeProviderError(code, error?.message, {
+	const normalized = new FacadeProviderError(code, error?.message, {
 		provider: safeIdentifier(provider, error?.provider ?? "unknown-provider"),
 		stage: safeIdentifier(stage, error?.stage ?? "unknown-stage"),
 		status: status ?? error?.status,
@@ -54,4 +56,6 @@ export function normalizeProviderFailure(error, provider, stage) {
 		definitiveNonSubmission: error instanceof FacadeProviderError && error.definitiveNonSubmission,
 		remoteId: error?.remoteId,
 	});
+	transferFacadeProviderRemoteId(error, normalized);
+	return normalized;
 }
