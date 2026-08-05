@@ -180,3 +180,35 @@ test("applies only allowlisted typed-grammar corrections", () => {
 	assert.equal(correctGrammar(typed, ["PRIMITIVE_BUDGET_EXCEEDED"]).bay_width_m, 3);
 	assert.throws(() => correctGrammar(typed, ["CHANGE_MASSING"]), /unrecognized grammar failure code/i);
 });
+
+test("validates typed grammar before and after every correction", () => {
+	const typed = normalizeFacadeGrammar({
+		approvedDesign: { facade_grammar: punchedGrammar },
+		floorGuides: punchedFloorGuides,
+		facadePlanes: punchedFacadePlanes,
+	});
+	for (const malformed of [
+		{ ...typed, raw_vertices: [[0, 0, 0]] },
+		{ ...typed, materials: ["brick", "precast", "window-frame", "curtain-wall"] },
+		{ ...typed, unresolved_surfaces: ["back"] },
+		{ ...typed, reveal_depth_m: Number.NaN },
+		{ ...typed, bay_width_m: 1.2, window_width_m: 1.2, frame_width_m: 0.08 },
+		{ ...typed, floor_elevations_m: [0, 2.4], sill_height_m: 0.85, window_height_m: 1.65, lintel_height_m: 0.18 },
+	]) {
+		assert.throws(() => correctGrammar(malformed, ["DETAIL_BOUNDS_EXCEEDED"]), /grammar|facade|window|floor|unknown|range|material/i);
+	}
+	const corrected = correctGrammar(typed, ["WINDOW_CROSSES_FLOOR_BAND", "DETAIL_BOUNDS_EXCEEDED"]);
+	assert.equal(corrected.system, "brick-punched-window-v1");
+	assert.equal(corrected.window_height_m < typed.window_height_m, true);
+	assert.equal(corrected.reveal_depth_m < typed.reveal_depth_m, true);
+	assert.deepEqual(corrected.floor_elevations_m, typed.floor_elevations_m);
+	assert.equal(corrected.curtain_wall_allowed, false);
+	const narrowFacade = {
+		...typed,
+		bay_width_m: 0.9,
+		window_width_m: 0.6,
+		frame_width_m: 0.03,
+		facade_lengths_m: { front: 1, right: 1, back: 1, left: 1 },
+	};
+	assert.throws(() => correctGrammar(narrowFacade, ["PRIMITIVE_BUDGET_EXCEEDED"]), /bay.*facade|facade.*bay/i);
+});

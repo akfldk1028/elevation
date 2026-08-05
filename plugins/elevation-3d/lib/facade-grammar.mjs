@@ -108,6 +108,25 @@ export function validatePunchedFacadeGrammar(value, { floorGuides, allowMissingM
 			throw grammarError("window dimensions cross a floor band");
 		}
 	}
+	if (allowDerived) {
+		if (Object.hasOwn(grammar, "wall_opacity") && grammar.wall_opacity !== "opaque") {
+			throw grammarError("punched facade walls must remain opaque");
+		}
+		if (Object.hasOwn(grammar, "curtain_wall_allowed") && grammar.curtain_wall_allowed !== false) {
+			throw grammarError("curtain-wall substitution is not allowed");
+		}
+		if (Object.hasOwn(grammar, "floor_elevations_m")) floorHeights({ floor_guides_m: grammar.floor_elevations_m });
+		if (Object.hasOwn(grammar, "facade_lengths_m")) {
+			const lengths = plainRecord(grammar.facade_lengths_m, "facade_lengths_m");
+			if (Object.keys(lengths).length !== PUNCHED_FACADE_SURFACES.length
+				|| PUNCHED_FACADE_SURFACES.some((surface) => !Number.isFinite(lengths[surface]) || lengths[surface] <= 0)) {
+				throw grammarError("all canonical facade lengths must be finite and positive");
+			}
+			if (numbers.bay_width_m > Math.min(...PUNCHED_FACADE_SURFACES.map((surface) => lengths[surface]))) {
+				throw grammarError("bay width is infeasible for the available facade lengths");
+			}
+		}
+	}
 	return {
 		system: PUNCHED_FACADE_SYSTEM,
 		surfaces,
@@ -186,6 +205,15 @@ export function correctGrammar(grammar, failureCodes) {
 		throw grammarError("grammar failure codes must be a unique string array");
 	}
 	if (grammar?.system === PUNCHED_FACADE_SYSTEM) {
+		const floorGuides = Object.hasOwn(grammar, "floor_elevations_m")
+			? { floor_guides_m: grammar.floor_elevations_m }
+			: undefined;
+		const canonical = validatePunchedFacadeGrammar(grammar, { floorGuides, allowDerived: true });
+		const derived = Object.fromEntries([...PUNCHED_DERIVED_FIELDS]
+			.filter((field) => Object.hasOwn(grammar, field))
+			.map((field) => [field, field === "floor_elevations_m"
+				? [...grammar[field]]
+				: field === "facade_lengths_m" ? { ...grammar[field] } : grammar[field]]));
 		const corrections = {
 			WINDOW_CROSSES_FLOOR_BAND: (value) => ({ ...value, window_height_m: clamp(value.window_height_m * 0.85, LIMITS.window_height_m) }),
 			DETAIL_BOUNDS_EXCEEDED: (value) => ({
@@ -196,12 +224,13 @@ export function correctGrammar(grammar, failureCodes) {
 			CORNER_DATUM_MISMATCH: (value) => ({ ...value, corner_datum_m: 0 }),
 			PRIMITIVE_BUDGET_EXCEEDED: (value) => ({ ...value, bay_width_m: clamp(value.bay_width_m * 1.25, LIMITS.bay_width_m) }),
 		};
-		let corrected = { ...grammar };
+		let corrected = canonical;
 		for (const code of failureCodes) {
 			if (!Object.hasOwn(corrections, code)) throw grammarError(`unrecognized grammar failure code: ${code}`);
 			corrected = corrections[code](corrected);
 		}
-		return corrected;
+		const postCorrection = { ...corrected, ...derived };
+		return { ...validatePunchedFacadeGrammar(postCorrection, { floorGuides, allowDerived: true }), ...derived };
 	}
 	const corrected = { ...grammar };
 	if (failureCodes.includes("DETAIL_BOUNDS_EXCEEDED")) {
