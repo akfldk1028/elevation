@@ -16,6 +16,12 @@ const MAX_RESPONSE_NODES = 4_096;
 const MAX_RESPONSE_BYTES = Math.ceil(MAX_IMAGE_BYTES / 3) * 4 + 1024 * 1024;
 const DEFAULT_TIMEOUT_MS = 120_000;
 const requestAuthorities = new WeakMap();
+const proposalResultAuthorities = new WeakMap();
+
+export function readVerifiedProposalResultAuthority(value) {
+	const authority = value && typeof value === "object" ? proposalResultAuthorities.get(value) : null;
+	return authority ? { ...authority } : null;
+}
 
 function failure(code, message, options = {}) {
 	return new FacadeProviderError(code, message, { provider: PROVIDER, stage: "generate", ...options });
@@ -227,7 +233,11 @@ export function buildRequest(input) {
 		output: request.output,
 	}));
 	const authorizedRequest = Object.freeze(request);
-	requestAuthorities.set(authorizedRequest, Object.freeze({ fingerprint: request.fingerprint }));
+	requestAuthorities.set(authorizedRequest, Object.freeze({
+		fingerprint: request.fingerprint,
+		candidateId: evidenceAuthority.candidateId,
+		evidenceManifestSha256: evidenceAuthority.manifestSha256,
+	}));
 	return authorizedRequest;
 }
 
@@ -420,12 +430,19 @@ export function createProvider(envInput = {}, optionsInput = {}) {
 				const decoded = await decodeImage(outputs[0].b64_json, remoteId);
 				const stableRemoteId = remoteId ?? `openai-${sha256(decoded.bytes)}`;
 				const usage = sanitized(payload?.usage ?? null, apiKey);
-				return {
+				const result = {
 					...decoded,
 					remoteId: stableRemoteId,
 					usage,
 					rawMeta: sanitized({ provider: PROVIDER, model: MODEL, created: payload?.created ?? null, remoteIdHash: sha256(stableRemoteId), usage }, apiKey),
 				};
+				proposalResultAuthorities.set(result, Object.freeze({
+					provider: PROVIDER,
+					candidateId: authority.candidateId,
+					evidenceManifestSha256: authority.evidenceManifestSha256,
+					proposalSha256: sha256(decoded.bytes),
+				}));
+				return result;
 			} catch (error) {
 				throw normalizeProviderFailure(error, PROVIDER, error?.stage === "preflight" ? "preflight" : "generate");
 			}

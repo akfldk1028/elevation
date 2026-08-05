@@ -1,5 +1,6 @@
 import { lstat, readFile, realpath } from "node:fs/promises";
 import { resolve } from "node:path";
+import sharp from "sharp";
 
 import { redactSecrets, sha256, stableJson } from "../core.mjs";
 import {
@@ -12,6 +13,8 @@ import {
 import { readVerifiedFacadeEvidenceAuthority } from "./evidence.mjs";
 import { consumePaidOperationSubmissionCapability } from "./paid-operation-ledger.mjs";
 import { FacadeProviderError } from "./provider.mjs";
+import { readVerifiedProposalResultAuthority as readOpenAIProposalResultAuthority } from "./providers/openai-image.mjs";
+import { readVerifiedProposalResultAuthority as readGeminiProposalResultAuthority } from "./providers/gemini-image.mjs";
 
 const PROVIDER = "openai";
 const MODEL = "gpt-5.6";
@@ -21,6 +24,8 @@ const MAX_TIMEOUT_MS = 300_000;
 const MAX_PROPOSAL_BYTES = 32 * 1024 * 1024;
 const MAX_MANIFEST_BYTES = 1024 * 1024;
 const MAX_RESPONSE_BYTES = 1024 * 1024;
+const verifiedProposalAuthorities = new WeakMap();
+const claimedProviderResults = new WeakSet();
 
 export const FACADE_GRAMMAR_SCHEMA = Object.freeze({
 	type: "object",
@@ -110,7 +115,7 @@ function imageType(bytes) {
 	return null;
 }
 
-async function readProposal(path) {
+async function readProposalFile(path, expected = {}) {
 	if (typeof path !== "string" || !path) throw failure("GRAMMAR_PROPOSAL_INVALID", "A proposal image path is required", { definitiveNonSubmission: true });
 	const absolute = resolve(path);
 	let stats;
@@ -124,7 +129,29 @@ async function readProposal(path) {
 	const bytes = await readFile(canonical);
 	const mimeType = imageType(bytes);
 	if (!mimeType) throw failure("GRAMMAR_PROPOSAL_INVALID", "Proposal image type is not approved", { definitiveNonSubmission: true });
-	return { bytes, mimeType, digest: sha256(bytes) };
+	let metadata;
+	let decoded;
+	try {
+		metadata = await sharp(bytes, { limitInputPixels: MAX_PROPOSAL_BYTES }).metadata();
+		decoded = await sharp(bytes, { limitInputPixels: MAX_PROPOSAL_BYTES }).raw().toBuffer({ resolveWithObject: true });
+	} catch {
+		throw failure("GRAMMAR_PROPOSAL_INVALID", "Proposal image did not fully decode", { definitiveNonSubmission: true });
+	}
+	if (!Number.isInteger(metadata.width) || metadata.width <= 0 || !Number.isInteger(metadata.height) || metadata.height <= 0
+		|| !Number.isInteger(metadata.channels) || metadata.channels < 1 || metadata.channels > 4
+		|| metadata.width * metadata.height * metadata.channels > MAX_PROPOSAL_BYTES
+		|| decoded.info.width !== metadata.width || decoded.info.height !== metadata.height || decoded.info.channels !== metadata.channels
+		|| decoded.data.length !== metadata.width * metadata.height * metadata.channels) {
+		throw failure("GRAMMAR_PROPOSAL_INVALID", "Proposal decoded image payload is inconsistent", { definitiveNonSubmission: true });
+	}
+	const digest = sha256(bytes);
+	if (expected.path !== undefined && canonical !== expected.path) {
+		throw failure("GRAMMAR_PROPOSAL_INVALID", "Verified proposal path does not match its approved path", { definitiveNonSubmission: true });
+	}
+	if (expected.digest !== undefined && digest !== expected.digest) {
+		throw failure("GRAMMAR_PROPOSAL_INVALID", "Verified proposal hash does not match its provider result", { definitiveNonSubmission: true });
+	}
+	return { path: canonical, bytes, mimeType, digest };
 }
 
 function clonePlainData(value, seen = new Set(), depth = 0, state = { nodes: 0 }) {
@@ -195,7 +222,65 @@ function validateConfig(config) {
 	if (apiKey !== undefined && (typeof apiKey !== "string" || !apiKey.trim() || apiKey.length > 4_096 || /[\r\n\0]/.test(apiKey))) {
 		throw failure("GRAMMAR_CREDENTIALS_INVALID", "OpenAI credential is invalid", { definitiveNonSubmission: true });
 	}
-	return { candidateId: fields.candidateId, ceilingUsd, estimateUsd, timeoutMs, apiKey };
+	const proposalProvider = fields.proposalProvider;
+	if (!new Set(["gpt-image-2", "nano-banana-pro"]).has(proposalProvider)) {
+		throw failure("GRAMMAR_PROPOSAL_INVALID", "An approved proposal provider identity is required", { definitiveNonSubmission: true });
+	}
+	return { candidateId: fields.candidateId, proposalProvider, ceilingUsd, estimateUsd, timeoutMs, apiKey };
+}
+
+function providerResultAuthority(providerResult) {
+	const openAI = readOpenAIProposalResultAuthority(providerResult);
+	const gemini = readGeminiProposalResultAuthority(providerResult);
+	if (openAI && gemini) throw failure("GRAMMAR_PROPOSAL_INVALID", "Verified proposal provider identity is ambiguous", { definitiveNonSubmission: true });
+	return openAI ?? gemini;
+}
+
+export async function verifyFacadeProposal(input) {
+	const fields = dataRecord(input, "verifyFacadeProposal input");
+	const controls = validateConfig(fields.config);
+	const evidenceAuthority = verifiedEvidence(fields.evidence, controls.candidateId);
+	const providerAuthority = providerResultAuthority(fields.providerResult);
+	if (!providerAuthority) throw failure("GRAMMAR_PROPOSAL_INVALID", "Verified proposal provider result is required", { definitiveNonSubmission: true });
+	if (providerAuthority.provider !== controls.proposalProvider) {
+		throw failure("GRAMMAR_PROPOSAL_INVALID", "Verified proposal provider does not match configuration", { definitiveNonSubmission: true });
+	}
+	if (providerAuthority.candidateId !== controls.candidateId) {
+		throw failure("GRAMMAR_PROPOSAL_INVALID", "Verified proposal candidate does not match configuration", { definitiveNonSubmission: true });
+	}
+	if (providerAuthority.evidenceManifestSha256 !== evidenceAuthority.authority.manifestSha256) {
+		throw failure("GRAMMAR_PROPOSAL_INVALID", "Verified proposal evidence does not match extraction evidence", { definitiveNonSubmission: true });
+	}
+	if (claimedProviderResults.has(fields.providerResult)) {
+		throw failure("GRAMMAR_PROPOSAL_INVALID", "Verified proposal provider result was already bound to an approved path", { definitiveNonSubmission: true });
+	}
+	const proposal = await readProposalFile(fields.proposalPath, { digest: providerAuthority.proposalSha256 });
+	const publicAuthority = Object.freeze({
+		path: proposal.path,
+		proposalSha256: proposal.digest,
+		provider: providerAuthority.provider,
+		candidateId: providerAuthority.candidateId,
+		evidenceManifestSha256: providerAuthority.evidenceManifestSha256,
+	});
+	claimedProviderResults.add(fields.providerResult);
+	verifiedProposalAuthorities.set(publicAuthority, Object.freeze({
+		path: proposal.path,
+		digest: proposal.digest,
+		provider: providerAuthority.provider,
+		candidateId: providerAuthority.candidateId,
+		evidenceManifestSha256: providerAuthority.evidenceManifestSha256,
+	}));
+	return publicAuthority;
+}
+
+async function readVerifiedProposal(value, evidenceAuthority, controls) {
+	const authority = value && typeof value === "object" ? verifiedProposalAuthorities.get(value) : null;
+	if (!authority) throw failure("GRAMMAR_PROPOSAL_INVALID", "Verified proposal authority is required", { definitiveNonSubmission: true });
+	if (authority.provider !== controls.proposalProvider || authority.candidateId !== controls.candidateId
+		|| authority.evidenceManifestSha256 !== evidenceAuthority.authority.manifestSha256) {
+		throw failure("GRAMMAR_PROPOSAL_INVALID", "Verified proposal provenance does not match extraction controls", { definitiveNonSubmission: true });
+	}
+	return readProposalFile(authority.path, { path: authority.path, digest: authority.digest });
 }
 
 function canonicalPrompt({ evidenceManifestSha256, manifestText, proposalSha256 }) {
@@ -332,7 +417,7 @@ export async function extractFacadeGrammar(input) {
 	}
 	const controls = validateConfig(config);
 	const verified = verifiedEvidence(evidence, controls.candidateId);
-	const proposal = await readProposal(proposalPath);
+	const proposal = await readVerifiedProposal(proposalPath, verified, controls);
 	throwIfAborted(signal, true);
 	const body = requestBody(proposal, verified);
 	const requestKey = sha256(stableJson(redactSecrets({

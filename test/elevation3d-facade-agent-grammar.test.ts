@@ -7,8 +7,12 @@ import sharp from "sharp";
 
 import { sha256, stableJson } from "../plugins/elevation-3d/lib/core.mjs";
 import { verifyFacadeEvidencePack } from "../plugins/elevation-3d/lib/facade-agent/evidence.mjs";
-import { extractFacadeGrammar } from "../plugins/elevation-3d/lib/facade-agent/grammar-agent.mjs";
+import { extractFacadeGrammar, verifyFacadeProposal } from "../plugins/elevation-3d/lib/facade-agent/grammar-agent.mjs";
 import { createPaidOperationLedger } from "../plugins/elevation-3d/lib/facade-agent/paid-operation-ledger.mjs";
+import {
+	buildRequest as buildOpenAIRequest,
+	createProvider as createOpenAIProvider,
+} from "../plugins/elevation-3d/lib/facade-agent/providers/openai-image.mjs";
 
 const SURFACES = ["front", "right", "back", "left"];
 const VIEWS = [...SURFACES, "top", "axon", "opposite-axon"];
@@ -18,12 +22,14 @@ const proposalPath = join(root, "proposal.png");
 const proposalBytes = await sharp({ create: { width: 2, height: 2, channels: 3, background: "#923f2d" } }).png().toBuffer();
 await writeFile(proposalPath, proposalBytes);
 
-async function verifiedEvidenceFixture() {
-	const evidenceRoot = join(root, "evidence");
+async function verifiedEvidenceFixture(label = "primary", sourceText = "geometry authority fixture") {
+	const fixtureRoot = join(root, label);
+	await mkdir(fixtureRoot);
+	const evidenceRoot = join(fixtureRoot, "evidence");
 	await mkdir(evidenceRoot);
 	const evidencePng = await sharp({ create: { width: 1, height: 1, channels: 3, background: "#eeeeee" } }).png().toBuffer();
-	const sourceBytes = Buffer.from("geometry authority fixture");
-	const sourcePath = join(root, "source.bin");
+	const sourceBytes = Buffer.from(sourceText);
+	const sourcePath = join(fixtureRoot, "source.bin");
 	await writeFile(sourcePath, sourceBytes);
 	const artifacts: Record<string, unknown> = {};
 	for (const mode of PASSES) {
@@ -52,6 +58,7 @@ async function verifiedEvidenceFixture() {
 }
 
 const evidence = await verifiedEvidenceFixture();
+const otherEvidence = await verifiedEvidenceFixture("other", "different geometry authority fixture");
 after(async () => rm(root, { recursive: true, force: true }));
 let ledgerSequence = 0;
 
@@ -88,6 +95,7 @@ function config(overrides: Record<string, unknown> = {}) {
 	return {
 		candidateId: "creative-020", grammarModel: "gpt-5.6", grammarBudgetUsd: 0.1,
 		grammarEstimateUsd: 0.05, grammarTimeoutMs: 1_000, openAIApiKey: "sk-fixture-secret",
+		proposalProvider: "gpt-image-2",
 		...overrides,
 	};
 }
@@ -116,11 +124,47 @@ function fixtureLedger() {
 	};
 }
 
+async function generatedProposalResult(sourceEvidence = evidence) {
+	const request = buildOpenAIRequest({
+		evidence: sourceEvidence,
+		brief: { brief_id: "brick-punched-window-v1", candidate_id: "creative-020" },
+		output: { width: 1536, height: 1024, format: "png" },
+	});
+	const provider = createOpenAIProvider({ OPENAI_API_KEY: "sk-provider-fixture" }, {
+		fetchImpl: async () => Response.json({
+			id: `proposal-result-${ledgerSequence}`,
+			data: [{ b64_json: proposalBytes.toString("base64") }],
+			usage: { input_tokens: 1, output_tokens: 1 },
+		}),
+		timeoutMs: 1_000,
+	});
+	let result: any;
+	await createPaidOperationLedger(join(root, `proposal-paid-${ledgerSequence++}.json`), { approvedRoot: root }).executeOnce({
+		requestKey: request.fingerprint,
+		provider: request.provider,
+		kind: "image-generation",
+		ceilingUsd: 0.1,
+		estimateUsd: 0.05,
+		operation: async (submission: any) => {
+			result = await provider.generate({ request, submission });
+			return { remoteId: result.remoteId, artifactSha256: sha256(result.bytes), actualUsd: 0.05 };
+		},
+	});
+	return result;
+}
+
+const proposalAuthority = await verifyFacadeProposal({
+	proposalPath,
+	providerResult: await generatedProposalResult(),
+	evidence,
+	config: config(),
+});
+
 test("calls the pinned Responses structured-output contract and binds proposal and verified evidence hashes", async () => {
 	const fetchCalls: any[] = [];
 	const ledger = fixtureLedger();
 	const extracted = await extractFacadeGrammar({
-		proposalPath, evidence, config: config(), ledger,
+		proposalPath: proposalAuthority, evidence, config: config(), ledger,
 		fetchImpl: async (url: string, init: any) => {
 			fetchCalls.push({ url, init, body: JSON.parse(init.body) });
 			return Response.json(responseFixture(grammar));
@@ -147,6 +191,45 @@ test("calls the pinned Responses structured-output contract and binds proposal a
 	assert.doesNotMatch(stableJson({ extracted, ledger: ledger.calls.map(({ operation: _operation, ...call }) => call) }), /sk-fixture-secret|Authorization/i);
 });
 
+test("requires an unforgeable proposal authority bound to provider, candidate, evidence, path, and bytes", async () => {
+	for (const [name, makeInput] of [
+		["copied provider result", async () => ({ proposalPath, providerResult: { ...await generatedProposalResult() }, evidence, config: config() })],
+		["provider mismatch", async () => ({ proposalPath, providerResult: await generatedProposalResult(), evidence, config: config({ proposalProvider: "nano-banana-pro" }) })],
+		["candidate mismatch", async () => ({ proposalPath, providerResult: await generatedProposalResult(), evidence, config: config({ candidateId: "creative-999" }) })],
+		["evidence mismatch", async () => ({ proposalPath, providerResult: await generatedProposalResult(), evidence: otherEvidence, config: config() })],
+	] as const) {
+		await assert.rejects(() => makeInput().then((input) => verifyFacadeProposal(input)), /verified proposal|provider|candidate|evidence/i, name);
+	}
+
+	const copiedPath = join(root, "copied-proposal.png");
+	await writeFile(copiedPath, proposalBytes);
+	for (const value of [proposalPath, { ...proposalAuthority }, { ...proposalAuthority, path: copiedPath }]) {
+		let fetchCalls = 0;
+		const ledger = fixtureLedger();
+		await assert.rejects(() => extractFacadeGrammar({
+			proposalPath: value, evidence, config: config(), ledger,
+			fetchImpl: async () => { fetchCalls += 1; return Response.json(responseFixture(grammar)); },
+		}), /verified proposal/i);
+		assert.equal(fetchCalls, 0);
+		assert.equal(ledger.calls.length, 0);
+	}
+
+	const changedBytes = await sharp({ create: { width: 2, height: 2, channels: 3, background: "#000000" } }).png().toBuffer();
+	await writeFile(proposalPath, changedBytes);
+	try {
+		let fetchCalls = 0;
+		const ledger = fixtureLedger();
+		await assert.rejects(() => extractFacadeGrammar({
+			proposalPath: proposalAuthority, evidence, config: config(), ledger,
+			fetchImpl: async () => { fetchCalls += 1; return Response.json(responseFixture(grammar)); },
+		}), /proposal.*hash|verified proposal/i);
+		assert.equal(fetchCalls, 0);
+		assert.equal(ledger.calls.length, 0);
+	} finally {
+		await writeFile(proposalPath, proposalBytes);
+	}
+});
+
 test("fails closed on malformed, ambiguous, unsafe, or geometry-changing structured output", async () => {
 	const cases: Array<[string, unknown]> = [
 		["unknown field", { ...grammar, raw_vertices: [[0, 0, 0]] }],
@@ -168,7 +251,7 @@ test("fails closed on malformed, ambiguous, unsafe, or geometry-changing structu
 	for (const [name, value] of cases) {
 		let calls = 0;
 		await assert.rejects(() => extractFacadeGrammar({
-			proposalPath, evidence, config: config(), ledger: fixtureLedger(),
+			proposalPath: proposalAuthority, evidence, config: config(), ledger: fixtureLedger(),
 			fetchImpl: async () => { calls += 1; return Response.json(responseFixture(value)); },
 		}), (error: any) => {
 			assert.match(error.code ?? error.message, /GRAMMAR_(OUTPUT|RESPONSE)_INVALID/);
@@ -188,7 +271,7 @@ test("rejects wrong models, over-budget work, and unverified provenance before t
 		let calls = 0;
 		const ledger = fixtureLedger();
 		await assert.rejects(() => extractFacadeGrammar({
-			proposalPath, evidence, config: config(), ledger,
+			proposalPath: proposalAuthority, evidence, config: config(), ledger,
 			fetchImpl: async () => { calls += 1; return Response.json(responseFixture(grammar)); },
 			...changed,
 		}), /model|budget|verified evidence/i, name);
@@ -204,7 +287,7 @@ test("rejects a hostile verified-manifest mutation without transport or secret l
 	let calls = 0;
 	try {
 		await assert.rejects(() => extractFacadeGrammar({
-			proposalPath, evidence, config: config(), ledger: fixtureLedger(),
+			proposalPath: proposalAuthority, evidence, config: config(), ledger: fixtureLedger(),
 			fetchImpl: async () => { calls += 1; return Response.json(responseFixture(grammar)); },
 		}), (error: any) => {
 			assert.equal(error.code, "GRAMMAR_EVIDENCE_UNVERIFIED");
@@ -221,7 +304,7 @@ test("a forged ledger cannot authorize a grammar submission", async () => {
 	let calls = 0;
 	const forgedLedger = { executeOnce: (input: any) => input.operation(Object.freeze(Object.create(null))) };
 	await assert.rejects(() => extractFacadeGrammar({
-		proposalPath, evidence, config: config(), ledger: forgedLedger,
+		proposalPath: proposalAuthority, evidence, config: config(), ledger: forgedLedger,
 		fetchImpl: async () => { calls += 1; return Response.json(responseFixture(grammar)); },
 	}), (error: any) => error.code === "GRAMMAR_SUBMISSION_UNAUTHORIZED");
 	assert.equal(calls, 0);
@@ -230,7 +313,7 @@ test("a forged ledger cannot authorize a grammar submission", async () => {
 test("bounds response parsing and applies timeout and caller abort without retrying", async () => {
 	let oversizedCalls = 0;
 	await assert.rejects(() => extractFacadeGrammar({
-		proposalPath, evidence, config: config(), ledger: fixtureLedger(),
+		proposalPath: proposalAuthority, evidence, config: config(), ledger: fixtureLedger(),
 		fetchImpl: async () => {
 			oversizedCalls += 1;
 			return new Response("{}", { headers: { "content-length": String(2 * 1024 * 1024) } });
@@ -240,7 +323,7 @@ test("bounds response parsing and applies timeout and caller abort without retry
 
 	let timeoutCalls = 0;
 	await assert.rejects(() => extractFacadeGrammar({
-		proposalPath, evidence, config: config({ grammarTimeoutMs: 10 }), ledger: fixtureLedger(),
+		proposalPath: proposalAuthority, evidence, config: config({ grammarTimeoutMs: 10 }), ledger: fixtureLedger(),
 		fetchImpl: async (_url: string, init: any) => new Promise((_resolve, reject) => {
 			timeoutCalls += 1;
 			init.signal.addEventListener("abort", () => reject(init.signal.reason), { once: true });
@@ -252,7 +335,7 @@ test("bounds response parsing and applies timeout and caller abort without retry
 	controller.abort(new DOMException("fixture abort", "AbortError"));
 	let abortedCalls = 0;
 	await assert.rejects(() => extractFacadeGrammar({
-		proposalPath, evidence, config: config(), ledger: fixtureLedger(), signal: controller.signal,
+		proposalPath: proposalAuthority, evidence, config: config(), ledger: fixtureLedger(), signal: controller.signal,
 		fetchImpl: async () => { abortedCalls += 1; return Response.json(responseFixture(grammar)); },
 	}), (error: any) => error.code === "GRAMMAR_ABORTED");
 	assert.equal(abortedCalls, 0);
