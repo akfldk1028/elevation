@@ -1,9 +1,9 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { Document, Material, NodeIO } from "@gltf-transform/core";
 import { PUNCHED_FACADE_SYSTEM } from "./facade-grammar.mjs";
-import { buildPunchedFacadeDetails } from "./facade-agent/punched-facade.mjs";
+import { buildPunchedFacadeDetails, PUNCHED_FACADE_BUDGETS } from "./facade-agent/punched-facade.mjs";
 import { createFacadePbrMaps } from "./facade-agent/procedural-materials.mjs";
 
 const DETAIL_LIMITS = {
@@ -346,7 +346,77 @@ function geometryBounds(scene) {
 	return { min: minimum, max: maximum };
 }
 
+function denseArray(value) {
+	if (!Array.isArray(value)) return false;
+	for (let index = 0; index < value.length; index++) if (!Object.hasOwn(value, index)) return false;
+	return true;
+}
+
+function projectedValueBytes(value, seen = new Set(), depth = 0) {
+	if (value === null || value === undefined) return 4n;
+	if (typeof value === "string") return BigInt(value.length) * 6n + 2n;
+	if (typeof value === "number" || typeof value === "boolean") return 16n;
+	if (typeof value !== "object" || depth > 12) throw new TypeError("invalid facade extras for GLB projection");
+	if (seen.has(value)) throw new TypeError("invalid cyclic facade extras for GLB projection");
+	seen.add(value);
+	if (Array.isArray(value) && !denseArray(value)) throw new TypeError("facade extras arrays must be dense");
+	let bytes = 2n;
+	const descriptors = Object.getOwnPropertyDescriptors(value);
+	for (const [key, descriptor] of Object.entries(descriptors)) {
+		if (!Object.hasOwn(descriptor, "value")) throw new TypeError("facade extras cannot contain accessors");
+		bytes += BigInt(key.length) * 6n + 3n + projectedValueBytes(descriptor.value, seen, depth + 1);
+	}
+	seen.delete(value);
+	return bytes;
+}
+
+function validateGeometryForBudget(geometry, label) {
+	if (!geometry || !denseArray(geometry.positions) || !denseArray(geometry.indices)) {
+		throw new TypeError(`${label} geometry must contain dense positions and indices`);
+	}
+	for (const point of geometry.positions) if (!denseArray(point) || point.length !== 3 || point.some((value) => !Number.isFinite(value))) {
+		throw new TypeError(`${label} positions must be finite dense VEC3 values`);
+	}
+	let indexCount = 0n;
+	for (const face of geometry.indices) {
+		if (!denseArray(face) || !face.length || face.some((index) => !Number.isSafeInteger(index) || index < 0 || index >= geometry.positions.length)) {
+			throw new TypeError(`${label} indices must be dense and reference positions`);
+		}
+		indexCount += BigInt(face.length);
+	}
+	if (geometry.uvs !== undefined) {
+		if (!denseArray(geometry.uvs) || geometry.uvs.length !== geometry.positions.length
+			|| geometry.uvs.some((uv) => !denseArray(uv) || uv.length !== 2 || uv.some((value) => !Number.isFinite(value)))) {
+			throw new TypeError(`${label} UVs must be finite dense VEC2 values matching positions`);
+		}
+	}
+	return { vertices: BigInt(geometry.positions.length), indices: indexCount };
+}
+
+function assertEnrichedSceneBudget(scene) {
+	if (!scene || !denseArray(scene.details)) throw new TypeError("enriched scene details must be a dense array");
+	if (scene.details.length > PUNCHED_FACADE_BUDGETS.maxDetailPrimitives) throw new RangeError("detail primitive budget exceeded");
+	let { vertices, indices } = validateGeometryForBudget(scene.base, "base");
+	let extrasBytes = 0n;
+	for (let index = 0; index < scene.details.length; index++) {
+		const detail = scene.details[index];
+		const counts = validateGeometryForBudget(detail, `detail-${index}`);
+		vertices += counts.vertices;
+		indices += counts.indices;
+		const extras = Object.fromEntries(Object.entries(detail).filter(([key]) => !["positions", "indices", "uvs"].includes(key)));
+		extrasBytes += projectedValueBytes(extras);
+	}
+	if (vertices > BigInt(PUNCHED_FACADE_BUDGETS.maxTotalVertices)) throw new RangeError("facade vertex budget exceeded");
+	if (indices > BigInt(PUNCHED_FACADE_BUDGETS.maxTotalIndices)) throw new RangeError("facade index budget exceeded");
+	const textureProjection = scene.details.length && scene.grammar?.system === PUNCHED_FACADE_SYSTEM ? 2n * 1024n * 1024n : 0n;
+	const projectedBytes = 64n * 1024n + vertices * 20n + indices * 4n
+		+ BigInt(scene.details.length + 1) * 2048n + extrasBytes + textureProjection;
+	if (projectedBytes > BigInt(PUNCHED_FACADE_BUDGETS.maxProjectedGlbBytes)) throw new RangeError("projected GLB byte budget exceeded");
+	return { vertices, indices, projectedBytes };
+}
+
 export async function writeEnrichedGlb(scene, outputPath) {
+	assertEnrichedSceneBudget(scene);
 	const document = new Document();
 	const buffer = document.createBuffer("geometry");
 	const punched = scene.details.length > 0 && scene.grammar?.system === PUNCHED_FACADE_SYSTEM;
@@ -385,9 +455,10 @@ export async function writeEnrichedGlb(scene, outputPath) {
 	}
 
 	const path = resolve(outputPath);
+	const bytes = await new NodeIO().writeBinary(document);
+	if (bytes.byteLength > PUNCHED_FACADE_BUDGETS.maxFinalGlbBytes) throw new RangeError("final GLB byte budget exceeded");
 	await mkdir(dirname(path), { recursive: true });
-	await new NodeIO().write(path, document);
-	const bytes = await readFile(path);
+	await writeFile(path, bytes);
 	return {
 		path,
 		sha256: createHash("sha256").update(bytes).digest("hex"),

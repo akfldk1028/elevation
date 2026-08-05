@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { deflateSync } from "node:zlib";
 import { validatePunchedFacadeGrammar } from "../facade-grammar.mjs";
+import { PUNCHED_FACADE_BUDGETS } from "./punched-facade.mjs";
 
 const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
 const PALETTE = Object.freeze({
@@ -97,9 +98,12 @@ function mapRecord(name, resolution, grammarHash, data) {
 
 export function createFacadePbrMaps({ grammar, resolution }) {
 	const canonical = validatePunchedFacadeGrammar(grammar, { allowDerived: true });
-	if (!Number.isInteger(resolution) || resolution < 1 || resolution > 2048) {
-		throw new TypeError("procedural facade texture resolution must be an integer from 1 to 2048");
+	if (!Number.isSafeInteger(resolution) || resolution < 1) {
+		throw new TypeError("procedural facade texture resolution must be a positive integer");
 	}
+	const resolutionBigInt = BigInt(resolution);
+	const projectedTextureBytes = resolutionBigInt * (resolutionBigInt * 4n + 1n) * 6n;
+	if (projectedTextureBytes > BigInt(PUNCHED_FACADE_BUDGETS.maxTextureBytes)) throw new RangeError("texture byte budget exceeded");
 	const grammarHash = sha256(JSON.stringify(canonical));
 	const ratio = canonical.brick_module_m[0] / canonical.brick_module_m[1];
 	const brickBase = encodePng(resolution, resolution, (x, y) => {

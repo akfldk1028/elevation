@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { access, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
@@ -61,6 +61,26 @@ const punchedGrammar = {
 	confidence: 0.92,
 	unresolved_surfaces: [],
 };
+
+function persistedBounds(primitive: any) {
+	const values = Array.from(primitive.getAttribute("POSITION")?.getArray() ?? []) as number[];
+	const minimum = [Infinity, Infinity, Infinity];
+	const maximum = [-Infinity, -Infinity, -Infinity];
+	for (let index = 0; index < values.length; index += 3) for (let axis = 0; axis < 3; axis++) {
+		minimum[axis] = Math.min(minimum[axis], values[index + axis]);
+		maximum[axis] = Math.max(maximum[axis], values[index + axis]);
+	}
+	return { minimum, maximum };
+}
+
+function persistedPairConflict(left: any, right: any) {
+	const a = persistedBounds(left);
+	const b = persistedBounds(right);
+	const overlap = [0, 1, 2].map((axis) => Math.min(a.maximum[axis], b.maximum[axis]) - Math.max(a.minimum[axis], b.minimum[axis]));
+	if (overlap.every((value) => value > 1e-6)) return "positive-volume";
+	if (overlap.filter((value) => value > 1e-6).length === 2 && overlap.some((value) => Math.abs(value) <= 1e-6)) return "coplanar-face";
+	return null;
+}
 
 test("preserves every source vertex and triangle in the base primitive", () => {
 	const scene = buildEnrichedScene({ mesh, floorGuides, facadePlanes, grammar, safeFallback: false });
@@ -157,6 +177,67 @@ test("embeds UV-bound deterministic 2K PBR textures while round-tripping exact M
 	assert.ok(texturedPrimitives.every((primitive) => primitive.getAttribute("TEXCOORD_0")));
 	assert.equal(artifact.texture_provenance.length, 6);
 	assert.ok(artifact.texture_provenance.every((entry) => /^[a-f0-9]{64}$/.test(entry.sha256)));
+});
+
+test("persists disjoint facade detail volumes and explicitly measures deliberate exact-MASS backing contacts", async () => {
+	const root = await mkdtemp(join(tmpdir(), "elevation3d-punched-intersections-"));
+	temporaryRoots.push(root);
+	const output = join(root, "punched-intersections.glb");
+	await writeEnrichedGlb(buildEnrichedScene({ mesh, floorGuides, facadePlanes, grammar: punchedGrammar, safeFallback: false }), output);
+	const parsed = await new NodeIO().read(output);
+	const primitives = parsed.getRoot().listMeshes().find((item) => item.getName() === "facade-details")?.listPrimitives() ?? [];
+	const conflicts = [];
+	for (let left = 0; left < primitives.length; left++) for (let right = left + 1; right < primitives.length; right++) {
+		const conflict = persistedPairConflict(primitives[left], primitives[right]);
+		if (conflict) conflicts.push({ left, right, conflict, leftKind: primitives[left].getExtras().kind, rightKind: primitives[right].getExtras().kind });
+	}
+	assert.deepEqual(conflicts, []);
+
+	for (const primitive of primitives) {
+		const extras = primitive.getExtras();
+		const plane = facadePlanes.facade_planes.find((candidate) => candidate.view === extras.view);
+		const values = Array.from(primitive.getAttribute("POSITION")?.getArray() ?? []) as number[];
+		const signedDepths = [];
+		for (let index = 0; index < values.length; index += 3) signedDepths.push(
+			(values[index] - plane.origin[0]) * plane.normal[0] + (values[index + 1] - plane.origin[1]) * plane.normal[1],
+		);
+		const minimum = Math.min(...signedDepths);
+		const maximum = Math.max(...signedDepths);
+		if (minimum <= 1e-6 && maximum >= -1e-6) {
+			assert.equal(extras.mass_intersection_classification, "deliberate-exact-mass-backing");
+			assert.ok(Math.abs(extras.mass_backing_intersection_m - Math.max(0, -minimum)) <= 1e-6);
+		}
+	}
+});
+
+test("rejects projected vertex and final GLB byte budgets without leaving partial output", async () => {
+	const root = await mkdtemp(join(tmpdir(), "elevation3d-punched-budget-"));
+	temporaryRoots.push(root);
+	const vertexOutput = join(root, "too-many-vertices.glb");
+	const oversizedBase = { positions: Array.from({ length: 80_001 }, () => [0, 0, 0]), indices: [[0, 0, 0]] };
+	await assert.rejects(() => writeEnrichedGlb({ base: oversizedBase, details: [] }, vertexOutput), /vertex budget exceeded/i);
+	await assert.rejects(() => access(vertexOutput), { code: "ENOENT" });
+	const indexOutput = join(root, "too-many-indices.glb");
+	const oversizedIndices = { positions: [[0, 0, 0], [1, 0, 0], [0, 1, 0]], indices: [Array.from({ length: 360_003 }, (_, index) => index % 3)] };
+	await assert.rejects(() => writeEnrichedGlb({ base: oversizedIndices, details: [] }, indexOutput), /index budget exceeded/i);
+	await assert.rejects(() => access(indexOutput), { code: "ENOENT" });
+	const primitiveOutput = join(root, "too-many-primitives.glb");
+	const minimalDetail = { kind: "glazing", view: "front", material: "glass", component_id: 0, positions: [[0, 0, 0], [1, 0, 0], [0, 0, 1]], indices: [[0, 2, 1]] };
+	await assert.rejects(
+		() => writeEnrichedGlb({ base: { positions: mesh.vertices, indices: mesh.triangles }, details: Array(10_001).fill(minimalDetail) }, primitiveOutput),
+		/detail primitive budget exceeded/i,
+	);
+	await assert.rejects(() => access(primitiveOutput), { code: "ENOENT" });
+
+	const byteOutput = join(root, "too-many-bytes.glb");
+	const detail = {
+		kind: "brick-cladding", view: "front", material: "brick", component_id: 0,
+		positions: [[0, 0, 0], [1, 0, 0], [1, 0, 1], [0, 0, 1], [0, 0.1, 0], [1, 0.1, 0], [1, 0.1, 1], [0, 0.1, 1]],
+		indices: [[0, 2, 1], [0, 3, 2]], uvs: Array.from({ length: 8 }, () => [0, 0]),
+		provenance_padding: "x".repeat(16 * 1024 * 1024),
+	};
+	await assert.rejects(() => writeEnrichedGlb({ base: { positions: mesh.vertices, indices: mesh.triangles }, details: [detail] }, byteOutput), /projected GLB byte budget exceeded/i);
+	await assert.rejects(() => access(byteOutput), { code: "ENOENT" });
 });
 
 test("safe fallback exports only exact base geometry with conservative material", async () => {
