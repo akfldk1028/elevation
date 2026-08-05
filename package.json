@@ -74,7 +74,6 @@
     "node-cron": "^4.6.0",
     "puppeteer-core": "^25.4.0",
     "sharp": "^0.35.3",
-    "tencentcloud-sdk-nodejs-ai3d": "^4.1.265",
     "three": "^0.185.1",
     "watlas": "^1.0.1",
     "yaml": "^2.8.2"
