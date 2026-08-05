@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, open, readFile, rename, rm, unlink, writeFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { lstat, mkdir, open, readFile, rename, rm, unlink, writeFile } from "node:fs/promises";
+import { dirname, isAbsolute, parse, relative, resolve, sep } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { sha256 } from "../core.mjs";
-import { FacadeProviderError, normalizeProviderFailure } from "./provider.mjs";
+import { normalizeProviderFailure } from "./provider.mjs";
 
 const ALLOWED_KINDS = new Set(["image-generation", "grammar-extraction"]);
 const HEX_SHA256 = /^[a-f0-9]{64}$/;
@@ -13,6 +13,58 @@ function codedError(code, message) {
 	const error = new Error(message);
 	error.code = code;
 	return error;
+}
+
+function unsafePathError() {
+	return codedError("PAID_OPERATION_PATH_UNSAFE", "Paid operation ledger path is outside its approved regular-file boundary");
+}
+
+function ledgerUncertainError() {
+	return codedError("PAID_OPERATION_LEDGER_UNCERTAIN", "Paid operation ledger cannot be trusted; refusing submission");
+}
+
+function isContained(root, target) {
+	const child = relative(root, target);
+	return child !== "" && child !== ".." && !child.startsWith(`..${sep}`) && !isAbsolute(child);
+}
+
+async function assertSafePathComponents(target, { leafKind = null, leafRequired = false } = {}) {
+	const absolute = resolve(target);
+	const root = parse(absolute).root;
+	const components = absolute.slice(root.length).split(/[\\/]+/).filter(Boolean);
+	let current = root;
+	for (let index = 0; index < components.length; index += 1) {
+		current = resolve(current, components[index]);
+		let stats;
+		try { stats = await lstat(current); }
+		catch (error) {
+			if (error?.code === "ENOENT") return false;
+			throw error;
+		}
+		if (stats.isSymbolicLink()) throw unsafePathError();
+		const isLeaf = index === components.length - 1;
+		if (!isLeaf && !stats.isDirectory()) throw unsafePathError();
+		if (isLeaf && leafKind === "directory" && !stats.isDirectory()) throw unsafePathError();
+		if (isLeaf && leafKind === "file" && !stats.isFile()) throw unsafePathError();
+	}
+	return true;
+}
+
+async function assertApprovedRoot(root) {
+	if (!await assertSafePathComponents(root, { leafKind: "directory", leafRequired: true })) throw unsafePathError();
+}
+
+async function ensureSafeParent(root, target) {
+	await assertApprovedRoot(root);
+	const parent = dirname(target);
+	await assertSafePathComponents(parent, { leafKind: "directory" });
+	await mkdir(parent, { recursive: true });
+	if (!await assertSafePathComponents(parent, { leafKind: "directory", leafRequired: true })) throw unsafePathError();
+}
+
+async function assertSafeSensitiveEntry(root, target) {
+	await assertApprovedRoot(root);
+	return assertSafePathComponents(target, { leafKind: "file" });
 }
 
 function finiteNonnegative(value, label) {
@@ -50,8 +102,9 @@ function validateOperationRecord(requestKey, value) {
 	return value;
 }
 
-async function readLedger(path) {
+async function readLedger(path, approvedRoot) {
 	try {
+		await assertSafeSensitiveEntry(approvedRoot, path);
 		const parsed = JSON.parse(await readFile(path, "utf8"));
 		if (parsed?.version !== 1 || !parsed.operations || typeof parsed.operations !== "object" || Array.isArray(parsed.operations)) {
 			throw new Error("Invalid paid operation ledger");
@@ -60,7 +113,8 @@ async function readLedger(path) {
 		return parsed;
 	} catch (error) {
 		if (error?.code === "ENOENT") return { version: 1, operations: {} };
-		throw error;
+		if (error?.code === "PAID_OPERATION_PATH_UNSAFE") throw error;
+		throw ledgerUncertainError();
 	}
 }
 
@@ -76,17 +130,21 @@ async function syncDirectory(path) {
 	}
 }
 
-async function atomicWrite(path, value) {
+async function atomicWrite(path, value, approvedRoot) {
 	const directory = dirname(path);
-	await mkdir(directory, { recursive: true });
+	await ensureSafeParent(approvedRoot, path);
+	await assertSafeSensitiveEntry(approvedRoot, path);
 	const temporaryPath = `${path}.tmp-${process.pid}-${randomUUID()}`;
 	let handle;
 	try {
 		handle = await open(temporaryPath, "wx", 0o600);
+		if (!(await handle.stat()).isFile()) throw unsafePathError();
 		await handle.writeFile(`${JSON.stringify(value, null, 2)}\n`, "utf8");
 		await handle.sync();
 		await handle.close();
 		handle = null;
+		await assertSafeSensitiveEntry(approvedRoot, path);
+		if (!await assertSafePathComponents(temporaryPath, { leafKind: "file", leafRequired: true })) throw unsafePathError();
 		await rename(temporaryPath, path);
 		await syncDirectory(directory);
 	} finally {
@@ -105,28 +163,34 @@ function pidIsAlive(pid) {
 	}
 }
 
-async function acquireReservation(lockPath, { waitMs, pollMs, signal }) {
+async function acquireReservation(lockPath, approvedRoot, { waitMs, pollMs, signal }) {
 	const token = randomUUID();
 	const started = Date.now();
-	await mkdir(dirname(lockPath), { recursive: true });
+	await ensureSafeParent(approvedRoot, lockPath);
 	for (;;) {
 		signal?.throwIfAborted();
+		await assertSafeSensitiveEntry(approvedRoot, lockPath);
 		try {
 			await writeFile(lockPath, `${JSON.stringify({ version: 1, token, pid: process.pid, createdAt: new Date().toISOString() })}\n`, {
 				encoding: "utf8", flag: "wx", mode: 0o600,
 			});
+			if (!await assertSafePathComponents(lockPath, { leafKind: "file", leafRequired: true })) throw unsafePathError();
 			return token;
 		} catch (error) {
 			if (error?.code !== "EEXIST") throw error;
 		}
 		let owner;
 		try {
+			await assertSafeSensitiveEntry(approvedRoot, lockPath);
 			owner = JSON.parse(await readFile(lockPath, "utf8"));
 		} catch (error) {
 			if (error?.code === "ENOENT") continue;
 			throw codedError("PAID_OPERATION_RESERVATION_UNCERTAIN", "Paid operation reservation ownership cannot be proven; refusing submission");
 		}
-		const alive = pidIsAlive(owner?.pid);
+		if (owner?.version !== 1 || typeof owner?.token !== "string" || owner.token.length === 0) {
+			throw codedError("PAID_OPERATION_RESERVATION_UNCERTAIN", "Paid operation reservation ownership cannot be proven; refusing submission");
+		}
+		const alive = pidIsAlive(owner.pid);
 		if (alive === null) throw codedError("PAID_OPERATION_RESERVATION_UNCERTAIN", "Paid operation reservation ownership cannot be proven; refusing submission");
 		if (alive === false) throw codedError("PAID_OPERATION_RESERVATION_STALE", "Paid operation reservation owner is not alive; refusing submission");
 		if (Date.now() - started >= waitMs) throw codedError("PAID_OPERATION_RESERVATION_TIMEOUT", "Timed out waiting for the paid operation reservation");
@@ -134,15 +198,17 @@ async function acquireReservation(lockPath, { waitMs, pollMs, signal }) {
 	}
 }
 
-async function releaseReservation(lockPath, token) {
+async function releaseReservation(lockPath, token, approvedRoot) {
 	let owner;
 	try {
+		await assertSafeSensitiveEntry(approvedRoot, lockPath);
 		owner = JSON.parse(await readFile(lockPath, "utf8"));
 	} catch (error) {
 		if (error?.code === "ENOENT") return;
 		throw error;
 	}
 	if (owner?.token !== token || owner?.pid !== process.pid) return;
+	await assertSafeSensitiveEntry(approvedRoot, lockPath);
 	await unlink(lockPath).catch((error) => { if (error?.code !== "ENOENT") throw error; });
 }
 
@@ -162,11 +228,15 @@ function uncertainError(kind) {
 	return codedError("PAID_OPERATION_SUBMISSION_UNCERTAIN", `Refusing to resubmit uncertain ${kind} operation; reconcile provider state manually`);
 }
 
-export function createPaidOperationLedger(path, { lockWaitMs = 5_000, lockPollMs = 25 } = {}) {
+export function createPaidOperationLedger(path, { approvedRoot, lockWaitMs = 5_000, lockPollMs = 25 } = {}) {
 	if (typeof path !== "string" || path.length === 0) throw new TypeError("A paid operation ledger path is required");
 	finiteNonnegative(lockWaitMs, "lockWaitMs");
 	finiteNonnegative(lockPollMs, "lockPollMs");
-	const ledgerPath = resolve(path);
+	if (approvedRoot !== undefined && (typeof approvedRoot !== "string" || !isAbsolute(approvedRoot))) throw unsafePathError();
+	if (approvedRoot === undefined && (!isAbsolute(path) || path.split(/[\\/]+/).includes(".."))) throw unsafePathError();
+	const root = resolve(approvedRoot ?? dirname(resolve(path)));
+	const ledgerPath = resolve(root, path);
+	if (!isContained(root, ledgerPath)) throw unsafePathError();
 	const lockPath = `${ledgerPath}.lock`;
 	let pending = Promise.resolve();
 	const serialize = (operation) => {
@@ -181,12 +251,20 @@ export function createPaidOperationLedger(path, { lockWaitMs = 5_000, lockPollMs
 			return serialize(async () => {
 				validateIdentity(input ?? {});
 				input.signal?.throwIfAborted();
-				const token = await acquireReservation(lockPath, {
-					waitMs: lockWaitMs, pollMs: lockPollMs, signal: input.signal,
-				});
+				let token;
+				try {
+					token = await acquireReservation(lockPath, root, {
+						waitMs: lockWaitMs, pollMs: lockPollMs, signal: input.signal,
+					});
+				} catch (error) {
+					if (error?.code !== "PAID_OPERATION_RESERVATION_STALE") throw error;
+					const staleLedger = await readLedger(ledgerPath, root);
+					if (staleLedger.operations[input.requestKey]?.status === "submitting") throw uncertainError(input.kind);
+					throw error;
+				}
 				try {
 					input.signal?.throwIfAborted();
-					const ledger = await readLedger(ledgerPath);
+					const ledger = await readLedger(ledgerPath, root);
 					const existing = ledger.operations[input.requestKey];
 					if (existing) {
 						if (existing.provider !== input.provider || existing.kind !== input.kind) {
@@ -205,41 +283,37 @@ export function createPaidOperationLedger(path, { lockWaitMs = 5_000, lockPollMs
 						artifactSha256: null,
 						actualUsd: null,
 					};
-					await atomicWrite(ledgerPath, ledger);
+					await atomicWrite(ledgerPath, ledger, root);
 					try {
 						const result = validateResult(await input.operation());
 						ledger.operations[input.requestKey] = {
 							...ledger.operations[input.requestKey], ...result, status: "succeeded",
 						};
-						await atomicWrite(ledgerPath, ledger);
+						await atomicWrite(ledgerPath, ledger, root);
 						return publicResult(ledger.operations[input.requestKey]);
 					} catch (error) {
+						const internalRemoteId = validRemoteId(error?.remoteId) ? error.remoteId : null;
 						const failure = normalizeProviderFailure(error, input.provider, input.kind === "image-generation" ? "generate" : "grammar");
-						if (failure.remoteId) {
-							ledger.operations[input.requestKey].remoteId = failure.remoteId;
-							await atomicWrite(ledgerPath, ledger);
-							throw new FacadeProviderError(failure.code, failure.message, {
-								provider: failure.provider,
-								stage: failure.stage,
-								status: failure.status,
-								retryable: failure.retryable,
-							});
+						if (internalRemoteId) {
+							ledger.operations[input.requestKey].remoteId = internalRemoteId;
+							await atomicWrite(ledgerPath, ledger, root);
+							throw failure;
 						}
 						if (failure.definitiveNonSubmission) {
 							delete ledger.operations[input.requestKey];
-							await atomicWrite(ledgerPath, ledger);
+							await atomicWrite(ledgerPath, ledger, root);
 							throw failure;
 						}
 						throw uncertainError(input.kind);
 					}
 				} finally {
-					await releaseReservation(lockPath, token);
+					await releaseReservation(lockPath, token, root);
 				}
 			});
 		},
 		async summary() {
 			await pending;
-			const ledger = await readLedger(ledgerPath);
+			const ledger = await readLedger(ledgerPath, root);
 			return {
 				version: ledger.version,
 				operations: Object.entries(ledger.operations).map(([key, operation]) => ({

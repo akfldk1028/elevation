@@ -11,6 +11,15 @@ function safeStatus(value) {
 	return Number.isInteger(value) && value >= 100 && value <= 599 ? value : null;
 }
 
+function knownRemoteId(value) {
+	return typeof value === "string" && value.length > 0 && value.length <= 4096;
+}
+
+function safeMessage(message, remoteId) {
+	const redacted = redactSecrets(typeof message === "string" && message ? message : "Provider request failed");
+	return knownRemoteId(remoteId) ? redacted.split(remoteId).join("[REDACTED_REMOTE_ID]") : redacted;
+}
+
 export class FacadeProviderError extends Error {
 	constructor(code, message, {
 		provider = "unknown-provider",
@@ -20,16 +29,14 @@ export class FacadeProviderError extends Error {
 		definitiveNonSubmission = false,
 		remoteId = null,
 	} = {}) {
-		const safeMessage = redactSecrets(typeof message === "string" && message ? message : "Provider request failed");
-		super(safeMessage);
+		super(safeMessage(message, remoteId));
 		this.name = "FacadeProviderError";
 		this.code = typeof code === "string" && ERROR_CODE.test(code) ? code : "PROVIDER_REQUEST_FAILED";
 		this.provider = safeIdentifier(provider, "unknown-provider");
 		this.stage = safeIdentifier(stage, "unknown-stage");
 		this.status = safeStatus(status);
 		this.retryable = retryable === true;
-		this.remoteId = typeof remoteId === "string" && remoteId.length > 0 && remoteId.length <= 4096 && !/[\r\n\0]/.test(remoteId) ? remoteId : null;
-		this.definitiveNonSubmission = definitiveNonSubmission === true && this.remoteId === null;
+		this.definitiveNonSubmission = definitiveNonSubmission === true && !knownRemoteId(remoteId);
 	}
 }
 
@@ -45,6 +52,6 @@ export function normalizeProviderFailure(error, provider, stage) {
 		status: status ?? error?.status,
 		retryable: error instanceof FacadeProviderError ? error.retryable : status === 429 || (status !== null && status >= 500),
 		definitiveNonSubmission: error instanceof FacadeProviderError && error.definitiveNonSubmission,
-		remoteId: error instanceof FacadeProviderError ? error.remoteId : null,
+		remoteId: error?.remoteId,
 	});
 }
