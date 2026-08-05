@@ -5,7 +5,7 @@ import { resolveMaterialPalette } from "./material-palettes.mjs";
 import { verifyAllViewsViewer } from "./results.mjs";
 
 const VIEW_NAMES = ["front", "back", "left", "right", "plan", "top", "axon", "opposite-axon"];
-const ORTHOGRAPHIC_NAMES = ["front", "back", "left", "right", "top"];
+const ORTHOGRAPHIC_NAMES = ["front", "right", "back", "left", "top"];
 
 function isAbort(error, signal) {
 	return signal?.aborted || error?.name === "AbortError";
@@ -41,7 +41,7 @@ function sourceBounds(mesh) {
 	return { min, max, size, center };
 }
 
-function deliveryCameras(input) {
+export function deriveDeliveryCameras(input) {
 	const identity = input.cameras?.identity ?? input.identity;
 	const views = input.cameras?.views;
 	if (!views) fail("CAMERA_INPUT_INVALID", "candidate camera views are required");
@@ -95,7 +95,7 @@ function memoryRecord(run, browser, deliveryRoot) {
 export async function deliverSelectedAllViews({ runDir, candidateId, artifact, input, signal, lifecycle, deps = {} }) {
 	throwIfAborted(signal);
 	const deliveryRoot = join(resolve(runDir), "delivery");
-	const cameras = deliveryCameras(input);
+	const cameras = deriveDeliveryCameras(input);
 	const render = deps.renderAllViews ?? renderAllViews;
 	const verify = deps.verifyAllViewsViewer ?? verifyAllViewsViewer;
 	let run;
