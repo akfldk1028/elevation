@@ -3,6 +3,7 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import { getBounds, NodeIO } from "@gltf-transform/core";
 import sharp from "sharp";
 import { sha256 } from "./core.mjs";
+import { PUNCHED_FACADE_MATERIALS, PUNCHED_FACADE_SYSTEM, validatePunchedFacadeGrammar } from "./facade-grammar.mjs";
 
 const DRAWING_NAMES = ["plan", "front", "back", "left", "right", "top", "axon"];
 const REQUIRED_MATERIALS = ["bronze", "concrete", "glass", "opaque"];
@@ -21,6 +22,81 @@ function boundsOf(vertices) {
 
 function rounded(value) {
 	return Number(value.toFixed(12));
+}
+
+function distance(left, right) {
+	return Math.hypot(...left.map((value, axis) => value - right[axis]));
+}
+
+function typedPbrValid(root, grammar) {
+	try {
+		const grammarHash = sha256(JSON.stringify(validatePunchedFacadeGrammar(grammar, { allowDerived: true })));
+		for (const name of ["brick", "precast"]) {
+			const material = root.listMaterials().find((candidate) => candidate.getName() === name);
+			const textures = [material?.getBaseColorTexture(), material?.getNormalTexture(), material?.getMetallicRoughnessTexture()];
+			if (textures.some((texture) => !texture)) return false;
+			if (textures.some((texture) => {
+				const extras = texture.getExtras();
+				return extras?.generator !== "elevation-3d-procedural-pbr-v1" || extras?.grammar_sha256 !== grammarHash
+					|| !/^[a-f0-9]{64}$/.test(extras?.sha256 ?? "") || extras.sha256 !== sha256(texture.getImage())
+					|| texture.getMimeType() !== "image/png" || JSON.stringify(texture.getSize()) !== JSON.stringify([2048, 2048]);
+			})) return false;
+		}
+		return true;
+	} catch { return false; }
+}
+
+function typedFacadeMetrics(detailRecords, surfaces, floorGuides) {
+	const recordsByView = Map.groupBy(detailRecords.filter((record) => surfaces.includes(record.extras?.view)), (record) => record.extras.view);
+	const coveredViews = surfaces.filter((view) => {
+		const records = recordsByView.get(view) ?? [];
+		const cladding = records.filter((record) => record.extras?.kind === "brick-cladding");
+		return cladding.length > 0 && cladding.every((record) => record.material === "brick");
+	});
+	const viewsPresent = surfaces.filter((view) => (recordsByView.get(view)?.length ?? 0) > 0);
+	const reveals = detailRecords.filter((record) => record.extras?.kind === "window-reveal");
+	const revealDepths = reveals.map((record) => {
+		const view = record.extras.view;
+		const depthAxis = view === "front" || view === "back" ? 1 : 0;
+		const persistedDepth = record.bounds.max[depthAxis] - record.bounds.min[depthAxis];
+		return Math.min(Number(record.extras.depth_m), persistedDepth);
+	}).filter(Number.isFinite);
+	const corners = Map.groupBy(detailRecords.filter((record) => record.extras?.kind === "corner-return"), (record) => record.extras.corner_anchor_id);
+	const floorStarts = floorGuides.slice(0, -1);
+	const cornerKeysComplete = surfaces.every((view) => floorStarts.every((floor) => {
+		const records = detailRecords.filter((record) => record.extras?.kind === "corner-return"
+			&& record.extras.view === view && Math.abs(Number(record.extras.floor_m) - floor) <= 1e-5);
+		return ["corner-start", "corner-end"].every((slot) => records.filter((record) => record.extras.slot === slot).length === 1);
+	})) && [...corners.values()].every((group) => group.length === 2 && new Set(group.map((record) => record.extras.view)).size === 2);
+	const floorKeysComplete = surfaces.every((view) => floorStarts.every((floor) => detailRecords.some((record) => (
+		record.extras?.kind === "glazing" && record.extras.view === view && Math.abs(Number(record.extras.floor_m) - floor) <= 1e-5
+	))));
+	let cornerMaxGap = 0;
+	let cornerInvalid = false;
+	for (const group of corners.values()) for (let left = 0; left < group.length; left++) for (let right = left + 1; right < group.length; right++) {
+		const a = group[left].extras.anchor_position, b = group[right].extras.anchor_position;
+		if (Array.isArray(a) && Array.isArray(b) && a.length === 3 && b.length === 3 && [...a, ...b].every(Number.isFinite)) {
+			cornerMaxGap = Math.max(cornerMaxGap, distance(a, b));
+		} else cornerInvalid = true;
+	}
+	let floorError = 0;
+	let floorInvalid = false;
+	for (const record of detailRecords) {
+		const floor = Number(record.extras?.floor_m);
+		if (!Number.isFinite(floor)) continue;
+		const floorIndex = floorGuides.findIndex((guide) => Math.abs(guide - floor) <= 1e-5);
+		if (floorIndex < 0 || floorIndex + 1 >= floorGuides.length) { floorInvalid = true; continue; }
+		floorError = Math.max(floorError, floorGuides[floorIndex] - record.bounds.min[2], record.bounds.max[2] - floorGuides[floorIndex + 1], 0);
+	}
+	return {
+		opaque_wall_coverage: surfaces.length ? coveredViews.length / surfaces.length : 0,
+		minimum_reveal_depth_m: revealDepths.length ? Math.min(...revealDepths) : 0,
+		corner_max_gap_m: cornerInvalid ? null : cornerMaxGap,
+		floor_alignment_max_error_m: floorInvalid ? null : floorError,
+		facade_orientation_coverage: surfaces.length ? viewsPresent.length / surfaces.length : 0,
+		corner_keys_complete: cornerKeysComplete,
+		floor_keys_complete: floorKeysComplete,
+	};
 }
 
 async function pngInfo(bytes) {
@@ -165,6 +241,14 @@ export async function validateEnrichment({ sourceMesh, artifact, grammar, requir
 	const codes = [];
 	const metrics = { missing_drawings: [], drawing_dimensions: {} };
 	const artifacts = { glb: resolve(artifact.path), drawings: {} };
+	const punchedFacade = grammar?.system === PUNCHED_FACADE_SYSTEM && !safeFallback;
+	if (punchedFacade) {
+		try {
+			validatePunchedFacadeGrammar(grammar, {
+				floorGuides: { floor_guides_m: grammar.floor_elevations_m }, allowDerived: true,
+			});
+		} catch { codes.push("FACADE_GRAMMAR_INVALID"); }
+	}
 	let glbBytes;
 	let glbHash;
 	let artifactRealPath;
@@ -184,7 +268,12 @@ export async function validateEnrichment({ sourceMesh, artifact, grammar, requir
 	}
 
 	const sourceBounds = boundsOf(sourceMesh.vertices);
-	const allowedDetailExcess = rounded(Math.max(Number(grammar.frame_depth_m), Number(grammar.mullion_depth_m)) + 0.01);
+	const allowedDetailExcess = rounded((punchedFacade
+		? Number(grammar.cladding_depth_m)
+		: Math.max(Number(grammar.frame_depth_m), Number(grammar.mullion_depth_m))) + 0.01);
+	const allowedAttachmentDistance = rounded((punchedFacade
+		? Math.max(Number(grammar.cladding_depth_m), Number(grammar.reveal_depth_m), Number(grammar.sill_depth_m))
+		: Math.max(Number(grammar.frame_depth_m), Number(grammar.mullion_depth_m))) + 0.01);
 	metrics.allowed_detail_excess_m = allowedDetailExcess;
 	if (document) {
 		const root = document.getRoot();
@@ -194,6 +283,7 @@ export async function validateEnrichment({ sourceMesh, artifact, grammar, requir
 		const basePrimitive = basePrimitives.length === 1 ? basePrimitives[0] : null;
 		const positions = basePrimitive?.getAttribute("POSITION");
 		const indices = basePrimitive?.getIndices();
+		metrics.canonical_surface_match = 0;
 		if (!basePrimitive || !positions || !indices) codes.push("BASE_PRIMITIVE_MISSING");
 		else {
 			const expectedPositions = Array.from(new Float32Array(sourceMesh.vertices.flat()));
@@ -201,7 +291,10 @@ export async function validateEnrichment({ sourceMesh, artifact, grammar, requir
 			const expectedIndices = sourceMesh.triangles.flat();
 			const actualIndices = Array.from(indices.getArray());
 			const identityTransform = Array.from(baseNode.getWorldMatrix()).every((value, index) => value === IDENTITY_MATRIX[index]);
-			if (!identityTransform || JSON.stringify(actualPositions) !== JSON.stringify(expectedPositions) || JSON.stringify(actualIndices) !== JSON.stringify(expectedIndices)) codes.push("BASE_GEOMETRY_CHANGED");
+			const canonicalSurfaceMatch = identityTransform && JSON.stringify(actualPositions) === JSON.stringify(expectedPositions)
+				&& JSON.stringify(actualIndices) === JSON.stringify(expectedIndices);
+			metrics.canonical_surface_match = canonicalSurfaceMatch ? 1 : 0;
+			if (!canonicalSurfaceMatch) codes.push(punchedFacade ? "CANONICAL_SURFACE_MISMATCH" : "BASE_GEOMETRY_CHANGED");
 			metrics.source_base_components = components(expectedIndices, expectedPositions.length / 3);
 			metrics.actual_base_components = components(actualIndices, actualPositions.length / 3);
 			metrics.base_vertex_count = positions.getCount();
@@ -232,8 +325,12 @@ export async function validateEnrichment({ sourceMesh, artifact, grammar, requir
 		metrics.detail_primitive_count = detailPrimitives.length;
 		metrics.materials = materials;
 		const fallbackMaterialValid = detailPrimitives.length === 0 && materials.length === 1 && materials[0] === "concrete";
-		const enrichedMaterialsValid = detailPrimitives.length > 0 && REQUIRED_MATERIALS.every((name) => materials.includes(name));
+		const expectedPunchedMaterials = ["concrete", ...PUNCHED_FACADE_MATERIALS].sort();
+		const enrichedMaterialsValid = punchedFacade
+			? detailPrimitives.length > 0 && JSON.stringify(materials) === JSON.stringify(expectedPunchedMaterials)
+			: detailPrimitives.length > 0 && REQUIRED_MATERIALS.every((name) => materials.includes(name));
 		if (safeFallback ? !fallbackMaterialValid : !enrichedMaterialsValid) codes.push("MATERIAL_SET_INVALID");
+		if (punchedFacade && !typedPbrValid(root, grammar)) codes.push("PBR_MATERIAL_INVALID");
 		const primitiveBudget = Number.isFinite(Number(grammar.primitive_budget)) ? Number(grammar.primitive_budget) : DEFAULT_PRIMITIVE_BUDGET;
 		metrics.primitive_budget = primitiveBudget;
 		if (primitives.length > primitiveBudget) codes.push("PRIMITIVE_BUDGET_EXCEEDED");
@@ -242,13 +339,14 @@ export async function validateEnrichment({ sourceMesh, artifact, grammar, requir
 		const detailMatrix = detailNode?.getWorldMatrix() ?? IDENTITY_MATRIX;
 		const detailRecords = detailPrimitives.map((primitive) => ({
 			extras: primitive.getExtras(),
+			material: primitive.getMaterial()?.getName() ?? null,
 			bounds: primitiveWorldBounds(primitive, detailMatrix),
 		}));
 		const sourceRegions = componentRegions(sourceMesh);
 		const attachmentDistances = detailRecords.map((record) => sourceRegions.map((region) => (
-			overlaps(record.bounds, region, allowedDetailExcess) ? detailComponentDistance(record, region) : Infinity
-		)));
-		const attachmentCounts = attachmentDistances.map((distances) => distances.filter((distance) => distance <= allowedDetailExcess + 1e-7).length);
+				overlaps(record.bounds, region, allowedAttachmentDistance) ? detailComponentDistance(record, region) : Infinity
+			)));
+		const attachmentCounts = attachmentDistances.map((distances) => distances.filter((distance) => distance <= allowedAttachmentDistance + 1e-7).length);
 		metrics.source_component_regions = sourceRegions.map(({ min, max }) => ({ min, max }));
 		metrics.detail_component_distances_m = attachmentDistances.map((distances) => distances.map((distance) => Number.isFinite(distance) ? rounded(distance) : null));
 		metrics.detail_component_attachment_counts = attachmentCounts;
@@ -256,8 +354,8 @@ export async function validateEnrichment({ sourceMesh, artifact, grammar, requir
 		if (attachmentCounts.some((count) => count > 1)) codes.push("DETAIL_COMPONENT_BRIDGE");
 		const detailExtras = detailRecords.map((record) => record.extras);
 		const facadeViews = Object.keys(grammar.facade_lengths_m ?? {});
-		if (!safeFallback && facadeViews.some((view) => !detailExtras.some((extras) => extras?.kind === "mullion" && extras.view === view))) codes.push("DETAIL_COVERAGE_MISSING");
-		if (!safeFallback && floorGuides.length) {
+		if (!safeFallback && !punchedFacade && facadeViews.some((view) => !detailExtras.some((extras) => extras?.kind === "mullion" && extras.view === view))) codes.push("DETAIL_COVERAGE_MISSING");
+		if (!safeFallback && !punchedFacade && floorGuides.length) {
 			const bands = detailRecords.filter((record) => record.extras?.kind === "floor-band");
 			const elevations = bands.map((record) => Number(record.extras.elevation_m)).filter(Number.isFinite);
 			const alignedBands = bands.filter((record) => {
@@ -273,6 +371,19 @@ export async function validateEnrichment({ sourceMesh, artifact, grammar, requir
 				: floorGuides.some((guide) => !alignedBands.some((band) => Math.abs(Number(band.extras.elevation_m) - guide) <= 1e-5));
 			if (coverageMissing) codes.push("FLOOR_GUIDE_COVERAGE_MISSING");
 			if (elevations.some((value) => value < sourceBounds.min[2] - 1e-5 || value > sourceBounds.max[2] + 1e-5 || !floorGuides.some((guide) => Math.abs(value - guide) <= 1e-5))) codes.push("NEW_STOREY_DETECTED");
+		}
+		if (punchedFacade) {
+			const surfaces = Array.isArray(grammar.surfaces) ? grammar.surfaces : [];
+			const typedMetrics = typedFacadeMetrics(detailRecords, surfaces, floorGuides);
+			const { corner_keys_complete: cornerKeysComplete, floor_keys_complete: floorKeysComplete, ...publicMetrics } = typedMetrics;
+			Object.assign(metrics, Object.fromEntries(Object.entries(publicMetrics).map(([name, value]) => (
+				[name, Number.isFinite(value) ? Number(value.toFixed(6)) : null]
+			))));
+			if (metrics.facade_orientation_coverage !== 1) codes.push("FACADE_ORIENTATION_COVERAGE_MISSING");
+			if (metrics.opaque_wall_coverage !== 1) codes.push("OPAQUE_WALL_COVERAGE_MISSING");
+			if (metrics.minimum_reveal_depth_m < Number(grammar.reveal_depth_m) - 1e-5) codes.push("PUNCHED_REVEAL_DEPTH_MISSING");
+			if (!cornerKeysComplete || metrics.corner_max_gap_m === null || metrics.corner_max_gap_m > 1e-5) codes.push("CORNER_DATUM_MISMATCH");
+			if (!floorKeysComplete || metrics.floor_alignment_max_error_m === null || metrics.floor_alignment_max_error_m > 1e-5) codes.push("WINDOW_CROSSES_FLOOR_BAND");
 		}
 	}
 

@@ -96,6 +96,7 @@ test("accepts parsed enriched GLB and provenance-bound PNG drawings", async () =
 	assert.deepEqual(report.metrics.materials, ["bronze", "concrete", "glass", "opaque"]);
 	assert.equal(report.metrics.drawing_dimensions.front.width, 2);
 	assert.equal(report.artifacts.glb_sha256, f.artifact.sha256);
+	assert.equal(report.metrics.canonical_surface_match, 1);
 });
 
 test("rejects missing, hash-mismatched, and corrupt GLB bytes with stable codes", async () => {
