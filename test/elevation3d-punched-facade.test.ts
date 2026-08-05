@@ -42,6 +42,15 @@ const grammar = {
 	unresolved_surfaces: [],
 };
 
+function facadeBackingMesh(plane: { origin: number[]; normal: number[]; extent_m: number[] }) {
+	const tangent = [-plane.normal[1], plane.normal[0], 0];
+	const point = (u: number, v: number) => plane.origin.map((value, axis) => value + tangent[axis] * u + (axis === 2 ? v : 0));
+	return {
+		vertices: [point(0, 0), point(plane.extent_m[0], 0), point(plane.extent_m[0], plane.extent_m[1]), point(0, plane.extent_m[1])],
+		triangles: [[0, 1, 2], [0, 2, 3]],
+	};
+}
+
 function distance(left: number[], right: number[]) {
 	return Math.hypot(...left.map((value, index) => value - right[index]));
 }
@@ -125,4 +134,118 @@ test("creates deterministic, decodable procedural PBR maps", async () => {
 		assert.deepEqual([metadata.width, metadata.height], [64, 64]);
 		assert.equal(metadata.format, "png");
 	}
+});
+
+test("accepts the deterministic bay-count boundary and independently rejects bay-count and facade-width overruns", () => {
+	const boundaryPlane = { ...facadePlanes.facade_planes[0], extent_m: [115.2, 6.6] };
+	assert.ok(buildPunchedFacadeDetails({
+		mesh: facadeBackingMesh(boundaryPlane), floorGuides, facadePlanes: { facade_planes: [boundaryPlane] }, grammar: { ...grammar, bay_width_m: 0.9, window_width_m: 0.6 },
+	}).length > 0);
+	assert.throws(() => buildPunchedFacadeDetails({
+		mesh,
+		floorGuides,
+		facadePlanes: { facade_planes: [{ ...boundaryPlane, extent_m: [116.1, 6.6] }] },
+		grammar: { ...grammar, bay_width_m: 0.9, window_width_m: 0.6 },
+	}), /facade bay count budget exceeded/i);
+	assert.throws(() => buildPunchedFacadeDetails({
+		mesh,
+		floorGuides,
+		facadePlanes: { facade_planes: [{ ...boundaryPlane, extent_m: [120.1, 6.6] }] },
+		grammar,
+	}), /facade width budget exceeded/i);
+});
+
+test("rejects excessive dense floor guides and projected detail primitives before constructing output", () => {
+	const boundaryGuides = { floor_guides_m: Array.from({ length: 65 }, (_, index) => index * 3.3) };
+	const boundaryPlane = { ...facadePlanes.facade_planes[0], extent_m: [8, boundaryGuides.floor_guides_m.at(-1)] };
+	assert.ok(buildPunchedFacadeDetails({
+		mesh: facadeBackingMesh(boundaryPlane),
+		floorGuides: boundaryGuides,
+		facadePlanes: { facade_planes: [boundaryPlane] },
+		grammar,
+	}).length > 0);
+	const excessiveGuides = { floor_guides_m: Array.from({ length: 66 }, (_, index) => index * 3.3) };
+	assert.throws(() => buildPunchedFacadeDetails({
+		mesh,
+		floorGuides: excessiveGuides,
+		facadePlanes: { facade_planes: [{ ...facadePlanes.facade_planes[0], extent_m: [8, excessiveGuides.floor_guides_m.at(-1)] }] },
+		grammar,
+	}), /floor guide budget exceeded/i);
+
+	const manyFloors = { floor_guides_m: Array.from({ length: 6 }, (_, index) => index * 3.3) };
+	const widePlanes = { facade_planes: facadePlanes.facade_planes.concat([
+		{ view: "back", origin: [4, 2, 0], normal: [0, 1, 0], extent_m: [40, 16.5] },
+		{ view: "left", origin: [-4, 2, 0], normal: [-1, 0, 0], extent_m: [40, 16.5] },
+	]).map((plane) => ({ ...plane, extent_m: [40, 16.5] })) };
+	assert.throws(() => buildPunchedFacadeDetails({
+		mesh, floorGuides: manyFloors, facadePlanes: widePlanes, grammar: { ...grammar, bay_width_m: 0.9, window_width_m: 0.6 },
+	}), /detail primitive budget exceeded/i);
+});
+
+test("rejects sparse typed geometry inputs and texture allocations beyond the deterministic byte budget", () => {
+	const sparsePlanes = [];
+	sparsePlanes.length = 1;
+	assert.throws(() => buildPunchedFacadeDetails({ mesh, floorGuides, facadePlanes: { facade_planes: sparsePlanes }, grammar }), /dense/i);
+	assert.throws(() => createFacadePbrMaps({ grammar, resolution: 2049 }), /texture byte budget exceeded/i);
+});
+
+test("rejects procedural facade planes that have no positive-area exact-MASS backing", () => {
+	const detached = { ...facadePlanes.facade_planes[0], origin: [-4, -20, 0] };
+	assert.throws(
+		() => buildPunchedFacadeDetails({ mesh, floorGuides, facadePlanes: { facade_planes: [detached] }, grammar }),
+		/lacks exact-MASS backing/i,
+	);
+});
+
+test("rejects duplicate coplanar MASS triangles that double-count missing backing", () => {
+	const plane = facadePlanes.facade_planes[0];
+	const incomplete = facadeBackingMesh({ ...plane, extent_m: [plane.extent_m[0] / 2, plane.extent_m[1]] });
+	incomplete.triangles = incomplete.triangles.concat(incomplete.triangles.map((triangle) => [...triangle]));
+	assert.throws(
+		() => buildPunchedFacadeDetails({ mesh: incomplete, floorGuides, facadePlanes: { facade_planes: [plane] }, grammar }),
+		/lacks exact-MASS backing/i,
+	);
+});
+
+test("rejects opposite-winding duplicate MASS triangles that counterfeit full backing", () => {
+	const plane = facadePlanes.facade_planes[0];
+	const backing = facadeBackingMesh(plane);
+	const incomplete = { vertices: backing.vertices.slice(0, 3), triangles: [[0, 1, 2], [2, 1, 0]] };
+	assert.throws(
+		() => buildPunchedFacadeDetails({ mesh: incomplete, floorGuides, facadePlanes: { facade_planes: [plane] }, grammar }),
+		/lacks exact-MASS backing/i,
+	);
+});
+
+test("rejects opposite-winding subdivided MASS triangles that counterfeit full backing", () => {
+	const plane = facadePlanes.facade_planes[0];
+	const backing = facadeBackingMesh(plane);
+	const triangle = backing.vertices.slice(0, 3);
+	const centroid = triangle[0].map((value, axis) => triangle.reduce((sum, point) => sum + point[axis], 0) / 3);
+	const incomplete = {
+		vertices: triangle.concat([centroid]),
+		triangles: [[0, 1, 2], [3, 1, 0], [3, 2, 1], [3, 0, 2]],
+	};
+	assert.throws(
+		() => buildPunchedFacadeDetails({ mesh: incomplete, floorGuides, facadePlanes: { facade_planes: [plane] }, grammar }),
+		/lacks exact-MASS backing/i,
+	);
+});
+
+test("counts authoritative MASS vertices and indices in the pre-allocation output budget", () => {
+	const largeMass = { ...mesh, vertices: mesh.vertices.concat(Array.from({ length: 79_692 }, () => [0, 0, 0])) };
+	assert.throws(
+		() => buildPunchedFacadeDetails({ mesh: largeMass, floorGuides, facadePlanes: { facade_planes: [facadePlanes.facade_planes[0]] }, grammar }),
+		/facade vertex budget exceeded/i,
+	);
+});
+
+test("rejects coordinates whose facade joints collapse after Float32 persistence", () => {
+	const translation = 1_000_000;
+	const translatedMesh = { ...mesh, vertices: mesh.vertices.map((point) => [point[0] + translation, point[1], point[2]]) };
+	const translatedPlane = { ...facadePlanes.facade_planes[0], origin: [facadePlanes.facade_planes[0].origin[0] + translation, -2, 0] };
+	assert.throws(
+		() => buildPunchedFacadeDetails({ mesh: translatedMesh, floorGuides, facadePlanes: { facade_planes: [translatedPlane] }, grammar }),
+		/Float32 separation budget exceeded/i,
+	);
 });
