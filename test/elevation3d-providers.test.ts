@@ -56,6 +56,41 @@ describe("Hunyuan provider contract", () => {
 		assert.deepEqual(await provider.status("h-1"), { status: "succeeded", files: [{ type: "GLB", url: "https://result.test/model.glb" }] });
 		assert.deepEqual(seenActions, ["SubmitTextureTo3DJob", "DescribeTextureTo3DJob"]);
 	});
+
+	test("sanitizes COS upload and cleanup failures", async () => {
+		const dir = await mkdtemp(join(tmpdir(), "hunyuan-cos-provider-"));
+		const localPath = join(dir, "mass.obj");
+		await writeFile(localPath, "v 0 0 0\n");
+		const cosModule = await import("cos-nodejs-sdk-v5");
+		const COS = cosModule.default;
+		const originalPutObject = COS.prototype.putObject;
+		const originalDeleteObject = COS.prototype.deleteObject;
+		const marker = "COS-CREDENTIAL-DO-NOT-LEAK";
+		COS.prototype.putObject = function (_params, callback) { callback(new Error(marker)); };
+		COS.prototype.deleteObject = function (_params, callback) { callback(new Error(marker)); };
+
+		try {
+			const provider = await createHunyuanProvider({
+				TENCENTCLOUD_SECRET_ID: marker,
+				TENCENTCLOUD_SECRET_KEY: `${marker}-KEY`,
+				TENCENT_COS_BUCKET: "test-bucket",
+			}, { fetchImpl: async () => Response.json({ Response: {} }) });
+
+			await assert.rejects(() => provider.stageFile(localPath, "mass.obj"), (error) => {
+				assert.equal(String(error), "Error: Tencent COS stageFile failed");
+				assert.equal(String(error).includes(marker), false);
+				return true;
+			});
+			await assert.rejects(() => provider.cleanup("mass.obj"), (error) => {
+				assert.equal(String(error), "Error: Tencent COS cleanup failed");
+				assert.equal(String(error).includes(marker), false);
+				return true;
+			});
+		} finally {
+			COS.prototype.putObject = originalPutObject;
+			COS.prototype.deleteObject = originalDeleteObject;
+		}
+	});
 });
 
 describe("Wan provider contract", () => {

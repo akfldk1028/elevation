@@ -2,6 +2,7 @@ import { createHash, createHmac } from "node:crypto";
 
 const CONTENT_TYPE = "application/json; charset=utf-8";
 const PRODUCTION_ENDPOINT = "https://ai3d.tencentcloudapi.com";
+const ALLOWED_ACTIONS = new Set(["SubmitTextureTo3DJob", "DescribeTextureTo3DJob"]);
 
 function sha256Hex(value) {
 	return createHash("sha256").update(value).digest("hex");
@@ -66,6 +67,7 @@ export function createTencentCloudJsonClient({
 	const url = parseEndpoint(endpoint);
 	return {
 		async call(action, request) {
+			if (!ALLOWED_ACTIONS.has(action)) throw new Error("Tencent Cloud action is not allowed");
 			const payload = JSON.stringify(request);
 			const timestamp = Math.floor(new Date(now()).getTime() / 1000);
 			const authorization = createTc3Authorization({ secretId, secretKey, service, host: url.host, timestamp, payload });
