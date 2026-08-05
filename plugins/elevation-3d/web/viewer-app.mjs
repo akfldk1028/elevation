@@ -323,7 +323,11 @@ function projectedMeshes() {
 
 function semanticRole(material) {
 	const name = String(material?.name ?? "").toLowerCase();
-	return ["concrete", "glass", "bronze", "opaque"].find((role) => name.includes(role)) ?? "concrete";
+	if (name.includes("glass")) return "glass";
+	if (name.includes("window-frame") || name.includes("bronze")) return "bronze";
+	if (name.includes("precast")) return "concrete";
+	if (["brick", "opaque"].some((role) => name.includes(role))) return "opaque";
+	return "concrete";
 }
 
 function loadedProjectedBounds(root, axes) {
@@ -357,7 +361,12 @@ function createCompetitionCamera(root, view, size, marginRatio, pixelsPerMetre) 
 	const width = bounds.maxH - bounds.minH;
 	const height = bounds.maxV - bounds.minV;
 	const usable = 1 - marginRatio * 2;
-	const span = pixelsPerMetre == null ? Math.max(width / usable, height / usable) : size / pixelsPerMetre;
+	const reservedLaneTop = size - 550;
+	// Reserve the title/subtitle lane above and the dimension/scale-bar lane below.
+	const annotationVerticalUsable = (reservedLaneTop - 192) / size;
+	const span = pixelsPerMetre == null
+		? Math.max(width / usable, height / Math.min(usable, annotationVerticalUsable))
+		: size / pixelsPerMetre;
 	if (!(span >= width && span >= height)) throw new Error("competition elevation common scale clips projected geometry");
 	const centerH = (bounds.minH + bounds.maxH) / 2;
 	let centerV = (bounds.minV + bounds.maxV) / 2;
@@ -365,7 +374,6 @@ function createCompetitionCamera(root, view, size, marginRatio, pixelsPerMetre) 
 	const pxPerM = size / span;
 	const projectedBottom = (size + height * pxPerM) / 2;
 	// Keep the fixed 5 m scale-bar label clear as well as the dimension lanes.
-	const reservedLaneTop = size - 550;
 	if (projectedBottom > reservedLaneTop) centerV += (reservedLaneTop - projectedBottom) / pxPerM;
 	const horizontal = new THREE.Vector3(...axes.horizontal);
 	const vertical = new THREE.Vector3(...axes.vertical);
@@ -397,6 +405,7 @@ function createCompetitionCamera(root, view, size, marginRatio, pixelsPerMetre) 
 function competitionMaterials(root, palette, options = {}) {
 	const meshes = [];
 	const counts = { concrete: 0, glass: 0, bronze: 0, opaque: 0 };
+	let typedFacade = false;
 	const roleColors = { concrete: 0xff0000, glass: 0x00ff00, bronze: 0x0000ff, opaque: 0xffff00 };
 	root.traverse((object) => {
 		if (!object.isMesh) return;
@@ -406,6 +415,7 @@ function competitionMaterials(root, palette, options = {}) {
 			if (String(ancestor.name).toLowerCase() === "facade-details") facadeDetail = true;
 			ancestor = ancestor.parent;
 		}
+		typedFacade ||= facadeDetail;
 		const polygonOffsetFactor = facadeDetail ? (options.facadeDetailPolygonOffsetFactor ?? -4) : 4;
 		const originals = Array.isArray(object.material) ? object.material : [object.material];
 		const roles = originals.map(semanticRole);
@@ -433,7 +443,7 @@ function competitionMaterials(root, palette, options = {}) {
 		meshes.push({ object, originals, roles, fills, ids, normals, depths });
 		object.material = Array.isArray(object.material) ? fills : fills[0];
 	});
-	return { meshes, counts };
+	return { meshes, counts, typedFacade };
 }
 
 function applyMaterials(records, key) {
@@ -505,6 +515,7 @@ function renderCompetition(root, view) {
 			overall_width: { min_y: maxY + 73, max_y: outputSize - 48 },
 		},
 		material_roles: Object.keys(semantic.counts),
+		typed_facade: semantic.typedFacade,
 		role_pixel_counts: semantic.counts,
 		projected_content_bounds_px: { min_x: minX, min_y: minY, max_x: maxX, max_y: maxY },
 	};

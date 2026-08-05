@@ -79,12 +79,27 @@ export async function renderDrawings(runDir, strategies, {
 export async function verifyAllViewsViewer({ runDir, outputDir = join(runDir, "browser-verification"), signal } = {}) {
 	await mkdir(outputDir, { recursive: true });
 	const consoleErrors = [];
+	const blockedExternalRequests = [];
+	const guardLocalRequests = async (targetPage) => {
+		await targetPage.setRequestInterception(true);
+		targetPage.on("request", (request) => {
+			let allowed = false;
+			try {
+				const url = new URL(request.url());
+				allowed = ["data:", "blob:"].includes(url.protocol)
+					|| (["http:", "https:"].includes(url.protocol) && ["127.0.0.1", "localhost", "::1"].includes(url.hostname));
+			} catch { allowed = false; }
+			if (allowed) request.continue();
+			else { blockedExternalRequests.push(request.url()); request.abort("blockedbyclient"); }
+		});
+	};
 	let browser, page, previewPort;
 	try {
 		signal?.throwIfAborted();
 		const base = await startPreview(runDir, 0); previewPort = Number(new URL(base).port);
 		browser = await puppeteer.launch({ executablePath: await findChrome(), headless: true, args: ["--disable-gpu-sandbox", "--no-sandbox", "--use-angle=swiftshader"] });
 		page = await browser.newPage();
+		await guardLocalRequests(page);
 		page.on("pageerror", (error) => consoleErrors.push(error.message));
 		page.on("console", (message) => { if (message.type() === "error") consoleErrors.push(`${message.location().url || "page"}: ${message.text()}`); });
 		await page.setViewport({ width: 1440, height: 1000, deviceScaleFactor: 1 });
@@ -127,7 +142,7 @@ export async function verifyAllViewsViewer({ runDir, outputDir = join(runDir, "b
 		const openedArtifacts = [];
 		for (const url of artifactUrls) {
 			const artifactPage = await browser.newPage();
-			try { const response = await artifactPage.goto(url, { waitUntil: "networkidle0" }); openedArtifacts.push({ url, status: response?.status() ?? null }); }
+			try { await guardLocalRequests(artifactPage); const response = await artifactPage.goto(url, { waitUntil: "networkidle0" }); openedArtifacts.push({ url, status: response?.status() ?? null }); }
 			finally { await artifactPage.close(); }
 		}
 		const report = {
@@ -141,7 +156,8 @@ export async function verifyAllViewsViewer({ runDir, outputDir = join(runDir, "b
 			material_stability: settledState.material_stability,
 			settled_frame_hashes: settledFrameHashes,
 			settled_frames_identical: new Set(settledFrameHashes).size === 1,
-			opened_artifacts: openedArtifacts, console_errors: consoleErrors, screenshots: { initial, interacted },
+			opened_artifacts: openedArtifacts, blocked_external_requests: blockedExternalRequests,
+			console_errors: consoleErrors, screenshots: { initial, interacted },
 		};
 		const reportPath = join(outputDir, "browser-verification.json");
 		await writeFile(reportPath, JSON.stringify(report, null, 2));

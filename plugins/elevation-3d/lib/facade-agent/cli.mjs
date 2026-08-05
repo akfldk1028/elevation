@@ -39,6 +39,15 @@ function parseNumber(value, label) {
 	return number;
 }
 
+function aliasedValue(values, canonical, legacy) {
+	if (values[canonical] !== undefined && values[legacy] !== undefined) {
+		throw new FacadeAgentContractError("ARGUMENT_DUPLICATE", `Conflicting aliases: ${canonical} and ${legacy}`);
+	}
+	const value = values[canonical] ?? values[legacy];
+	if (value === undefined) throw new FacadeAgentContractError("ARGUMENT_REQUIRED", `${canonical} is required`);
+	return value;
+}
+
 function parseOptions(argv) {
 	const command = argv[0];
 	if (![...FACADE_AGENT_STAGES, "run", "status", "resume"].includes(command)) {
@@ -62,24 +71,29 @@ function parseOptions(argv) {
 	}
 	const allowed = command === "status" || command === "resume"
 		? new Set(["--run-dir"])
-		: new Set(["--candidate", "--brief", "--dataset-root", "--output-root", "--run-id", "--providers", "--image-budget-gpt-image-2", "--image-budget-nano-banana-pro", "--grammar-budget", "--confirm-cost-usd"]);
+		: new Set(["--candidate", "--brief", "--dataset-root", "--output-root", "--run-id", "--providers",
+			"--gpt-image-max-usd", "--nano-banana-max-usd", "--grammar-max-usd",
+			"--image-budget-gpt-image-2", "--image-budget-nano-banana-pro", "--grammar-budget", "--confirm-cost-usd"]);
 	for (const key of Object.keys(values)) if (!allowed.has(key)) throw new FacadeAgentContractError("ARGUMENT_INVALID", `Unsupported argument: ${key}`);
 	if ((command === "status" || command === "resume") && flags.size > 0) throw new FacadeAgentContractError("ARGUMENT_INVALID", `${command} accepts only --run-dir`);
 	if (command === "status" || command === "resume") {
 		if (!values["--run-dir"]) throw new FacadeAgentContractError("ROOT_INVALID", "runDir is required");
 		return { command, runDir: resolve(values["--run-dir"]) };
 	}
-	for (const required of ["--candidate", "--brief", "--dataset-root", "--output-root", "--run-id", "--image-budget-gpt-image-2", "--image-budget-nano-banana-pro", "--grammar-budget"]) {
+	for (const required of ["--candidate", "--brief", "--dataset-root", "--output-root", "--run-id"]) {
 		if (values[required] === undefined) throw new FacadeAgentContractError("ARGUMENT_REQUIRED", `${required} is required`);
 	}
+	const gptImageBudget = aliasedValue(values, "--gpt-image-max-usd", "--image-budget-gpt-image-2");
+	const nanoImageBudget = aliasedValue(values, "--nano-banana-max-usd", "--image-budget-nano-banana-pro");
+	const grammarBudget = aliasedValue(values, "--grammar-max-usd", "--grammar-budget");
 	const dryRun = flags.has("--dry-run");
 	const confirmLive = flags.has("--confirm-live");
 	if (dryRun && confirmLive) throw new FacadeAgentContractError("LIVE_CONFIRMATION_INVALID", "Dry-run cannot confirm live execution");
 	const imageBudgetUsd = {
-		"gpt-image-2": parseNumber(values["--image-budget-gpt-image-2"], "imageBudgetUsd.gpt-image-2"),
-		"nano-banana-pro": parseNumber(values["--image-budget-nano-banana-pro"], "imageBudgetUsd.nano-banana-pro"),
+		"gpt-image-2": parseNumber(gptImageBudget, "imageBudgetUsd.gpt-image-2"),
+		"nano-banana-pro": parseNumber(nanoImageBudget, "imageBudgetUsd.nano-banana-pro"),
 	};
-	const grammarBudgetUsd = parseNumber(values["--grammar-budget"], "grammarBudgetUsd");
+	const grammarBudgetUsd = parseNumber(grammarBudget, "grammarBudgetUsd");
 	if (confirmLive) {
 		const expected = imageBudgetUsd["gpt-image-2"] + imageBudgetUsd["nano-banana-pro"] + grammarBudgetUsd;
 		const confirmed = parseNumber(values["--confirm-cost-usd"], "confirmCostUsd");

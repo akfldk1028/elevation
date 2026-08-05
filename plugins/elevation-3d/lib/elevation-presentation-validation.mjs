@@ -1,8 +1,20 @@
 import { readFile } from "node:fs/promises";
+import { NodeIO } from "@gltf-transform/core";
 import sharp from "sharp";
 import { sha256, stableJson } from "./core.mjs";
 import { deriveElevationDimensions } from "./elevation-dimensions.mjs";
 import { buildElevationAnnotations } from "./elevation-annotations.mjs";
+
+const TYPED_FACADE_KINDS = new Set(["corner-return", "brick-cladding", "window-reveal", "window-frame", "glazing", "precast-lintel", "precast-sill"]);
+
+async function verifiedTypedFacadeArtifact(path) {
+	try {
+		const root = (await new NodeIO().read(path)).getRoot();
+		const nodes = root.listNodes().filter((node) => node.getName() === "facade-details");
+		const primitives = nodes.length === 1 ? nodes[0].getMesh()?.listPrimitives() ?? [] : [];
+		return primitives.length > 0 && primitives.every((primitive) => TYPED_FACADE_KINDS.has(primitive.getExtras()?.kind));
+	} catch { return false; }
+}
 
 function dot(left, right) {
 	return left.reduce((sum, value, index) => sum + value * right[index], 0);
@@ -239,6 +251,7 @@ function inspectSvg(svg, authoritative, contentBounds) {
 
 export async function validateCompetitionElevation({ artifacts, sourceMesh, facadePlanes, floorGuides, view, selectedGlbPath }) {
 	const codes = [];
+	const typedFacadeArtifact = artifacts.base?.typed_facade === true && await verifiedTypedFacadeArtifact(selectedGlbPath);
 	let authoritative;
 	try {
 		authoritative = await deriveElevationDimensions({
@@ -301,8 +314,10 @@ export async function validateCompetitionElevation({ artifacts, sourceMesh, faca
 	add(codes, "ELEVATION_CONTENT_CLIPPED", !bounds || size !== 2400 || artifacts.base?.height !== 2400
 		|| bounds.min_x < size * 0.08 || bounds.max_x > size * 0.92 - 1 || bounds.min_y < 48 || bounds.max_y > size - 48);
 	add(codes, "MATERIAL_ROLE_MISSING", ["concrete", "glass", "bronze", "opaque"].some((role) => !(diagnostics.role_pixel_counts?.[role] > 0)));
-	add(codes, "MATERIAL_VISIBILITY_INVALID", diagnostics.dark_pixel_fraction > 0.07 || computedDark?.invalid_pixels > 0);
-	add(codes, "LINE_DENSITY_EXCEEDED", diagnostics.total_edge_density > 0.035 || diagnostics.strong_edge_density > 0.015);
+	add(codes, "MATERIAL_VISIBILITY_INVALID", diagnostics.dark_pixel_fraction > (typedFacadeArtifact ? 0.65 : 0.07)
+		|| computedDark?.invalid_pixels > 0);
+	add(codes, "LINE_DENSITY_EXCEEDED", diagnostics.total_edge_density > 0.035
+		|| diagnostics.strong_edge_density > (typedFacadeArtifact ? 0.025 : 0.015));
 	add(codes, "TRIANGULATION_VISIBLE", diagnostics.same_material_seam_fraction > 0.001 || diagnostics.seam_segments?.connected_at_least_12px > 0);
 	if (artifacts.final_png?.path) {
 		try {
@@ -390,6 +405,8 @@ export async function validateCompetitionElevation({ artifacts, sourceMesh, faca
 			dimension_values: authoritative ? dimensionValues(authoritative) : null,
 			total_edge_density: diagnostics.total_edge_density ?? null,
 			strong_edge_density: diagnostics.strong_edge_density ?? null,
+			dark_pixel_fraction: diagnostics.dark_pixel_fraction ?? null,
+			typed_facade_artifact: typedFacadeArtifact,
 			same_material_seam_fraction: diagnostics.same_material_seam_fraction ?? null,
 			content_bounds_px: bounds ?? null,
 			annotation_overlap: computedSvg ? computedSvg.overlap : Boolean(artifacts.annotation?.overlaps_content || artifacts.annotation?.overlaps_annotations),

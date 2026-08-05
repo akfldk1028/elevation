@@ -1,7 +1,8 @@
-import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { redactSecrets, sha256 } from "./core.mjs";
+import { createPaidOperationLedger } from "./facade-agent/paid-operation-ledger.mjs";
 
 const memoryAppendQueues = new Map();
 const DRAWING_NAMES = ["plan", "front", "back", "left", "right", "top", "axon"];
@@ -266,6 +267,141 @@ function runRelativePath(runDir, path, label) {
 		throw new Error(`${label} must remain within the run directory`);
 	}
 	return relativePath.replaceAll("\\", "/");
+}
+
+function facadeArtifact(runDir, record, label) {
+	if (!record) return null;
+	const value = typeof record === "string" ? { path: record } : record;
+	if (typeof value.path !== "string" || !value.path) return null;
+	const absolute = isAbsolute(value.path) ? value.path : resolve(runDir, value.path);
+	return {
+		path: runRelativePath(runDir, absolute, label),
+		...(typeof value.sha256 === "string" ? { sha256: value.sha256 } : {}),
+		...(typeof value.config_sha256 === "string" ? { config_sha256: value.config_sha256 } : {}),
+	};
+}
+
+const FACADE_METRICS = new Set([
+	"canonical_surface_match", "opaque_wall_coverage", "minimum_reveal_depth_m", "corner_max_gap_m",
+	"floor_alignment_max_error_m", "facade_orientation_coverage", "maximum_bounds_excess_m",
+	"base_vertex_count", "base_triangle_count", "base_sha256", "primitive_count", "detail_primitive_count",
+	"materials", "drawing_dimensions", "segment_authority_match",
+]);
+
+function facadeMetrics(metrics) {
+	return Object.fromEntries(Object.entries(metrics ?? {}).filter(([name]) => FACADE_METRICS.has(name)));
+}
+
+function facadeScore(score) {
+	if (!score || typeof score !== "object") return null;
+	return {
+		status: score.status ?? null,
+		score: Number.isFinite(score.score) ? score.score : null,
+		components: persistent(score.components ?? score.breakdown?.components ?? {}),
+		formula_version: score.formula_version ?? score.breakdown?.formula_version ?? null,
+		...(typeof score.sha256 === "string" ? { sha256: score.sha256 } : {}),
+	};
+}
+
+function facadeAttempt(runDir, version) {
+	return {
+		id: version.id,
+		status: version.status,
+		artifact: facadeArtifact(runDir, version.artifact, `${version.id} facade artifact`),
+		validation: version.validation ? {
+			accepted: version.validation.accepted === true,
+			codes: [...(version.validation.codes ?? [])],
+			retryable: version.validation.retryable === true,
+			metrics: facadeMetrics(version.validation.metrics),
+		} : null,
+		validation_receipt: facadeArtifact(runDir, version.validation_receipt, `${version.id} validation receipt`),
+		...(version.failure?.code ? { failure_code: version.failure.code } : {}),
+	};
+}
+
+function facadeDelivery(runDir, delivery) {
+	if (!delivery || typeof delivery !== "object") return null;
+	const normalized = {
+		manifest: facadeArtifact(runDir, delivery.manifest, "facade delivery manifest"),
+		validation: facadeArtifact(runDir, delivery.validation, "facade delivery validation"),
+		viewer: facadeArtifact(runDir, delivery.viewer, "facade delivery viewer"),
+		browser_verification: facadeArtifact(runDir, delivery.browser_verification, "facade browser verification"),
+	};
+	if (delivery.views && typeof delivery.views === "object") {
+		normalized.views = Object.fromEntries(Object.entries(delivery.views).map(([name, record]) => [
+			name, facadeArtifact(runDir, record, `facade delivery ${name}`),
+		]));
+	}
+	return normalized;
+}
+
+async function facadeCosts(runDir) {
+	let summary;
+	const ledgerRoot = join(runDir, "ledger");
+	const ledgerPath = join(ledgerRoot, "paid-operations.json");
+	try { await access(ledgerPath); summary = await createPaidOperationLedger(ledgerPath, { approvedRoot: ledgerRoot }).summary(); }
+	catch (error) { if (error.code !== "ENOENT") throw error; return { total_usd: 0, image_usd: {}, grammar_usd: 0 }; }
+	const operations = (summary?.operations ?? []).filter((operation) => operation?.status === "succeeded");
+	const image = operations.filter((operation) => operation.kind === "image-generation");
+	const grammar = operations.filter((operation) => operation.kind === "grammar-extraction");
+	const imageUsd = {};
+	for (const operation of image) imageUsd[operation.provider] = (imageUsd[operation.provider] ?? 0)
+		+ (Number.isFinite(operation.actualUsd) ? operation.actualUsd : 0);
+	return {
+		total_usd: [...image, ...grammar].reduce((sum, operation) => sum + (Number.isFinite(operation.actualUsd) ? operation.actualUsd : 0), 0),
+		image_usd: imageUsd,
+		grammar_usd: grammar.reduce((sum, operation) => sum + (Number.isFinite(operation.actualUsd) ? operation.actualUsd : 0), 0),
+	};
+}
+
+export async function appendFacadeAgentMemory(result, memoryRoot) {
+	if (!result?.final) throw new Error("A final facade-agent result is required before appending memory");
+	const runId = assertSafePathSegment(result.run_id, "run_id");
+	const candidateId = assertSafePathSegment(result.candidate_id, "candidate_id");
+	if (typeof result.brief_id !== "string" || !result.brief_id) throw new Error("brief_id is required");
+	const runDir = resolve(result.run_dir);
+	const providers = Object.fromEntries(Object.entries(result.providers ?? {}).map(([provider, state]) => [provider, {
+		status: state?.status ?? null,
+		request_fingerprint: state?.generation?.request_sha256 ?? null,
+		proposal_sha256: state?.proposal?.sha256 ?? state?.generation?.artifact_sha256 ?? null,
+		grammar_sha256: state?.grammar?.artifact_sha256 ?? null,
+		grammar_artifact: facadeArtifact(runDir, state?.grammar, `${provider} grammar artifact`),
+		attempts: (state?.versions ?? []).map((version) => facadeAttempt(runDir, version)),
+		score: facadeScore(state?.score),
+		...(state?.failure?.code ? { failure_code: state.failure.code } : {}),
+	}]));
+	const event = persistent({
+		schema_version: "arr.elevation3d.facade-agent-memory.v1",
+		run_id: runId,
+		candidate_id: candidateId,
+		brief_id: result.brief_id,
+		artifact_base: "run_dir",
+		input_sha256: result.input_sha256 ?? null,
+		status: result.status ?? result.final.status,
+		geometry_authority: "canonical-local-mass",
+		retry_policy: "two-local-attempts-no-image-resubmit",
+		image_submissions: Object.fromEntries(Object.entries(result.image_submissions?.by_provider ?? {}).map(([provider, count]) => [provider, count])),
+		grammar_submissions: Object.fromEntries(Object.entries(result.providers ?? {}).map(([provider, state]) => [provider, state?.grammar?.status === "succeeded" ? 1 : 0])),
+		costs: await facadeCosts(runDir),
+		providers,
+		delivery: facadeDelivery(runDir, result.selected_delivery ?? result.delivery?.memory_record),
+		winner: result.final.status === "winner" ? {
+			provider: result.final.selected_provider,
+			version: result.final.selected_version,
+			score_sha256: result.final.score_sha256 ?? null,
+		} : null,
+		fallback_reference: result.fallback_reference ? facadeArtifact(runDir, result.fallback_reference, "facade fallback") : null,
+		final: {
+			status: result.final.status,
+			selected_provider: result.final.selected_provider ?? null,
+			selected_version: result.final.selected_version ?? null,
+			selected_glb_sha256: result.final.selected_glb_sha256 ?? null,
+			score_sha256: result.final.score_sha256 ?? null,
+			delivery_sha256: result.final.delivery_sha256 ?? null,
+		},
+	});
+	await appendUniqueRunEvent(resolveDescendant(resolve(memoryRoot), "facade-agent-runs.jsonl"), event);
+	return event;
 }
 
 function deliveryArtifact(run, record, label) {

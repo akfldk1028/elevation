@@ -99,6 +99,23 @@ test("accepts parsed enriched GLB and provenance-bound PNG drawings", async () =
 	assert.equal(report.metrics.canonical_surface_match, 1);
 });
 
+test("rejects a facade artifact that omits required segment authority metadata", async () => {
+	const f = await fixture();
+	const facadeSegmentAuthority = {
+		schema_version: "arr.elevation3d.facade-segments.v1",
+		facade_planes: [{
+			segment_id: "front-segment", view: "front", origin: [-2, -1, 0], normal: [0, -1, 0],
+			extent_m: [4, 3], start_corner_id: "front-start", end_corner_id: "front-end",
+		}],
+	};
+	const report = await validateEnrichment({
+		sourceMesh, artifact: f.artifact, grammar, requiredDrawings: f.drawings, facadeSegmentAuthority,
+	});
+	assert.equal(report.metrics.segment_authority_match, false);
+	assert.ok(report.codes.includes("FACADE_SEGMENT_AUTHORITY_MISMATCH"));
+	assert.equal(report.accepted, false);
+});
+
 test("rejects missing, hash-mismatched, and corrupt GLB bytes with stable codes", async () => {
 	const f = await fixture({ fallback: true });
 	const mismatch = await validateEnrichment({ sourceMesh, artifact: { ...f.artifact, sha256: "0".repeat(64) }, grammar, requiredDrawings: f.drawings, safeFallback: true });

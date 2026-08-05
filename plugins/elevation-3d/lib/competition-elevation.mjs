@@ -328,6 +328,7 @@ export async function renderCompetitionElevationBase({
 			selected_glb_sha256: selectedGlbSha256,
 			viewer_config_sha256: viewerConfigSha256,
 			material_roles: browserArtifact.material_roles,
+			typed_facade: browserArtifact.typed_facade === true,
 			line_pass: config.competition_elevation.line_pass,
 			diagnostic_paths: diagnosticPaths,
 			diagnostics: {

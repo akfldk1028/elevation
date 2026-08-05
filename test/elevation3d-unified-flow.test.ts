@@ -150,7 +150,7 @@ function acceptedFinalDeliveryDeps() {
 				console_errors: [], glb_load_count: 1, activated_views: [...DELIVERY_VIEW_NAMES],
 				camera_presets: Object.fromEntries(DELIVERY_VIEW_NAMES.map((name) => [name, { type: name === "axon" || name === "opposite-axon" ? "perspective" : "orthographic" }])),
 				material_stability: { transparent_depth_writers: 0, facade_detail_meshes: 10, polygon_offset_facade_details: 10, deterministic_render_order: true },
-				settled_frames_identical: true, settled_frame_hashes: ["c".repeat(64), "c".repeat(64), "c".repeat(64)],
+				settled_frames_identical: true, settled_frame_hashes: ["c".repeat(64), "c".repeat(64), "c".repeat(64)], blocked_external_requests: [],
 			};
 		},
 	};

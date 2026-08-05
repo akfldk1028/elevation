@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { readFile } from "node:fs/promises";
 import sharp from "sharp";
 import { buildPunchedFacadeDetails } from "../plugins/elevation-3d/lib/facade-agent/punched-facade.mjs";
+import * as punchedFacade from "../plugins/elevation-3d/lib/facade-agent/punched-facade.mjs";
 import { createFacadePbrMaps } from "../plugins/elevation-3d/lib/facade-agent/procedural-materials.mjs";
 import { buildEnrichedScene } from "../plugins/elevation-3d/lib/enrichment.mjs";
 
@@ -41,6 +43,42 @@ const grammar = {
 	confidence: 0.92,
 	unresolved_surfaces: [],
 };
+
+test("derives the real creative-020 closed-shell perimeter as 16 deterministic backed segments", async () => {
+	const source = JSON.parse(await readFile("D:/Data/50_ELE/MAAS_ELEVATION_TEST_SET_20260730/candidates/creative-020/mass/mesh/indexed-mesh.json", "utf8"));
+	assert.throws(() => buildPunchedFacadeDetails({
+		mesh: source,
+		floorGuides: { floor_guides_m: [0, 3.3, 6.6, 9.9, 13.2, 16.5] },
+		facadePlanes: { facade_planes: [
+			{ view: "front", origin: [-5.325923, -5.325923, 0], normal: [0, -1, 0], extent_m: [10.651846, 16.5] },
+		] },
+		grammar: { ...grammar, bay_width_m: 1.2, window_width_m: 0.8 },
+	}), /exact-MASS backing/i);
+	assert.equal(typeof (punchedFacade as any).deriveFacadeSegmentsFromMass, "function");
+	const derive = (punchedFacade as any).deriveFacadeSegmentsFromMass;
+	const first = derive({ mesh: source });
+	const permuted = derive({ mesh: { ...source, triangles: [...source.triangles].reverse() } });
+	assert.equal(first.schema_version, "arr.elevation3d.facade-segments.v1");
+	assert.equal(first.segments.length, 16);
+	assert.deepEqual(permuted, first);
+	assert.equal(new Set(first.segments.map((segment: any) => segment.segment_id)).size, 16);
+	assert.equal(first.segments.every((segment: any) => segment.mass_backed === true && segment.outward === true), true);
+	assert.equal(first.segments.every((segment: any) => segment.extent_m[0] > 0 && segment.extent_m[1] === 16.5), true);
+	const cornerCounts = Map.groupBy(first.segments.flatMap((segment: any) => [segment.start_corner_id, segment.end_corner_id]), (value: string) => value);
+	assert.equal([...cornerCounts.values()].every((ids) => ids.length === 2), true);
+	for (let index = 0; index < first.segments.length; index++) {
+		assert.equal(first.segments[index].end_corner_id, first.segments[(index + 1) % first.segments.length].start_corner_id);
+	}
+	const reversedFace = structuredClone(source);
+	reversedFace.triangles[0].reverse();
+	assert.throws(() => derive({ mesh: reversedFace }), /closed|orientation|topology/i);
+	assert.throws(() => derive({ mesh: { ...source, triangles: source.triangles.slice(1) } }), /closed|topology/i);
+	const disconnected = structuredClone(source);
+	const offset = disconnected.vertices.length;
+	disconnected.vertices.push([20, 20, 0], [21, 20, 0], [20, 21, 0], [20, 20, 1]);
+	disconnected.triangles.push(...[[0, 2, 1], [0, 1, 3], [1, 2, 3], [2, 0, 3]].map((triangle) => triangle.map((value) => value + offset)));
+	assert.throws(() => derive({ mesh: disconnected }), /connected|component|topology/i);
+});
 
 function facadeBackingMesh(plane: { origin: number[]; normal: number[]; extent_m: number[] }) {
 	const tangent = [-plane.normal[1], plane.normal[0], 0];

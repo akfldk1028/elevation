@@ -583,6 +583,22 @@ function validationRecord(validation, retryable) {
 	});
 }
 
+function persistedDeliveryMemory(runDir, value) {
+	if (!value || typeof value !== "object") return null;
+	const record = (input, label) => input?.path ? {
+		...persistent(input), path: relativePath(runDir, input.path, label),
+	} : null;
+	return persistent({
+		manifest: record(value.manifest, "delivery manifest"),
+		validation: record(value.validation, "delivery validation"),
+		viewer: record(value.viewer, "delivery viewer"),
+		browser_verification: record(value.browser_verification, "delivery browser verification"),
+		views: value.views && Object.fromEntries(Object.entries(value.views).map(([name, view]) => [
+			name, record(view, `delivery ${name} view`),
+		])),
+	});
+}
+
 function localRetryAllowed(validation, attempt) {
 	if (attempt !== 1 || validation?.accepted === true || validation?.retryable === false) return false;
 	const codes = validation?.codes;
@@ -674,7 +690,9 @@ async function buildAndValidateProvider({ config, deps, runDir, run, state, prov
 				await writeProvider(runDir, run, config, provider, state, deps);
 				return { state, scoreResult: null };
 			}
-			currentGrammar = correctGrammar(currentGrammar, version.validation.codes);
+			currentGrammar = typeof deps.correctGrammar === "function"
+				? deps.correctGrammar(currentGrammar, version.validation.codes, run._candidate)
+				: correctGrammar(currentGrammar, version.validation.codes);
 		} catch (error) {
 			if (error instanceof LifecycleHookError) throw error;
 			version.status = isAbort(error, signal) ? "cancelled" : "rejected";
@@ -966,7 +984,11 @@ async function executeFacade(config, deps, stopAfterStage = null) {
 					artifact, input: candidate, signal, lifecycle: deps.lifecycle,
 				});
 				await callLifecycle(deps, { stage: "delivery", status: "returned", provider: decision.provider, selected_glb_sha256: artifact.sha256 });
-				run.delivery = { status: "succeeded", provider: decision.provider, selected_glb_sha256: artifact.sha256, delivery_sha256: sha256(stableJson(persistent(delivery))) };
+				run.delivery = {
+					status: "succeeded", provider: decision.provider, selected_glb_sha256: artifact.sha256,
+					delivery_sha256: sha256(stableJson(persistent(delivery))),
+					memory_record: persistedDeliveryMemory(runDir, delivery?.memory_record),
+				};
 				await persistPublicRun(runDir, run);
 				await callLifecycle(deps, { stage: "delivery", status: "succeeded", provider: decision.provider, selected_glb_sha256: artifact.sha256, delivery_sha256: run.delivery.delivery_sha256 });
 				final = {

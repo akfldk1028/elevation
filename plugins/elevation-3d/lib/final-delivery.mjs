@@ -68,6 +68,7 @@ function exactNames(value) {
 function browserAccepted(report) {
 	const stability = report?.material_stability;
 	return Array.isArray(report?.console_errors) && report.console_errors.length === 0
+		&& Array.isArray(report.blocked_external_requests) && report.blocked_external_requests.length === 0
 		&& report.glb_load_count === 1
 		&& [...new Set(report.activated_views ?? [])].sort().join("|") === [...VIEW_NAMES].sort().join("|")
 		&& exactNames(report.camera_presets)

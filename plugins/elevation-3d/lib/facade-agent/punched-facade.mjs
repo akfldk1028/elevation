@@ -8,6 +8,7 @@ const DETAIL_PRIMITIVES_PER_BAY = 15;
 export const PUNCHED_FACADE_BUDGETS = Object.freeze({
 	maxFacadeWidthM: 120,
 	maxFacadePlanes: 4,
+	maxFacadeSegments: 32,
 	maxBaysPerPlane: 128,
 	maxFloorGuides: 65,
 	maxStoreys: 64,
@@ -123,12 +124,17 @@ function massComponentOrientations(mesh) {
 
 function validatePlanes(facadePlanes, grammar) {
 	const planes = facadePlanes?.facade_planes;
+	const segmentAuthority = facadePlanes?.schema_version === "arr.elevation3d.facade-segments.v1";
 	if (!Array.isArray(planes)) throw new TypeError("invalid facade geometry: facade planes must be a dense array");
 	if (!planes.length) throw new TypeError("invalid facade geometry: facade planes are required");
-	if (planes.length > PUNCHED_FACADE_BUDGETS.maxFacadePlanes) throw new RangeError("facade plane budget exceeded");
+	if (planes.length > (segmentAuthority ? PUNCHED_FACADE_BUDGETS.maxFacadeSegments : PUNCHED_FACADE_BUDGETS.maxFacadePlanes)) throw new RangeError("facade plane budget exceeded");
 	if (!denseArray(planes)) throw new TypeError("invalid facade geometry: facade planes must be a dense array");
-	if (new Set(planes.map((plane) => plane.view)).size !== planes.length) {
+	if (!segmentAuthority && new Set(planes.map((plane) => plane.view)).size !== planes.length) {
 		throw new TypeError("invalid facade geometry: facade views must be unique");
+	}
+	if (segmentAuthority && (new Set(planes.map((plane) => plane.segment_id)).size !== planes.length
+		|| planes.some((plane, index) => plane.end_corner_id !== planes[(index + 1) % planes.length].start_corner_id))) {
+		throw new TypeError("invalid facade geometry: facade segment topology is invalid");
 	}
 	for (const plane of planes) {
 		if (!grammar.surfaces.includes(plane.view) || !finitePoint(plane.origin) || !finitePoint(plane.normal)
@@ -337,6 +343,13 @@ function pushDetail(details, plane, tangent, grammar, bounds, properties, massBa
 		...properties,
 		...massBackingProperties,
 		view: plane.view,
+		...(plane.segment_id ? {
+			segment_id: plane.segment_id,
+			segment_length_m: plane.extent_m[0],
+			segment_start_corner_id: plane.start_corner_id,
+			segment_end_corner_id: plane.end_corner_id,
+			local_bounds: { u0: bounds.u0, u1: bounds.u1, v0: bounds.v0, v1: bounds.v1, n0: bounds.n0, n1: bounds.n1 },
+		} : {}),
 		component_id: 0,
 		geometry_signature: primitiveSignature(properties.kind, properties.material, properties.slot, bounds),
 		...geometry,
@@ -449,7 +462,10 @@ function emitCornerReturns(details, plane, tangent, grammar, floor, nextFloor, r
 		pushDetail(details, plane, tangent, grammar, bounds, {
 			kind: "corner-return", material: "brick", floor_m: floor, bay: null,
 			depth_m: grammar.cladding_depth_m, slot: `corner-${side}`,
-			corner_anchor_id: anchorId(anchor, floor), anchor_position: anchor,
+			corner_anchor_id: plane.segment_id
+				? `corner-${sha256(JSON.stringify([side === "start" ? plane.start_corner_id : plane.end_corner_id, Number(floor.toFixed(8))])).slice(0, 20)}`
+				: anchorId(anchor, floor),
+			anchor_position: anchor,
 		}, massSupport);
 	}
 }
@@ -522,6 +538,145 @@ function emitBay(details, plane, tangent, grammar, region, floor, nextFloor, bay
 		v0: opening.v0 - frame, v1: opening.v0 - GEOMETRY_GAP_M,
 		n0: visiblePlane - grammar.sill_depth_m, n1: visiblePlane,
 	}, { ...common, kind: "precast-sill", material: "precast", depth_m: grammar.sill_depth_m, slot: "sill" }, massSupport);
+}
+
+function closedShellOrientation(mesh) {
+	validateSourceMesh(mesh);
+	const edges = new Map();
+	const adjacent = Array.from({ length: mesh.triangles.length }, () => []);
+	for (let triangleIndex = 0; triangleIndex < mesh.triangles.length; triangleIndex++) {
+		const triangle = mesh.triangles[triangleIndex];
+		for (let index = 0; index < 3; index++) {
+			const start = triangle[index], end = triangle[(index + 1) % 3];
+			const key = start < end ? `${start}|${end}` : `${end}|${start}`;
+			const entries = edges.get(key) ?? [];
+			entries.push({ triangleIndex, direction: start < end ? 1 : -1 });
+			edges.set(key, entries);
+		}
+	}
+	for (const entries of edges.values()) {
+		if (entries.length !== 2 || entries[0].direction + entries[1].direction !== 0) {
+			throw new TypeError("invalid facade topology: MASS must be a consistently oriented closed shell");
+		}
+		adjacent[entries[0].triangleIndex].push(entries[1].triangleIndex);
+		adjacent[entries[1].triangleIndex].push(entries[0].triangleIndex);
+	}
+	const visited = new Set(), stack = [0];
+	while (stack.length) {
+		const index = stack.pop();
+		if (visited.has(index)) continue;
+		visited.add(index);
+		stack.push(...adjacent[index]);
+	}
+	if (visited.size !== mesh.triangles.length) throw new TypeError("invalid facade topology: MASS must contain one connected component");
+	let signedVolume = 0;
+	for (const triangle of mesh.triangles) {
+		const [a, b, c] = triangle.map((index) => mesh.vertices[index]);
+		signedVolume += dot(a, cross(b, c)) / 6;
+	}
+	if (Math.abs(signedVolume) <= EPSILON) throw new TypeError("invalid facade topology: MASS shell volume is zero");
+	return Math.sign(signedVolume);
+}
+
+function roundedPoint(point) {
+	return point.map((value) => Number(value.toFixed(8)));
+}
+
+function cornerId(point) {
+	return `facade-corner-${sha256(JSON.stringify(roundedPoint(point))).slice(0, 20)}`;
+}
+
+function facadeView(normal) {
+	if (Math.abs(normal[0]) > Math.abs(normal[1])) return normal[0] > 0 ? "right" : "left";
+	return normal[1] > 0 ? "back" : "front";
+}
+
+function connectedTriangleGroups(mesh, triangleIndexes) {
+	const byEdge = new Map();
+	for (const triangleIndex of triangleIndexes) {
+		const triangle = mesh.triangles[triangleIndex];
+		for (let index = 0; index < 3; index++) {
+			const values = [triangle[index], triangle[(index + 1) % 3]].sort((a, b) => a - b);
+			const key = values.join("|");
+			const entries = byEdge.get(key) ?? [];
+			entries.push(triangleIndex);
+			byEdge.set(key, entries);
+		}
+	}
+	const adjacent = new Map(triangleIndexes.map((index) => [index, []]));
+	for (const entries of byEdge.values()) if (entries.length === 2) {
+		adjacent.get(entries[0]).push(entries[1]);
+		adjacent.get(entries[1]).push(entries[0]);
+	}
+	const pending = new Set(triangleIndexes), groups = [];
+	while (pending.size) {
+		const group = [], stack = [pending.values().next().value];
+		while (stack.length) {
+			const index = stack.pop();
+			if (!pending.delete(index)) continue;
+			group.push(index);
+			stack.push(...adjacent.get(index));
+		}
+		groups.push(group);
+	}
+	return groups;
+}
+
+export function deriveFacadeSegmentsFromMass({ mesh } = {}) {
+	const orientation = closedShellOrientation(mesh);
+	const planeGroups = new Map();
+	for (let triangleIndex = 0; triangleIndex < mesh.triangles.length; triangleIndex++) {
+		const points = mesh.triangles[triangleIndex].map((index) => mesh.vertices[index]);
+		const raw = cross(points[1].map((value, axis) => value - points[0][axis]), points[2].map((value, axis) => value - points[0][axis]));
+		const length = Math.hypot(...raw);
+		const normal = raw.map((value) => value * orientation / length);
+		if (Math.abs(normal[2]) > 1e-7) continue;
+		const roundedNormal = normal.map((value) => Number(value.toFixed(8)));
+		const offset = Number(dot(roundedNormal, points[0]).toFixed(8));
+		const key = `${roundedNormal.join(",")}|${offset}`;
+		const group = planeGroups.get(key) ?? { normal: roundedNormal, indexes: [] };
+		group.indexes.push(triangleIndex);
+		planeGroups.set(key, group);
+	}
+	const unsorted = [];
+	for (const group of planeGroups.values()) for (const indexes of connectedTriangleGroups(mesh, group.indexes)) {
+		const normal = group.normal;
+		const tangent = [-normal[1], normal[0], 0];
+		const points = [...new Set(indexes.flatMap((index) => mesh.triangles[index]))].map((index) => mesh.vertices[index]);
+		const us = points.map((point) => dot(point, tangent));
+		const zs = points.map((point) => point[2]);
+		const u0 = Math.min(...us), u1 = Math.max(...us), z0 = Math.min(...zs), z1 = Math.max(...zs);
+		const start = points.find((point) => Math.abs(dot(point, tangent) - u0) <= 1e-7 && Math.abs(point[2] - z0) <= 1e-7);
+		const end = points.find((point) => Math.abs(dot(point, tangent) - u1) <= 1e-7 && Math.abs(point[2] - z0) <= 1e-7);
+		if (!start || !end || u1 - u0 <= EPSILON || z1 - z0 <= EPSILON) throw new TypeError("invalid facade topology: vertical segment is not rectangular");
+		const plane = { origin: [...start], normal: [...normal], extent_m: [u1 - u0, z1 - z0] };
+		const backing = validateMassBacking(mesh, plane, tangent, Array(mesh.triangles.length).fill(orientation));
+		const canonical = { normal: roundedPoint(normal), origin: roundedPoint(start), extent_m: roundedPoint(plane.extent_m) };
+		unsorted.push({
+			segment_id: `facade-segment-${sha256(JSON.stringify(canonical)).slice(0, 20)}`,
+			view: facadeView(normal), normal: [...normal], origin: [...start], extent_m: [u1 - u0, z1 - z0],
+			start_corner_id: cornerId(start), end_corner_id: cornerId(end),
+			mass_backed: Math.abs(backing.coveredArea - backing.targetArea) <= Math.max(EPSILON, backing.targetArea * 1e-6),
+			outward: true,
+		});
+	}
+	if (!unsorted.length || unsorted.length > PUNCHED_FACADE_BUDGETS.maxFacadeSegments) throw new RangeError("facade segment budget exceeded");
+	const byStart = new Map(unsorted.map((segment) => [segment.start_corner_id, segment]));
+	if (byStart.size !== unsorted.length) throw new TypeError("invalid facade topology: perimeter segment starts are ambiguous");
+	const first = [...unsorted].sort((left, right) => left.origin[0] - right.origin[0] || left.origin[1] - right.origin[1] || left.segment_id.localeCompare(right.segment_id))[0];
+	const segments = [], used = new Set();
+	let current = first;
+	while (current && !used.has(current.segment_id)) {
+		segments.push(current); used.add(current.segment_id); current = byStart.get(current.end_corner_id);
+	}
+	if (segments.length !== unsorted.length || current?.segment_id !== first.segment_id) throw new TypeError("invalid facade topology: perimeter is not one closed cycle");
+	const xs = mesh.vertices.map((point) => point[0]), ys = mesh.vertices.map((point) => point[1]);
+	const facadeLengths = {
+		front: Math.max(...xs) - Math.min(...xs), back: Math.max(...xs) - Math.min(...xs),
+		right: Math.max(...ys) - Math.min(...ys), left: Math.max(...ys) - Math.min(...ys),
+	};
+	const value = { schema_version: "arr.elevation3d.facade-segments.v1", facade_planes: segments, segments, facade_lengths_m: facadeLengths };
+	return { ...value, sha256: sha256(JSON.stringify(value)) };
 }
 
 export function buildPunchedFacadeDetails({ mesh, floorGuides, facadePlanes, grammar }) {
