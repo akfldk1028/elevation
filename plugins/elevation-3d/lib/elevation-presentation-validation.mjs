@@ -4,16 +4,48 @@ import sharp from "sharp";
 import { sha256, stableJson } from "./core.mjs";
 import { deriveElevationDimensions } from "./elevation-dimensions.mjs";
 import { buildElevationAnnotations } from "./elevation-annotations.mjs";
+import { readVerifiedFacadeValidationAuthority } from "./enrichment-validation.mjs";
+import { assertCanonicalFacadeSegmentAuthority } from "./facade-agent/punched-facade.mjs";
 
 const TYPED_FACADE_KINDS = new Set(["corner-return", "brick-cladding", "window-reveal", "window-frame", "glazing", "precast-lintel", "precast-sill"]);
 
-async function verifiedTypedFacadeArtifact(path) {
+async function verifiedTypedFacadeArtifact(path, facadeValidation, facadeValidationReceipt, sourceMesh, facadeSegmentAuthority) {
 	try {
+		const authority = readVerifiedFacadeValidationAuthority(facadeValidation);
+		if (!authority || authority.grammar?.system !== "brick-punched-window-v1") return { typed: false, receiptBound: false };
+		const canonicalSegments = assertCanonicalFacadeSegmentAuthority({ mesh: sourceMesh, facadeSegmentAuthority });
+		const bytes = await readFile(path);
+		if (sha256(bytes) !== authority.bindings.glb_sha256
+			|| authority.bindings.geometry_content_sha256 !== canonicalSegments.source_geometry_sha256
+			|| authority.bindings.geometry_signed_volume_orientation !== 1
+			|| authority.bindings.facade_segment_authority_sha256 !== canonicalSegments.sha256
+			|| authority.metrics?.canonical_surface_match !== 1 || authority.metrics?.segment_authority_match !== true) return { typed: false, receiptBound: false };
+		const receiptBytes = await readFile(facadeValidationReceipt?.path);
+		const receipt = JSON.parse(receiptBytes.toString("utf8"));
+		const receiptChecks = {
+			file_hash: sha256(receiptBytes) === facadeValidationReceipt.sha256,
+			receipt_hash: sha256(stableJson(receipt)) === facadeValidationReceipt.receipt_sha256,
+			schema: receipt.schema_version === "arr.elevation3d.facade-validation-receipt.v1",
+			artifact: receipt.artifact_sha256 === authority.bindings.glb_sha256,
+			accepted: receipt.validation?.accepted === true,
+			codes: stableJson(receipt.validation?.codes) === "[]",
+			metrics: stableJson(receipt.validation?.metrics) === stableJson(authority.metrics),
+		};
+		const receiptBound = Object.values(receiptChecks).every(Boolean);
+		if (!receiptBound) return { typed: false, receiptBound: false, receiptChecks };
 		const root = (await new NodeIO().read(path)).getRoot();
-		const nodes = root.listNodes().filter((node) => node.getName() === "facade-details");
-		const primitives = nodes.length === 1 ? nodes[0].getMesh()?.listPrimitives() ?? [] : [];
-		return primitives.length > 0 && primitives.every((primitive) => TYPED_FACADE_KINDS.has(primitive.getExtras()?.kind));
-	} catch { return false; }
+		const primitives = root.listMeshes().flatMap((mesh) => mesh.listPrimitives());
+		const typed = primitives.filter((primitive) => TYPED_FACADE_KINDS.has(primitive.getExtras()?.kind));
+		const segmentIds = new Set(typed.map((primitive) => primitive.getExtras()?.segment_id));
+		const expectedIds = canonicalSegments.facade_planes.map((segment) => segment.segment_id);
+		const kinds = new Set(typed.map((primitive) => primitive.getExtras().kind));
+		const typedArtifact = primitives.length === authority.metrics.primitive_count
+			&& typed.length === authority.metrics.detail_primitive_count
+			&& typed.every((primitive) => typeof primitive.getExtras()?.segment_id === "string")
+			&& segmentIds.size === expectedIds.length && expectedIds.every((segmentId) => segmentIds.has(segmentId))
+			&& ["brick-cladding", "window-reveal", "glazing", "precast-lintel", "precast-sill", "corner-return"].every((kind) => kinds.has(kind));
+		return { typed: typedArtifact, receiptBound, receiptChecks };
+	} catch { return { typed: false, receiptBound: false, receiptChecks: null }; }
 }
 
 function dot(left, right) {
@@ -249,9 +281,10 @@ function inspectSvg(svg, authoritative, contentBounds) {
 	return { mismatch, overlap, pageViolation, source_count: bySource.size };
 }
 
-export async function validateCompetitionElevation({ artifacts, sourceMesh, facadePlanes, floorGuides, view, selectedGlbPath }) {
+export async function validateCompetitionElevation({ artifacts, sourceMesh, facadePlanes, facadeSegmentAuthority, facadeValidation, facadeValidationReceipt, floorGuides, view, selectedGlbPath }) {
 	const codes = [];
-	const typedFacadeArtifact = artifacts.base?.typed_facade === true && await verifiedTypedFacadeArtifact(selectedGlbPath);
+	const typedFacadeEvidence = await verifiedTypedFacadeArtifact(selectedGlbPath, facadeValidation, facadeValidationReceipt, sourceMesh, facadeSegmentAuthority);
+	const typedFacadeArtifact = typedFacadeEvidence.typed;
 	let authoritative;
 	try {
 		authoritative = await deriveElevationDimensions({
@@ -314,7 +347,7 @@ export async function validateCompetitionElevation({ artifacts, sourceMesh, faca
 	add(codes, "ELEVATION_CONTENT_CLIPPED", !bounds || size !== 2400 || artifacts.base?.height !== 2400
 		|| bounds.min_x < size * 0.08 || bounds.max_x > size * 0.92 - 1 || bounds.min_y < 48 || bounds.max_y > size - 48);
 	add(codes, "MATERIAL_ROLE_MISSING", ["concrete", "glass", "bronze", "opaque"].some((role) => !(diagnostics.role_pixel_counts?.[role] > 0)));
-	add(codes, "MATERIAL_VISIBILITY_INVALID", diagnostics.dark_pixel_fraction > (typedFacadeArtifact ? 0.65 : 0.07)
+	add(codes, "MATERIAL_VISIBILITY_INVALID", diagnostics.dark_pixel_fraction > (typedFacadeArtifact ? 0.60 : 0.07)
 		|| computedDark?.invalid_pixels > 0);
 	add(codes, "LINE_DENSITY_EXCEEDED", diagnostics.total_edge_density > 0.035
 		|| diagnostics.strong_edge_density > (typedFacadeArtifact ? 0.025 : 0.015));
@@ -407,6 +440,7 @@ export async function validateCompetitionElevation({ artifacts, sourceMesh, faca
 			strong_edge_density: diagnostics.strong_edge_density ?? null,
 			dark_pixel_fraction: diagnostics.dark_pixel_fraction ?? null,
 			typed_facade_artifact: typedFacadeArtifact,
+			typed_facade_receipt_bound: typedFacadeEvidence.receiptBound,
 			same_material_seam_fraction: diagnostics.same_material_seam_fraction ?? null,
 			content_bounds_px: bounds ?? null,
 			annotation_overlap: computedSvg ? computedSvg.overlap : Boolean(artifacts.annotation?.overlaps_content || artifacts.annotation?.overlaps_annotations),

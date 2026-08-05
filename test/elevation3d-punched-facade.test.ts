@@ -19,12 +19,7 @@ const mesh = {
 	],
 };
 const floorGuides = { floor_guides_m: [0, 3.3, 6.6] };
-const facadePlanes = {
-	facade_planes: [
-		{ view: "front", origin: [-4, -2, 0], normal: [0, -1, 0], extent_m: [8, 6.6] },
-		{ view: "right", origin: [4, -2, 0], normal: [1, 0, 0], extent_m: [4, 6.6] },
-	],
-};
+const facadePlanes = (punchedFacade as any).deriveFacadeSegmentsFromMass({ mesh });
 const grammar = {
 	system: "brick-punched-window-v1",
 	surfaces: ["front", "right", "back", "left"],
@@ -53,14 +48,17 @@ test("derives the real creative-020 closed-shell perimeter as 16 deterministic b
 			{ view: "front", origin: [-5.325923, -5.325923, 0], normal: [0, -1, 0], extent_m: [10.651846, 16.5] },
 		] },
 		grammar: { ...grammar, bay_width_m: 1.2, window_width_m: 0.8 },
-	}), /exact-MASS backing/i);
+	}), /segment authority/i);
 	assert.equal(typeof (punchedFacade as any).deriveFacadeSegmentsFromMass, "function");
 	const derive = (punchedFacade as any).deriveFacadeSegmentsFromMass;
 	const first = derive({ mesh: source });
 	const permuted = derive({ mesh: { ...source, triangles: [...source.triangles].reverse() } });
 	assert.equal(first.schema_version, "arr.elevation3d.facade-segments.v1");
+	assert.equal(first.source_signed_volume_orientation, 1);
+	assert.match(first.source_geometry_sha256, /^[a-f0-9]{64}$/);
 	assert.equal(first.segments.length, 16);
-	assert.deepEqual(permuted, first);
+	assert.deepEqual(permuted.facade_planes, first.facade_planes);
+	assert.notEqual(permuted.source_geometry_sha256, first.source_geometry_sha256);
 	assert.equal(new Set(first.segments.map((segment: any) => segment.segment_id)).size, 16);
 	assert.equal(first.segments.every((segment: any) => segment.mass_backed === true && segment.outward === true), true);
 	assert.equal(first.segments.every((segment: any) => segment.extent_m[0] > 0 && segment.extent_m[1] === 16.5), true);
@@ -72,6 +70,8 @@ test("derives the real creative-020 closed-shell perimeter as 16 deterministic b
 	const reversedFace = structuredClone(source);
 	reversedFace.triangles[0].reverse();
 	assert.throws(() => derive({ mesh: reversedFace }), /closed|orientation|topology/i);
+	const reversedShell = { ...source, triangles: source.triangles.map((triangle: number[]) => [...triangle].reverse()) };
+	assert.throws(() => derive({ mesh: reversedShell }), /approved|orientation|winding/i);
 	assert.throws(() => derive({ mesh: { ...source, triangles: source.triangles.slice(1) } }), /closed|topology/i);
 	const disconnected = structuredClone(source);
 	const offset = disconnected.vertices.length;
@@ -80,7 +80,44 @@ test("derives the real creative-020 closed-shell perimeter as 16 deterministic b
 	assert.throws(() => derive({ mesh: disconnected }), /connected|component|topology/i);
 });
 
-function facadeBackingMesh(plane: { origin: number[]; normal: number[]; extent_m: number[] }) {
+test("recomputes exact creative-020 segment authority before allocating facade details", async () => {
+	const source = JSON.parse(await readFile("D:/Data/50_ELE/MAAS_ELEVATION_TEST_SET_20260730/candidates/creative-020/mass/mesh/indexed-mesh.json", "utf8"));
+	const derive = (punchedFacade as any).deriveFacadeSegmentsFromMass;
+	const authority = derive({ mesh: source });
+	const floors = { floor_guides_m: [0, 3.3, 6.6, 9.9, 13.2, 16.5] };
+	const realGrammar = { ...grammar, bay_width_m: 1.2, window_width_m: 0.8 };
+	assert.ok(buildPunchedFacadeDetails({ mesh: source, floorGuides: floors, facadePlanes: authority, grammar: realGrammar }).length > 0);
+
+	const oneSegment = structuredClone(authority);
+	oneSegment.facade_planes = [{ ...oneSegment.facade_planes[0], end_corner_id: oneSegment.facade_planes[0].start_corner_id }];
+	oneSegment.segments = structuredClone(oneSegment.facade_planes);
+	const omitted = structuredClone(authority);
+	omitted.facade_planes = omitted.facade_planes.slice(1);
+	omitted.segments = structuredClone(omitted.facade_planes);
+	const extra = structuredClone(authority);
+	extra.facade_planes.push({ ...extra.facade_planes[0], segment_id: "forged-extra-segment" });
+	extra.segments = structuredClone(extra.facade_planes);
+	const reordered = structuredClone(authority);
+	reordered.facade_planes = [...reordered.facade_planes.slice(1), reordered.facade_planes[0]];
+	reordered.segments = structuredClone(reordered.facade_planes);
+	const mutated = structuredClone(authority);
+	mutated.facade_planes[0].extent_m[0] += 0.01;
+	mutated.segments = structuredClone(mutated.facade_planes);
+	const downgraded = { facade_planes: authority.facade_planes.slice(0, 4).map((plane: any) => ({
+		view: plane.view, origin: plane.origin, normal: plane.normal, extent_m: plane.extent_m,
+	})) };
+	for (const forged of [oneSegment, omitted, extra, reordered, mutated, downgraded]) {
+		assert.throws(() => buildPunchedFacadeDetails({
+			mesh: source, floorGuides: floors, facadePlanes: forged, grammar: realGrammar,
+		}), /segment authority/i);
+	}
+	const reversedShell = { ...source, triangles: source.triangles.map((triangle: number[]) => [...triangle].reverse()) };
+	assert.throws(() => buildPunchedFacadeDetails({
+		mesh: reversedShell, floorGuides: floors, facadePlanes: downgraded, grammar: realGrammar,
+	}), /approved|orientation|winding/i);
+});
+
+function facadeBackingMesh(plane: { origin: number[]; normal: number[]; extent_m: number[] }, backingDepth = 1) {
 	const tangent = [-plane.normal[1], plane.normal[0], 0];
 	const point = (u: number, v: number, depth: number) => plane.origin.map((value, axis) => (
 		value + tangent[axis] * u + (axis === 2 ? v : 0) - plane.normal[axis] * depth
@@ -90,7 +127,7 @@ function facadeBackingMesh(plane: { origin: number[]; normal: number[]; extent_m
 	return {
 		vertices: [
 			point(0, 0, 0), point(width, 0, 0), point(width, height, 0), point(0, height, 0),
-			point(0, 0, 1), point(width, 0, 1), point(width, height, 1), point(0, height, 1),
+			point(0, 0, backingDepth), point(width, 0, backingDepth), point(width, height, backingDepth), point(0, height, backingDepth),
 		],
 		triangles: [
 			[0, 1, 2], [0, 2, 3], [4, 6, 5], [4, 7, 6],
@@ -187,30 +224,36 @@ test("creates deterministic, decodable procedural PBR maps", async () => {
 
 test("accepts the deterministic bay-count boundary and independently rejects bay-count and facade-width overruns", () => {
 	const boundaryPlane = { ...facadePlanes.facade_planes[0], extent_m: [115.2, 6.6] };
+	const boundaryMesh = facadeBackingMesh(boundaryPlane, 2);
 	assert.ok(buildPunchedFacadeDetails({
-		mesh: facadeBackingMesh(boundaryPlane), floorGuides, facadePlanes: { facade_planes: [boundaryPlane] }, grammar: { ...grammar, bay_width_m: 0.9, window_width_m: 0.6 },
+		mesh: boundaryMesh, floorGuides, facadePlanes: (punchedFacade as any).deriveFacadeSegmentsFromMass({ mesh: boundaryMesh }), grammar: { ...grammar, bay_width_m: 0.9, window_width_m: 0.6 },
 	}).length > 0);
+	const bayOverrunPlane = { ...boundaryPlane, extent_m: [116.1, 6.6] };
+	const bayOverrunMesh = facadeBackingMesh(bayOverrunPlane);
 	assert.throws(() => buildPunchedFacadeDetails({
-		mesh,
+		mesh: bayOverrunMesh,
 		floorGuides,
-		facadePlanes: { facade_planes: [{ ...boundaryPlane, extent_m: [116.1, 6.6] }] },
+		facadePlanes: (punchedFacade as any).deriveFacadeSegmentsFromMass({ mesh: bayOverrunMesh }),
 		grammar: { ...grammar, bay_width_m: 0.9, window_width_m: 0.6 },
 	}), /facade bay count budget exceeded/i);
+	const widthOverrunPlane = { ...boundaryPlane, extent_m: [120.1, 6.6] };
+	const widthOverrunMesh = facadeBackingMesh(widthOverrunPlane);
 	assert.throws(() => buildPunchedFacadeDetails({
-		mesh,
+		mesh: widthOverrunMesh,
 		floorGuides,
-		facadePlanes: { facade_planes: [{ ...boundaryPlane, extent_m: [120.1, 6.6] }] },
+		facadePlanes: (punchedFacade as any).deriveFacadeSegmentsFromMass({ mesh: widthOverrunMesh }),
 		grammar,
 	}), /facade width budget exceeded/i);
 });
 
 test("rejects excessive dense floor guides and projected detail primitives before constructing output", () => {
 	const boundaryGuides = { floor_guides_m: Array.from({ length: 65 }, (_, index) => index * 3.3) };
-	const boundaryPlane = { ...facadePlanes.facade_planes[0], extent_m: [8, boundaryGuides.floor_guides_m.at(-1)] };
+	const boundaryPlane = { ...facadePlanes.facade_planes[0], extent_m: [4, boundaryGuides.floor_guides_m.at(-1)] };
+	const boundaryMesh = facadeBackingMesh(boundaryPlane, 4);
 	assert.ok(buildPunchedFacadeDetails({
-		mesh: facadeBackingMesh(boundaryPlane),
+		mesh: boundaryMesh,
 		floorGuides: boundaryGuides,
-		facadePlanes: { facade_planes: [boundaryPlane] },
+		facadePlanes: (punchedFacade as any).deriveFacadeSegmentsFromMass({ mesh: boundaryMesh }),
 		grammar,
 	}).length > 0);
 	const excessiveGuides = { floor_guides_m: Array.from({ length: 66 }, (_, index) => index * 3.3) };
@@ -222,19 +265,17 @@ test("rejects excessive dense floor guides and projected detail primitives befor
 	}), /floor guide budget exceeded/i);
 
 	const manyFloors = { floor_guides_m: Array.from({ length: 6 }, (_, index) => index * 3.3) };
-	const widePlanes = { facade_planes: facadePlanes.facade_planes.concat([
-		{ view: "back", origin: [4, 2, 0], normal: [0, 1, 0], extent_m: [40, 16.5] },
-		{ view: "left", origin: [-4, 2, 0], normal: [-1, 0, 0], extent_m: [40, 16.5] },
-	]).map((plane) => ({ ...plane, extent_m: [40, 16.5] })) };
+	const wideMesh = { ...mesh, vertices: mesh.vertices.map(([x, y, z]) => [x * 5, y * 10, z * 2.5]) };
+	const widePlanes = (punchedFacade as any).deriveFacadeSegmentsFromMass({ mesh: wideMesh });
 	assert.throws(() => buildPunchedFacadeDetails({
-		mesh, floorGuides: manyFloors, facadePlanes: widePlanes, grammar: { ...grammar, bay_width_m: 0.9, window_width_m: 0.6 },
+		mesh: wideMesh, floorGuides: manyFloors, facadePlanes: widePlanes, grammar: { ...grammar, bay_width_m: 0.9, window_width_m: 0.6 },
 	}), /detail primitive budget exceeded/i);
 });
 
 test("rejects sparse typed geometry inputs and texture allocations beyond the deterministic byte budget", () => {
 	const sparsePlanes = [];
 	sparsePlanes.length = 1;
-	assert.throws(() => buildPunchedFacadeDetails({ mesh, floorGuides, facadePlanes: { facade_planes: sparsePlanes }, grammar }), /dense/i);
+	assert.throws(() => buildPunchedFacadeDetails({ mesh, floorGuides, facadePlanes: { facade_planes: sparsePlanes }, grammar }), /segment authority/i);
 	assert.throws(() => createFacadePbrMaps({ grammar, resolution: 2049 }), /texture byte budget exceeded/i);
 });
 
@@ -244,7 +285,7 @@ test("rejects high-incidence non-manifold MASS without overflowing the component
 		() => buildPunchedFacadeDetails({ mesh: frontTriangle, floorGuides, facadePlanes: { facade_planes: [facadePlanes.facade_planes[0]] }, grammar }),
 		(error: Error) => {
 			assert.doesNotMatch(error.message, /Maximum call stack/i);
-			assert.match(error.message, /exact-MASS backing/i);
+			assert.match(error.message, /closed shell/i);
 			return true;
 		},
 	);
@@ -254,7 +295,7 @@ test("rejects procedural facade planes that have no positive-area exact-MASS bac
 	const detached = { ...facadePlanes.facade_planes[0], origin: [-4, -20, 0] };
 	assert.throws(
 		() => buildPunchedFacadeDetails({ mesh, floorGuides, facadePlanes: { facade_planes: [detached] }, grammar }),
-		/lacks exact-MASS backing/i,
+		/segment authority/i,
 	);
 });
 
@@ -267,7 +308,7 @@ test("rejects a facade plane whose outward normal points through opaque MASS", (
 	};
 	assert.throws(
 		() => buildPunchedFacadeDetails({ mesh, floorGuides, facadePlanes: { facade_planes: [inwardFront] }, grammar }),
-		/outward orientation/i,
+		/segment authority/i,
 	);
 });
 
@@ -279,7 +320,7 @@ test("rejects reversed facade orientation when the supporting MASS component is 
 	const inwardFront = { ...facadePlanes.facade_planes[0], origin: [4, -2, 0], normal: [0, 1, 0] };
 	assert.throws(
 		() => buildPunchedFacadeDetails({ mesh: openReversedMass, floorGuides, facadePlanes: { facade_planes: [inwardFront] }, grammar }),
-		/(closed MASS|outward orientation)/i,
+		/(closed (?:MASS|shell)|outward orientation)/i,
 	);
 });
 
@@ -293,7 +334,7 @@ test("rejects inward facade orientation on an oppositely wound disconnected MASS
 	const inwardFront = { ...facadePlanes.facade_planes[0], origin: [24, 18, 0], normal: [0, 1, 0] };
 	assert.throws(
 		() => buildPunchedFacadeDetails({ mesh: mixedMass, floorGuides, facadePlanes: { facade_planes: [inwardFront] }, grammar }),
-		/outward orientation/i,
+		/one connected component/i,
 	);
 });
 
@@ -303,7 +344,7 @@ test("rejects duplicate coplanar MASS triangles that double-count missing backin
 	incomplete.triangles = incomplete.triangles.concat(incomplete.triangles.map((triangle) => [...triangle]));
 	assert.throws(
 		() => buildPunchedFacadeDetails({ mesh: incomplete, floorGuides, facadePlanes: { facade_planes: [plane] }, grammar }),
-		/lacks exact-MASS backing/i,
+		/closed shell/i,
 	);
 });
 
@@ -313,7 +354,7 @@ test("rejects opposite-winding duplicate MASS triangles that counterfeit full ba
 	const incomplete = { vertices: backing.vertices.slice(0, 3), triangles: [[0, 1, 2], [2, 1, 0]] };
 	assert.throws(
 		() => buildPunchedFacadeDetails({ mesh: incomplete, floorGuides, facadePlanes: { facade_planes: [plane] }, grammar }),
-		/lacks exact-MASS backing/i,
+		/shell volume is zero/i,
 	);
 });
 
@@ -328,14 +369,14 @@ test("rejects opposite-winding subdivided MASS triangles that counterfeit full b
 	};
 	assert.throws(
 		() => buildPunchedFacadeDetails({ mesh: incomplete, floorGuides, facadePlanes: { facade_planes: [plane] }, grammar }),
-		/lacks exact-MASS backing/i,
+		/shell volume is zero/i,
 	);
 });
 
 test("counts authoritative MASS vertices and indices in the pre-allocation output budget", () => {
 	const largeMass = { ...mesh, vertices: mesh.vertices.concat(Array.from({ length: 79_692 }, () => [0, 0, 0])) };
 	assert.throws(
-		() => buildPunchedFacadeDetails({ mesh: largeMass, floorGuides, facadePlanes: { facade_planes: [facadePlanes.facade_planes[0]] }, grammar }),
+		() => buildPunchedFacadeDetails({ mesh: largeMass, floorGuides, facadePlanes: (punchedFacade as any).deriveFacadeSegmentsFromMass({ mesh: largeMass }), grammar }),
 		/facade vertex budget exceeded/i,
 	);
 });
@@ -343,9 +384,8 @@ test("counts authoritative MASS vertices and indices in the pre-allocation outpu
 test("rejects coordinates whose facade joints collapse after Float32 persistence", () => {
 	const translation = 1_000_000;
 	const translatedMesh = { ...mesh, vertices: mesh.vertices.map((point) => [point[0] + translation, point[1], point[2]]) };
-	const translatedPlane = { ...facadePlanes.facade_planes[0], origin: [facadePlanes.facade_planes[0].origin[0] + translation, -2, 0] };
 	assert.throws(
-		() => buildPunchedFacadeDetails({ mesh: translatedMesh, floorGuides, facadePlanes: { facade_planes: [translatedPlane] }, grammar }),
+		() => buildPunchedFacadeDetails({ mesh: translatedMesh, floorGuides, facadePlanes: (punchedFacade as any).deriveFacadeSegmentsFromMass({ mesh: translatedMesh }), grammar }),
 		/Float32 separation budget exceeded/i,
 	);
 });

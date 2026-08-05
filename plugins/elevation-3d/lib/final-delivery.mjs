@@ -93,7 +93,7 @@ function memoryRecord(run, browser, deliveryRoot) {
 	};
 }
 
-export async function deliverSelectedAllViews({ runDir, candidateId, artifact, input, signal, lifecycle, deps = {} }) {
+export async function deliverSelectedAllViews({ runDir, candidateId, artifact, validation, validationReceipt, input, signal, lifecycle, deps = {} }) {
 	throwIfAborted(signal);
 	const deliveryRoot = join(resolve(runDir), "delivery");
 	const cameras = deriveDeliveryCameras(input);
@@ -107,6 +107,9 @@ export async function deliverSelectedAllViews({ runDir, candidateId, artifact, i
 			sourceMesh: input.mesh,
 			floorGuides: input.floor_guides,
 			facadePlanes: input.facade_planes,
+			facadeSegmentAuthority: input.facade_segment_authority,
+			facadeValidation: validation,
+			facadeValidationReceipt: validationReceipt?.path ? { ...validationReceipt, path: join(resolve(runDir), validationReceipt.path) } : null,
 			cameras,
 			palette: resolveMaterialPalette("competition-warm"),
 			candidateId,

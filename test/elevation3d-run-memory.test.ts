@@ -61,7 +61,7 @@ test("persists one safe idempotent facade-agent comparison event with run-relati
 				status: "accepted",
 				generation: { status: "succeeded", request_sha256: "2".repeat(64), artifact_sha256: "3".repeat(64), api_key: `${credentialPrefix}memory-must-drop` },
 				grammar: { status: "succeeded", path: "providers/gpt-image-2/grammar.json", artifact_sha256: "4".repeat(64), actual_usd: 0.04 },
-				versions: [{ id: "v001", status: "rejected", artifact: { path: "providers/gpt-image-2/artifacts/v001.glb", sha256: "5".repeat(64) }, validation: { accepted: false, codes: ["DETAIL_BOUNDS_EXCEEDED"], retryable: true, metrics: { maximum_bounds_excess_m: 0.2 } } }, { id: "v002", status: "accepted", artifact: { path: join(runDir, "providers", "gpt-image-2", "artifacts", "v002.glb"), sha256: "6".repeat(64) }, validation: { accepted: true, codes: [], retryable: false, metrics: { canonical_surface_match: 1, minimum_reveal_depth_m: 0.15, detail_primitive_count: 120 } } }],
+				versions: [{ id: "v001", status: "rejected", artifact: { path: "providers/gpt-image-2/artifacts/v001.glb", sha256: "5".repeat(64) }, validation: { accepted: false, codes: ["DETAIL_BOUNDS_EXCEEDED"], retryable: true, metrics: { maximum_bounds_excess_m: 0.2, maximum_outward_depth_m: 0.25, allowed_outward_depth_m: 0.2 } } }, { id: "v002", status: "accepted", artifact: { path: join(runDir, "providers", "gpt-image-2", "artifacts", "v002.glb"), sha256: "6".repeat(64) }, validation: { accepted: true, codes: [], retryable: false, metrics: { canonical_surface_match: 1, minimum_reveal_depth_m: 0.15, detail_primitive_count: 120 } } }],
 				score: { status: "scored", score: 97.4, components: { implementability: 100, multiview: 100, grammar: 97, visual: 86 }, sha256: "7".repeat(64) },
 			},
 			"nano-banana-pro": {
@@ -98,6 +98,8 @@ test("persists one safe idempotent facade-agent comparison event with run-relati
 	assert.equal(event.retry_policy, "two-local-attempts-no-image-resubmit");
 	assert.equal(event.providers["gpt-image-2"].attempts.length, 2);
 	assert.equal(event.providers["gpt-image-2"].attempts[1].artifact.path, "providers/gpt-image-2/artifacts/v002.glb");
+	assert.equal(event.providers["gpt-image-2"].attempts[0].validation.metrics.maximum_outward_depth_m, 0.25);
+	assert.equal(event.providers["gpt-image-2"].attempts[0].validation.metrics.allowed_outward_depth_m, 0.2);
 	assert.equal(event.delivery.viewer.path, "delivery/viewer/index.html");
 	assert.equal(JSON.stringify(event).includes(credentialPrefix), false);
 	assert.equal(JSON.stringify(event).includes("signedUrl"), false);

@@ -8,9 +8,11 @@ import sharp from "sharp";
 import { loadCandidatePackage, sha256, stableJson } from "../plugins/elevation-3d/lib/core.mjs";
 import {
 	buildFacadeEvidencePack,
+	readVerifiedFacadeEvidenceAuthority,
 	verifyFacadeEvidencePack,
 } from "../plugins/elevation-3d/lib/facade-agent/evidence.mjs";
 import { renderFacadeEvidencePasses } from "../plugins/elevation-3d/lib/facade-agent/evidence-renderer.mjs";
+import { deriveFacadeSegmentsFromMass } from "../plugins/elevation-3d/lib/facade-agent/punched-facade.mjs";
 
 const DATASET_ROOT = process.env.ELEVATION3D_DATASET_ROOT ?? "D:/Data/50_ELE/MAAS_ELEVATION_TEST_SET_20260730";
 const VIEW_NAMES = ["front", "right", "back", "left", "top", "axon", "opposite-axon"];
@@ -51,6 +53,7 @@ async function withTemporaryDirectory(run: (root: string) => Promise<void>) {
 test("builds a 35-image immutable evidence pack and rejects changed source hashes", async () => {
 	await withTemporaryDirectory(async (root) => {
 		const input = await loadCandidatePackage(DATASET_ROOT, "creative-020");
+		input.facade_segment_authority = deriveFacadeSegmentsFromMass({ mesh: input.mesh });
 		const fixturePng = join(root, "fixture.png");
 		await sharp({ create: { width: 2, height: 2, channels: 3, background: { r: 120, g: 130, b: 140 } } }).png().toFile(fixturePng);
 		let renderRequest: any;
@@ -66,6 +69,8 @@ test("builds a 35-image immutable evidence pack and rejects changed source hashe
 
 		assert.equal(pack.manifest.candidate_id, "creative-020");
 		assert.equal(pack.manifest.geometry_hash, input.identity.geometry_hash);
+		assert.equal(pack.manifest.geometry_signed_volume_orientation, 1);
+		assert.equal(pack.manifest.facade_segment_authority_sha256, input.facade_segment_authority.sha256);
 		assert.deepEqual(pack.manifest.floor_guides_m, input.floor_guides.floor_guides_m);
 		assert.equal(Object.keys(pack.manifest.artifacts).length, 35);
 		assert.equal(pack.manifest.contact_sheet.sha256.length, 64);
@@ -73,7 +78,12 @@ test("builds a 35-image immutable evidence pack and rejects changed source hashe
 		assert.deepEqual(Object.keys(renderRequest.cameras), VIEW_NAMES);
 		assert.strictEqual(renderRequest.mesh, input.mesh);
 		assert.equal(pack.manifestSha256, sha256(await readFile(pack.manifestPath)));
-		assert.equal((await verifyFacadeEvidencePack({ manifestPath: pack.manifestPath, input })).manifestSha256, pack.manifestSha256);
+		const verified = await verifyFacadeEvidencePack({ manifestPath: pack.manifestPath, input });
+		assert.equal(verified.manifestSha256, pack.manifestSha256);
+		assert.deepEqual(readVerifiedFacadeEvidenceAuthority(verified)?.facadeSegmentAuthority, {
+			sha256: input.facade_segment_authority.sha256,
+			segmentIds: input.facade_segment_authority.facade_planes.map((segment: any) => segment.segment_id),
+		});
 
 		input.artifacts[0].sha256 = "0".repeat(64);
 		await assert.rejects(

@@ -503,6 +503,11 @@ export async function extractFacadeGrammar(input) {
 		candidateId: controls.candidateId,
 		geometryHash: verified.authority.geometryHash,
 		geometryContentSha256: verified.authority.geometryContentSha256,
+		geometrySignedVolumeOrientation: verified.authority.geometrySignedVolumeOrientation,
+		facadeSegmentAuthority: verified.authority.facadeSegmentAuthority ? Object.freeze({
+			sha256: verified.authority.facadeSegmentAuthority.sha256,
+			segmentIds: Object.freeze([...verified.authority.facadeSegmentAuthority.segmentIds]),
+		}) : null,
 		provider: controls.proposalProvider,
 		evidenceManifestSha256: verified.authority.manifestSha256,
 		camerasSha256: verified.authority.camerasSha256,

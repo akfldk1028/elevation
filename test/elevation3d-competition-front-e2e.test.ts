@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { Document, NodeIO } from "@gltf-transform/core";
 import sharp from "sharp";
 import { renderCompetitionElevation } from "../plugins/elevation-3d/lib/competition-elevation.mjs";
 import { sha256 } from "../plugins/elevation-3d/lib/core.mjs";
@@ -28,6 +29,18 @@ async function inputs() {
 	const camera = { name: "front", identity: cameras.identity, ...cameras.views.front };
 	const dimensions = await deriveElevationDimensions({ sourceMesh, floorGuides, facadePlanes, artifact: { path: assets.selectedGlb, sha256: sha256(glbBytes) }, view: camera });
 	return { sourceMesh, floorGuides, facadePlanes, camera, dimensions };
+}
+
+async function writeCurtainWallSpoof(path: string, nodeName: string) {
+	const document = new Document();
+	const buffer = document.createBuffer();
+	const positions = document.createAccessor().setType("VEC3").setArray(new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0])).setBuffer(buffer);
+	const indices = document.createAccessor().setType("SCALAR").setArray(new Uint16Array([0, 1, 2])).setBuffer(buffer);
+	const material = document.createMaterial("glass").setAlphaMode("BLEND");
+	const primitive = document.createPrimitive().setAttribute("POSITION", positions).setIndices(indices).setMaterial(material).setExtras({ kind: "glazing" });
+	const node = document.createNode(nodeName).setMesh(document.createMesh("curtain-wall").addPrimitive(primitive));
+	document.createScene().addChild(node);
+	await new NodeIO().write(path, document);
 }
 
 test("renders and accepts a dimensioned creative-013 front with complete provenance", { timeout: 180_000 }, async () => {
@@ -135,4 +148,35 @@ test("rejects a one-millimetre dimension tamper and visible seam overload", asyn
 	assert.ok(report.codes.includes("DIMENSION_MISMATCH"));
 	assert.ok(report.codes.includes("LINE_DENSITY_EXCEEDED"));
 	assert.ok(report.codes.includes("TRIANGULATION_VISIBLE"));
+});
+
+test("does not relax dark-pixel limits for renamed or facade-details curtain-wall spoofs", async () => {
+	const root = await mkdtemp(join(tmpdir(), "elevation3d-typed-spoof-")); roots.push(root);
+	const input = await inputs();
+	for (const nodeName of ["facade-details", "renamed-facade-details"]) {
+		const glbPath = join(root, `${nodeName}.glb`);
+		await writeCurtainWallSpoof(glbPath, nodeName);
+		const glbHash = sha256(await readFile(glbPath));
+		const report = await validateCompetitionElevation({
+			artifacts: {
+				base: {
+					width: 2400, height: 2400, selected_glb_sha256: glbHash, typed_facade: true,
+					camera: { ...input.camera, type: "orthographic", px_per_m_x: 80, px_per_m_y: 80 },
+					content_bounds_px: { min_x: 216, min_y: 800, max_x: 2183, max_y: 1599 },
+					diagnostics: {
+						dark_pixel_fraction: 0.2, total_edge_density: 0.02, strong_edge_density: 0.02,
+						same_material_seam_fraction: 0, seam_segments: { connected_at_least_12px: 0 },
+						role_pixel_counts: { concrete: 1, glass: 1, bronze: 1, opaque: 1 },
+					},
+				},
+				dimensions: { ...input.dimensions, selected_glb_sha256: glbHash },
+				annotation: { overlaps_content: false, overlaps_annotations: false, min_page_clearance_px: 48 },
+			},
+			sourceMesh: input.sourceMesh, facadePlanes: input.facadePlanes, floorGuides: input.floorGuides,
+			view: input.camera, selectedGlbPath: glbPath,
+		});
+		assert.ok(report.codes.includes("MATERIAL_VISIBILITY_INVALID"), `${nodeName} spoof relaxed the dark-pixel limit`);
+		assert.equal(report.metrics.typed_facade_artifact, false);
+		assert.equal(report.metrics.typed_facade_receipt_bound, false);
+	}
 });

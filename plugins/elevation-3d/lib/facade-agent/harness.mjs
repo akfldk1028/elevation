@@ -682,7 +682,10 @@ async function buildAndValidateProvider({ config, deps, runDir, run, state, prov
 				state.status = scoreResult?.accepted === true ? "accepted" : "rejected";
 				if (state.status === "rejected") state.failure = { code: scoreResult?.reason ?? "SCORE_REJECTED", message: "Authorized scoring rejected the provider" };
 				await writeProvider(runDir, run, config, provider, state, deps, { stage: "score-receipt", status: "succeeded", provider, receipt_sha256: state.score_receipt.receipt_sha256 });
-				return { state, scoreResult: scoreResult?.accepted === true ? scoreResult : null, selectedArtifact: artifact };
+				return {
+					state, scoreResult: scoreResult?.accepted === true ? scoreResult : null,
+					selectedArtifact: artifact, selectedValidation: validation, selectedValidationReceipt: version.validation_receipt,
+				};
 			}
 			if (!retryable || attempt === config.maxLocalAttempts) {
 				state.status = "rejected";
@@ -941,6 +944,8 @@ async function executeFacade(config, deps, stopAfterStage = null) {
 
 		const scores = [];
 		const selectedArtifacts = {};
+		const selectedValidations = {};
+		const selectedValidationReceipts = {};
 		for (const provider of normalized.providers) {
 			const processed = await buildAndValidateProvider({
 				config: normalized, deps, runDir, run, state: states[provider], provider,
@@ -949,6 +954,8 @@ async function executeFacade(config, deps, stopAfterStage = null) {
 			states[provider] = processed.state;
 			if (processed.scoreResult) scores.push(processed.scoreResult);
 			if (processed.selectedArtifact) selectedArtifacts[provider] = processed.selectedArtifact;
+			if (processed.selectedValidation) selectedValidations[provider] = processed.selectedValidation;
+			if (processed.selectedValidationReceipt) selectedValidationReceipts[provider] = processed.selectedValidationReceipt;
 			if (processed.cancelled) return terminalCancellation(runDir, run, normalized, deps, provider);
 		}
 		if (stopAfterStage === "build") return readFacadeAgentStatus(runDir);
@@ -981,7 +988,9 @@ async function executeFacade(config, deps, stopAfterStage = null) {
 				artifact = await authorizeGlb(runDir, artifact);
 				const delivery = await deps.renderDelivery({
 					runDir, candidateId: normalized.candidateId, provider: decision.provider,
-					artifact, input: candidate, signal, lifecycle: deps.lifecycle,
+					artifact, validation: selectedValidations[decision.provider],
+					validationReceipt: selectedValidationReceipts[decision.provider],
+					input: candidate, signal, lifecycle: deps.lifecycle,
 				});
 				await callLifecycle(deps, { stage: "delivery", status: "returned", provider: decision.provider, selected_glb_sha256: artifact.sha256 });
 				run.delivery = {
