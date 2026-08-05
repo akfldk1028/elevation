@@ -28,6 +28,14 @@ function dot(left, right) {
 	return left.reduce((sum, value, axis) => sum + value * right[axis], 0);
 }
 
+function cross(left, right) {
+	return [
+		left[1] * right[2] - left[2] * right[1],
+		left[2] * right[0] - left[0] * right[2],
+		left[0] * right[1] - left[1] * right[0],
+	];
+}
+
 function finitePoint(value, dimensions = 3) {
 	return denseArray(value) && value.length === dimensions && value.every(Number.isFinite);
 }
@@ -63,6 +71,54 @@ function validateSourceMesh(mesh) {
 		];
 		if (Math.hypot(...cross) <= EPSILON) throw new TypeError("invalid facade source geometry: degenerate triangle");
 	}
+}
+
+function massComponentOrientations(mesh) {
+	const edges = new Map();
+	const triangleEdges = mesh.triangles.map((triangle, triangleIndex) => triangle.map((start, index) => {
+		const end = triangle[(index + 1) % 3];
+		const forward = start < end;
+		const key = forward ? `${start}|${end}` : `${end}|${start}`;
+		const entries = edges.get(key) ?? [];
+		entries.push({ triangleIndex, direction: forward ? 1 : -1 });
+		edges.set(key, entries);
+		return key;
+	}));
+	const adjacent = Array.from({ length: mesh.triangles.length }, () => []);
+	for (const entries of edges.values()) for (let index = 1; index < entries.length; index++) {
+		adjacent[entries[0].triangleIndex].push(entries[index].triangleIndex);
+		adjacent[entries[index].triangleIndex].push(entries[0].triangleIndex);
+	}
+	const orientations = Array(mesh.triangles.length).fill(null);
+	const visited = new Set();
+	for (let start = 0; start < mesh.triangles.length; start++) {
+		if (visited.has(start)) continue;
+		const component = [];
+		const stack = [start];
+		while (stack.length) {
+			const triangleIndex = stack.pop();
+			if (visited.has(triangleIndex)) continue;
+			visited.add(triangleIndex);
+			component.push(triangleIndex);
+			for (const neighbor of adjacent[triangleIndex]) stack.push(neighbor);
+		}
+		const componentEdges = new Set(component.flatMap((triangleIndex) => triangleEdges[triangleIndex]));
+		const closedAndConsistent = [...componentEdges].every((key) => {
+			const entries = edges.get(key);
+			return entries.length === 2 && entries[0].direction + entries[1].direction === 0;
+		});
+		if (!closedAndConsistent) continue;
+		const reference = mesh.vertices[mesh.triangles[component[0]][0]];
+		let signedVolume = 0;
+		for (const triangleIndex of component) {
+			const [a, b, c] = mesh.triangles[triangleIndex]
+				.map((vertex) => mesh.vertices[vertex].map((value, axis) => value - reference[axis]));
+			signedVolume += dot(a, cross(b, c)) / 6;
+		}
+		if (Math.abs(signedVolume) <= EPSILON) continue;
+		for (const triangleIndex of component) orientations[triangleIndex] = Math.sign(signedVolume);
+	}
+	return orientations;
 }
 
 function validatePlanes(facadePlanes, grammar) {
@@ -122,16 +178,23 @@ function polygonArea2d(polygon) {
 	return Math.abs(polygonSignedArea2d(polygon));
 }
 
-function massSupportTriangles(mesh, plane, tangent) {
+function massSupportTriangles(mesh, plane, tangent, componentOrientations) {
 	const support = [];
-	for (const triangle of mesh.triangles) {
-		const local = triangle.map((index) => {
-			const point = mesh.vertices[index];
+	for (let triangleIndex = 0; triangleIndex < mesh.triangles.length; triangleIndex++) {
+		const triangle = mesh.triangles[triangleIndex];
+		const points = triangle.map((index) => mesh.vertices[index]);
+		const local = points.map((point) => {
 			const relative = point.map((value, axis) => value - plane.origin[axis]);
 			return [dot(relative, tangent), point[2] - plane.origin[2], dot(relative, plane.normal)];
 		});
 		if (local.every((point) => Math.abs(point[2]) <= 1e-5) && polygonArea2d(local.map(([u, v]) => [u, v])) > EPSILON) {
-			support.push(local.map(([u, v]) => [u, v]));
+			const ab = points[1].map((value, axis) => value - points[0][axis]);
+			const ac = points[2].map((value, axis) => value - points[0][axis]);
+			support.push({
+				projected: local.map(([u, v]) => [u, v]),
+				worldNormal: cross(ab, ac),
+				componentOrientation: componentOrientations[triangleIndex],
+			});
 		}
 	}
 	return support;
@@ -153,7 +216,7 @@ function massBackingCoverage(support, bounds) {
 	let winding = 0;
 	const edges = new Map();
 	const triangles = new Set();
-	for (const triangle of support) {
+	for (const { projected: triangle } of support) {
 		let clipped = clipPolygon2d(triangle, 0, bounds.u0, true);
 		clipped = clipPolygon2d(clipped, 0, bounds.u1, false);
 		clipped = clipPolygon2d(clipped, 1, bounds.v0, true);
@@ -190,16 +253,32 @@ function massBackingCoverage(support, bounds) {
 	return { coveredArea, targetArea };
 }
 
-function validateMassBacking(mesh, plane, tangent) {
-	const coverage = massBackingCoverage(massSupportTriangles(mesh, plane, tangent), {
+function validateMassBacking(mesh, plane, tangent, componentOrientations) {
+	const bounds = {
 		u0: 0,
 		u1: plane.extent_m[0],
 		v0: 0,
 		v1: plane.extent_m[1],
+	};
+	const support = massSupportTriangles(mesh, plane, tangent, componentOrientations).filter(({ projected }) => {
+		let clipped = clipPolygon2d(projected, 0, bounds.u0, true);
+		clipped = clipPolygon2d(clipped, 0, bounds.u1, false);
+		clipped = clipPolygon2d(clipped, 1, bounds.v0, true);
+		clipped = clipPolygon2d(clipped, 1, bounds.v1, false);
+		return clipped.length >= 3 && polygonArea2d(clipped) > EPSILON;
 	});
+	const coverage = massBackingCoverage(support, bounds);
 	if (coverage.targetArea <= EPSILON
 		|| Math.abs(coverage.coveredArea - coverage.targetArea) > Math.max(EPSILON, coverage.targetArea * 1e-6)) {
 		throw new TypeError("invalid facade geometry: detail lacks exact-MASS backing");
+	}
+	if (support.some(({ componentOrientation }) => componentOrientation === null)) {
+		throw new TypeError("invalid facade geometry: supporting facade requires a closed MASS component");
+	}
+	if (support.some(({ worldNormal, componentOrientation }) => (
+		dot(worldNormal, plane.normal) * componentOrientation / Math.hypot(...worldNormal) < 1 - 1e-6
+	))) {
+		throw new TypeError("invalid facade geometry: facade plane requires outward orientation");
 	}
 	return coverage;
 }
@@ -448,6 +527,7 @@ function emitBay(details, plane, tangent, grammar, region, floor, nextFloor, bay
 export function buildPunchedFacadeDetails({ mesh, floorGuides, facadePlanes, grammar }) {
 	const floors = validateFloorGuideBudget(floorGuides);
 	validateSourceMesh(mesh);
+	const componentOrientations = massComponentOrientations(mesh);
 	const canonical = validatePunchedFacadeGrammar(grammar, { floorGuides, allowDerived: true });
 	const planes = validatePlanes(facadePlanes, canonical);
 	assertFloat32Separation(floors, planes);
@@ -460,7 +540,7 @@ export function buildPunchedFacadeDetails({ mesh, floorGuides, facadePlanes, gra
 			throw new TypeError("invalid facade geometry: floor guides exceed a facade plane extent");
 		}
 		const tangent = [-plane.normal[1], plane.normal[0], 0];
-		const massBacking = validateMassBacking(mesh, plane, tangent);
+		const massBacking = validateMassBacking(mesh, plane, tangent, componentOrientations);
 		const { regions, ...returnWidths } = bayRegions(plane.extent_m[0], canonical);
 		for (let floorIndex = 0; floorIndex + 1 < floors.length; floorIndex++) {
 			const floor = floors[floorIndex];
