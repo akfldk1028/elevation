@@ -130,6 +130,52 @@ test("verifier rejects noncanonical manifest bytes with unchanged meaning", asyn
 	});
 });
 
+test("verifier rejects a canonically rehashed PNG whose IDAT does not fully decode", async () => {
+	await withTemporaryDirectory(async (root) => {
+		const input = await loadCandidatePackage(DATASET_ROOT, "creative-020");
+		const fixturePng = join(root, "fixture.png");
+		await sharp({ create: { width: 2, height: 2, channels: 3, background: { r: 60, g: 70, b: 80 } } }).png().toFile(fixturePng);
+		const renderPasses = async ({ modes }: any) => Object.fromEntries(modes.flatMap((mode: string) =>
+			VIEW_NAMES.map((view) => [`${mode}:${view}`, fixturePng])));
+		const pack = await buildFacadeEvidencePack({ input, runDir: join(root, "run"), renderPasses });
+		const artifactPath = pack.artifacts["color:front"].path;
+		const truncated = (await readFile(artifactPath)).subarray(0, 70);
+		assert.deepEqual(await sharp(truncated).metadata().then(({ format, width, height }) => [format, width, height]), ["png", 2, 2]);
+		await assert.rejects(() => sharp(truncated).raw().toBuffer());
+		await writeFile(artifactPath, truncated);
+		pack.manifest.artifacts["color:front"].sha256 = sha256(truncated);
+		await writeFile(pack.manifestPath, `${stableJson(pack.manifest)}\n`);
+		await assert.rejects(
+			() => verifyFacadeEvidencePack({ manifestPath: pack.manifestPath, input }),
+			(error: any) => error?.code === "EVIDENCE_ARTIFACT_HASH_MISMATCH",
+		);
+	});
+});
+
+test("verifier fully decodes a canonically rehashed contact sheet before acceptance", async () => {
+	await withTemporaryDirectory(async (root) => {
+		const input = await loadCandidatePackage(DATASET_ROOT, "creative-020");
+		const fixturePng = join(root, "fixture.png");
+		await sharp({ create: { width: 2, height: 2, channels: 3, background: { r: 60, g: 70, b: 80 } } }).png().toFile(fixturePng);
+		const renderPasses = async ({ modes }: any) => Object.fromEntries(modes.flatMap((mode: string) =>
+			VIEW_NAMES.map((view) => [`${mode}:${view}`, fixturePng])));
+		const pack = await buildFacadeEvidencePack({ input, runDir: join(root, "run"), renderPasses });
+		const truncated = (await readFile(pack.contactSheetPath)).subarray(0, 70);
+		assert.deepEqual(
+			await sharp(truncated).metadata().then(({ format, width, height }) => [format, width, height]),
+			["png", pack.manifest.contact_sheet.width, pack.manifest.contact_sheet.height],
+		);
+		await assert.rejects(() => sharp(truncated).raw().toBuffer());
+		await writeFile(pack.contactSheetPath, truncated);
+		pack.manifest.contact_sheet.sha256 = sha256(truncated);
+		await writeFile(pack.manifestPath, `${stableJson(pack.manifest)}\n`);
+		await assert.rejects(
+			() => verifyFacadeEvidencePack({ manifestPath: pack.manifestPath, input }),
+			(error: any) => error?.code === "EVIDENCE_ARTIFACT_HASH_MISMATCH",
+		);
+	});
+});
+
 test("builder rejects an evidence-directory junction without writing through it", async (t) => {
 	await withTemporaryDirectory(async (root) => {
 		const input = await loadCandidatePackage(DATASET_ROOT, "creative-020");

@@ -227,6 +227,20 @@ async function auditStagingTree(root) {
 	}
 }
 
+async function verifyDecodedPixels(bytes, width, height, channels, label) {
+	let decoded;
+	try {
+		decoded = await sharp(bytes).raw().toBuffer({ resolveWithObject: true });
+	} catch {
+		fail("EVIDENCE_ARTIFACT_HASH_MISMATCH", `${label} PNG pixel payload does not fully decode`);
+	}
+	const expectedLength = width * height * channels;
+	if (!Number.isInteger(channels) || channels < 1 || channels > 4 || decoded.info.width !== width || decoded.info.height !== height
+		|| decoded.info.channels !== channels || decoded.data.length !== expectedLength) {
+		fail("EVIDENCE_ARTIFACT_HASH_MISMATCH", `${label} decoded pixel dimensions do not match evidence authority`);
+	}
+}
+
 export async function buildFacadeEvidencePack({ input, runDir, renderPasses = renderFacadeEvidencePasses, signal }) {
 	throwIfAborted(signal);
 	const runRoot = await ensureDirectoryTreeSafe(runDir);
@@ -336,6 +350,7 @@ export async function verifyFacadeEvidencePack({ manifestPath: manifestFile, inp
 		if (metadata.format !== "png" || metadata.width !== record.width || metadata.height !== record.height) {
 			fail("EVIDENCE_ARTIFACT_HASH_MISMATCH", `evidence artifact metadata mismatch: ${key}`);
 		}
+		await verifyDecodedPixels(bytes, record.width, record.height, metadata.channels, `evidence artifact ${key}`);
 	}
 	if (manifest.contact_sheet?.path !== "contact-sheet.png" || !Number.isInteger(manifest.contact_sheet?.width)
 		|| manifest.contact_sheet.width <= 0 || !Number.isInteger(manifest.contact_sheet?.height) || manifest.contact_sheet.height <= 0) {
@@ -348,5 +363,6 @@ export async function verifyFacadeEvidencePack({ manifestPath: manifestFile, inp
 	if (contactSheetMetadata.format !== "png" || contactSheetMetadata.width !== manifest.contact_sheet.width || contactSheetMetadata.height !== manifest.contact_sheet.height) {
 		fail("EVIDENCE_ARTIFACT_HASH_MISMATCH", "contact sheet metadata mismatch");
 	}
+	await verifyDecodedPixels(contactSheetBytes, manifest.contact_sheet.width, manifest.contact_sheet.height, contactSheetMetadata.channels, "contact sheet");
 	return { manifest, manifestPath, manifestSha256: sha256(manifestBytes), contactSheetPath };
 }
