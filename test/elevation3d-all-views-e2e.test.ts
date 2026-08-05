@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import sharp from "sharp";
 import { renderAllViews, validateAllViewsRun, verifyPersistedAllViewsArtifacts } from "../plugins/elevation-3d/lib/all-views.mjs";
 import { sha256 } from "../plugins/elevation-3d/lib/core.mjs";
+import { deriveDeliveryCameras } from "../plugins/elevation-3d/lib/final-delivery.mjs";
 import { resolveMaterialPalette } from "../plugins/elevation-3d/lib/material-palettes.mjs";
 import { resolveElevation3dAssets } from "./helpers/elevation3d-assets.ts";
 
@@ -45,6 +46,19 @@ async function realInputs() {
 		cutElevationM: 1.2,
 	};
 }
+
+test("derived axon cameras retain opposite horizontal depth headings", async () => {
+	const input = await realInputs();
+	const cameras = deriveDeliveryCameras({ mesh: input.sourceMesh, cameras: { identity: input.cameras.front.identity, views: input.cameras } });
+	const horizontalDepth = (camera: any) => {
+		const vector = [camera.target[0] - camera.position[0], camera.target[1] - camera.position[1]];
+		const length = Math.hypot(...vector);
+		return vector.map((value) => value / length);
+	};
+	const axon = horizontalDepth(cameras.axon);
+	const opposite = horizontalDepth(cameras["opposite-axon"]);
+	assert.ok(axon[0] * opposite[0] + axon[1] * opposite[1] < -0.8);
+});
 
 test("packages one inspectable GLB and eight accepted views", { timeout: 600_000 }, async () => {
 	const run = await renderAllViews(await realInputs());
