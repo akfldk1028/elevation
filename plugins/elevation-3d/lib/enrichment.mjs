@@ -2,6 +2,9 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { Document, Material, NodeIO } from "@gltf-transform/core";
+import { PUNCHED_FACADE_SYSTEM } from "./facade-grammar.mjs";
+import { buildPunchedFacadeDetails } from "./facade-agent/punched-facade.mjs";
+import { createFacadePbrMaps } from "./facade-agent/procedural-materials.mjs";
 
 const DETAIL_LIMITS = {
 	frame_depth_m: [0.05, 0.25],
@@ -272,7 +275,10 @@ function facadeDetails(mesh, floorGuides, facadePlanes, grammar) {
 export function buildEnrichedScene({ mesh, floorGuides, facadePlanes, grammar, safeFallback }) {
 	return {
 		base: { positions: mesh.vertices, indices: mesh.triangles },
-		details: safeFallback ? [] : facadeDetails(mesh, floorGuides, facadePlanes, grammar),
+		details: safeFallback ? [] : grammar?.system === PUNCHED_FACADE_SYSTEM
+			? buildPunchedFacadeDetails({ mesh, floorGuides, facadePlanes, grammar })
+			: facadeDetails(mesh, floorGuides, facadePlanes, grammar),
+		grammar,
 	};
 }
 
@@ -281,14 +287,22 @@ const MATERIAL_FACTORS = {
 	glass: { color: [0.72, 0.86, 0.92, 0.28], metallic: 0, roughness: 0.12 },
 	bronze: { color: [0.16, 0.10, 0.06, 1], metallic: 0.75, roughness: 0.30 },
 	opaque: { color: [0.18, 0.20, 0.22, 1], metallic: 0.20, roughness: 0.55 },
+	brick: { color: [0.52, 0.22, 0.15, 1], metallic: 0, roughness: 0.82 },
+	precast: { color: [0.68, 0.66, 0.62, 1], metallic: 0, roughness: 0.76 },
+	"window-frame": { color: [0.12, 0.09, 0.07, 1], metallic: 0.72, roughness: 0.28 },
 };
 
-function createMaterial(document, name) {
+function createMaterial(document, name, textures) {
 	const factors = MATERIAL_FACTORS[name];
+	if (!factors) throw new TypeError(`unsupported facade material: ${name}`);
 	const material = document.createMaterial(name)
 		.setBaseColorFactor(factors.color)
 		.setMetallicFactor(factors.metallic)
 		.setRoughnessFactor(factors.roughness);
+	if (textures) material
+		.setBaseColorTexture(textures.baseColor)
+		.setNormalTexture(textures.normal)
+		.setMetallicRoughnessTexture(textures.metallicRoughness);
 	if (name === "glass") material.setAlphaMode(Material.AlphaMode.BLEND).setDoubleSided(true);
 	return material;
 }
@@ -300,6 +314,10 @@ function indexArray(indices) {
 }
 
 function addPrimitive(document, buffer, mesh, name, geometry, material, extras) {
+	if (!material) throw new TypeError(`missing material for primitive: ${name}`);
+	if (geometry.uvs && geometry.uvs.length !== geometry.positions.length) {
+		throw new TypeError(`invalid facade geometry: ${name} UV count does not match positions`);
+	}
 	const positions = document.createAccessor(`${name}-positions`, buffer)
 		.setType("VEC3")
 		.setArray(new Float32Array(geometry.positions.flat()));
@@ -307,6 +325,12 @@ function addPrimitive(document, buffer, mesh, name, geometry, material, extras) 
 		.setType("SCALAR")
 		.setArray(indexArray(geometry.indices));
 	const primitive = document.createPrimitive().setAttribute("POSITION", positions).setIndices(indices).setMaterial(material);
+	if (geometry.uvs) {
+		const uvs = document.createAccessor(`${name}-uvs`, buffer)
+			.setType("VEC2")
+			.setArray(new Float32Array(geometry.uvs.flat()));
+		primitive.setAttribute("TEXCOORD_0", uvs);
+	}
 	if (extras) primitive.setExtras(extras);
 	mesh.addPrimitive(primitive);
 }
@@ -325,8 +349,25 @@ function geometryBounds(scene) {
 export async function writeEnrichedGlb(scene, outputPath) {
 	const document = new Document();
 	const buffer = document.createBuffer("geometry");
-	const usedMaterialNames = scene.details.length ? ["concrete", "glass", "bronze", "opaque"] : ["concrete"];
-	const materials = Object.fromEntries(usedMaterialNames.map((name) => [name, createMaterial(document, name)]));
+	const punched = scene.details.length > 0 && scene.grammar?.system === PUNCHED_FACADE_SYSTEM;
+	const usedMaterialNames = punched
+		? ["concrete", "brick", "precast", "window-frame", "glass"]
+		: scene.details.length ? ["concrete", "glass", "bronze", "opaque"] : ["concrete"];
+	const pbrMaps = punched ? createFacadePbrMaps({ grammar: scene.grammar, resolution: 2048 }) : null;
+	const pbrTextures = {};
+	const textureProvenance = [];
+	if (pbrMaps) for (const materialName of ["brick", "precast"]) {
+		pbrTextures[materialName] = {};
+		for (const channel of ["baseColor", "normal", "metallicRoughness"]) {
+			const map = pbrMaps[materialName][channel];
+			pbrTextures[materialName][channel] = document.createTexture(map.name)
+				.setImage(map.data)
+				.setMimeType(map.mimeType)
+				.setExtras({ sha256: map.sha256, grammar_sha256: map.grammar_sha256, generator: map.generator });
+			textureProvenance.push({ material: materialName, channel, width: map.width, height: map.height, sha256: map.sha256, grammar_sha256: map.grammar_sha256 });
+		}
+	}
+	const materials = Object.fromEntries(usedMaterialNames.map((name) => [name, createMaterial(document, name, pbrTextures[name])]));
 	const gltfScene = document.createScene("enriched-scene");
 	document.getRoot().setDefaultScene(gltfScene);
 
@@ -337,7 +378,7 @@ export async function writeEnrichedGlb(scene, outputPath) {
 	if (scene.details.length) {
 		const detailMesh = document.createMesh("facade-details");
 		scene.details.forEach((detail, index) => {
-			const { positions, indices, ...extras } = detail;
+			const { positions, indices, uvs, ...extras } = detail;
 			addPrimitive(document, buffer, detailMesh, `detail-${index}`, detail, materials[detail.material], extras);
 		});
 		gltfScene.addChild(document.createNode("facade-details").setMesh(detailMesh));
@@ -361,6 +402,7 @@ export async function writeEnrichedGlb(scene, outputPath) {
 			vertex_count: detail.positions.length, triangle_count: detail.indices.length,
 		})),
 		materials: usedMaterialNames,
+		texture_provenance: textureProvenance,
 		bounds: geometryBounds(scene),
 	};
 }
