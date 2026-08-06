@@ -1,5 +1,3 @@
-import { createHash } from "node:crypto";
-
 import { FacadeProviderError } from "../../../provider.mjs";
 import { normalizeFacadeGrammarResult, readVerifiedFacadeGrammarRequestAuthority } from "../contract.mjs";
 
@@ -186,8 +184,7 @@ export function createProvider(env = {}, options = {}) {
 			});
 		}
 		const grammarCandidate = outputText(payload);
-		const fallbackId = `openai-${createHash("sha256").update(grammarCandidate).digest("hex")}`;
-		const stableRemoteId = typeof remoteId === "string" && remoteId.length > 0 && remoteId.length <= 4_096 && !/[\r\n\0]/.test(remoteId) ? remoteId : fallbackId;
+		const stableRemoteId = typeof remoteId === "string" && remoteId.length > 0 && remoteId.length <= 4_096 && !/[\r\n\0]/.test(remoteId) ? remoteId : null;
 		const reportedCost = payload?.usage?.cost_usd;
 		const actualUsd = reportedCost === undefined ? request.estimateUsd : reportedCost;
 		return normalizeFacadeGrammarResult({

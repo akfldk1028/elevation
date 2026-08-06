@@ -8,6 +8,7 @@ const HASH = /^[a-f0-9]{64}$/;
 const MAX_IMAGE_BYTES = 32 * 1024 * 1024;
 const MAX_PROMPT_BYTES = 128 * 1024;
 const MAX_PLAIN_BYTES = 1024 * 1024;
+const MAX_PLAIN_DEPTH = 32;
 const REQUEST_KEYS = new Set([
 	"provider", "model", "proposalSha256", "evidenceManifestSha256", "promptRevision", "prompt",
 	"promptSha256", "imageBytes", "imageMimeType", "schema", "ceilingUsd", "estimateUsd",
@@ -22,6 +23,15 @@ function fail(code, message, provider = "grammar") {
 		provider,
 		stage: "grammar",
 		definitiveNonSubmission: true,
+	});
+}
+
+function failResult(code, message, provider = "grammar", remoteId = null) {
+	throw new FacadeProviderError(code, message, {
+		provider,
+		stage: "grammar",
+		definitiveNonSubmission: false,
+		remoteId,
 	});
 }
 
@@ -47,6 +57,28 @@ function record(value, label, allowedKeys) {
 	return result;
 }
 
+function resultRecord(value, label, allowedKeys) {
+	if (!value || typeof value !== "object" || Array.isArray(value)) failResult("GRAMMAR_RESPONSE_INVALID", `${label} must be a plain data object`);
+	let prototype;
+	let descriptors;
+	try {
+		prototype = Object.getPrototypeOf(value);
+		descriptors = Object.getOwnPropertyDescriptors(value);
+	} catch {
+		failResult("GRAMMAR_RESPONSE_INVALID", `${label} could not be inspected safely`);
+	}
+	if (prototype !== Object.prototype && prototype !== null) failResult("GRAMMAR_RESPONSE_INVALID", `${label} must be a plain data object`);
+	const result = Object.create(null);
+	for (const key of Reflect.ownKeys(descriptors)) {
+		const descriptor = descriptors[key];
+		if (typeof key !== "string" || !allowedKeys.has(key) || descriptor.get || descriptor.set || !("value" in descriptor)) {
+			failResult("GRAMMAR_RESPONSE_INVALID", `${label} contains an unauthorized field or accessor`);
+		}
+		result[key] = descriptor.value;
+	}
+	return result;
+}
+
 function boundedString(value, label, maxBytes = 16_384) {
 	if (typeof value !== "string" || !value.trim() || Buffer.byteLength(value, "utf8") > maxBytes || /\0/.test(value)) {
 		fail("GRAMMAR_BOUNDARY_INVALID", `${label} must be a bounded non-empty string`);
@@ -64,11 +96,15 @@ function money(value, label) {
 	return value;
 }
 
-function clonePlain(value, seen = new Set(), state = { nodes: 0 }) {
-	if (++state.nodes > 16_384) fail("GRAMMAR_BOUNDARY_INVALID", "Plain data exceeds the grammar boundary limit");
+function clonePlain(value, context = {}, seen = new Set(), state = { nodes: 0 }, depth = 0) {
+	const reject = (message) => context.result
+		? failResult("GRAMMAR_RESPONSE_INVALID", message, context.provider, context.remoteId)
+		: fail("GRAMMAR_BOUNDARY_INVALID", message);
+	if (depth > MAX_PLAIN_DEPTH) reject("Plain data exceeds the grammar nesting-depth limit");
+	if (++state.nodes > 16_384) reject("Plain data exceeds the grammar boundary limit");
 	if (value === null || typeof value === "string" || typeof value === "boolean"
 		|| (typeof value === "number" && Number.isFinite(value))) return value;
-	if (!value || typeof value !== "object" || seen.has(value)) fail("GRAMMAR_BOUNDARY_INVALID", "Value must contain only acyclic plain data");
+	if (!value || typeof value !== "object" || seen.has(value)) reject("Value must contain only acyclic plain data");
 	seen.add(value);
 	let prototype;
 	let descriptors;
@@ -76,39 +112,43 @@ function clonePlain(value, seen = new Set(), state = { nodes: 0 }) {
 		prototype = Object.getPrototypeOf(value);
 		descriptors = Object.getOwnPropertyDescriptors(value);
 	} catch {
-		fail("GRAMMAR_BOUNDARY_INVALID", "Plain data could not be inspected safely");
+		reject("Plain data could not be inspected safely");
 	}
 	if (prototype !== Object.prototype && prototype !== null && prototype !== Array.prototype) {
-		fail("GRAMMAR_BOUNDARY_INVALID", "Value must contain only plain data objects and arrays");
+		reject("Value must contain only plain data objects and arrays");
 	}
 	if (Array.isArray(value)) {
-		if (prototype !== Array.prototype) fail("GRAMMAR_BOUNDARY_INVALID", "Array prototype is invalid");
+		if (prototype !== Array.prototype) reject("Array prototype is invalid");
 		const length = descriptors.length?.value;
 		const keys = Reflect.ownKeys(descriptors).filter((key) => key !== "length");
-		if (!Number.isSafeInteger(length) || length < 0 || keys.length !== length) fail("GRAMMAR_BOUNDARY_INVALID", "Array shape is invalid");
+		if (!Number.isSafeInteger(length) || length < 0 || keys.length !== length) reject("Array shape is invalid");
 		const result = new Array(length);
 		for (const key of keys) {
 			const descriptor = descriptors[key];
 			if (typeof key !== "string" || !/^(?:0|[1-9][0-9]*)$/.test(key) || Number(key) >= length
-				|| descriptor.get || descriptor.set || !("value" in descriptor)) fail("GRAMMAR_BOUNDARY_INVALID", "Array contains unsafe data");
-			result[Number(key)] = clonePlain(descriptor.value, seen, state);
+				|| descriptor.get || descriptor.set || !("value" in descriptor)) reject("Array contains unsafe data");
+			result[Number(key)] = clonePlain(descriptor.value, context, seen, state, depth + 1);
 		}
 		return result;
 	}
-	if (prototype !== Object.prototype && prototype !== null) fail("GRAMMAR_BOUNDARY_INVALID", "Object prototype is invalid");
+	if (prototype !== Object.prototype && prototype !== null) reject("Object prototype is invalid");
 	const result = Object.create(null);
 	for (const key of Reflect.ownKeys(descriptors)) {
 		const descriptor = descriptors[key];
 		if (typeof key !== "string" || ["__proto__", "prototype", "constructor"].includes(key)
-			|| descriptor.get || descriptor.set || !("value" in descriptor)) fail("GRAMMAR_BOUNDARY_INVALID", "Object contains unsafe data");
-		result[key] = clonePlain(descriptor.value, seen, state);
+			|| descriptor.get || descriptor.set || !("value" in descriptor)) reject("Object contains unsafe data");
+		result[key] = clonePlain(descriptor.value, context, seen, state, depth + 1);
 	}
 	return result;
 }
 
-function deepFreeze(value) {
+function deepFreeze(value, depth = 0, context = {}) {
+	if (depth > MAX_PLAIN_DEPTH + 2) {
+		if (context.result) failResult("GRAMMAR_RESPONSE_INVALID", "Plain data exceeds the grammar nesting-depth limit", context.provider, context.remoteId);
+		fail("GRAMMAR_BOUNDARY_INVALID", "Plain data exceeds the grammar nesting-depth limit");
+	}
 	if (!value || typeof value !== "object" || Object.isFrozen(value)) return value;
-	for (const child of Object.values(value)) deepFreeze(child);
+	for (const child of Object.values(value)) deepFreeze(child, depth + 1, context);
 	return Object.freeze(value);
 }
 
@@ -157,23 +197,41 @@ export function createFacadeGrammarRequest(input) {
 }
 
 export function normalizeFacadeGrammarResult(input) {
-	const fields = record(input, "Facade grammar result", RESULT_KEYS);
+	const fields = resultRecord(input, "Facade grammar result", RESULT_KEYS);
+	let remoteId = fields.remoteId;
+	if (remoteId !== null && remoteId !== undefined
+		&& (typeof remoteId !== "string" || !remoteId || Buffer.byteLength(remoteId, "utf8") > 4_096 || /[\r\n\0]/.test(remoteId))) {
+		failResult("GRAMMAR_RESPONSE_INVALID", "Grammar result remoteId is invalid");
+	}
+	remoteId ??= null;
 	const authority = readVerifiedFacadeGrammarRequestAuthority(fields.request);
-	if (!authority) fail("GRAMMAR_BOUNDARY_INVALID", "A verified common grammar request is required");
-	const provider = boundedString(fields.provider, "provider");
-	const resolvedModel = boundedString(fields.resolvedModel, "resolvedModel");
-	if (provider !== authority.provider || resolvedModel !== authority.model) fail("GRAMMAR_BOUNDARY_INVALID", "Grammar result identity does not match its request");
-	if (fields.transport !== "live" && fields.transport !== "fixture") fail("GRAMMAR_BOUNDARY_INVALID", "Grammar transport is invalid");
+	if (!authority) failResult("GRAMMAR_RESPONSE_INVALID", "A verified common grammar request is required", "grammar", remoteId);
+	if (typeof fields.provider !== "string" || !fields.provider.trim() || Buffer.byteLength(fields.provider, "utf8") > 16_384) {
+		failResult("GRAMMAR_RESPONSE_INVALID", "provider must be a bounded non-empty string", "grammar", remoteId);
+	}
+	if (typeof fields.resolvedModel !== "string" || !fields.resolvedModel.trim() || Buffer.byteLength(fields.resolvedModel, "utf8") > 16_384) {
+		failResult("GRAMMAR_RESPONSE_INVALID", "resolvedModel must be a bounded non-empty string", fields.provider, remoteId);
+	}
+	const provider = fields.provider;
+	const resolvedModel = fields.resolvedModel;
+	if (provider !== authority.provider || resolvedModel !== authority.model) failResult("GRAMMAR_RESPONSE_INVALID", "Grammar result identity does not match its request", provider, remoteId);
+	if (fields.transport !== "live" && fields.transport !== "fixture") failResult("GRAMMAR_RESPONSE_INVALID", "Grammar transport is invalid", provider, remoteId);
 	let grammarCandidate;
-	if (typeof fields.grammarCandidate === "string") grammarCandidate = boundedString(fields.grammarCandidate, "grammarCandidate", MAX_PLAIN_BYTES);
-	else grammarCandidate = clonePlain(fields.grammarCandidate);
-	const actualUsd = fields.actualUsd === null || fields.actualUsd === undefined ? null : money(fields.actualUsd, "actualUsd");
-	if (actualUsd !== null && actualUsd > authority.ceilingUsd) fail("GRAMMAR_RESPONSE_INVALID", "Grammar response reported an invalid cost", provider);
-	const usage = fields.usage === null || fields.usage === undefined ? null : clonePlain(fields.usage);
-	if (usage !== null && Buffer.byteLength(stableJson(usage), "utf8") > MAX_PLAIN_BYTES) fail("GRAMMAR_RESPONSE_TOO_LARGE", "Grammar usage exceeds the response limit", provider);
-	const remoteId = fields.remoteId === null || fields.remoteId === undefined ? null : boundedString(fields.remoteId, "remoteId", 4_096);
+	if (typeof fields.grammarCandidate === "string") {
+		if (!fields.grammarCandidate.trim() || Buffer.byteLength(fields.grammarCandidate, "utf8") > MAX_PLAIN_BYTES) {
+			failResult("GRAMMAR_RESPONSE_INVALID", "grammarCandidate must be bounded non-empty data", provider, remoteId);
+		}
+		grammarCandidate = fields.grammarCandidate;
+	} else grammarCandidate = clonePlain(fields.grammarCandidate, { result: true, provider, remoteId });
+	const actualUsd = fields.actualUsd === null || fields.actualUsd === undefined ? null : fields.actualUsd;
+	if (actualUsd !== null && (!Number.isFinite(actualUsd) || actualUsd < 0 || actualUsd > 10_000 || actualUsd > authority.ceilingUsd)) {
+		failResult("GRAMMAR_RESPONSE_INVALID", "Grammar response reported an invalid cost", provider, remoteId);
+	}
+	const usage = fields.usage === null || fields.usage === undefined ? null
+		: clonePlain(fields.usage, { result: true, provider, remoteId });
+	if (usage !== null && Buffer.byteLength(stableJson(usage), "utf8") > MAX_PLAIN_BYTES) failResult("GRAMMAR_RESPONSE_TOO_LARGE", "Grammar usage exceeds the response limit", provider, remoteId);
 	return deepFreeze({
 		provider, resolvedModel, transport: fields.transport, requestFingerprint: authority.fingerprint,
 		grammarCandidate, remoteId, actualUsd, usage,
-	});
+	}, 0, { result: true, provider, remoteId });
 }

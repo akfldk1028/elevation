@@ -199,6 +199,12 @@ function commonGrammarRequest(overrides: Record<string, unknown> = {}) {
 	});
 }
 
+function nestedPlainData(depth: number) {
+	let value: any = { leaf: true };
+	for (let index = 0; index < depth; index += 1) value = { child: value };
+	return value;
+}
+
 test("creates one deeply frozen, hash-bound common grammar request and rejects unsafe boundary input", () => {
 	const request = commonGrammarRequest();
 	assert.equal(request.provider, "openai-gpt-5.6");
@@ -228,6 +234,12 @@ test("creates one deeply frozen, hash-bound common grammar request and rejects u
 	] as const) {
 		assert.throws(() => commonGrammarRequest(overrides), /hash|plain|media|image|prompt|budget|ceiling/i, name);
 	}
+	assert.throws(() => commonGrammarRequest({ schema: nestedPlainData(64) }), (error: any) => {
+		assert.equal(error.code, "GRAMMAR_BOUNDARY_INVALID");
+		assert.equal(error.definitiveNonSubmission, true);
+		assert.doesNotMatch(`${error.name}\n${error.message}`, /RangeError|stack/i);
+		return true;
+	});
 });
 
 test("OpenAI grammar adapter preserves the pinned Responses compatibility contract", async () => {
@@ -255,6 +267,27 @@ test("OpenAI grammar adapter preserves the pinned Responses compatibility contra
 	assert.equal(result.provider, "openai-gpt-5.6");
 	assert.equal(result.transport, "live");
 	assert.equal(result.grammarCandidate, JSON.stringify(grammar));
+});
+
+test("OpenAI grammar result decoding preserves absent remote IDs and bounds nested usage", async () => {
+	const request = commonGrammarRequest();
+	const withoutRemote = createOpenAIGrammarProvider({ OPENAI_API_KEY: "sk-fixture" }, {
+		fetchImpl: async () => Response.json(responseFixture(grammar, { id: undefined })),
+	});
+	assert.equal((await withoutRemote.extract({ request })).remoteId, null);
+
+	const deeplyNestedUsage = createOpenAIGrammarProvider({ OPENAI_API_KEY: "sk-fixture" }, {
+		fetchImpl: async () => Response.json(responseFixture(grammar, {
+			id: "resp-depth-bound",
+			usage: nestedPlainData(64),
+		})),
+	});
+	await assert.rejects(() => deeplyNestedUsage.extract({ request }), (error: any) => {
+		assert.equal(error.code, "GRAMMAR_RESPONSE_INVALID");
+		assert.equal(error.definitiveNonSubmission, false);
+		assert.doesNotMatch(`${error.name}\n${error.message}`, /RangeError|stack/i);
+		return true;
+	});
 });
 
 test("OpenAI grammar adapter rejects exotic constructor boundaries without exposing trap data", () => {
@@ -464,6 +497,60 @@ test("a forged ledger cannot authorize a grammar submission", async () => {
 		fetchImpl: async () => { calls += 1; return Response.json(responseFixture(grammar)); },
 	}), (error: any) => error.code === "GRAMMAR_SUBMISSION_UNAUTHORIZED");
 	assert.equal(calls, 0);
+});
+
+test("a post-submission result failure leaves the real ledger uncertain and prevents another fetch", async () => {
+	const ledger = createPaidOperationLedger(join(root, `post-submit-paid-${ledgerSequence++}.json`), { approvedRoot: root });
+	let fetchCalls = 0;
+	const extraction = (response: unknown) => extractFacadeGrammar({
+		proposalPath: proposalAuthority, evidence, config: config(), ledger,
+		fetchImpl: async () => { fetchCalls += 1; return Response.json(response); },
+	});
+	await assert.rejects(() => extraction(responseFixture(grammar, {
+		id: undefined,
+		usage: { input_tokens: 100, output_tokens: 50, cost_usd: 0.11 },
+	})), (error: any) => error.code === "PAID_OPERATION_SUBMISSION_UNCERTAIN");
+	assert.equal(fetchCalls, 1);
+	await assert.rejects(() => extraction(responseFixture(grammar)), (error: any) => error.code === "PAID_OPERATION_SUBMISSION_UNCERTAIN");
+	assert.equal(fetchCalls, 1, "the uncertain same-request reservation must prevent another fetch");
+});
+
+test("a post-submission result failure retains known remote provenance in the real ledger", async () => {
+	const ledger = createPaidOperationLedger(join(root, `post-submit-remote-${ledgerSequence++}.json`), { approvedRoot: root });
+	const remoteId = "resp-known-result-failure";
+	let fetchCalls = 0;
+	const extraction = () => extractFacadeGrammar({
+		proposalPath: proposalAuthority, evidence, config: config(), ledger,
+		fetchImpl: async () => {
+			fetchCalls += 1;
+			return Response.json(responseFixture(grammar, {
+				id: remoteId,
+				usage: { input_tokens: 100, output_tokens: 50, cost_usd: 0.11 },
+			}));
+		},
+	});
+	await assert.rejects(extraction, (error: any) => error.code === "GRAMMAR_RESPONSE_INVALID");
+	assert.equal((await ledger.summary()).operations[0].remoteIdHash, sha256(remoteId));
+	await assert.rejects(extraction, (error: any) => error.code === "PAID_OPERATION_SUBMISSION_UNCERTAIN");
+	assert.equal(fetchCalls, 1);
+});
+
+test("missing provider IDs use canonical grammar provenance independent of JSON formatting and key order", async () => {
+	const variants = [
+		JSON.stringify(grammar),
+		JSON.stringify(Object.fromEntries(Object.entries(grammar).reverse())),
+	];
+	const remoteIdHashes = [];
+	for (const [index, grammarText] of variants.entries()) {
+		const ledger = createPaidOperationLedger(join(root, `canonical-remote-${index}-${ledgerSequence++}.json`), { approvedRoot: root });
+		await extractFacadeGrammar({
+			proposalPath: proposalAuthority, evidence, config: config(), ledger,
+			fetchImpl: async () => Response.json(responseFixture(grammarText, { id: undefined })),
+		});
+		remoteIdHashes.push((await ledger.summary()).operations[0].remoteIdHash);
+	}
+	const canonicalRemoteId = `openai-${sha256(stableJson(grammar))}`;
+	assert.deepEqual(remoteIdHashes, [sha256(canonicalRemoteId), sha256(canonicalRemoteId)]);
 });
 
 test("bounds response parsing and applies timeout and caller abort without retrying", async () => {
