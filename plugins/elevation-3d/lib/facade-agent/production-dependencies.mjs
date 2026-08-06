@@ -10,9 +10,10 @@ import { deliverSelectedAllViews } from "../final-delivery.mjs";
 import { renderUnifiedDrawings } from "../unified-render.mjs";
 import { buildFacadeEvidencePack, verifyFacadeEvidencePack } from "./evidence.mjs";
 import { extractFacadeGrammar, preflightFacadeGrammar, verifyFacadeProposal } from "./grammar-agent.mjs";
-import { createFacadeImageProviderRegistry } from "./image-providers/registry.mjs";
 import { createPaidOperationLedger } from "./paid-operation-ledger.mjs";
 import { deriveFacadeSegmentsFromMass } from "./punched-facade.mjs";
+import { createFacadeGrammarProviderRegistry } from "./routers/grammar-provider-registry.mjs";
+import { createFacadeImageProviderRegistry } from "./routers/image-provider-registry.mjs";
 import { rehydrateFacadeScoreResult, scoreFacadeCandidate, selectFacadeWinner } from "./score.mjs";
 
 function geometryBoundGrammar(grammar, candidate) {
@@ -39,6 +40,13 @@ export async function createProductionFacadeAgentDependencies(config, options = 
 		fetchImpl,
 		lookupImpl: options.lookupImpl ?? lookup,
 		timeoutMs: options.timeoutMs,
+		providerFactories: options.imageProviderFactories,
+	});
+	const grammarProvider = createFacadeGrammarProviderRegistry(config, {
+		env,
+		fetchImpl,
+		timeoutMs: options.timeoutMs,
+		providerFactories: options.grammarProviderFactories,
 	});
 	const score = async (input) => scoreFacadeCandidate(input);
 	score.select = selectFacadeWinner;
@@ -60,6 +68,7 @@ export async function createProductionFacadeAgentDependencies(config, options = 
 	return {
 		ledger,
 		providers,
+		grammarProvider,
 		loadCandidate: async ({ datasetRoot, candidateId }) => {
 			const candidate = await loadCandidatePackage(datasetRoot, candidateId);
 			if (!candidate.mesh?.vertices?.length || !candidate.mesh?.triangles?.length) return candidate;
