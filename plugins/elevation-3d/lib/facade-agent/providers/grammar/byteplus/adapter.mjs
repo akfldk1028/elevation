@@ -60,10 +60,6 @@ function authenticSignal(signal) {
 	}
 }
 
-function safeRemoteId(response, payload = null) {
-	return selectBytePlusGrammarRemoteId(payload, response?.headers?.get?.("x-request-id") ?? null);
-}
-
 async function readBoundedText(response) {
 	if (!(response instanceof Response)) throw failure("INVALID_PROVIDER_RESPONSE", "BytePlus returned an invalid HTTP response");
 	const declared = response.headers.get("content-length");
@@ -147,6 +143,7 @@ export function createProvider(env = {}, options = {}) {
 
 		const controller = new AbortController();
 		let timedOut = false;
+		let responseRemoteId = null;
 		const onAbort = () => controller.abort(signal.reason ?? new DOMException("The operation was aborted", "AbortError"));
 		signal?.addEventListener("abort", onAbort, { once: true });
 		const timer = setTimeout(() => {
@@ -166,6 +163,9 @@ export function createProvider(env = {}, options = {}) {
 					body: JSON.stringify(serializeBytePlusGrammarRequest(request)),
 					signal: controller.signal,
 				});
+				if (response instanceof Response) {
+					responseRemoteId = selectBytePlusGrammarRemoteId(null, response.headers.get("x-request-id"));
+				}
 				const text = await readBoundedText(response);
 				let payload;
 				try { payload = parseBytePlusJson(text); }
@@ -173,14 +173,14 @@ export function createProvider(env = {}, options = {}) {
 					if (response.ok) throw error;
 					payload = null;
 				}
-				const remoteId = safeRemoteId(response, payload);
+				const remoteId = selectBytePlusGrammarRemoteId(payload, responseRemoteId);
 				if (!response.ok) {
 					throw failure(statusCode(response.status, payload), "BytePlus grammar request failed", {
 						status: response.status,
 						remoteId,
 					});
 				}
-				const decoded = decodeBytePlusGrammarResponse(payload, { headerRemoteId: response.headers.get("x-request-id") });
+				const decoded = decodeBytePlusGrammarResponse(payload, { headerRemoteId: responseRemoteId });
 				const actualUsd = decoded.actualUsd ?? request.estimateUsd;
 				if (!Number.isFinite(actualUsd) || actualUsd < 0 || actualUsd > MAX_COST_USD || actualUsd > request.ceilingUsd) {
 					throw failure("INVALID_PROVIDER_RESPONSE", "BytePlus reported invalid grammar cost", { remoteId: decoded.remoteId });
@@ -203,13 +203,20 @@ export function createProvider(env = {}, options = {}) {
 			});
 			return await Promise.race([work, aborted]);
 		} catch (error) {
-			if (error instanceof FacadeProviderError) throw error;
-			if (error instanceof BytePlusGrammarResponseError) {
-				throw failure(error.code, error.message, { remoteId: error.remoteId });
+			if (error instanceof FacadeProviderError) {
+				if (!responseRemoteId) throw error;
+				throw failure(error.code, error.message, {
+					definitiveNonSubmission: error.definitiveNonSubmission,
+					remoteId: responseRemoteId,
+					status: error.status,
+				});
 			}
-			if (timedOut) throw failure("REQUEST_TIMEOUT", "BytePlus grammar extraction timed out");
-			if (signal?.aborted) throw failure("SUBMISSION_UNCERTAIN", "BytePlus grammar submission outcome is uncertain after caller abort");
-			throw failure("SUBMISSION_UNCERTAIN", "BytePlus grammar submission outcome is uncertain");
+			if (error instanceof BytePlusGrammarResponseError) {
+				throw failure(error.code, error.message, { remoteId: responseRemoteId ?? error.remoteId });
+			}
+			if (timedOut) throw failure("REQUEST_TIMEOUT", "BytePlus grammar extraction timed out", { remoteId: responseRemoteId });
+			if (signal?.aborted) throw failure("SUBMISSION_UNCERTAIN", "BytePlus grammar submission outcome is uncertain after caller abort", { remoteId: responseRemoteId });
+			throw failure("SUBMISSION_UNCERTAIN", "BytePlus grammar submission outcome is uncertain", { remoteId: responseRemoteId });
 		} finally {
 			clearTimeout(timer);
 			controller.signal.removeEventListener("abort", abortListener);
