@@ -17,6 +17,7 @@ import {
 } from "../plugins/elevation-3d/lib/facade-agent/grammar-agent.mjs";
 import {
 	createFacadeGrammarRequest,
+	normalizeFacadeGrammarResult,
 } from "../plugins/elevation-3d/lib/facade-agent/providers/grammar/contract.mjs";
 import {
 	buildFacadeGrammarPrompt,
@@ -24,7 +25,10 @@ import {
 import {
 	createProvider as createOpenAIGrammarProvider,
 } from "../plugins/elevation-3d/lib/facade-agent/providers/grammar/openai/adapter.mjs";
-import { createPaidOperationLedger } from "../plugins/elevation-3d/lib/facade-agent/paid-operation-ledger.mjs";
+import {
+	consumePaidOperationSubmissionCapability,
+	createPaidOperationLedger,
+} from "../plugins/elevation-3d/lib/facade-agent/paid-operation-ledger.mjs";
 import {
 	buildRequest as buildOpenAIRequest,
 	createProvider as createOpenAIProvider,
@@ -533,6 +537,46 @@ test("a post-submission result failure retains known remote provenance in the re
 	assert.equal((await ledger.summary()).operations[0].remoteIdHash, sha256(remoteId));
 	await assert.rejects(extraction, (error: any) => error.code === "PAID_OPERATION_SUBMISSION_UNCERTAIN");
 	assert.equal(fetchCalls, 1);
+});
+
+test("a malformed common result retains a safe own remote ID without invoking accessors or allowing replay", async () => {
+	const request = commonGrammarRequest();
+	const ledger = createPaidOperationLedger(join(root, `malformed-result-remote-${ledgerSequence++}.json`), { approvedRoot: root });
+	const remoteId = "resp-malformed-common-result";
+	const marker = "unauthorized-result-accessor-secret";
+	let fetchCalls = 0;
+	const execute = () => ledger.executeOnce({
+		requestKey: request.fingerprint,
+		provider: "openai",
+		kind: "grammar-extraction",
+		ceilingUsd: request.ceilingUsd,
+		estimateUsd: request.estimateUsd,
+		operation: async (submission: any) => {
+			assert.equal(consumePaidOperationSubmissionCapability(submission, {
+				requestKey: request.fingerprint, provider: "openai", kind: "grammar-extraction",
+			}), true);
+			fetchCalls += 1;
+			const result: any = {
+				request, provider: request.provider, resolvedModel: request.model, transport: "live",
+				grammarCandidate: JSON.stringify(grammar), remoteId, actualUsd: 0.05, usage: null,
+			};
+			Object.defineProperty(result, "unauthorized", {
+				enumerable: true,
+				get() { throw new Error(marker); },
+			});
+			return normalizeFacadeGrammarResult(result);
+		},
+	});
+	await assert.rejects(execute, (error: any) => {
+		assert.equal(error.code, "GRAMMAR_RESPONSE_INVALID");
+		assert.equal(error.definitiveNonSubmission, false);
+		assert.equal(Object.hasOwn(error, "remoteId"), false);
+		assert.doesNotMatch(`${error.message}\n${error.stack}\n${JSON.stringify(error)}`, new RegExp(`${marker}|${remoteId}`));
+		return true;
+	});
+	assert.equal((await ledger.summary()).operations[0].remoteIdHash, sha256(remoteId));
+	await assert.rejects(execute, (error: any) => error.code === "PAID_OPERATION_SUBMISSION_UNCERTAIN");
+	assert.equal(fetchCalls, 1, "persisted remote provenance must block another fetch");
 });
 
 test("missing provider IDs use canonical grammar provenance independent of JSON formatting and key order", async () => {

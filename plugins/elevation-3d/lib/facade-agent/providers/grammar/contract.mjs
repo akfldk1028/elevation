@@ -35,6 +35,17 @@ function failResult(code, message, provider = "grammar", remoteId = null) {
 	});
 }
 
+function validRemoteId(value) {
+	return typeof value === "string" && value.length > 0
+		&& Buffer.byteLength(value, "utf8") <= 4_096 && !/[\r\n\0]/.test(value);
+}
+
+function ownDataRemoteId(descriptors) {
+	const descriptor = descriptors?.remoteId;
+	return descriptor && !descriptor.get && !descriptor.set && Object.hasOwn(descriptor, "value")
+		&& validRemoteId(descriptor.value) ? descriptor.value : null;
+}
+
 function record(value, label, allowedKeys) {
 	if (!value || typeof value !== "object" || Array.isArray(value)) fail("GRAMMAR_BOUNDARY_INVALID", `${label} must be a plain data object`);
 	let prototype;
@@ -58,7 +69,7 @@ function record(value, label, allowedKeys) {
 }
 
 function resultRecord(value, label, allowedKeys) {
-	if (!value || typeof value !== "object" || Array.isArray(value)) failResult("GRAMMAR_RESPONSE_INVALID", `${label} must be a plain data object`);
+	if (!value || typeof value !== "object") failResult("GRAMMAR_RESPONSE_INVALID", `${label} must be a plain data object`);
 	let prototype;
 	let descriptors;
 	try {
@@ -67,12 +78,15 @@ function resultRecord(value, label, allowedKeys) {
 	} catch {
 		failResult("GRAMMAR_RESPONSE_INVALID", `${label} could not be inspected safely`);
 	}
-	if (prototype !== Object.prototype && prototype !== null) failResult("GRAMMAR_RESPONSE_INVALID", `${label} must be a plain data object`);
+	const remoteId = ownDataRemoteId(descriptors);
+	if (Array.isArray(value) || (prototype !== Object.prototype && prototype !== null)) {
+		failResult("GRAMMAR_RESPONSE_INVALID", `${label} must be a plain data object`, "grammar", remoteId);
+	}
 	const result = Object.create(null);
 	for (const key of Reflect.ownKeys(descriptors)) {
 		const descriptor = descriptors[key];
 		if (typeof key !== "string" || !allowedKeys.has(key) || descriptor.get || descriptor.set || !("value" in descriptor)) {
-			failResult("GRAMMAR_RESPONSE_INVALID", `${label} contains an unauthorized field or accessor`);
+			failResult("GRAMMAR_RESPONSE_INVALID", `${label} contains an unauthorized field or accessor`, "grammar", remoteId);
 		}
 		result[key] = descriptor.value;
 	}
@@ -199,8 +213,7 @@ export function createFacadeGrammarRequest(input) {
 export function normalizeFacadeGrammarResult(input) {
 	const fields = resultRecord(input, "Facade grammar result", RESULT_KEYS);
 	let remoteId = fields.remoteId;
-	if (remoteId !== null && remoteId !== undefined
-		&& (typeof remoteId !== "string" || !remoteId || Buffer.byteLength(remoteId, "utf8") > 4_096 || /[\r\n\0]/.test(remoteId))) {
+	if (remoteId !== null && remoteId !== undefined && !validRemoteId(remoteId)) {
 		failResult("GRAMMAR_RESPONSE_INVALID", "Grammar result remoteId is invalid");
 	}
 	remoteId ??= null;
