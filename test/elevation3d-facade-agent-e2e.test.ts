@@ -50,11 +50,10 @@ test("routes the offline Seedream and BytePlus fixture through an opaque punched
 	const runDir = join(outputRoot, "creative-020", runId);
 	const proposalDesign = facadeProposalFixture("seedream-5-pro");
 	const proposalBytes = await renderFacadeProposalFixture("seedream-5-pro");
-	assert.deepEqual(proposalDesign.entranceDoorZone, BYTEPLUS_ROUTED_FACADE_FIXTURE.architecturalIntent.entranceDoorZone);
+	assert.deepEqual(proposalDesign.entranceDoorZone, BYTEPLUS_ROUTED_FACADE_FIXTURE.proposalIntent.entranceDoorZone);
 	const proposalMetadata = await sharp(proposalBytes).metadata();
 	assert.deepEqual([proposalMetadata.format, proposalMetadata.width, proposalMetadata.height], ["png", 1536, 1536]);
 	const fetchCounts = { image: 0, grammar: 0, unexpected: 0 };
-	let delivery: any = null;
 	let deliveryFailure: any = null;
 
 	const fixtureFetch = async (url: string | URL, init?: RequestInit) => {
@@ -122,8 +121,7 @@ test("routes the offline Seedream and BytePlus fixture through an opaque punched
 			}),
 			renderDelivery: async (input: any) => {
 				try {
-					delivery = await renderDelivery(input);
-					return delivery;
+					return await renderDelivery(input);
 				} catch (error) {
 					deliveryFailure = error;
 					throw error;
@@ -143,34 +141,54 @@ test("routes the offline Seedream and BytePlus fixture through an opaque punched
 	assert.equal(exitCode, 0, `${runIo.read().stderr}\n${runIo.read().stdout}\n${deliveryFailure?.stack ?? deliveryFailure ?? ""}\nCAUSE: ${deliveryFailure?.cause?.stack ?? deliveryFailure?.cause ?? ""}`);
 	const summary = JSON.parse(runIo.read().stdout);
 	assert.equal(summary.state, "accepted");
+	const configEnvelope = JSON.parse(await readFile(join(runDir, "facade-agent-config.json"), "utf8"));
+	assert.equal(configEnvelope.config_sha256, sha256(stableJson(configEnvelope.config)));
+	assert.equal(configEnvelope.config.grammarProvider, "byteplus-seed-mini");
+	assert.deepEqual(configEnvelope.config.imageProviders, ["seedream-5-pro"]);
+	assert.equal(summary.router.grammar_provider, configEnvelope.config.grammarProvider);
+	assert.deepEqual(summary.router.image_providers, configEnvelope.config.imageProviders);
 	const persisted = JSON.parse(await readFile(join(runDir, "run.json"), "utf8"));
 	const provider = persisted.providers["seedream-5-pro"];
-	const result = {
-		...persisted,
-		router: summary.router,
-		transport: { image: provider.generation.transport, grammar: provider.grammar.transport },
-	};
-
-	assert.equal(result.router.grammar_provider, "byteplus-seed-mini");
-	assert.deepEqual(result.router.image_providers, ["seedream-5-pro"]);
-	assert.equal(result.transport.image, "fixture");
-	assert.equal(result.transport.grammar, "fixture");
+	const providerStateBytes = await readFile(join(runDir, persisted.provider_manifests["seedream-5-pro"].path));
+	assert.equal(sha256(providerStateBytes), persisted.provider_manifests["seedream-5-pro"].sha256);
+	assert.deepEqual(JSON.parse(providerStateBytes.toString("utf8")), provider);
+	assert.equal(provider.generation.transport, "fixture");
+	assert.equal(provider.grammar.transport, "fixture");
 	assert.deepEqual(fetchCounts, { image: 1, grammar: 1, unexpected: 0 });
-	assert.equal(result.image_submissions.total, 1);
-	assert.deepEqual(result.image_submissions.by_provider, { "seedream-5-pro": 1 });
+	assert.equal(persisted.image_submissions.total, 1);
+	assert.deepEqual(persisted.image_submissions.by_provider, { "seedream-5-pro": 1 });
 	assert.deepEqual(provider.versions.map((version: any) => [version.id, version.status]), [["v001", "accepted"]]);
 
 	const accepted = provider.versions[0];
-	const validation = {
-		...accepted.validation,
-		curtain_wall_allowed: BYTEPLUS_ROUTED_FACADE_FIXTURE.architecturalIntent.curtain_wall_allowed,
-	};
-	assert.equal(validation.accepted, true);
-	assert.equal(BYTEPLUS_ROUTED_FACADE_FIXTURE.architecturalIntent.wall_opacity, "opaque");
-	assert.equal(validation.curtain_wall_allowed, false);
-	assert.deepEqual(validation.codes, []);
-	assert.equal(validation.metrics.canonical_surface_match, 1);
-	assert.equal(validation.metrics.segment_authority_match, true);
+	assert.equal(accepted.validation.accepted, true);
+	assert.deepEqual(accepted.validation.codes, []);
+	assert.equal(accepted.validation.metrics.canonical_surface_match, 1);
+	assert.equal(accepted.validation.metrics.segment_authority_match, true);
+	const grammarBytes = await readFile(join(runDir, provider.grammar.path));
+	assert.equal(sha256(grammarBytes), provider.grammar.artifact_sha256);
+	const persistedGrammar = JSON.parse(grammarBytes.toString("utf8"));
+	assert.equal(sha256(stableJson(persistedGrammar)), provider.grammar.content_sha256);
+	assert.equal(provider.grammar.authority.grammarSha256, provider.grammar.content_sha256);
+	const validationReceiptBytes = await readFile(join(runDir, accepted.validation_receipt.path));
+	assert.equal(sha256(validationReceiptBytes), accepted.validation_receipt.sha256);
+	const validationReceipt = JSON.parse(validationReceiptBytes.toString("utf8"));
+	assert.equal(sha256(stableJson(validationReceipt)), accepted.validation_receipt.receipt_sha256);
+	assert.equal(accepted.validation_execution.receipt_sha256, accepted.validation_receipt.receipt_sha256);
+	assert.equal(validationReceipt.schema_version, "arr.elevation3d.facade-validation-receipt.v1");
+	assert.equal(validationReceipt.provider, "seedream-5-pro");
+	assert.equal(validationReceipt.version_id, "v001");
+	assert.deepEqual(validationReceipt.validation, accepted.validation);
+	assert.deepEqual(validationReceipt.validation_authority.grammar.materials, ["brick", "precast", "window-frame", "glass"]);
+	assert.equal(validationReceipt.validation_authority.grammar.system, "brick-punched-window-v1");
+	assert.equal(validationReceipt.validation_authority.grammar.wall_opacity, "opaque");
+	assert.equal(validationReceipt.validation_authority.grammar.curtain_wall_allowed, false);
+	assert.equal(
+		sha256(stableJson(validationReceipt.validation_authority.grammar)),
+		validationReceipt.validation_authority.bindings.grammar_sha256,
+	);
+	assert.equal(validationReceipt.grammar_sha256, provider.grammar.content_sha256);
+	assert.equal(validationReceipt.grammar_sha256, validationReceipt.validation_authority.bindings.extracted_grammar_sha256);
+	assert.equal(validationReceipt.validation.metrics.opaque_wall_coverage > 0.5, true);
 	const evidence = JSON.parse(await readFile(join(runDir, "evidence", "evidence-manifest.json"), "utf8"));
 	assert.equal(evidence.geometry_hash, MASS_GEOMETRY_SHA256);
 	assert.equal(evidence.geometry_content_sha256, MASS_CONTENT_SHA256);
@@ -180,7 +198,9 @@ test("routes the offline Seedream and BytePlus fixture through an opaque punched
 	const glbPath = join(runDir, accepted.artifact.path);
 	const glbBytes = await readFile(glbPath);
 	assert.equal(sha256(glbBytes), accepted.artifact.sha256);
-	assert.equal(accepted.artifact.sha256, result.final.selected_glb_sha256);
+	assert.equal(accepted.artifact.sha256, persisted.final.selected_glb_sha256);
+	assert.equal(validationReceipt.artifact_sha256, accepted.artifact.sha256);
+	assert.equal(validationReceipt.validation_authority.bindings.glb_sha256, accepted.artifact.sha256);
 	const document = await new NodeIO().read(glbPath);
 	assert.ok(document.getRoot().listMeshes().length > 0, "selected GLB must contain meshes");
 	assert.ok(document.getRoot().listMaterials().length > 0, "selected GLB must contain materials");
@@ -197,28 +217,51 @@ test("routes the offline Seedream and BytePlus fixture through an opaque punched
 	assert.equal(segmentIds.size, 16);
 	assert.deepEqual([...floorIds].sort((left, right) => left - right), [0, 3.3, 6.6, 9.9, 13.2]);
 
-	assert.ok(delivery, "fixture route must complete the real local delivery renderer");
-	delivery.manifest = {
-		...delivery.manifest,
-		facade_system: BYTEPLUS_ROUTED_FACADE_FIXTURE.architecturalIntent.facadeSystem,
-		fixture_derived: true,
-	};
-	assert.match(delivery.manifest.facade_system, /punched-window|masonry/);
-	assert.equal(delivery.manifest.fixture_derived, true);
-	assert.equal(delivery.manifest.selected_glb.sha256, accepted.artifact.sha256);
-	assert.equal(Object.keys(delivery.manifest.views).length, 8);
-	assert.deepEqual(Object.keys(delivery.manifest.views).sort(), [...VIEW_NAMES].sort());
-	assert.deepEqual(delivery.browser_verification.console_errors, []);
-	assert.deepEqual(delivery.browser_verification.blocked_external_requests, []);
+	assert.ok(accepted.delivery, "production harness must persist the selected delivery evidence");
+	const deliveryManifestBytes = await readFile(join(runDir, accepted.delivery.manifest.path));
+	assert.equal(sha256(deliveryManifestBytes), accepted.delivery.manifest.sha256);
+	assert.equal(accepted.delivery.manifest.sha256, persisted.delivery.memory_record.manifest.sha256);
+	const deliveryManifest = JSON.parse(deliveryManifestBytes.toString("utf8"));
+	assert.equal(deliveryManifest.schema_version, "arr.elevation3d.all-views.v1");
+	assert.equal(deliveryManifest.selected_glb.sha256, accepted.artifact.sha256);
+	assert.equal(deliveryManifest.validation.accepted, true);
+	assert.deepEqual(deliveryManifest.validation.codes, []);
+	assert.equal(Object.keys(deliveryManifest.views).length, 8);
+	assert.deepEqual(Object.keys(deliveryManifest.views).sort(), [...VIEW_NAMES].sort());
+
+	const browserReportBytes = await readFile(join(runDir, accepted.delivery.browser_verification.path));
+	assert.equal(sha256(browserReportBytes), accepted.delivery.browser_verification.sha256);
+	assert.equal(accepted.delivery.browser_verification.sha256, persisted.delivery.memory_record.browser_verification.sha256);
+	const browserReport = JSON.parse(browserReportBytes.toString("utf8"));
+	assert.equal(browserReport.schema_version, "arr.elevation3d.browser-verification.v1");
+	assert.deepEqual(browserReport.console_errors, []);
+	assert.deepEqual(browserReport.blocked_external_requests, []);
+	assert.equal(browserReport.settled_frames_identical, true);
+	assert.equal(browserReport.settled_frame_hashes.length, 3);
+	assert.equal(new Set(browserReport.settled_frame_hashes).size, 1);
+	assert.equal(browserReport.settled_frame_hashes.every((hash: any) => /^[a-f0-9]{64}$/.test(hash)), true);
+	assert.deepEqual([...new Set(browserReport.activated_views)].sort(), [...VIEW_NAMES].sort());
+	assert.equal(browserReport.opened_artifacts.length, 8);
+	assert.equal(new Set(browserReport.opened_artifacts.map((artifact: any) => artifact.url)).size, 8);
+	assert.equal(browserReport.opened_artifacts.every((artifact: any) => artifact.status === 200), true);
+	const openedPaths = new Set(browserReport.opened_artifacts.map((artifact: any) => new URL(artifact.url).pathname));
+	for (const name of VIEW_NAMES) assert.equal(openedPaths.has(`/${deliveryManifest.views[name].path.replaceAll("\\", "/")}`), true);
+	assert.equal(browserReport.glb_load_count, 1);
+	assert.equal(browserReport.material_stability.deterministic_render_order, true);
 
 	const hashes = new Set<string>();
 	const visualSignatures = new Set<string>();
+	const deliveryRoot = join(runDir, "providers", "seedream-5-pro", "delivery");
 	for (const name of VIEW_NAMES) {
-		const view = delivery.views[name];
-		assert.equal(view.path.endsWith(`${name}.png`), true, `${name} must use its named PNG`);
-		const bytes = await readFile(view.path);
+		const view = deliveryManifest.views[name];
+		const memoryView = accepted.delivery.views[name];
+		const viewPath = join(deliveryRoot, view.path);
+		assert.equal(resolve(viewPath), resolve(join(runDir, memoryView.path)));
+		assert.equal(viewPath.endsWith(`${name}.png`), true, `${name} must use its named PNG`);
+		const bytes = await readFile(viewPath);
 		assert.equal(sha256(bytes), view.sha256);
-		assert.equal(view.sha256, delivery.manifest.views[name].sha256);
+		assert.equal(view.sha256, memoryView.sha256);
+		assert.equal(view.selected_glb_sha256, accepted.artifact.sha256);
 		const metadata = await sharp(bytes, { failOn: "error", limitInputPixels: 2400 * 2400 }).metadata();
 		assert.equal(metadata.format, "png");
 		assert.equal(metadata.width, 2400);
@@ -231,9 +274,12 @@ test("routes the offline Seedream and BytePlus fixture through an opaque punched
 	assert.equal(hashes.size, 8, "all named views must have distinct PNG hashes");
 	assert.equal(visualSignatures.size, 8, "all named views must have distinct visual signatures");
 	context.diagnostic(stableJson({
-		fixture_derived: true,
+		transport: { image: provider.generation.transport, grammar: provider.grammar.transport },
 		selected_glb: { path: glbPath, sha256: accepted.artifact.sha256 },
-		views: Object.fromEntries(VIEW_NAMES.map((name) => [name, { path: delivery.views[name].path, sha256: delivery.views[name].sha256 }])),
+		validation_receipt: { path: accepted.validation_receipt.path, sha256: accepted.validation_receipt.sha256 },
+		delivery_manifest: { path: accepted.delivery.manifest.path, sha256: accepted.delivery.manifest.sha256 },
+		browser_report: { path: accepted.delivery.browser_verification.path, sha256: accepted.delivery.browser_verification.sha256 },
+		views: Object.fromEntries(VIEW_NAMES.map((name) => [name, accepted.delivery.views[name]])),
 		fetch_counts: fetchCounts,
 	}));
 });

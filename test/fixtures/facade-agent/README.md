@@ -1,6 +1,6 @@
 # Facade-agent provider fixtures
 
-The three `proposal.png` fixtures are deterministic, synthetic, non-curtain-wall architectural elevations used only for offline verification. They deliberately vary punched-window rhythm, brick tone, bay width, and floor staggering while preserving one opaque five-storey mass. Regenerated images carry a visible `SYNTHETIC OFFLINE FIXTURE` / `NOT PROVIDER MODEL OUTPUT` banner and include a punched-window frame/glass rhythm plus an explicit entrance-door zone.
+The three `proposal.png` fixtures are deterministic, synthetic, non-curtain-wall architectural elevations used only for offline verification. They deliberately vary punched-window rhythm, brick tone, bay width, and floor staggering while preserving one opaque five-storey mass. Regenerated images carry a visible `SYNTHETIC OFFLINE FIXTURE` / `NOT PROVIDER MODEL OUTPUT` banner and include a punched-window frame/glass rhythm plus an explicit entrance-door proposal zone. That door zone is proposal intent only; the approved production grammar has no door primitive, and the E2E does not claim that the GLB contains one.
 
 Regenerate them from the repository root with:
 
