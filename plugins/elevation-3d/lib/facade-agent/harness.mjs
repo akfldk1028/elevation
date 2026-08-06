@@ -10,7 +10,10 @@ import { facadeRequestFingerprint, FACADE_AGENT_STAGES, normalizeFacadeAgentConf
 import { isFacadeFixtureTransport } from "./fixture-transport.mjs";
 import { readVerifiedFacadeGrammarAuthority, rehydrateVerifiedFacadeGrammar, serializeVerifiedFacadeGrammarAuthority } from "./grammar-agent.mjs";
 import { consumePaidOperationSubmissionCapability } from "./paid-operation-ledger.mjs";
-import { rehydrateFacadeScoreResult, selectFacadeWinner } from "./score.mjs";
+import { rehydrateFacadeScoreResult } from "./score.mjs";
+import { normalizeFacadeEvaluationCost } from "./evaluation/cost.mjs";
+import { buildFacadeEvaluationReport } from "./evaluation/report.mjs";
+import { selectFacadeRecommendation } from "./evaluation/scorecard.mjs";
 
 const HEX_SHA256 = /^[a-f0-9]{64}$/;
 const TERMINAL_RUN_STATES = new Set(["winner", "no-winner", "human-review", "cancelled", "delivery-failed"]);
@@ -460,7 +463,10 @@ async function generateProvider({ config, deps, runDir, run, state, provider, ev
 			runDir, path: stagePath, stage: "generate", status: "succeeded", input: stageInput,
 			output: { proposal_sha256: digest, proposal_path: relativePath(runDir, proposalPath, "proposal artifact") }, previous, provider, deps,
 		});
-		state.generation = { status: "succeeded", request_sha256: request.fingerprint, artifact_sha256: digest };
+		state.generation = {
+			status: "succeeded", request_sha256: request.fingerprint, artifact_sha256: digest,
+			cost_receipt: { actualUsd: publicResult.actualUsd },
+		};
 		state.proposal = { path: relativePath(runDir, proposalPath, "proposal artifact"), sha256: digest, mime_type: generated.mimeType ?? null };
 		state.stage_manifests.generate = succeeded.ref;
 		state.status = "generated";
@@ -573,7 +579,9 @@ async function extractProviderGrammar({ config, deps, runDir, run, state, provid
 		catch (error) { if (!isFacadeFixtureTransport(deps.extractGrammar)) throw error; }
 		state.grammar = {
 			status: "succeeded", proposal_sha256: proposal.sha256, artifact_sha256: digest,
-			path: relativePath(runDir, grammarPath, "grammar artifact"), ...(authority ? { authority } : {}),
+			path: relativePath(runDir, grammarPath, "grammar artifact"),
+			cost_receipt: { actualUsd: publicResult.actualUsd },
+			...(authority ? { authority } : {}),
 		};
 		state.stage_manifests.grammar = succeeded.ref;
 		state.status = "grammar-ready";
@@ -1280,53 +1288,146 @@ async function executeFacade(config, deps, stopAfterStage = null) {
 		}
 		if (stopAfterStage === "validate") return readFacadeAgentStatus(runDir);
 
-		const select = deps.score?.select ?? deps.selectWinner ?? selectFacadeWinner;
-		const decision = select(scores, normalized.scoreTieTolerance ?? 0.5);
-		let final;
-		if (decision?.status === "winner" && selectedArtifacts[decision.provider]) {
-			let artifact = selectedArtifacts[decision.provider];
+		const evaluationCandidates = [];
+		for (const provider of normalized.providers) {
+			const state = states[provider];
+			const cost = normalizeFacadeEvaluationCost({
+				accepted: state.status === "accepted",
+				imageReceipt: state.generation?.cost_receipt,
+				grammarReceipt: state.grammar?.cost_receipt,
+				correctionReceipt: { actualUsd: 0 },
+			});
+			state.cost = cost;
+			await writeProvider(runDir, run, normalized, provider, state, deps);
+			evaluationCandidates.push({
+				provider,
+				accepted: state.status === "accepted",
+				score: state.score?.score,
+				cost,
+				diagnostics: {
+					local_correction_count: state.versions?.some((version) => version.id === "v002") ? 1 : 0,
+				},
+				artifacts: {
+					...(state.proposal ? { proposal: state.proposal } : {}),
+					...(selectedArtifacts[provider] ? { glb: {
+						path: relativePath(runDir, selectedArtifacts[provider].path, "selected GLB"),
+						sha256: selectedArtifacts[provider].sha256,
+					} } : {}),
+				},
+			});
+		}
+		const recommendation = selectFacadeRecommendation(evaluationCandidates);
+		const actualCosts = evaluationCandidates.map((candidate) => candidate.cost.actual_total_usd);
+		const actualTotalUsd = actualCosts.every((value) => value !== null)
+			? actualCosts.reduce((sum, value) => sum + Math.round(value * 1_000_000), 0) / 1_000_000
+			: null;
+		const evaluationReport = buildFacadeEvaluationReport({
+			candidateId: normalized.candidateId,
+			runId: normalized.runId,
+			recommendation,
+			candidates: evaluationCandidates,
+		});
+		const evaluationPath = join(runDir, "evaluation", "evaluation.json");
+		const evaluationWritten = await atomicJson(evaluationPath, evaluationReport, runDir);
+		run.evaluation_manifest = {
+			path: relativePath(runDir, evaluationPath, "evaluation report"),
+			sha256: evaluationWritten.sha256,
+		};
+
+		const technicalCandidate = scores.find((score) => score.provider === recommendation.technical_winner);
+		const decision = technicalCandidate
+			? { status: "winner", provider: technicalCandidate.provider, candidate: technicalCandidate, score: technicalCandidate.score }
+			: { status: "no-winner", candidates: [] };
+		const deliveries = {};
+		for (const provider of normalized.providers) {
+			if (!selectedArtifacts[provider]) continue;
+			if (states[provider].delivery?.status === "succeeded") {
+				deliveries[provider] = states[provider].delivery;
+				continue;
+			}
+			let artifact = selectedArtifacts[provider];
 			try {
 				throwIfAborted(signal);
 				artifact = await authorizeGlb(runDir, artifact);
-				run.delivery = { status: "submitting", provider: decision.provider, selected_glb_sha256: artifact.sha256 };
+				run.delivery = { status: "submitting", provider, selected_glb_sha256: artifact.sha256 };
 				await persistPublicRun(runDir, run);
-				await callLifecycle(deps, { stage: "delivery", status: "submitting", provider: decision.provider, selected_glb_sha256: artifact.sha256 });
+				await callLifecycle(deps, { stage: "delivery", status: "submitting", provider, selected_glb_sha256: artifact.sha256 });
 				artifact = await authorizeGlb(runDir, artifact);
 				const delivery = await deps.renderDelivery({
-					runDir, candidateId: normalized.candidateId, provider: decision.provider,
-					artifact, validation: selectedValidations[decision.provider],
-					validationReceipt: selectedValidationReceipts[decision.provider],
+					runDir, candidateId: normalized.candidateId, provider,
+					artifact, validation: selectedValidations[provider],
+					validationReceipt: selectedValidationReceipts[provider],
 					input: candidate, signal, lifecycle: deps.lifecycle,
 				});
-				await callLifecycle(deps, { stage: "delivery", status: "returned", provider: decision.provider, selected_glb_sha256: artifact.sha256 });
-				run.delivery = {
-					status: "succeeded", provider: decision.provider, selected_glb_sha256: artifact.sha256,
+				await callLifecycle(deps, { stage: "delivery", status: "returned", provider, selected_glb_sha256: artifact.sha256 });
+				const deliveryRecord = {
+					status: "succeeded", provider, selected_glb_sha256: artifact.sha256,
 					delivery_sha256: sha256(stableJson(persistent(delivery))),
 					memory_record: persistedDeliveryMemory(runDir, delivery?.memory_record),
 				};
+				states[provider].delivery = deliveryRecord;
+				await writeProvider(runDir, run, normalized, provider, states[provider], deps);
+				run.delivery = deliveryRecord;
 				await persistPublicRun(runDir, run);
-				await callLifecycle(deps, { stage: "delivery", status: "succeeded", provider: decision.provider, selected_glb_sha256: artifact.sha256, delivery_sha256: run.delivery.delivery_sha256 });
+				await callLifecycle(deps, { stage: "delivery", status: "succeeded", provider, selected_glb_sha256: artifact.sha256, delivery_sha256: deliveryRecord.delivery_sha256 });
+				deliveries[provider] = deliveryRecord;
+				run.delivery = null;
+				await persistPublicRun(runDir, run);
+			} catch (error) {
+				if (error instanceof LifecycleHookError) throw error;
+				if (isAbort(error, signal)) return terminalCancellation(runDir, run, normalized, deps, provider);
+				const failed = { status: "failed", provider, selected_glb_sha256: artifact.sha256, failure: safeError(error, "FINAL_DELIVERY_FAILED") };
+				states[provider].delivery = failed;
+				await writeProvider(runDir, run, normalized, provider, states[provider], deps);
+				deliveries[provider] = failed;
+				run.delivery = null;
+				await persistPublicRun(runDir, run);
+			}
+		}
+
+		let final;
+		if (decision?.status === "winner" && selectedArtifacts[decision.provider]) {
+			const delivery = deliveries[decision.provider];
+			if (delivery?.status === "succeeded") {
+				run.delivery = delivery;
 				final = {
 					status: "winner",
 					selected_provider: decision.provider,
 					selected_version: states[decision.provider].versions.find((version) => version.status === "accepted")?.id ?? null,
-					selected_glb_sha256: artifact.sha256,
+					selected_glb_sha256: delivery.selected_glb_sha256,
 					score_sha256: decision.candidate?.sha256 ?? states[decision.provider].score?.sha256 ?? null,
-					delivery_sha256: sha256(stableJson(persistent(delivery))),
+					delivery_sha256: delivery.delivery_sha256,
 				};
-			} catch (error) {
-				if (error instanceof LifecycleHookError) throw error;
-				if (isAbort(error, signal)) return terminalCancellation(runDir, run, normalized, deps, decision.provider);
-				run.delivery = { status: "failed", provider: decision.provider, selected_glb_sha256: artifact.sha256, failure: safeError(error, "FINAL_DELIVERY_FAILED") };
-				await persistPublicRun(runDir, run);
+			} else {
 				final = {
 					status: "delivery-failed", selected_provider: decision.provider,
-					selected_glb_sha256: artifact.sha256, failure: safeError(error, "FINAL_DELIVERY_FAILED"),
+					selected_glb_sha256: delivery?.selected_glb_sha256 ?? selectedArtifacts[decision.provider].sha256,
+					failure: delivery?.failure ?? { code: "FINAL_DELIVERY_FAILED", message: "Selected provider delivery is unavailable" },
 				};
 			}
 		} else if (decision?.status === "human-review") {
 			final = { status: "human-review", candidates: decision.candidates.map((candidate) => ({ provider: candidate.provider, score: candidate.score, sha256: candidate.sha256 })) };
 		} else final = { status: "no-winner", candidates: [] };
+		final = {
+			...final,
+			technical_winner: recommendation.technical_winner,
+			recommended_default: recommendation.recommended_default,
+			quality_fallback: recommendation.quality_fallback,
+			providers: Object.fromEntries(normalized.providers.map((provider) => [provider, { status: states[provider].status }])),
+			cost: { currency: "USD", actual_total_usd: actualTotalUsd },
+			evaluation_report: { ...run.evaluation_manifest },
+		};
+		run.comparison_memory = persistent({
+			selected_providers: [...normalized.providers],
+			technical_winner: recommendation.technical_winner,
+			recommended_default: recommendation.recommended_default,
+			quality_fallback: recommendation.quality_fallback,
+			providers: Object.fromEntries(evaluationCandidates.map((candidate) => [candidate.provider, {
+				status: candidate.accepted ? "accepted" : "rejected",
+				cost: candidate.cost,
+			}])),
+			cost: final.cost,
+		});
 
 		const compareTransition = await writeStage({
 			runDir, path: "stages/compare.json", stage: "compare", status: "succeeded",
@@ -1411,6 +1512,23 @@ export async function readFacadeAgentStatus(runDirInput) {
 		if (state.provider !== provider || stableJson(state) !== stableJson(run.providers[provider])) throw codedError("FACADE_AGENT_STATE_UNCERTAIN", `Provider state binding mismatch: ${provider}`);
 		for (const stageRef of Object.values(state.stage_manifests ?? {})) await readStageRef(runDir, stageRef);
 		await verifyProviderReceipts(runDir, state);
+	}
+	if (run.evaluation_manifest) {
+		const path = containedPath(runDir, join(runDir, run.evaluation_manifest.path), "evaluation report");
+		const bytes = await safeRead(runDir, path, "evaluation report");
+		let report;
+		try { report = JSON.parse(bytes.toString("utf8")); }
+		catch (error) { throw codedError("FACADE_AGENT_STATE_UNCERTAIN", "Evaluation report is invalid", error); }
+		if (sha256(bytes) !== run.evaluation_manifest.sha256
+			|| report.schema_version !== "arr.elevation3d.facade-evaluation.v1"
+			|| report.candidate_id !== run.candidate_id || report.run_id !== run.run_id
+			|| (run.final && (report.technical_winner !== run.final.technical_winner
+				|| report.recommended_default !== run.final.recommended_default
+				|| report.quality_fallback !== run.final.quality_fallback))) {
+			throw codedError("FACADE_AGENT_STATE_UNCERTAIN", "Evaluation report binding mismatch");
+		}
+	} else if (run.stage_manifests.compare) {
+		throw codedError("FACADE_AGENT_STATE_UNCERTAIN", "Completed comparison is missing its evaluation report");
 	}
 	if (run.final_manifest) {
 		const path = containedPath(runDir, join(runDir, run.final_manifest.path), "final manifest");

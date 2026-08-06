@@ -57,8 +57,9 @@ export const fixtureFactory = createFacadeAgentDependencyFactory(async (config) 
     if (!consumeFacadeGrammarSubmissionCapability(submission, { requestKey, proposalProvider: provider, proposalSha256: proposal.sha256, evidenceSha256: evidence.manifestSha256, model: runConfig.grammarModel })) throw new Error("grammar submission rejected");
     await note("grammar:" + provider); return { grammar, remoteId: "grammar-" + provider, actualUsd: 0 };
   });
-  const score = async ({ provider }) => ({ status: "scored", accepted: true, provider, score: provider === "gpt-image-2" ? 91 : 80, sha256: sha256(provider) });
-  score.select = (values) => process.env.FACADE_TEST_REJECT === "1" ? { status: "no-winner", candidates: [] } : { status: "winner", provider: "gpt-image-2", candidate: values.find((value) => value.provider === "gpt-image-2") };
+  const score = async ({ provider }) => process.env.FACADE_TEST_REJECT === "1"
+    ? ({ status: "rejected", accepted: false, provider, reason: "FIXTURE_REJECTED" })
+    : ({ status: "scored", accepted: true, provider, score: provider === "gpt-image-2" ? 91 : 80, sha256: sha256(provider) });
   return {
     signal: config.signal,
     loadCandidate: async () => ({ candidate: { candidate_id: "creative-020" }, identity: { geometry_hash: "fixture" } }),

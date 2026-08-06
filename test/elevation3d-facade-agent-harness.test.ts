@@ -95,6 +95,7 @@ function grammar() {
 }
 
 async function fixture(overrides: any = {}) {
+	const selectedProviders = overrides.providers ?? [...PROVIDERS];
 	const root = await mkdtemp(join(tmpdir(), "elevation3d-harness-"));
 	roots.push(root);
 	const outputRoot = join(root, "output");
@@ -126,7 +127,7 @@ async function fixture(overrides: any = {}) {
 		return { status: "winner", provider: authorized[0].provider, candidate: authorized[0], score: authorized[0].score };
 	};
 
-	const providers = Object.fromEntries(PROVIDERS.map((provider) => [provider, createFacadeFixtureTransport({
+	const providers = Object.fromEntries(selectedProviders.map((provider: string) => [provider, createFacadeFixtureTransport({
 		preflight({ request, ceilingUsd, estimateUsd }: any) {
 			calls.preflight.push({ provider, fingerprint: request.fingerprint, ceilingUsd, estimateUsd });
 			return { provider, model: provider, requestBytes: 1, ceilingUsd, estimateUsd, fixture: true };
@@ -147,7 +148,7 @@ async function fixture(overrides: any = {}) {
 			calls.generate.push(provider);
 			if (overrides.generateFailure?.provider === provider) throw overrides.generateFailure.error;
 			const bytes = Buffer.from(`fixture-proposal:${provider}`);
-			return { bytes, mimeType: "image/png", remoteId: `fixture-${provider}`, usage: { fixture: true } };
+			return { bytes, mimeType: "image/png", remoteId: `fixture-${provider}`, usage: { fixture: true }, actualUsd: overrides.imageCosts?.[provider] ?? 0 };
 		},
 	})]));
 	const extractGrammar = createFacadeFixtureTransport(async ({ provider, proposal, evidence, submission, requestKey, config }: any) => {
@@ -156,7 +157,7 @@ async function fixture(overrides: any = {}) {
 			evidenceSha256: evidence.manifestSha256, model: config.grammarModel,
 		}), true);
 		calls.grammar.push(provider);
-		return { grammar: grammar(), remoteId: `grammar-${provider}`, actualUsd: 0 };
+		return { grammar: grammar(), remoteId: `grammar-${provider}`, actualUsd: overrides.grammarCosts?.[provider] ?? 0 };
 	});
 	(extractGrammar as any).preflight = ({ ceilingUsd, estimateUsd }: any) => {
 		calls.preflight.push({ provider: "openai-grammar", model: "gpt-5.6", ceilingUsd, estimateUsd });
@@ -200,12 +201,73 @@ async function fixture(overrides: any = {}) {
 		root, runDir, calls, deps,
 		config: {
 			candidateId: "creative-020", datasetRoot: root, outputRoot, runId,
-			providers: [...PROVIDERS], briefId: "brick-punched-window-v1", confirmLive: false,
-			imageBudgetUsd: { "gpt-image-2": 1, "nano-banana-pro": 1 }, grammarBudgetUsd: 1,
+			providers: [...selectedProviders], briefId: "brick-punched-window-v1", confirmLive: false,
+			imageBudgetUsd: Object.fromEntries(selectedProviders.map((provider: string) => [provider, 1])), grammarBudgetUsd: 1,
 			grammarModel: "gpt-5.6", maxLocalAttempts: 2,
 		},
 	};
 }
+
+test("persists a redacted three-provider cost and practical-equivalence recommendation", async () => {
+	const providers = ["gpt-image-2", "seedream-5-pro", "qwen-image-2"];
+	const value = await fixture({
+		runId: "three-provider-recommendation", providers,
+		scores: { "gpt-image-2": 95, "seedream-5-pro": 93, "qwen-image-2": 92 },
+		imageCosts: { "gpt-image-2": 0.4, "seedream-5-pro": 0.08, "qwen-image-2": 0.02 },
+		grammarCosts: { "gpt-image-2": 0.1, "seedream-5-pro": 0.02, "qwen-image-2": 0.03 },
+	});
+	const result = await runFacadeAgent(value.config, value.deps);
+	assert.deepEqual(value.calls.generate, providers);
+	assert.deepEqual(value.calls.grammar, providers);
+	assert.deepEqual(value.calls.delivery.map((call: any) => call.provider), providers);
+	assert.ok(providers.every((provider) => result.providers[provider].delivery?.status === "succeeded"));
+	assert.equal(result.final.technical_winner, "gpt-image-2");
+	assert.equal(result.final.recommended_default, "qwen-image-2");
+	assert.equal(result.final.quality_fallback, "gpt-image-2");
+	assert.equal(result.final.cost.actual_total_usd, 0.65);
+	assert.deepEqual(result.comparison_memory.selected_providers, providers);
+	assert.equal(result.comparison_memory.recommended_default, "qwen-image-2");
+	assert.match(result.evaluation_manifest.path, /^evaluation\/evaluation\.json$/);
+	const report = JSON.parse(await readFile(join(value.runDir, result.evaluation_manifest.path), "utf8"));
+	assert.deepEqual(Object.keys(report.providers), [...providers].sort());
+	assert.equal(report.providers["qwen-image-2"].cost.actual_total_usd, 0.05);
+	const serialized = JSON.stringify(report);
+	for (const provider of providers) {
+		assert.equal(serialized.includes(`fixture-${provider}`), false);
+		assert.equal(serialized.includes(`grammar-${provider}`), false);
+	}
+	assert.equal(/https?:|token|secret/i.test(serialized), false);
+});
+
+test("status fails closed when the persisted evaluation report is tampered", async () => {
+	const value = await fixture({ runId: "tampered-evaluation-report" });
+	const result = await runFacadeAgent(value.config, value.deps);
+	await writeFile(join(value.runDir, result.evaluation_manifest.path), "{}\n");
+	await assert.rejects(() => readFacadeAgentStatus(value.runDir), (error: any) => error.code === "FACADE_AGENT_STATE_UNCERTAIN");
+});
+
+test("isolates one failed provider without fallback or duplicate submissions", async () => {
+	const providers = ["gpt-image-2", "seedream-5-pro", "qwen-image-2"];
+	const value = await fixture({
+		runId: "isolated-provider-failure", providers,
+		scores: { "gpt-image-2": 95, "qwen-image-2": 94 },
+		generateFailure: {
+			provider: "seedream-5-pro",
+			error: new FacadeProviderError("PROVIDER_AUTH_FAILED", "credential rejected", {
+				provider: "seedream-5-pro", stage: "generate", definitiveNonSubmission: true,
+			}),
+		},
+	});
+	const result = await runFacadeAgent(value.config, value.deps);
+	assert.deepEqual(value.calls.generate, providers);
+	assert.deepEqual(value.calls.grammar, ["gpt-image-2", "qwen-image-2"]);
+	assert.deepEqual(value.calls.delivery.map((call: any) => call.provider), ["gpt-image-2", "qwen-image-2"]);
+	assert.deepEqual(result.image_submissions.by_provider, {
+		"gpt-image-2": 1, "seedream-5-pro": 0, "qwen-image-2": 1,
+	});
+	assert.equal(result.providers["seedream-5-pro"].failure.code, "PROVIDER_AUTH_FAILED");
+	assert.equal(result.final.technical_winner, "gpt-image-2");
+});
 
 test("submits each image and grammar exactly once, applies only v002 locally, and delivers only the authorized winner", async () => {
 	const value = await fixture({
@@ -410,7 +472,7 @@ test("resume after canonical grammar persistence continues local work without pa
 	assert.equal(resumed.final.status, "winner");
 	assert.deepEqual(value.calls.generate, [...PROVIDERS]);
 	assert.deepEqual(value.calls.grammar, [...PROVIDERS]);
-	assert.equal(value.calls.delivery.length, 1);
+	assert.equal(value.calls.delivery.length, 2);
 });
 
 test("rejects false hashes and structurally invalid GLBs before validation or delivery", async (context) => {
@@ -488,9 +550,10 @@ test("re-hashes the selected GLB immediately before delivery", async () => {
 		} },
 	});
 	const result = await runFacadeAgent(value.config, value.deps);
-	assert.deepEqual(value.calls.delivery, []);
+	assert.deepEqual(value.calls.delivery.map((call: any) => call.provider), ["gpt-image-2"]);
 	assert.equal(result.final.status, "delivery-failed");
 	assert.equal(result.final.failure.code, "FACADE_BUILD_ARTIFACT_HASH_MISMATCH");
+	assert.equal(result.providers["nano-banana-pro"].delivery.failure.code, "FACADE_BUILD_ARTIFACT_HASH_MISMATCH");
 });
 
 test("re-authorizes the GLB after the delivery checkpoint hook", async () => {
@@ -547,7 +610,7 @@ test("resume after a rejected v001 validation receipt continues with v002 withou
 	assert.equal(resumed.final.status, "winner");
 	assert.equal(value.calls.validate.filter((call: any) => call.provider === "gpt-image-2" && call.versionId === "v001").length, 1);
 	assert.ok(value.calls.build.some((call: any) => call.provider === "gpt-image-2" && call.versionId === "v002"));
-	assert.equal(value.calls.delivery.length, 1);
+	assert.equal(value.calls.delivery.length, 2);
 });
 
 test("resume after a durable score receipt continues comparison and delivery without rescoring", async () => {
@@ -568,7 +631,7 @@ test("resume after a durable score receipt continues comparison and delivery wit
 	const resumed = await runFacadeAgent(value.config, value.deps);
 	assert.equal(resumed.final.status, "winner");
 	assert.equal(value.calls.score.filter((provider: string) => provider === "gpt-image-2").length, 1);
-	assert.equal(value.calls.delivery.length, 1);
+	assert.equal(value.calls.delivery.length, 2);
 });
 
 test("in-flight markers prevent callback replay before validation and score receipt publication", async (context) => {
@@ -732,12 +795,13 @@ test("ends after v002 rejection and produces no winner when both providers rejec
 	assert.equal(value.calls.grammar.length, 2);
 });
 
-test("routes an authorized score tie to human review without rendering a final delivery", async () => {
+test("breaks an authorized technical tie by provider ID after rendering both accepted candidates", async () => {
 	const value = await fixture({ scores: { "gpt-image-2": 90, "nano-banana-pro": 90 } });
 	const result = await runFacadeAgent(value.config, value.deps);
-	assert.equal(result.final.status, "human-review");
-	assert.equal("selected_provider" in result.final, false);
-	assert.equal(value.calls.delivery.length, 0);
+	assert.equal(result.final.status, "winner");
+	assert.equal(result.final.selected_provider, "gpt-image-2");
+	assert.equal(result.final.technical_winner, "gpt-image-2");
+	assert.equal(value.calls.delivery.length, 2);
 });
 
 test("transport, uncertain submission, geometry mismatch, unknown validation, and cancellation never create v002", async (context) => {
