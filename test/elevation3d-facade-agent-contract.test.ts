@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { resolve } from "node:path";
 import {
+	DEFAULT_GRAMMAR_PROVIDER,
+	DEFAULT_IMAGE_PROVIDERS,
 	FACADE_AGENT_PROVIDERS,
+	FACADE_GRAMMAR_PROVIDER_IDS,
 	FacadeAgentContractError,
 	facadeRequestFingerprint,
 	normalizeFacadeAgentConfig,
@@ -23,6 +26,54 @@ function approvedConfig(overrides = {}) {
 		...overrides,
 	};
 }
+
+test("normalizes schema-v2 router configuration and preserves legacy compatibility views", () => {
+	assert.deepEqual(FACADE_GRAMMAR_PROVIDER_IDS, ["byteplus-seed-mini", "openai-gpt-5.6"]);
+	assert.deepEqual(DEFAULT_IMAGE_PROVIDERS, ["seedream-5-pro"]);
+	assert.equal(DEFAULT_GRAMMAR_PROVIDER, "byteplus-seed-mini");
+	const canonical = normalizeFacadeAgentConfig({
+		candidateId: "creative-020", datasetRoot: "D:/dataset", outputRoot: "D:/results",
+		runId: "router-v2-001", briefId: "brick-punched-window-v1",
+		imageProviders: ["seedream-5-pro"], grammarProvider: "byteplus-seed-mini",
+		imageBudgetUsd: { "seedream-5-pro": 0.06 }, grammarBudgetUsd: 0.01,
+		confirmLive: true, confirmedTotalUsd: 0.07,
+	});
+	assert.equal(canonical.schemaVersion, 2);
+	assert.deepEqual(canonical.imageProviders, ["seedream-5-pro"]);
+	assert.equal(canonical.grammarProvider, "byteplus-seed-mini");
+	assert.deepEqual(canonical.providers, canonical.imageProviders);
+	assert.equal(canonical.runBudgetUsd, 0.07);
+
+	const legacy = normalizeFacadeAgentConfig({
+		candidateId: "creative-020", datasetRoot: "D:/dataset", outputRoot: "D:/results",
+		runId: "router-v1-001", briefId: "brick-punched-window-v1",
+		providers: ["gpt-image-2"], grammarModel: "gpt-5.6",
+		imageBudgetUsd: { "gpt-image-2": 0.5 }, grammarBudgetUsd: 0.35,
+		confirmLive: false,
+	});
+	assert.deepEqual(legacy.imageProviders, ["gpt-image-2"]);
+	assert.equal(legacy.grammarProvider, "openai-gpt-5.6");
+});
+
+test("rejects conflicting router representations, unknown grammar providers, and imprecise live confirmation", () => {
+	assert.throws(() => normalizeFacadeAgentConfig(approvedConfig({
+		imageProviders: ["seedream-5-pro"],
+	})), (error: any) => error.code === "CONFIG_FIELD_CONFLICT");
+	assert.throws(() => normalizeFacadeAgentConfig(approvedConfig({
+		grammarProvider: "byteplus-seed-mini",
+	})), (error: any) => error.code === "CONFIG_FIELD_CONFLICT");
+	assert.throws(() => normalizeFacadeAgentConfig(approvedConfig({
+		grammarProvider: "unknown-grammar-provider",
+		grammarModel: undefined,
+	})), (error: any) => error.code === "GRAMMAR_PROVIDER_INVALID");
+	assert.throws(() => normalizeFacadeAgentConfig({
+		candidateId: "creative-020", datasetRoot: "D:/dataset", outputRoot: "D:/results",
+		runId: "router-v2-002", briefId: "brick-punched-window-v1",
+		imageProviders: ["seedream-5-pro"], grammarProvider: "byteplus-seed-mini",
+		imageBudgetUsd: { "seedream-5-pro": 0.06 }, grammarBudgetUsd: 0.01,
+		confirmLive: true, confirmedTotalUsd: 0.070001,
+	}), (error: any) => error.code === "LIVE_COST_CONFIRMATION_INVALID");
+});
 
 test("locks the first comparison and rejects unsafe expansion", () => {
 	const value = normalizeFacadeAgentConfig({
