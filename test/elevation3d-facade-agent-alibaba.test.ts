@@ -126,7 +126,8 @@ test("preflight fixes the Singapore workspace endpoint, model, output, and budge
 		provider: "qwen-image-2", model: "qwen-image-2.0", requestBytes: EVIDENCE.length, ceilingUsd: 0.05,
 	});
 	assert.throws(() => createProvider({ DASHSCOPE_WORKSPACE_ID: "workspace-123" }, { fetchImpl, lookupImpl: PUBLIC_LOOKUP }).preflight({ request: request(), estimateUsd: 0.035, ceilingUsd: 0.05 }), (error: any) => error.code === "PROVIDER_CREDENTIALS_MISSING");
-	assert.throws(() => createProvider({ DASHSCOPE_API_KEY: "secret", DASHSCOPE_WORKSPACE_ID: "bad.workspace" }, { fetchImpl, lookupImpl: PUBLIC_LOOKUP }), (error: any) => error.code === "PROVIDER_WORKSPACE_INVALID");
+	const invalidWorkspace = createProvider({ DASHSCOPE_API_KEY: "secret", DASHSCOPE_WORKSPACE_ID: "bad.workspace" }, { fetchImpl, lookupImpl: PUBLIC_LOOKUP });
+	assert.throws(() => invalidWorkspace.preflight({ request: request(), estimateUsd: 0.035, ceilingUsd: 0.05 }), (error: any) => error.code === "PROVIDER_WORKSPACE_INVALID");
 	assert.throws(() => provider.preflight({ request: request({ model: "qwen-image-2.0-pro" }), estimateUsd: 0.035, ceilingUsd: 0.05 }), (error: any) => error.code === "PROVIDER_MODEL_NOT_ALLOWED");
 	assert.equal(calls, 0);
 });

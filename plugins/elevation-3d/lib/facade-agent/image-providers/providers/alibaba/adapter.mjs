@@ -65,6 +65,11 @@ function validateBudget(fields, request) {
 	if (fields.estimateUsd > fields.ceilingUsd) throw failure("PROVIDER_BUDGET_EXCEEDED", "Qwen estimate exceeds its ceiling", { stage: "preflight", definitiveNonSubmission: true });
 }
 
+function validateWorkspace(workspaceId) {
+	if (typeof workspaceId !== "string" || !/^[a-z0-9][a-z0-9-]{0,62}$/.test(workspaceId)) throw failure("PROVIDER_WORKSPACE_INVALID", "DASHSCOPE_WORKSPACE_ID is invalid", { stage: "preflight", definitiveNonSubmission: true });
+	return workspaceId;
+}
+
 function statusCode(status, payload) {
 	const marker = `${payload?.code ?? ""} ${payload?.error?.code ?? ""}`.toLowerCase();
 	if (/moderation|safety|content[_ -]?policy/.test(marker)) return "PROVIDER_MODERATION_BLOCKED";
@@ -85,18 +90,17 @@ export function createProvider(envInput = {}, optionsInput = {}) {
 	const options = record(optionsInput, "Alibaba options");
 	const apiKey = env.DASHSCOPE_API_KEY;
 	const workspaceId = env.DASHSCOPE_WORKSPACE_ID;
-	if (typeof workspaceId !== "string" || !/^[a-z0-9][a-z0-9-]{0,62}$/.test(workspaceId)) throw failure("PROVIDER_WORKSPACE_INVALID", "DASHSCOPE_WORKSPACE_ID is invalid", { stage: "preflight", definitiveNonSubmission: true });
 	const fetchImpl = options.fetchImpl;
 	const lookupImpl = options.lookupImpl;
 	const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 	if (typeof fetchImpl !== "function" || typeof lookupImpl !== "function") throw new TypeError("fetchImpl and lookupImpl are required functions");
 	if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new TypeError("timeoutMs must be a positive finite number");
-	const endpoint = ALIBABA_QWEN_POLICY.endpoint(workspaceId);
 
 	return Object.freeze({
 		transport: "live",
 		preflight(input) {
 			if (typeof apiKey !== "string" || !apiKey.trim()) throw failure("PROVIDER_CREDENTIALS_MISSING", "DASHSCOPE_API_KEY is required", { stage: "preflight", definitiveNonSubmission: true });
+			validateWorkspace(workspaceId);
 			const fields = record(input, "Qwen preflight input");
 			validatedRequest(fields.request);
 			validateBudget(fields, fields.request);
@@ -105,6 +109,7 @@ export function createProvider(envInput = {}, optionsInput = {}) {
 		async generate(input) {
 			try {
 				if (typeof apiKey !== "string" || !apiKey.trim()) throw failure("PROVIDER_CREDENTIALS_MISSING", "DASHSCOPE_API_KEY is required", { stage: "preflight", definitiveNonSubmission: true });
+				const endpoint = ALIBABA_QWEN_POLICY.endpoint(validateWorkspace(workspaceId));
 				const fields = record(input, "Qwen generation input");
 				const authority = validatedRequest(fields.request);
 				if (!consumePaidOperationSubmissionCapability(fields.submission, { requestKey: authority.fingerprint, provider: ALIBABA_QWEN_POLICY.provider, kind: "image-generation" })) throw failure("PROVIDER_SUBMISSION_UNAUTHORIZED", "Qwen requires a one-shot paid submission capability", { stage: "preflight", definitiveNonSubmission: true });

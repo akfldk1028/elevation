@@ -1,4 +1,5 @@
 import { mkdir } from "node:fs/promises";
+import { lookup } from "node:dns/promises";
 import { dirname, join, resolve } from "node:path";
 
 import { loadCandidatePackage } from "../core.mjs";
@@ -9,15 +10,10 @@ import { deliverSelectedAllViews } from "../final-delivery.mjs";
 import { renderUnifiedDrawings } from "../unified-render.mjs";
 import { buildFacadeEvidencePack, verifyFacadeEvidencePack } from "./evidence.mjs";
 import { extractFacadeGrammar, preflightFacadeGrammar, verifyFacadeProposal } from "./grammar-agent.mjs";
+import { createFacadeImageProviderRegistry } from "./image-providers/registry.mjs";
 import { createPaidOperationLedger } from "./paid-operation-ledger.mjs";
 import { deriveFacadeSegmentsFromMass } from "./punched-facade.mjs";
-import { buildRequest as buildGeminiRequest, createProvider as createGeminiProvider } from "./providers/gemini-image.mjs";
-import { buildRequest as buildOpenAIRequest, createProvider as createOpenAIProvider } from "./providers/openai-image.mjs";
 import { rehydrateFacadeScoreResult, scoreFacadeCandidate, selectFacadeWinner } from "./score.mjs";
-
-function providerWithRequestBuilder(provider, buildRequest) {
-	return Object.freeze({ preflight: provider.preflight, generate: provider.generate, buildRequest });
-}
 
 function geometryBoundGrammar(grammar, candidate) {
 	const facadeAuthority = candidate.facade_segment_authority ?? candidate.facade_planes;
@@ -38,8 +34,12 @@ export async function createProductionFacadeAgentDependencies(config, options = 
 	const ledgerRoot = join(runDir, "ledger");
 	await mkdir(ledgerRoot, { recursive: true });
 	const ledger = createPaidOperationLedger(join(ledgerRoot, "paid-operations.json"), { approvedRoot: ledgerRoot });
-	const openai = createOpenAIProvider({ OPENAI_API_KEY: env.OPENAI_API_KEY }, { fetchImpl });
-	const gemini = createGeminiProvider({ GEMINI_API_KEY: env.GEMINI_API_KEY }, { fetchImpl });
+	const providers = createFacadeImageProviderRegistry(config, {
+		env,
+		fetchImpl,
+		lookupImpl: options.lookupImpl ?? lookup,
+		timeoutMs: options.timeoutMs,
+	});
 	const score = async (input) => scoreFacadeCandidate(input);
 	score.select = selectFacadeWinner;
 	score.rehydrate = (value) => rehydrateFacadeScoreResult(value);
@@ -59,10 +59,7 @@ export async function createProductionFacadeAgentDependencies(config, options = 
 	});
 	return {
 		ledger,
-		providers: {
-			"gpt-image-2": providerWithRequestBuilder(openai, buildOpenAIRequest),
-			"nano-banana-pro": providerWithRequestBuilder(gemini, buildGeminiRequest),
-		},
+		providers,
 		loadCandidate: async ({ datasetRoot, candidateId }) => {
 			const candidate = await loadCandidatePackage(datasetRoot, candidateId);
 			if (!candidate.mesh?.vertices?.length || !candidate.mesh?.triangles?.length) return candidate;
