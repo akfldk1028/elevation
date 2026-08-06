@@ -9,11 +9,21 @@ import { sha256, stableJson } from "../plugins/elevation-3d/lib/core.mjs";
 import { verifyFacadeEvidencePack } from "../plugins/elevation-3d/lib/facade-agent/evidence.mjs";
 import {
 	extractFacadeGrammar,
+	FACADE_GRAMMAR_SCHEMA,
 	readVerifiedFacadeGrammarAuthority,
 	rehydrateVerifiedFacadeGrammar,
 	serializeVerifiedFacadeGrammarAuthority,
 	verifyFacadeProposal,
 } from "../plugins/elevation-3d/lib/facade-agent/grammar-agent.mjs";
+import {
+	createFacadeGrammarRequest,
+} from "../plugins/elevation-3d/lib/facade-agent/providers/grammar/contract.mjs";
+import {
+	buildFacadeGrammarPrompt,
+} from "../plugins/elevation-3d/lib/facade-agent/providers/grammar/prompt.mjs";
+import {
+	createProvider as createOpenAIGrammarProvider,
+} from "../plugins/elevation-3d/lib/facade-agent/providers/grammar/openai/adapter.mjs";
 import { createPaidOperationLedger } from "../plugins/elevation-3d/lib/facade-agent/paid-operation-ledger.mjs";
 import {
 	buildRequest as buildOpenAIRequest,
@@ -164,6 +174,123 @@ const proposalAuthority = await verifyFacadeProposal({
 	providerResult: await generatedProposalResult(),
 	evidence,
 	config: config(),
+});
+
+function commonGrammarRequest(overrides: Record<string, unknown> = {}) {
+	const prompt = buildFacadeGrammarPrompt({
+		proposalSha256: sha256(proposalBytes),
+		evidenceManifestSha256: evidence.manifestSha256,
+		manifestText: `${stableJson(evidence.manifest)}\n`,
+	});
+	return createFacadeGrammarRequest({
+		provider: "openai-gpt-5.6",
+		model: "gpt-5.6",
+		proposalSha256: sha256(proposalBytes),
+		evidenceManifestSha256: evidence.manifestSha256,
+		promptRevision: prompt.revision,
+		prompt: prompt.prompt,
+		promptSha256: prompt.sha256,
+		imageBytes: proposalBytes,
+		imageMimeType: "image/png",
+		schema: FACADE_GRAMMAR_SCHEMA,
+		ceilingUsd: 0.1,
+		estimateUsd: 0.05,
+		...overrides,
+	});
+}
+
+test("creates one deeply frozen, hash-bound common grammar request and rejects unsafe boundary input", () => {
+	const request = commonGrammarRequest();
+	assert.equal(request.provider, "openai-gpt-5.6");
+	assert.equal(request.model, "gpt-5.6");
+	assert.equal(request.proposalSha256, sha256(proposalBytes));
+	assert.equal(request.evidenceManifestSha256, evidence.manifestSha256);
+	assert.equal(request.promptRevision, "facade-grammar-v2");
+	assert.equal(request.promptSha256.length, 64);
+	assert.equal(request.ceilingUsd, 0.1);
+	assert.equal(request.estimateUsd, 0.05);
+	assert.equal(Object.isFrozen(request), true);
+	assert.equal(Object.isFrozen(request.schema), true);
+	assert.equal(Object.isFrozen(request.schema.properties), true);
+	assert.match(request.prompt, new RegExp(request.proposalSha256));
+	assert.match(request.prompt, new RegExp(request.evidenceManifestSha256));
+
+	for (const [name, overrides] of [
+		["proposal hash", { proposalSha256: "a".repeat(63) }],
+		["evidence hash", { evidenceManifestSha256: "b".repeat(65) }],
+		["prompt binding", { prompt: "valid-looking but unbound prompt", promptSha256: sha256("valid-looking but unbound prompt") }],
+		["prompt revision", { promptRevision: "facade-grammar-v1" }],
+		["exotic schema", { schema: new Date() }],
+		["media", { imageBytes: Buffer.from("GIF89a"), imageMimeType: "image/gif" }],
+		["prompt size", { prompt: "x".repeat(256 * 1024), promptSha256: sha256("x".repeat(256 * 1024)) }],
+		["image size", { imageBytes: Buffer.alloc(32 * 1024 * 1024 + 1), imageMimeType: "image/png" }],
+		["budget", { estimateUsd: 0.11 }],
+	] as const) {
+		assert.throws(() => commonGrammarRequest(overrides), /hash|plain|media|image|prompt|budget|ceiling/i, name);
+	}
+});
+
+test("OpenAI grammar adapter preserves the pinned Responses compatibility contract", async () => {
+	const calls: any[] = [];
+	const provider = createOpenAIGrammarProvider({ OPENAI_API_KEY: "sk-fixture-secret" }, {
+		timeoutMs: 1_000,
+		fetchImpl: async (url: string, init: any) => {
+			calls.push({ url, init, body: JSON.parse(init.body) });
+			return Response.json(responseFixture(grammar));
+		},
+	});
+	const request = commonGrammarRequest();
+	assert.deepEqual(provider.preflight({ request }), {
+		provider: "openai-gpt-5.6", model: "gpt-5.6", transport: "live",
+		ceilingUsd: 0.1, estimateUsd: 0.05,
+	});
+	const result = await provider.extract({ request });
+	assert.equal(calls.length, 1);
+	const [call] = calls;
+	assert.equal(call.url, "https://api.openai.com/v1/responses");
+	assert.equal(call.body.model, "gpt-5.6");
+	assert.equal(call.body.text.format.type, "json_schema");
+	assert.equal(call.body.text.format.strict, true);
+	assert.match(call.body.input[0].content[1].image_url, /^data:image\/png;base64,/);
+	assert.equal(result.provider, "openai-gpt-5.6");
+	assert.equal(result.transport, "live");
+	assert.equal(result.grammarCandidate, JSON.stringify(grammar));
+});
+
+test("OpenAI grammar adapter rejects exotic constructor boundaries without exposing trap data", () => {
+	const marker = "grammar-constructor-trap-secret";
+	const hostileEnv = Object.defineProperty({}, "OPENAI_API_KEY", { enumerable: true, get() { throw new Error(marker); } });
+	const hostileOptions = Object.defineProperty({}, "fetchImpl", { enumerable: true, get() { throw new Error(marker); } });
+	for (const [env, options] of [[hostileEnv, {}], [{ OPENAI_API_KEY: "sk-fixture" }, hostileOptions]]) {
+		assert.throws(() => createOpenAIGrammarProvider(env, options), (error: any) => {
+			assert.equal(error.code, "GRAMMAR_BOUNDARY_INVALID");
+			assert.doesNotMatch(`${error.message}\n${error.stack}`, new RegExp(marker));
+			return true;
+		});
+	}
+});
+
+test("grammar prompt and adapter call boundaries reject accessors before transport", async () => {
+	const marker = "grammar-call-trap-secret";
+	const hostile = Object.defineProperty({}, "request", { enumerable: true, get() { throw new Error(marker); } });
+	const hostilePrompt = Object.defineProperty({}, "proposalSha256", { enumerable: true, get() { throw new Error(marker); } });
+	assert.throws(() => buildFacadeGrammarPrompt(hostilePrompt), (error: any) => {
+		assert.equal(error.code, "GRAMMAR_BOUNDARY_INVALID");
+		assert.doesNotMatch(`${error.message}\n${error.stack}`, new RegExp(marker));
+		return true;
+	});
+	let fetchCalls = 0;
+	const provider = createOpenAIGrammarProvider({ OPENAI_API_KEY: "sk-fixture" }, {
+		fetchImpl: async () => { fetchCalls += 1; return Response.json(responseFixture(grammar)); },
+	});
+	for (const call of [() => provider.preflight(hostile), () => provider.extract(hostile)]) {
+		await assert.rejects(async () => call(), (error: any) => {
+			assert.equal(error.code, "GRAMMAR_BOUNDARY_INVALID");
+			assert.doesNotMatch(`${error.message}\n${error.stack}`, new RegExp(marker));
+			return true;
+		});
+	}
+	assert.equal(fetchCalls, 0);
 });
 
 test("calls the pinned Responses structured-output contract and binds proposal and verified evidence hashes", async () => {
