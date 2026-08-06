@@ -378,7 +378,7 @@ export async function executeFacadeAgentCommand(input, { signal, dependencyFacto
 	if (parsed.command === "resume") config = await loadPersistedConfig(parsed.runDir);
 	const runPath = join(config.outputRoot, config.candidateId, config.runId, "run.json");
 	if (parsed.command === "run" && await fileExists(runPath)) throw codedError("FACADE_AGENT_RUN_EXISTS", "Run already exists; use status or resume");
-	await persistConfig(config);
+	if (parsed.command !== "resume") await persistConfig(config);
 	const deps = await dependencies(config, signal, dependencyFactory, fetchImpl);
 	const stage = parsed.dryRun ? "preflight" : FACADE_AGENT_STAGES.includes(parsed.command) ? parsed.command : null;
 	const result = stage ? await runFacadeStage(stage, config, deps) : await runFacadeAgent(config, deps);
