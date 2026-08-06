@@ -1,0 +1,14 @@
+{
+  "model": "dola-seedream-5-0-pro-260628",
+  "created": 1785985200,
+  "request_id": "byteplus-request-fixture",
+  "data": [
+    {
+      "b64_json": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAADElEQVQImWNg5+AEAAAyABna+TCwAAAAAElFTkSuQmCC"
+    }
+  ],
+  "usage": {
+    "generated_images": 1,
+    "output_pixels": 2359296
+  }
+}

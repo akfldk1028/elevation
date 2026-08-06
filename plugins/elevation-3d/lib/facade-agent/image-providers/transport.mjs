@@ -18,7 +18,7 @@ function authenticSignal(signal) {
 	}
 }
 
-export async function fetchWithProviderDeadline({ fetchImpl, url, init = {}, signal: signalInput, timeoutMs, provider } = {}) {
+export async function fetchWithProviderDeadline({ fetchImpl, url, init = {}, signal: signalInput, timeoutMs, provider, consume } = {}) {
 	if (typeof fetchImpl !== "function") throw new TypeError("fetchImpl must be a function");
 	if (typeof url !== "string" || !url) throw new TypeError("url must be a non-empty string");
 	if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new TypeError("timeoutMs must be a positive finite number");
@@ -34,9 +34,10 @@ export async function fetchWithProviderDeadline({ fetchImpl, url, init = {}, sig
 	}, timeoutMs);
 	try {
 		const response = await fetchImpl(url, { ...init, signal: controller.signal });
+		const result = typeof consume === "function" ? await consume(response, controller.signal) : response;
 		if (timedOut) throw failure("PROVIDER_TIMEOUT", "Provider request timed out", { provider });
 		if (signal?.aborted) throw failure("PROVIDER_ABORTED", "Provider request was aborted", { provider });
-		return response;
+		return result;
 	} catch (error) {
 		if (timedOut) throw failure("PROVIDER_TIMEOUT", "Provider request timed out", { provider });
 		if (signal?.aborted) throw failure("PROVIDER_ABORTED", "Provider request was aborted", { provider });

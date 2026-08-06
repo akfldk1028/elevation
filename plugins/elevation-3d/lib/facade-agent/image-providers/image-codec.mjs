@@ -43,3 +43,18 @@ export async function decodeBoundedProviderImage({ bytes: input, expectedMimeTyp
 		sha256: createHash("sha256").update(bytes).digest("hex"),
 	});
 }
+
+export async function decodeBoundedBase64Png(value) {
+	if (typeof value !== "string" || value.length === 0 || value.length % 4 !== 0) fail("PROVIDER_RESPONSE_INVALID", "Provider returned malformed base64 image data");
+	const padding = value.endsWith("==") ? 2 : value.endsWith("=") ? 1 : 0;
+	const decodedLength = Math.floor(value.length / 4) * 3 - padding;
+	if (decodedLength > FACADE_PROVIDER_IMAGE_LIMITS.maxEncodedBytes) fail("PROVIDER_IMAGE_TOO_LARGE", "Facade provider image exceeds the encoded byte limit");
+	for (let index = 0; index < value.length - padding; index += 1) {
+		const code = value.charCodeAt(index);
+		if (!((code >= 65 && code <= 90) || (code >= 97 && code <= 122) || (code >= 48 && code <= 57) || code === 43 || code === 47)) {
+			fail("PROVIDER_RESPONSE_INVALID", "Provider returned malformed base64 image data");
+		}
+	}
+	for (let index = value.length - padding; index < value.length; index += 1) if (value.charCodeAt(index) !== 61) fail("PROVIDER_RESPONSE_INVALID", "Provider returned malformed base64 image data");
+	return decodeBoundedProviderImage({ bytes: Buffer.from(value, "base64") });
+}
