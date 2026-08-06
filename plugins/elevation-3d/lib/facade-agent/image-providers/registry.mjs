@@ -85,7 +85,7 @@ function scopedOptions(provider, options) {
 }
 
 export function createFacadeImageProviderRegistry(config, options = {}) {
-	const providers = validateProviders(config?.providers);
+	const providers = validateProviders(config?.imageProviders ?? config?.providers);
 	const env = options.env ?? process.env;
 	const factories = options.providerFactories ?? DEFAULT_FACTORIES;
 	if (!factories || typeof factories !== "object") throw new TypeError("providerFactories must be an allowlisted factory record");

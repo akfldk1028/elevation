@@ -4,7 +4,7 @@ import test from "node:test";
 import {
 	createFacadeImageProviderRegistry,
 	FACADE_IMAGE_PROVIDER_IDS,
-} from "../plugins/elevation-3d/lib/facade-agent/image-providers/registry.mjs";
+} from "../plugins/elevation-3d/lib/facade-agent/routers/image-provider-registry.mjs";
 
 const ALL_ENV = Object.freeze({
 	OPENAI_API_KEY: "openai-only",
@@ -16,7 +16,7 @@ const ALL_ENV = Object.freeze({
 
 function config(providers: string[]) {
 	return Object.freeze({
-		providers: Object.freeze([...providers]),
+		imageProviders: Object.freeze([...providers]),
 		imageBudgetUsd: Object.freeze(Object.fromEntries(providers.map((provider) => [provider, 1]))),
 		imageEstimateUsd: Object.freeze(Object.fromEntries(providers.map((provider) => [provider, 0.1]))),
 	});
@@ -52,6 +52,19 @@ test("rejects unknown and duplicate providers before constructing any adapter", 
 		assert.throws(() => createFacadeImageProviderRegistry(config(providers), { env: ALL_ENV, fetchImpl: async () => new Response(), lookupImpl: async () => [], providerFactories }), (error: any) => error.code === "PROVIDER_SET_INVALID");
 	}
 	assert.equal(calls, 0);
+});
+
+test("retains the legacy providers field as an image-router compatibility input", () => {
+	const providerFactories = {
+		"gpt-image-2": () => Object.freeze({ preflight() {}, async generate() {} }),
+	};
+	const registry = createFacadeImageProviderRegistry({
+		providers: ["gpt-image-2"],
+		imageBudgetUsd: { "gpt-image-2": 1 },
+		imageEstimateUsd: { "gpt-image-2": 0.1 },
+	}, { env: ALL_ENV, fetchImpl: async () => new Response(), providerFactories });
+
+	assert.deepEqual(Object.keys(registry), ["gpt-image-2"]);
 });
 
 test("retains Nano Banana compatibility as an explicitly selected provider", () => {
