@@ -1,0 +1,8 @@
+{
+  "id": "byteplus-error-fixture",
+  "error": {
+    "code": "content_policy_violation",
+    "type": "moderation_error",
+    "message": "must-not-leak Authorization: Bearer byteplus-fixture-key https://signed.example.test/result?X-Amz-Signature=must-not-leak"
+  }
+}
