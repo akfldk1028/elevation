@@ -105,3 +105,5 @@ export function selectFacadeWinner(candidates, tolerance = 0.5) {
 	}
 	return { status: "winner", provider: scored[0].provider, score: scored[0].score, candidate: scored[0], formula_version: FORMULA_VERSION };
 }
+
+export { selectFacadeRecommendation } from "./evaluation/scorecard.mjs";

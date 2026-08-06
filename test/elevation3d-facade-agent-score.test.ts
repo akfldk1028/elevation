@@ -14,7 +14,7 @@ import { extractFacadeGrammar, verifyFacadeProposal } from "../plugins/elevation
 import { createPaidOperationLedger } from "../plugins/elevation-3d/lib/facade-agent/paid-operation-ledger.mjs";
 import { buildRequest as buildOpenAIRequest, createProvider as createOpenAIProvider } from "../plugins/elevation-3d/lib/facade-agent/providers/openai-image.mjs";
 import { buildRequest as buildGeminiRequest, createProvider as createGeminiProvider } from "../plugins/elevation-3d/lib/facade-agent/providers/gemini-image.mjs";
-import { scoreFacadeCandidate, selectFacadeWinner } from "../plugins/elevation-3d/lib/facade-agent/score.mjs";
+import { scoreFacadeCandidate, selectFacadeRecommendation, selectFacadeWinner } from "../plugins/elevation-3d/lib/facade-agent/score.mjs";
 import { deriveFacadeSegmentsFromMass } from "../plugins/elevation-3d/lib/facade-agent/punched-facade.mjs";
 
 const roots: string[] = [];
@@ -266,4 +266,11 @@ test("uses exact 35/35/20/10 weights and provider-neutral tolerance handling", a
 	assert.equal("provider" in exact, false);
 	assert.deepEqual(exact.candidates.map((candidate: any) => candidate.provider), ["gpt-image-2", "nano-banana-pro"]);
 	assert.equal(selectFacadeWinner([gpt, nanoExact], -0).status, "no-winner");
+	assert.deepEqual(selectFacadeRecommendation([
+		{ provider: "gpt-image-2", accepted: true, score: 95, cost: { actual_total_usd: 0.5 } },
+		{ provider: "qwen-image-2", accepted: true, score: 92, cost: { actual_total_usd: 0.3 } },
+	]), {
+		status: "recommended", technical_winner: "gpt-image-2",
+		recommended_default: "qwen-image-2", quality_fallback: "gpt-image-2",
+	});
 });
