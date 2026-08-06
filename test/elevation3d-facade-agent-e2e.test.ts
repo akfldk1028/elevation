@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, readdir, rm, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { after, test } from "node:test";
@@ -78,8 +78,12 @@ function ioCapture() {
 }
 
 test("runs the complete creative-020 comparison fixture without network or paid resubmission", { timeout: 900_000 }, async (context) => {
-	const root = await mkdtemp(join(tmpdir(), "elevation3d-facade-agent-e2e-"));
-	roots.push(root);
+	const retainedRoot = process.env.FACADE_AGENT_E2E_OUTPUT_ROOT?.trim();
+	const root = retainedRoot
+		? resolve(retainedRoot)
+		: await mkdtemp(join(tmpdir(), "elevation3d-facade-agent-e2e-"));
+	if (retainedRoot) await mkdir(root, { recursive: true });
+	else roots.push(root);
 	const outputRoot = join(root, "output");
 	const memoryRoot = join(root, "memory");
 	const runId = "creative-020-brick-fixture-v1";
