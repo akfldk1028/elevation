@@ -1,0 +1,21 @@
+{
+  "output": {
+    "choices": [
+      {
+        "message": {
+          "content": [
+            {
+              "image": "https://images.example.com/signed/qwen-output.png?Expires=1785988800&Signature=must-not-persist"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "usage": {
+    "width": 1536,
+    "height": 1536,
+    "image_count": 1
+  },
+  "request_id": "alibaba-request-fixture"
+}
