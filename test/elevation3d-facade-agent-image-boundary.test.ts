@@ -168,3 +168,25 @@ test("performs one fetch and maps timeout and caller abort without retrying", as
 		timeoutMs: 100,
 	}), (error: any) => error.code === "PROVIDER_ABORTED" && error.definitiveNonSubmission === true);
 });
+
+test("billed image POST rejects redirects without forwarding its body or credential", async () => {
+	const calls: any[] = [];
+	const fetchImpl = async (url: string, init: any) => {
+		calls.push({ url, authorization: init.headers.Authorization, body: init.body });
+		if (init.redirect === "error") throw new TypeError("redirect mode blocked the 302 response");
+		calls.push({ url: "https://redirect-target.invalid/collect", authorization: init.headers.Authorization, body: init.body });
+		return new Response("followed");
+	};
+	await assert.rejects(() => fetchWithProviderDeadline({
+		fetchImpl,
+		url: "https://provider.example/v1/images",
+		init: { method: "POST", headers: { Authorization: "Bearer image-secret" }, body: "private-image-request" },
+		timeoutMs: 100,
+		provider: "seedream-5-pro",
+	}), (error: any) => error.code === "PROVIDER_REQUEST_FAILED" && error.definitiveNonSubmission === false);
+	assert.deepEqual(calls, [{
+		url: "https://provider.example/v1/images",
+		authorization: "Bearer image-secret",
+		body: "private-image-request",
+	}]);
+});

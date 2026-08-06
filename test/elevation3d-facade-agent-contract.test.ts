@@ -97,6 +97,34 @@ test("locks the first comparison and rejects unsafe expansion", () => {
 	assert.throws(() => normalizeFacadeAgentConfig({ ...value, maxLocalAttempts: 3 }), /two local attempts/i);
 });
 
+test("allocates 0.35 across three providers as exact deterministic micro-dollars", () => {
+	const value = normalizeFacadeAgentConfig({
+		candidateId: "creative-020", datasetRoot: "D:/dataset", outputRoot: "D:/results",
+		runId: "exact-micros-001", briefId: "brick-punched-window-v1",
+		imageProviders: ["gpt-image-2", "seedream-5-pro", "qwen-image-2"],
+		grammarProvider: "openai-gpt-5.6",
+		imageBudgetUsd: { "gpt-image-2": 0.5, "seedream-5-pro": 0.1, "qwen-image-2": 0.05 },
+		grammarBudgetUsd: 0.35,
+		confirmLive: true, confirmedTotalUsd: 1,
+	});
+	assert.deepEqual(value.imageBudgetMicros, { "gpt-image-2": 500_000, "seedream-5-pro": 100_000, "qwen-image-2": 50_000 });
+	assert.deepEqual(value.grammarBudgetAllocationMicros, {
+		"gpt-image-2": 116_667,
+		"seedream-5-pro": 116_667,
+		"qwen-image-2": 116_666,
+	});
+	assert.deepEqual(value.grammarEstimateAllocationMicros, value.grammarBudgetAllocationMicros);
+	assert.equal(Object.values(value.grammarBudgetAllocationMicros).reduce((sum: number, amount: number) => sum + amount, 0), 350_000);
+	assert.equal(value.grammarBudgetMicros, 350_000);
+	assert.equal(value.runBudgetMicros, 1_000_000);
+	assert.equal(value.confirmedTotalMicros, 1_000_000);
+	assert.deepEqual(value.grammarBudgetAllocationUsd, {
+		"gpt-image-2": 0.116667,
+		"seedream-5-pro": 0.116667,
+		"qwen-image-2": 0.116666,
+	});
+});
+
 test("fingerprint is stable and excludes consent-free defaults", () => {
 	const left = facadeRequestFingerprint({ provider: "gpt-image-2", evidenceSha256: "a".repeat(64), briefId: "brick-punched-window-v1", parameters: { quality: "high", size: "auto" } });
 	const right = facadeRequestFingerprint({ parameters: { size: "auto", quality: "high" }, briefId: "brick-punched-window-v1", evidenceSha256: "a".repeat(64), provider: "gpt-image-2" });

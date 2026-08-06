@@ -301,6 +301,15 @@ function validateConfig(config) {
 	return { candidateId: fields.candidateId, proposalProvider, ceilingUsd, estimateUsd, timeoutMs, apiKey };
 }
 
+function validateProposalConfig(config) {
+	const fields = dataRecord(config, "config");
+	const proposalProvider = fields.proposalProvider;
+	if (!PROPOSAL_PROVIDERS.has(proposalProvider)) {
+		throw failure("GRAMMAR_PROPOSAL_INVALID", "An approved proposal provider identity is required", { definitiveNonSubmission: true });
+	}
+	return { candidateId: fields.candidateId, proposalProvider };
+}
+
 export function preflightFacadeGrammar(input = {}) {
 	const fields = dataRecord(input, "grammar preflight input");
 	const config = fields.config && typeof fields.config === "object" ? {
@@ -330,7 +339,7 @@ function providerResultAuthority(providerResult) {
 
 export async function verifyFacadeProposal(input) {
 	const fields = dataRecord(input, "verifyFacadeProposal input");
-	const controls = validateConfig(fields.config);
+	const controls = validateProposalConfig(fields.config);
 	const evidenceAuthority = verifiedEvidence(fields.evidence, controls.candidateId);
 	const providerAuthority = providerResultAuthority(fields.providerResult);
 	if (!providerAuthority) throw failure("GRAMMAR_PROPOSAL_INVALID", "Verified proposal provider result is required", { definitiveNonSubmission: true });
@@ -419,25 +428,28 @@ export async function extractFacadeGrammar(input) {
 	const requestKey = request.fingerprint;
 	const provider = createOpenAIGrammarProvider({ OPENAI_API_KEY: controls.apiKey }, {
 		fetchImpl, timeoutMs: controls.timeoutMs,
+		submissionAuthorizer: harnessMode
+			? (capability) => {
+				const authorized = consumeFacadeGrammarSubmissionCapability(capability, {
+				requestKey: harnessRequestKey, proposalProvider: controls.proposalProvider,
+				proposalSha256: proposal.digest, evidenceSha256: verified.authority.manifestSha256,
+				model: config.grammarModel,
+				});
+				if (!authorized) throw failure("GRAMMAR_SUBMISSION_UNAUTHORIZED", "A one-shot paid-operation submission authorization is required", { definitiveNonSubmission: true });
+				return true;
+			}
+			: (capability) => {
+				const authorized = consumePaidOperationSubmissionCapability(capability, {
+				requestKey, provider: PROVIDER, kind: "grammar-extraction",
+				});
+				if (!authorized) throw failure("GRAMMAR_SUBMISSION_UNAUTHORIZED", "A one-shot paid-operation submission authorization is required", { definitiveNonSubmission: true });
+				return true;
+			},
 	});
 	let parsedGrammar = null;
 	let transportReceipt = null;
 	const operation = async (submissionCapability, facadeMode = false) => {
-		const authorized = facadeMode
-			? consumeFacadeGrammarSubmissionCapability(submissionCapability, {
-				requestKey: harnessRequestKey, proposalProvider: controls.proposalProvider,
-				proposalSha256: proposal.digest, evidenceSha256: verified.authority.manifestSha256,
-				model: config.grammarModel,
-			})
-			: consumePaidOperationSubmissionCapability(submissionCapability, {
-				requestKey, provider: PROVIDER, kind: "grammar-extraction",
-			});
-		if (!authorized) {
-			throw failure("GRAMMAR_SUBMISSION_UNAUTHORIZED", "A one-shot paid-operation submission authorization is required", {
-				definitiveNonSubmission: true,
-			});
-		}
-		const result = await provider.extract({ request, signal });
+		const result = await provider.extract({ request, submission: submissionCapability, signal });
 		try { parsedGrammar = parseGrammar(result.grammarCandidate, { floor_guides_m: evidence.manifest.floor_guides_m }); }
 		catch (error) {
 			if (error instanceof FacadeProviderError) throw failure(error.code, error.message, { remoteId: result.remoteId });

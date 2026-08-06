@@ -203,6 +203,28 @@ function commonGrammarRequest(overrides: Record<string, unknown> = {}) {
 	});
 }
 
+async function authorizedOpenAIExtract(provider: ReturnType<typeof createOpenAIGrammarProvider>, request = commonGrammarRequest(), signal?: AbortSignal) {
+	let result: any;
+	let operationError: any;
+	await createPaidOperationLedger(join(root, `openai-adapter-paid-${ledgerSequence++}.json`), { approvedRoot: root }).executeOnce({
+		requestKey: request.fingerprint,
+		provider: "openai-gpt-5.6",
+		kind: "grammar-extraction",
+		ceilingUsd: request.ceilingUsd,
+		estimateUsd: request.estimateUsd,
+		operation: async (submission: object) => {
+			try { result = await provider.extract({ request, submission, signal }); }
+			catch (error) {
+				operationError = error;
+				return { remoteId: `captured-openai-adapter-error-${ledgerSequence}`, artifactSha256: "f".repeat(64), actualUsd: 0 };
+			}
+			return { remoteId: result.remoteId ?? `openai-adapter-${ledgerSequence}`, artifactSha256: "a".repeat(64), actualUsd: result.actualUsd };
+		},
+	});
+	if (operationError) throw operationError;
+	return result;
+}
+
 function nestedPlainData(depth: number) {
 	let value: any = { leaf: true };
 	for (let index = 0; index < depth; index += 1) value = { child: value };
@@ -260,7 +282,7 @@ test("OpenAI grammar adapter preserves the pinned Responses compatibility contra
 		provider: "openai-gpt-5.6", model: "gpt-5.6", transport: "live",
 		ceilingUsd: 0.1, estimateUsd: 0.05,
 	});
-	const result = await provider.extract({ request });
+	const result = await authorizedOpenAIExtract(provider, request);
 	assert.equal(calls.length, 1);
 	const [call] = calls;
 	assert.equal(call.url, "https://api.openai.com/v1/responses");
@@ -273,12 +295,62 @@ test("OpenAI grammar adapter preserves the pinned Responses compatibility contra
 	assert.equal(result.grammarCandidate, JSON.stringify(grammar));
 });
 
+test("OpenAI grammar adapter requires the common one-shot ledger submission capability before fetch", async () => {
+	let fetchCalls = 0;
+	const provider = createOpenAIGrammarProvider({ OPENAI_API_KEY: "sk-fixture-secret" }, {
+		fetchImpl: async () => { fetchCalls += 1; return Response.json(responseFixture(grammar)); },
+	});
+	await assert.rejects(() => provider.extract({ request: commonGrammarRequest() }), (error: any) => {
+		assert.equal(error.code, "SUBMISSION_UNCERTAIN");
+		assert.equal(error.definitiveNonSubmission, false);
+		return true;
+	});
+	assert.equal(fetchCalls, 0);
+});
+
+test("proposal authority verification is grammar-provider neutral", async () => {
+	const providerResult = await generatedProposalResult();
+	const neutralPath = join(root, `provider-neutral-proposal-${ledgerSequence}.png`);
+	await writeFile(neutralPath, proposalBytes);
+	const authority: any = await verifyFacadeProposal({
+		proposalPath: neutralPath,
+		providerResult,
+		evidence,
+		config: {
+			candidateId: "creative-020", proposalProvider: "gpt-image-2",
+			grammarProvider: "byteplus-seed-mini", grammarBudgetUsd: 0.01, grammarEstimateUsd: 0.008,
+		},
+	});
+	assert.equal(authority.provider, "gpt-image-2");
+	assert.equal(authority.proposalSha256, sha256(proposalBytes));
+});
+
+test("OpenAI grammar billed POST rejects redirects without forwarding its body or credential", async () => {
+	const calls: any[] = [];
+	const provider = createOpenAIGrammarProvider({ OPENAI_API_KEY: "openai-redirect-secret" }, {
+		timeoutMs: 1_000,
+		fetchImpl: async (url: string, init: any) => {
+			calls.push({ url, authorization: init.headers.Authorization, body: init.body });
+			if (init.redirect === "error") throw new TypeError("redirect mode blocked the 307 response");
+			calls.push({ url: "https://redirect-target.invalid/collect", authorization: init.headers.Authorization, body: init.body });
+			return Response.json(responseFixture(grammar));
+		},
+	});
+	await assert.rejects(() => authorizedOpenAIExtract(provider), (error: any) => {
+		assert.equal(error.code, "GRAMMAR_TRANSPORT_FAILED");
+		assert.equal(error.definitiveNonSubmission, false);
+		return true;
+	});
+	assert.equal(calls.length, 1);
+	assert.equal(calls[0].url, "https://api.openai.com/v1/responses");
+});
+
 test("OpenAI grammar result decoding preserves absent remote IDs and bounds nested usage", async () => {
 	const request = commonGrammarRequest();
 	const withoutRemote = createOpenAIGrammarProvider({ OPENAI_API_KEY: "sk-fixture" }, {
 		fetchImpl: async () => Response.json(responseFixture(grammar, { id: undefined })),
 	});
-	assert.equal((await withoutRemote.extract({ request })).remoteId, null);
+	assert.equal((await authorizedOpenAIExtract(withoutRemote, request)).remoteId, null);
 
 	const deeplyNestedUsage = createOpenAIGrammarProvider({ OPENAI_API_KEY: "sk-fixture" }, {
 		fetchImpl: async () => Response.json(responseFixture(grammar, {
@@ -286,7 +358,7 @@ test("OpenAI grammar result decoding preserves absent remote IDs and bounds nest
 			usage: nestedPlainData(64),
 		})),
 	});
-	await assert.rejects(() => deeplyNestedUsage.extract({ request }), (error: any) => {
+	await assert.rejects(() => authorizedOpenAIExtract(deeplyNestedUsage, request), (error: any) => {
 		assert.equal(error.code, "GRAMMAR_RESPONSE_INVALID");
 		assert.equal(error.definitiveNonSubmission, false);
 		assert.doesNotMatch(`${error.name}\n${error.message}`, /RangeError|stack/i);

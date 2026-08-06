@@ -33,7 +33,9 @@ export async function fetchWithProviderDeadline({ fetchImpl, url, init = {}, sig
 		controller.abort(new DOMException("Provider request timed out", "TimeoutError"));
 	}, timeoutMs);
 	try {
-		const response = await fetchImpl(url, { ...init, signal: controller.signal });
+		const requestInit = { ...init, signal: controller.signal };
+		if (`${requestInit.method ?? "GET"}`.toUpperCase() === "POST") requestInit.redirect = "error";
+		const response = await fetchImpl(url, requestInit);
 		const result = typeof consume === "function" ? await consume(response, controller.signal) : response;
 		if (timedOut) throw failure("PROVIDER_TIMEOUT", "Provider request timed out", { provider });
 		if (signal?.aborted) throw failure("PROVIDER_ABORTED", "Provider request was aborted", { provider });

@@ -401,6 +401,7 @@ export function createProvider(envInput = {}, optionsInput = {}) {
 					method: "POST",
 					headers: { "content-type": "application/json", "x-goog-api-key": apiKey },
 					body,
+					redirect: "error",
 				}, signal, timeoutMs, async (response) => {
 					const headerRemoteId = response.headers.get("x-request-id");
 					return { response, ...await readBoundedJsonResponse(response), headerRemoteId };

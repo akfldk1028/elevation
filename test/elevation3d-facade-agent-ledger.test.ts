@@ -530,6 +530,67 @@ test("allows deterministic grammar splits whose reservations and actuals fit the
 	});
 });
 
+test("persists and aggregates repeated operations as exact integer micro-dollars", async () => {
+	await withLedger(async (_root, path) => {
+		const ledger = createPaidOperationLedger(path);
+		const splits = [116_667, 116_667, 116_666];
+		for (const [index, micros] of splits.entries()) {
+			const result: any = await ledger.executeOnce({
+				requestKey: `${index + 4}`.repeat(64), provider: "openai-gpt-5.6", kind: "grammar-extraction",
+				ceilingMicros: micros, estimateMicros: micros,
+				runCeilingMicros: 350_000, kindCeilingMicros: 350_000,
+				operation: async () => ({ remoteId: `exact-split-${index}`, artifactSha256, actualMicros: micros }),
+			});
+			assert.equal(result.actualMicros, micros);
+			assert.equal(result.actualUsd, micros / 1_000_000);
+		}
+		const persisted = JSON.parse(await readFile(path, "utf8"));
+		assert.equal(persisted.version, 2);
+		for (const operation of Object.values(persisted.operations) as any[]) {
+			assert.equal(Number.isSafeInteger(operation.ceilingMicros), true);
+			assert.equal(Number.isSafeInteger(operation.estimateMicros), true);
+			assert.equal(Number.isSafeInteger(operation.actualMicros), true);
+			assert.equal(Object.hasOwn(operation, "ceilingUsd"), false);
+			assert.equal(Object.hasOwn(operation, "estimateUsd"), false);
+			assert.equal(Object.hasOwn(operation, "actualUsd"), false);
+		}
+		const summary: any = await ledger.summary();
+		assert.equal(summary.costs.by_kind["grammar-extraction"].reserved_ceiling_micros, 350_000);
+		assert.equal(summary.costs.by_kind["grammar-extraction"].estimated_micros, 350_000);
+		assert.equal(summary.costs.by_kind["grammar-extraction"].actual_micros, 350_000);
+		assert.equal(summary.costs.total.actual_micros, 350_000);
+		assert.equal(summary.costs.total.actual_usd, 0.35);
+	});
+});
+
+test("safely reads a legacy USD ledger and rewrites it with exact micros on the next operation", async () => {
+	await withLedger(async (_root, path) => {
+		await writeFile(path, `${JSON.stringify({ version: 1, operations: {
+			[requestKey]: {
+				provider: "gpt-image-2", kind: "image-generation", status: "succeeded",
+				estimateUsd: 0.1, ceilingUsd: 0.1, remoteId: "legacy-remote", artifactSha256, actualUsd: 0.1,
+			},
+		} }, null, 2)}\n`);
+		const ledger = createPaidOperationLedger(path);
+		const legacy: any = await ledger.executeOnce({
+			requestKey, provider: "gpt-image-2", kind: "image-generation",
+			ceilingMicros: 100_000, estimateMicros: 100_000,
+			operation: async () => { throw new Error("legacy operation must not replay"); },
+		});
+		assert.equal(legacy.actualMicros, 100_000);
+		await ledger.executeOnce({
+			requestKey: "f".repeat(64), provider: "gpt-image-2", kind: "image-generation",
+			ceilingMicros: 200_000, estimateMicros: 200_000,
+			runCeilingMicros: 300_000,
+			operation: async () => ({ remoteId: "new-remote", artifactSha256, actualMicros: 200_000 }),
+		});
+		const rewritten = JSON.parse(await readFile(path, "utf8"));
+		assert.equal(rewritten.version, 2);
+		assert.equal(rewritten.operations[requestKey].actualMicros, 100_000);
+		assert.equal(rewritten.operations["f".repeat(64)].actualMicros, 200_000);
+	});
+});
+
 test("normalizes provider failures with redacted metadata", () => {
 	const normalized = normalizeProviderFailure(
 		Object.assign(new Error("Authorization: Bearer secret-key-value"), { status: 503 }),

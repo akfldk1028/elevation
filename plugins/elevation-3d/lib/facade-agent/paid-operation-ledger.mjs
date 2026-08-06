@@ -94,52 +94,83 @@ function finiteNonnegative(value, label) {
 	return value;
 }
 
-function validateIdentity({ requestKey, provider, kind, ceilingUsd, estimateUsd, runCeilingUsd, kindCeilingUsd, operation }) {
+function exactUsdMicros(value, label) {
+	finiteNonnegative(value, label);
+	const micros = Math.round(value * 1_000_000);
+	if (!Number.isSafeInteger(micros) || Math.abs(micros / 1_000_000 - value) > Number.EPSILON) throw new TypeError(`${label} must use at most six decimal places`);
+	return micros;
+}
+
+function exactMicros(value, label) {
+	if (!Number.isSafeInteger(value) || value < 0) throw new TypeError(`${label} must be a nonnegative safe integer`);
+	return value;
+}
+
+function moneyMicros(input, microsKey, usdKey, label, { required = true } = {}) {
+	const fromMicros = input[microsKey] === undefined ? undefined : exactMicros(input[microsKey], microsKey);
+	const fromUsd = input[usdKey] === undefined ? undefined : exactUsdMicros(input[usdKey], usdKey);
+	if (fromMicros !== undefined && fromUsd !== undefined && fromMicros !== fromUsd) throw new TypeError(`${label} micro-dollar and USD values must match`);
+	const value = fromMicros ?? fromUsd;
+	if (required && value === undefined) throw new TypeError(`${label} is required`);
+	return value;
+}
+
+function validateIdentity(input) {
+	const { requestKey, provider, kind, operation } = input;
 	if (typeof requestKey !== "string" || !HEX_SHA256.test(requestKey)) throw new TypeError("requestKey must be a lowercase SHA-256 digest");
 	if (typeof provider !== "string" || !PROVIDER.test(provider)) throw new TypeError("provider must be a safe identifier");
 	if (!ALLOWED_KINDS.has(kind)) throw new TypeError("kind must be image-generation or grammar-extraction");
-	finiteNonnegative(ceilingUsd, "ceilingUsd");
-	finiteNonnegative(estimateUsd, "estimateUsd");
+	const ceilingMicros = moneyMicros(input, "ceilingMicros", "ceilingUsd", "ceiling");
+	const estimateMicros = moneyMicros(input, "estimateMicros", "estimateUsd", "estimate");
+	const runCeilingMicros = moneyMicros(input, "runCeilingMicros", "runCeilingUsd", "run ceiling", { required: false });
+	const kindCeilingMicros = moneyMicros(input, "kindCeilingMicros", "kindCeilingUsd", "kind ceiling", { required: false });
 	if (typeof operation !== "function") throw new TypeError("operation must be a function");
-	if (estimateUsd > ceilingUsd) throw codedError("PAID_OPERATION_BUDGET_EXCEEDED", "Estimated paid operation cost exceeds its approved ceiling");
-	if (runCeilingUsd !== undefined) finiteNonnegative(runCeilingUsd, "runCeilingUsd");
-	if (kindCeilingUsd !== undefined) finiteNonnegative(kindCeilingUsd, "kindCeilingUsd");
-	if (runCeilingUsd !== undefined && ceilingUsd > runCeilingUsd) throw codedError("PAID_OPERATION_AGGREGATE_BUDGET_EXCEEDED", "Paid operation ceiling exceeds the approved run budget");
-	if (kindCeilingUsd !== undefined && ceilingUsd > kindCeilingUsd) throw codedError("PAID_OPERATION_AGGREGATE_BUDGET_EXCEEDED", "Paid operation ceiling exceeds the approved kind budget");
+	if (estimateMicros > ceilingMicros) throw codedError("PAID_OPERATION_BUDGET_EXCEEDED", "Estimated paid operation cost exceeds its approved ceiling");
+	if (runCeilingMicros !== undefined && ceilingMicros > runCeilingMicros) throw codedError("PAID_OPERATION_AGGREGATE_BUDGET_EXCEEDED", "Paid operation ceiling exceeds the approved run budget");
+	if (kindCeilingMicros !== undefined && ceilingMicros > kindCeilingMicros) throw codedError("PAID_OPERATION_AGGREGATE_BUDGET_EXCEEDED", "Paid operation ceiling exceeds the approved kind budget");
+	return { ...input, requestKey, provider, kind, operation, ceilingMicros, estimateMicros, runCeilingMicros, kindCeilingMicros };
 }
 
 function validRemoteId(value) {
 	return typeof value === "string" && value.length > 0 && value.length <= 4096 && !/[\r\n\0]/.test(value);
 }
 
-function validateOperationRecord(requestKey, value) {
+function validateOperationRecord(requestKey, value, version) {
 	if (!HEX_SHA256.test(requestKey) || !value || typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid paid operation ledger");
 	if (typeof value.provider !== "string" || !PROVIDER.test(value.provider) || !ALLOWED_KINDS.has(value.kind)) throw new Error("Invalid paid operation ledger");
 	if (!new Set(["submitting", "succeeded"]).has(value.status)) throw new Error("Invalid paid operation ledger");
-	finiteNonnegative(value.estimateUsd, "persisted estimateUsd");
-	finiteNonnegative(value.ceilingUsd, "persisted ceilingUsd");
-	if (value.estimateUsd > value.ceilingUsd) throw new Error("Invalid paid operation ledger");
+	const estimateMicros = version === 1 ? exactUsdMicros(value.estimateUsd, "persisted estimateUsd") : exactMicros(value.estimateMicros, "persisted estimateMicros");
+	const ceilingMicros = version === 1 ? exactUsdMicros(value.ceilingUsd, "persisted ceilingUsd") : exactMicros(value.ceilingMicros, "persisted ceilingMicros");
+	if (estimateMicros > ceilingMicros) throw new Error("Invalid paid operation ledger");
 	if (value.remoteId !== null && !validRemoteId(value.remoteId)) throw new Error("Invalid paid operation ledger");
 	if (value.artifactSha256 !== null && (typeof value.artifactSha256 !== "string" || !HEX_SHA256.test(value.artifactSha256))) throw new Error("Invalid paid operation ledger");
-	if (value.actualUsd !== null) finiteNonnegative(value.actualUsd, "persisted actualUsd");
-	if (value.actualUsd !== null && value.actualUsd > value.ceilingUsd) throw new Error("Invalid paid operation ledger");
-	if (value.status === "succeeded" && (!validRemoteId(value.remoteId) || !HEX_SHA256.test(value.artifactSha256) || value.actualUsd === null)) {
+	const rawActual = version === 1 ? value.actualUsd : value.actualMicros;
+	const actualMicros = rawActual === null ? null : version === 1
+		? exactUsdMicros(rawActual, "persisted actualUsd")
+		: exactMicros(rawActual, "persisted actualMicros");
+	if (actualMicros !== null && actualMicros > ceilingMicros) throw new Error("Invalid paid operation ledger");
+	if (value.status === "succeeded" && (!validRemoteId(value.remoteId) || !HEX_SHA256.test(value.artifactSha256) || actualMicros === null)) {
 		throw new Error("Invalid paid operation ledger");
 	}
-	return value;
+	return {
+		provider: value.provider, kind: value.kind, status: value.status,
+		estimateMicros, ceilingMicros, remoteId: value.remoteId,
+		artifactSha256: value.artifactSha256, actualMicros,
+	};
 }
 
 async function readLedger(path, approvedRoot) {
 	try {
 		await assertSafeSensitiveEntry(approvedRoot, path);
 		const parsed = JSON.parse(await readFile(path, "utf8"));
-		if (parsed?.version !== 1 || !parsed.operations || typeof parsed.operations !== "object" || Array.isArray(parsed.operations)) {
+		if (![1, 2].includes(parsed?.version) || !parsed.operations || typeof parsed.operations !== "object" || Array.isArray(parsed.operations)) {
 			throw new Error("Invalid paid operation ledger");
 		}
-		for (const [key, operation] of Object.entries(parsed.operations)) validateOperationRecord(key, operation);
-		return parsed;
+		const operations = Object.fromEntries(Object.entries(parsed.operations)
+			.map(([key, operation]) => [key, validateOperationRecord(key, operation, parsed.version)]));
+		return { version: 2, operations };
 	} catch (error) {
-		if (error?.code === "ENOENT") return { version: 1, operations: {} };
+		if (error?.code === "ENOENT") return { version: 2, operations: {} };
 		if (error?.code === "PAID_OPERATION_PATH_UNSAFE") throw error;
 		throw ledgerUncertainError();
 	}
@@ -243,38 +274,46 @@ function validateResult(value) {
 	if (!value || typeof value !== "object" || Array.isArray(value)) throw new TypeError("Paid operation must return a result object");
 	if (!validRemoteId(value.remoteId)) throw new TypeError("Paid operation result remoteId is invalid");
 	if (typeof value.artifactSha256 !== "string" || !HEX_SHA256.test(value.artifactSha256)) throw new TypeError("Paid operation result artifactSha256 is invalid");
-	finiteNonnegative(value.actualUsd, "Paid operation result actualUsd");
-	return { remoteId: value.remoteId, artifactSha256: value.artifactSha256, actualUsd: value.actualUsd };
+	const actualMicros = moneyMicros(value, "actualMicros", "actualUsd", "Paid operation result actual cost");
+	return { remoteId: value.remoteId, artifactSha256: value.artifactSha256, actualMicros };
 }
 
 function publicResult(record) {
-	return { remoteIdHash: sha256(record.remoteId), artifactSha256: record.artifactSha256, actualUsd: record.actualUsd };
+	return {
+		remoteIdHash: sha256(record.remoteId), artifactSha256: record.artifactSha256,
+		actualMicros: record.actualMicros, actualUsd: record.actualMicros / 1_000_000,
+	};
 }
 
 function assertAggregateBudget(ledger, input) {
-	if (input.runCeilingUsd === undefined && input.kindCeilingUsd === undefined) return;
+	if (input.runCeilingMicros === undefined && input.kindCeilingMicros === undefined) return;
 	const operations = Object.values(ledger.operations);
-	const runReserved = operations.reduce((sum, operation) => sum + operation.ceilingUsd, 0);
+	const runReserved = operations.reduce((sum, operation) => sum + operation.ceilingMicros, 0);
 	const kindReserved = operations.filter((operation) => operation.kind === input.kind)
-		.reduce((sum, operation) => sum + operation.ceilingUsd, 0);
-	if (input.runCeilingUsd !== undefined && runReserved + input.ceilingUsd > input.runCeilingUsd + Number.EPSILON) {
+		.reduce((sum, operation) => sum + operation.ceilingMicros, 0);
+	if (input.runCeilingMicros !== undefined && runReserved + input.ceilingMicros > input.runCeilingMicros) {
 		throw codedError("PAID_OPERATION_AGGREGATE_BUDGET_EXCEEDED", "Paid operation reservations exceed the approved run budget");
 	}
-	if (input.kindCeilingUsd !== undefined && kindReserved + input.ceilingUsd > input.kindCeilingUsd + Number.EPSILON) {
+	if (input.kindCeilingMicros !== undefined && kindReserved + input.ceilingMicros > input.kindCeilingMicros) {
 		throw codedError("PAID_OPERATION_AGGREGATE_BUDGET_EXCEEDED", "Paid operation reservations exceed the approved kind budget");
 	}
 }
 
 function costSummary(operations) {
-	const empty = () => ({ reserved_ceiling_usd: 0, estimated_usd: 0, actual_usd: 0 });
+	const empty = () => ({ reserved_ceiling_micros: 0, estimated_micros: 0, actual_micros: 0 });
 	const total = empty();
 	const byKind = Object.fromEntries([...ALLOWED_KINDS].map((kind) => [kind, empty()]));
 	for (const operation of operations) {
 		for (const target of [total, byKind[operation.kind]]) {
-			target.reserved_ceiling_usd += operation.ceilingUsd;
-			target.estimated_usd += operation.estimateUsd;
-			target.actual_usd += operation.actualUsd ?? 0;
+			target.reserved_ceiling_micros += operation.ceilingMicros;
+			target.estimated_micros += operation.estimateMicros;
+			target.actual_micros += operation.actualMicros ?? 0;
 		}
+	}
+	for (const target of [total, ...Object.values(byKind)]) {
+		target.reserved_ceiling_usd = target.reserved_ceiling_micros / 1_000_000;
+		target.estimated_usd = target.estimated_micros / 1_000_000;
+		target.actual_usd = target.actual_micros / 1_000_000;
 	}
 	return { total, by_kind: byKind };
 }
@@ -304,75 +343,75 @@ export function createPaidOperationLedger(path, { approvedRoot, lockWaitMs = 5_0
 		path: ledgerPath,
 		executeOnce(input) {
 			return serialize(async () => {
-				validateIdentity(input ?? {});
-				input.signal?.throwIfAborted();
+				const normalizedInput = validateIdentity(input ?? {});
+				normalizedInput.signal?.throwIfAborted();
 				let token;
 				try {
 					token = await acquireReservation(lockPath, root, {
-						waitMs: lockWaitMs, pollMs: lockPollMs, signal: input.signal,
+						waitMs: lockWaitMs, pollMs: lockPollMs, signal: normalizedInput.signal,
 					});
 				} catch (error) {
 					if (error?.code !== "PAID_OPERATION_RESERVATION_STALE") throw error;
 					const staleLedger = await readLedger(ledgerPath, root);
-					if (staleLedger.operations[input.requestKey]?.status === "submitting") throw uncertainError(input.kind);
+					if (staleLedger.operations[normalizedInput.requestKey]?.status === "submitting") throw uncertainError(normalizedInput.kind);
 					throw error;
 				}
 				try {
-					input.signal?.throwIfAborted();
+					normalizedInput.signal?.throwIfAborted();
 					const ledger = await readLedger(ledgerPath, root);
-					const existing = ledger.operations[input.requestKey];
+					const existing = ledger.operations[normalizedInput.requestKey];
 					if (existing) {
-						if (existing.provider !== input.provider || existing.kind !== input.kind) {
+						if (existing.provider !== normalizedInput.provider || existing.kind !== normalizedInput.kind) {
 							throw codedError("PAID_OPERATION_IDENTITY_MISMATCH", "Paid operation request key is already bound to a different operation");
 						}
 						if (existing.status === "succeeded") return publicResult(existing);
-						throw uncertainError(input.kind);
+						throw uncertainError(normalizedInput.kind);
 					}
-					assertAggregateBudget(ledger, input);
-					ledger.operations[input.requestKey] = {
-						provider: input.provider,
-						kind: input.kind,
+					assertAggregateBudget(ledger, normalizedInput);
+					ledger.operations[normalizedInput.requestKey] = {
+						provider: normalizedInput.provider,
+						kind: normalizedInput.kind,
 						status: "submitting",
-						estimateUsd: input.estimateUsd,
-						ceilingUsd: input.ceilingUsd,
+						estimateMicros: normalizedInput.estimateMicros,
+						ceilingMicros: normalizedInput.ceilingMicros,
 						remoteId: null,
 						artifactSha256: null,
-						actualUsd: null,
+						actualMicros: null,
 					};
 					await atomicWrite(ledgerPath, ledger, root);
 					const submissionCapability = issueSubmissionCapability({
-						requestKey: input.requestKey,
-						provider: input.provider,
-						kind: input.kind,
-						estimateUsd: input.estimateUsd,
-						ceilingUsd: input.ceilingUsd,
+						requestKey: normalizedInput.requestKey,
+						provider: normalizedInput.provider,
+						kind: normalizedInput.kind,
+						estimateMicros: normalizedInput.estimateMicros,
+						ceilingMicros: normalizedInput.ceilingMicros,
 					});
 					try {
-						const result = validateResult(await input.operation(submissionCapability));
-						if (result.actualUsd > input.ceilingUsd) {
+						const result = validateResult(await normalizedInput.operation(submissionCapability));
+						if (result.actualMicros > normalizedInput.ceilingMicros) {
 							throw codedError("PAID_OPERATION_ACTUAL_BUDGET_EXCEEDED", "Paid operation actual cost exceeds its reserved ceiling");
 						}
-						ledger.operations[input.requestKey] = {
-							...ledger.operations[input.requestKey], ...result, status: "succeeded",
+						ledger.operations[normalizedInput.requestKey] = {
+							...ledger.operations[normalizedInput.requestKey], ...result, status: "succeeded",
 						};
 						await atomicWrite(ledgerPath, ledger, root);
-						return publicResult(ledger.operations[input.requestKey]);
+						return publicResult(ledger.operations[normalizedInput.requestKey]);
 					} catch (error) {
 						const internalRemoteId = takeFacadeProviderRemoteIdForLedger(error)
 							?? (validRemoteId(error?.remoteId) ? error.remoteId : null);
-						const failure = normalizeProviderFailure(error, input.provider, input.kind === "image-generation" ? "generate" : "grammar");
+						const failure = normalizeProviderFailure(error, normalizedInput.provider, normalizedInput.kind === "image-generation" ? "generate" : "grammar");
 						takeFacadeProviderRemoteIdForLedger(failure);
 						if (internalRemoteId) {
-							ledger.operations[input.requestKey].remoteId = internalRemoteId;
+							ledger.operations[normalizedInput.requestKey].remoteId = internalRemoteId;
 							await atomicWrite(ledgerPath, ledger, root);
 							throw failure;
 						}
 						if (failure.definitiveNonSubmission) {
-							delete ledger.operations[input.requestKey];
+							delete ledger.operations[normalizedInput.requestKey];
 							await atomicWrite(ledgerPath, ledger, root);
 							throw failure;
 						}
-						throw uncertainError(input.kind);
+						throw uncertainError(normalizedInput.kind);
 					} finally {
 						revokeSubmissionCapability(submissionCapability);
 					}
@@ -389,11 +428,14 @@ export function createPaidOperationLedger(path, { approvedRoot, lockWaitMs = 5_0
 				provider: operation.provider,
 				kind: operation.kind,
 				status: operation.status,
-				estimateUsd: operation.estimateUsd,
-				ceilingUsd: operation.ceilingUsd,
+				estimateMicros: operation.estimateMicros,
+				ceilingMicros: operation.ceilingMicros,
+				estimateUsd: operation.estimateMicros / 1_000_000,
+				ceilingUsd: operation.ceilingMicros / 1_000_000,
 				remoteIdHash: operation.remoteId ? sha256(operation.remoteId) : null,
 				artifactSha256: operation.artifactSha256,
-				actualUsd: operation.actualUsd,
+				actualMicros: operation.actualMicros,
+				actualUsd: operation.actualMicros === null ? null : operation.actualMicros / 1_000_000,
 			}));
 			return {
 				version: ledger.version,

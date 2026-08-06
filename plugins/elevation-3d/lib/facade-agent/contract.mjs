@@ -62,13 +62,14 @@ function deepFreeze(value) {
 	return value;
 }
 
-function deterministicAllocation(total, providers) {
-	let assigned = 0;
-	return Object.fromEntries(providers.map((provider, index) => {
-		const value = index === providers.length - 1 ? total - assigned : total / providers.length;
-		assigned += value;
-		return [provider, value];
-	}));
+function deterministicMicrosAllocation(totalMicros, providers) {
+	const quotient = Math.floor(totalMicros / providers.length);
+	const remainder = totalMicros % providers.length;
+	return Object.fromEntries(providers.map((provider, index) => [provider, quotient + (index < remainder ? 1 : 0)]));
+}
+
+function microsToUsdRecord(record) {
+	return Object.fromEntries(Object.entries(record).map(([key, micros]) => [key, micros / 1_000_000]));
 }
 
 export function normalizeFacadeAgentConfig(input) {
@@ -101,11 +102,18 @@ export function normalizeFacadeAgentConfig(input) {
 		provider,
 		finitePositive(input.imageBudgetUsd?.[provider], `imageBudgetUsd.${provider}`),
 	]));
+	const imageBudgetMicros = Object.fromEntries(imageProviders.map((provider) => [
+		provider, exactUsdMicros(imageBudgetUsd[provider], `imageBudgetUsd.${provider}`),
+	]));
 	const grammarBudgetUsd = finiteNonnegative(input.grammarBudgetUsd, "grammarBudgetUsd");
+	const grammarBudgetMicros = exactUsdMicros(grammarBudgetUsd, "grammarBudgetUsd");
 	const grammarEstimateUsd = finiteNonnegative(input.grammarEstimateUsd ?? grammarBudgetUsd, "grammarEstimateUsd");
+	const grammarEstimateMicros = exactUsdMicros(grammarEstimateUsd, "grammarEstimateUsd");
 	if (grammarEstimateUsd > grammarBudgetUsd) throw new FacadeAgentContractError("BUDGET_INVALID", "grammarEstimateUsd cannot exceed the run-wide grammarBudgetUsd");
-	const grammarBudgetAllocationUsd = deterministicAllocation(grammarBudgetUsd, imageProviders);
-	const grammarEstimateAllocationUsd = deterministicAllocation(grammarEstimateUsd, imageProviders);
+	const grammarBudgetAllocationMicros = deterministicMicrosAllocation(grammarBudgetMicros, imageProviders);
+	const grammarEstimateAllocationMicros = deterministicMicrosAllocation(grammarEstimateMicros, imageProviders);
+	const grammarBudgetAllocationUsd = microsToUsdRecord(grammarBudgetAllocationMicros);
+	const grammarEstimateAllocationUsd = microsToUsdRecord(grammarEstimateAllocationMicros);
 	const imageEstimateUsd = Object.fromEntries(imageProviders.map((provider) => {
 		const estimate = finiteNonnegative(input.imageEstimateUsd?.[provider] ?? imageBudgetUsd[provider], `imageEstimateUsd.${provider}`);
 		if (estimate > imageBudgetUsd[provider]) throw new FacadeAgentContractError("BUDGET_INVALID", `imageEstimateUsd.${provider} cannot exceed its image budget`);
@@ -116,15 +124,17 @@ export function normalizeFacadeAgentConfig(input) {
 		finiteNonnegative(value, `imageEstimateUsd.${provider}`);
 		if (!imageProviders.includes(provider) && value !== 0) throw new FacadeAgentContractError("BUDGET_INVALID", `Unselected provider estimate must be absent or zero: ${provider}`);
 	}
-	const runBudgetMicros = Object.values(imageBudgetUsd).reduce((sum, value, index) => sum + exactUsdMicros(value, `imageBudgetUsd.${imageProviders[index]}`), 0)
-		+ exactUsdMicros(grammarBudgetUsd, "grammarBudgetUsd");
-	const runEstimateMicros = Object.values(imageEstimateUsd).reduce((sum, value, index) => sum + exactUsdMicros(value, `imageEstimateUsd.${imageProviders[index]}`), 0)
-		+ exactUsdMicros(grammarEstimateUsd, "grammarEstimateUsd");
+	const imageEstimateMicros = Object.fromEntries(imageProviders.map((provider) => [
+		provider, exactUsdMicros(imageEstimateUsd[provider], `imageEstimateUsd.${provider}`),
+	]));
+	const runBudgetMicros = Object.values(imageBudgetMicros).reduce((sum, value) => sum + value, grammarBudgetMicros);
+	const runEstimateMicros = Object.values(imageEstimateMicros).reduce((sum, value) => sum + value, grammarEstimateMicros);
 	const runBudgetUsd = runBudgetMicros / 1_000_000;
 	const runEstimateUsd = runEstimateMicros / 1_000_000;
 	const confirmLive = input.confirmLive === true;
 	const confirmedTotalUsd = input.confirmedTotalUsd;
-	if (confirmLive && exactUsdMicros(confirmedTotalUsd, "confirmedTotalUsd") !== runBudgetMicros) throw new FacadeAgentContractError("LIVE_COST_CONFIRMATION_INVALID", "Live cost confirmation must exactly equal all selected ceilings");
+	const confirmedTotalMicros = confirmLive ? exactUsdMicros(confirmedTotalUsd, "confirmedTotalUsd") : undefined;
+	if (confirmLive && confirmedTotalMicros !== runBudgetMicros) throw new FacadeAgentContractError("LIVE_COST_CONFIRMATION_INVALID", "Live cost confirmation must exactly equal all selected ceilings");
 	if (!confirmLive && confirmedTotalUsd !== undefined) throw new FacadeAgentContractError("LIVE_COST_CONFIRMATION_INVALID", "Cost confirmation requires live execution");
 	const { imageProviders: _imageProviders, providers: _providers, grammarProvider: _grammarProvider, grammarModel: _grammarModel, ...rest } = input;
 	return deepFreeze(redactSecrets({
@@ -139,17 +149,25 @@ export function normalizeFacadeAgentConfig(input) {
 		grammarProvider,
 		...(grammarProvider === "openai-gpt-5.6" ? { grammarModel: "gpt-5.6" } : {}),
 		imageBudgetUsd,
+		imageBudgetMicros,
 		imageEstimateUsd,
+		imageEstimateMicros,
 		grammarBudgetUsd,
+		grammarBudgetMicros,
 		grammarEstimateUsd,
+		grammarEstimateMicros,
 		grammarBudgetAllocationUsd,
+		grammarBudgetAllocationMicros,
 		grammarEstimateAllocationUsd,
+		grammarEstimateAllocationMicros,
 		runBudgetUsd,
+		runBudgetMicros,
 		runEstimateUsd,
+		runEstimateMicros,
 		maxLocalAttempts: 2,
 		maxImageSubmissionsPerProvider: 1,
 		confirmLive,
-		...(confirmLive ? { confirmedTotalUsd } : {}),
+		...(confirmLive ? { confirmedTotalUsd, confirmedTotalMicros } : {}),
 	}));
 }
 

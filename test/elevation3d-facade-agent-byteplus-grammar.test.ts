@@ -179,6 +179,22 @@ test("BytePlus grammar maps HTTP failures once without exposing provider payload
 	}
 });
 
+test("BytePlus grammar billed POST rejects redirects without forwarding its body or credential", async () => {
+	const calls: any[] = [];
+	const provider = createProvider({ ARK_API_KEY: "byteplus-redirect-secret" }, {
+		fetchImpl: async (url: string, init: any) => {
+			calls.push({ url, authorization: init.headers.Authorization, body: init.body });
+			if (init.redirect === "error") throw new TypeError("redirect mode blocked the 308 response");
+			calls.push({ url: "https://redirect-target.invalid/collect", authorization: init.headers.Authorization, body: init.body });
+			return successResponse();
+		},
+	});
+	await assert.rejects(() => authorizedExtract(provider),
+		(error: any) => assertFailure(error, "SUBMISSION_UNCERTAIN", false));
+	assert.equal(calls.length, 1);
+	assert.equal(calls[0].url, ENDPOINT);
+});
+
 test("BytePlus grammar treats timeout and in-flight caller abort as non-replayable one-shot failures", async () => {
 	let timeoutCalls = 0;
 	const timeoutProvider = createProvider({ ARK_API_KEY: "key" }, {
@@ -237,6 +253,18 @@ test("BytePlus grammar rejects reported cost above the fixed ceiling after one f
 	await assert.rejects(() => authorizedExtract(provider),
 		(error: any) => assertFailure(error, "INVALID_PROVIDER_RESPONSE", false));
 	assert.equal(fetchCalls, 1);
+});
+
+test("BytePlus grammar cancels the response body before rejecting declared length overflow", async () => {
+	let cancelled = false;
+	const response = new Response(new ReadableStream({
+		pull() {},
+		cancel() { cancelled = true; },
+	}), { headers: { "content-length": String(1024 * 1024 + 1) } });
+	const provider = createProvider({ ARK_API_KEY: "key" }, { fetchImpl: async () => response });
+	await assert.rejects(() => authorizedExtract(provider),
+		(error: any) => assertFailure(error, "RESPONSE_TOO_LARGE", false));
+	assert.equal(cancelled, true);
 });
 
 test("BytePlus grammar retains header provenance across every post-fetch response failure and blocks replay", async () => {

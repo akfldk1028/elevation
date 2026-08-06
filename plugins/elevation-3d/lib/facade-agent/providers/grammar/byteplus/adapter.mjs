@@ -64,6 +64,7 @@ async function readBoundedText(response) {
 	if (!(response instanceof Response)) throw failure("INVALID_PROVIDER_RESPONSE", "BytePlus returned an invalid HTTP response");
 	const declared = response.headers.get("content-length");
 	if (declared !== null && (!/^(?:0|[1-9][0-9]*)$/.test(declared) || Number(declared) > MAX_RESPONSE_BYTES)) {
+		await response.body?.cancel?.().catch(() => {});
 		throw failure("RESPONSE_TOO_LARGE", "BytePlus grammar response exceeds the size limit");
 	}
 	const reader = response.body?.getReader();
@@ -162,6 +163,7 @@ export function createProvider(env = {}, options = {}) {
 					headers: { "content-type": "application/json", Authorization: `Bearer ${apiKey}` },
 					body: JSON.stringify(serializeBytePlusGrammarRequest(request)),
 					signal: controller.signal,
+					redirect: "error",
 				});
 				if (response instanceof Response) {
 					responseRemoteId = selectBytePlusGrammarRemoteId(null, response.headers.get("x-request-id"));
