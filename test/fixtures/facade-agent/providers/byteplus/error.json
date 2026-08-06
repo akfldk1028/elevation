@@ -1,0 +1,7 @@
+{
+  "error": {
+    "code": "RateLimitExceeded",
+    "message": "request rejected; api_key=must-not-leak"
+  },
+  "request_id": "byteplus-error-fixture"
+}

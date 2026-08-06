@@ -74,3 +74,36 @@ export function cloneBoundedPlainData(value, options = {}) {
 export function redactBoundedPlainData(value, options = {}) {
 	return freezeTree(redactSecrets(cloneBoundedPlainData(value, options)));
 }
+
+export async function readBoundedJsonResponse(response, { maxBytes = 48 * 1024 * 1024 } = {}) {
+	if (!(response instanceof Response)) throw new FacadeImageBoundaryError("PROVIDER_RESPONSE_INVALID", "Provider response must be a Response");
+	if (!Number.isSafeInteger(maxBytes) || maxBytes < 1) throw new TypeError("maxBytes must be a positive safe integer");
+	const declared = response.headers.get("content-length");
+	if (declared !== null && (!/^(?:0|[1-9][0-9]*)$/.test(declared) || Number(declared) > maxBytes)) {
+		throw new FacadeImageBoundaryError("PROVIDER_RESPONSE_TOO_LARGE", "Provider response exceeds the configured byte limit");
+	}
+	const reader = response.body?.getReader();
+	if (!reader) throw new FacadeImageBoundaryError("PROVIDER_RESPONSE_INVALID", "Provider response body is missing");
+	const chunks = [];
+	let total = 0;
+	try {
+		for (;;) {
+			const { done, value } = await reader.read();
+			if (done) break;
+			if (!(value instanceof Uint8Array)) throw new FacadeImageBoundaryError("PROVIDER_RESPONSE_INVALID", "Provider response body is invalid");
+			total += value.byteLength;
+			if (total > maxBytes) {
+				await reader.cancel().catch(() => undefined);
+				throw new FacadeImageBoundaryError("PROVIDER_RESPONSE_TOO_LARGE", "Provider response exceeds the configured byte limit");
+			}
+			chunks.push(Buffer.from(value));
+		}
+	} finally {
+		reader.releaseLock();
+	}
+	let parsed;
+	try { parsed = JSON.parse(Buffer.concat(chunks, total).toString("utf8")); }
+	catch { throw new FacadeImageBoundaryError("PROVIDER_RESPONSE_INVALID", "Provider returned invalid JSON"); }
+	try { return cloneBoundedPlainData(parsed); }
+	catch { throw new FacadeImageBoundaryError("PROVIDER_RESPONSE_INVALID", "Provider returned a structurally invalid JSON payload"); }
+}
