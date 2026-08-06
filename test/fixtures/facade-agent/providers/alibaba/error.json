@@ -1,0 +1,5 @@
+{
+  "code": "Throttling.RateQuota",
+  "message": "request rejected; api_key=must-not-leak",
+  "request_id": "alibaba-error-fixture"
+}
