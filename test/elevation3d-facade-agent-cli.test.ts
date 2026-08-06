@@ -120,9 +120,30 @@ function base(root: string, runId: string) {
 	return [
 		"--candidate", "creative-020", "--brief", "brick-punched-window-v1",
 		"--dataset-root", root, "--output-root", join(root, "output"), "--run-id", runId,
+		"--providers", "gpt-image-2,nano-banana-pro",
 		"--image-budget-gpt-image-2", "1", "--image-budget-nano-banana-pro", "1", "--grammar-budget", "1",
 	];
 }
+
+test("accepts repeatable provider-keyed budgets and exact decimal live confirmation for three providers", async () => {
+	const root = await mkdtemp(join(tmpdir(), "elevation3d-cli-provider-budgets-")); roots.push(root);
+	const args = [
+		"preflight", "--candidate", "creative-020", "--brief", "brick-punched-window-v1",
+		"--dataset-root", root, "--output-root", join(root, "output"), "--run-id", "provider-budgets",
+		"--providers", "gpt-image-2,seedream-5-pro,qwen-image-2",
+		"--image-budget", "gpt-image-2=0.10",
+		"--image-budget", "seedream-5-pro=0.20",
+		"--image-budget", "qwen-image-2=0.30",
+		"--grammar-budget", "0.10",
+		"--confirm-live", "--confirm-total-usd", "0.70",
+	];
+	const result = invoke(args);
+	assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
+	const envelope = JSON.parse(await readFile(join(root, "output", "creative-020", "provider-budgets", "facade-agent-config.json"), "utf8"));
+	assert.deepEqual(envelope.config.providers, ["gpt-image-2", "seedream-5-pro", "qwen-image-2"]);
+	assert.deepEqual(envelope.config.imageBudgetUsd, { "gpt-image-2": 0.1, "seedream-5-pro": 0.2, "qwen-image-2": 0.3 });
+	assert.equal(envelope.config.runBudgetUsd, 0.7);
+});
 
 test("CLI emits one safe JSON document, progress on stderr, and stable outcome codes", async () => {
 	const root = await mkdtemp(join(tmpdir(), "elevation3d-cli-outcomes-")); roots.push(root);
@@ -245,6 +266,7 @@ test("normal CLI preflight constructs production dependencies without secrets or
 	const result = invokeProduction(["preflight",
 		"--candidate", "creative-020", "--brief", "brick-punched-window-v1",
 		"--dataset-root", datasetRoot, "--output-root", join(root, "output"), "--run-id", "production-preflight",
+		"--providers", "gpt-image-2,nano-banana-pro",
 		"--image-budget-gpt-image-2", "1", "--image-budget-nano-banana-pro", "1", "--grammar-budget", "1",
 	]);
 	assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);

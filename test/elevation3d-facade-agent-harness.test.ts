@@ -651,6 +651,7 @@ test("preserves request identity through actual provider factories with mocked f
 	});
 	value.deps.extractGrammar = actualExtractGrammar;
 	value.config.confirmLive = true;
+	value.config.confirmedTotalUsd = 3;
 
 	const result = await runFacadeAgent(value.config, value.deps);
 	assert.deepEqual(fetchCalls, { openai: 1, gemini: 1, grammar: 2 });

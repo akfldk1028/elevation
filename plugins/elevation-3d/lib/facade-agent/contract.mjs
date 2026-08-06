@@ -2,7 +2,8 @@ import { resolve } from "node:path";
 import { redactSecrets, sha256, stableJson } from "../core.mjs";
 import { assertSafePathSegment } from "../run-memory.mjs";
 
-export const FACADE_AGENT_PROVIDERS = Object.freeze(["gpt-image-2", "nano-banana-pro"]);
+export const FACADE_AGENT_PROVIDER_IDS = Object.freeze(["gpt-image-2", "seedream-5-pro", "qwen-image-2", "nano-banana-pro"]);
+export const FACADE_AGENT_PROVIDERS = Object.freeze(["gpt-image-2", "seedream-5-pro", "qwen-image-2"]);
 export const FACADE_AGENT_STAGES = Object.freeze(["preflight", "evidence", "generate", "grammar", "build", "validate", "compare"]);
 
 export class FacadeAgentContractError extends Error {
@@ -26,6 +27,19 @@ function finiteNonnegative(value, label) {
 		throw new FacadeAgentContractError("BUDGET_INVALID", `${label} must be a finite nonnegative number`);
 	}
 	return value;
+}
+
+function finitePositive(value, label) {
+	finiteNonnegative(value, label);
+	if (value === 0) throw new FacadeAgentContractError("BUDGET_INVALID", `${label} must be positive for a selected provider`);
+	return value;
+}
+
+function exactUsdMicros(value, label) {
+	finiteNonnegative(value, label);
+	const micros = Math.round(value * 1_000_000);
+	if (!Number.isSafeInteger(micros) || Math.abs(micros / 1_000_000 - value) > Number.EPSILON) throw new FacadeAgentContractError("BUDGET_INVALID", `${label} must use at most six decimal places`);
+	return micros;
 }
 
 function resolveRoot(value, label) {
@@ -62,10 +76,17 @@ export function normalizeFacadeAgentConfig(input) {
 	if (input.grammarModel !== "gpt-5.6") throw new FacadeAgentContractError("GRAMMAR_MODEL_INVALID", "First comparison requires gpt-5.6 grammar extraction");
 	if (input.maxLocalAttempts !== undefined && input.maxLocalAttempts !== 2) throw new FacadeAgentContractError("LOCAL_ATTEMPT_LIMIT_INVALID", "Exactly two local attempts are allowed");
 	const providers = [...(input.providers ?? FACADE_AGENT_PROVIDERS)];
-	if (providers.join("|") !== FACADE_AGENT_PROVIDERS.join("|")) throw new FacadeAgentContractError("PROVIDER_SET_INVALID", "Controlled comparison requires both providers in fixed order");
+	if (providers.length === 0 || providers.some((provider) => !FACADE_AGENT_PROVIDER_IDS.includes(provider)) || new Set(providers).size !== providers.length) {
+		throw new FacadeAgentContractError("PROVIDER_SET_INVALID", "Provider selection must be a unique non-empty allowlisted subset");
+	}
+	for (const [provider, value] of Object.entries(input.imageBudgetUsd ?? {})) {
+		if (!FACADE_AGENT_PROVIDER_IDS.includes(provider)) throw new FacadeAgentContractError("PROVIDER_SET_INVALID", "Image budget contains an unknown provider");
+		finiteNonnegative(value, `imageBudgetUsd.${provider}`);
+		if (!providers.includes(provider) && value !== 0) throw new FacadeAgentContractError("BUDGET_INVALID", `Unselected provider budget must be absent or zero: ${provider}`);
+	}
 	const imageBudgetUsd = Object.fromEntries(providers.map((provider) => [
 		provider,
-		finiteNonnegative(input.imageBudgetUsd?.[provider], `imageBudgetUsd.${provider}`),
+		finitePositive(input.imageBudgetUsd?.[provider], `imageBudgetUsd.${provider}`),
 	]));
 	const grammarBudgetUsd = finiteNonnegative(input.grammarBudgetUsd, "grammarBudgetUsd");
 	const grammarEstimateUsd = finiteNonnegative(input.grammarEstimateUsd ?? grammarBudgetUsd, "grammarEstimateUsd");
@@ -77,8 +98,21 @@ export function normalizeFacadeAgentConfig(input) {
 		if (estimate > imageBudgetUsd[provider]) throw new FacadeAgentContractError("BUDGET_INVALID", `imageEstimateUsd.${provider} cannot exceed its image budget`);
 		return [provider, estimate];
 	}));
-	const runBudgetUsd = Object.values(imageBudgetUsd).reduce((sum, value) => sum + value, 0) + grammarBudgetUsd;
-	const runEstimateUsd = Object.values(imageEstimateUsd).reduce((sum, value) => sum + value, 0) + grammarEstimateUsd;
+	for (const [provider, value] of Object.entries(input.imageEstimateUsd ?? {})) {
+		if (!FACADE_AGENT_PROVIDER_IDS.includes(provider)) throw new FacadeAgentContractError("PROVIDER_SET_INVALID", "Image estimate contains an unknown provider");
+		finiteNonnegative(value, `imageEstimateUsd.${provider}`);
+		if (!providers.includes(provider) && value !== 0) throw new FacadeAgentContractError("BUDGET_INVALID", `Unselected provider estimate must be absent or zero: ${provider}`);
+	}
+	const runBudgetMicros = Object.values(imageBudgetUsd).reduce((sum, value, index) => sum + exactUsdMicros(value, `imageBudgetUsd.${providers[index]}`), 0)
+		+ exactUsdMicros(grammarBudgetUsd, "grammarBudgetUsd");
+	const runEstimateMicros = Object.values(imageEstimateUsd).reduce((sum, value, index) => sum + exactUsdMicros(value, `imageEstimateUsd.${providers[index]}`), 0)
+		+ exactUsdMicros(grammarEstimateUsd, "grammarEstimateUsd");
+	const runBudgetUsd = runBudgetMicros / 1_000_000;
+	const runEstimateUsd = runEstimateMicros / 1_000_000;
+	const confirmLive = input.confirmLive === true;
+	const confirmedTotalUsd = input.confirmedTotalUsd;
+	if (confirmLive && exactUsdMicros(confirmedTotalUsd, "confirmedTotalUsd") !== runBudgetMicros) throw new FacadeAgentContractError("LIVE_COST_CONFIRMATION_INVALID", "Live cost confirmation must exactly equal all selected ceilings");
+	if (!confirmLive && confirmedTotalUsd !== undefined) throw new FacadeAgentContractError("LIVE_COST_CONFIRMATION_INVALID", "Cost confirmation requires live execution");
 	return deepFreeze(redactSecrets({
 		...input,
 		candidateId,
@@ -96,7 +130,8 @@ export function normalizeFacadeAgentConfig(input) {
 		runEstimateUsd,
 		maxLocalAttempts: 2,
 		maxImageSubmissionsPerProvider: 1,
-		confirmLive: input.confirmLive === true,
+		confirmLive,
+		...(confirmLive ? { confirmedTotalUsd } : {}),
 	}));
 }
 
