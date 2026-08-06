@@ -1321,19 +1321,6 @@ async function executeFacade(config, deps, stopAfterStage = null) {
 		const actualTotalUsd = actualCosts.every((value) => value !== null)
 			? actualCosts.reduce((sum, value) => sum + Math.round(value * 1_000_000), 0) / 1_000_000
 			: null;
-		const evaluationReport = buildFacadeEvaluationReport({
-			candidateId: normalized.candidateId,
-			runId: normalized.runId,
-			recommendation,
-			candidates: evaluationCandidates,
-		});
-		const evaluationPath = join(runDir, "evaluation", "evaluation.json");
-		const evaluationWritten = await atomicJson(evaluationPath, evaluationReport, runDir);
-		run.evaluation_manifest = {
-			path: relativePath(runDir, evaluationPath, "evaluation report"),
-			sha256: evaluationWritten.sha256,
-		};
-
 		const technicalCandidate = scores.find((score) => score.provider === recommendation.technical_winner);
 		const decision = technicalCandidate
 			? { status: "winner", provider: technicalCandidate.provider, candidate: technicalCandidate, score: technicalCandidate.score }
@@ -1355,6 +1342,7 @@ async function executeFacade(config, deps, stopAfterStage = null) {
 				artifact = await authorizeGlb(runDir, artifact);
 				const delivery = await deps.renderDelivery({
 					runDir, candidateId: normalized.candidateId, provider,
+					deliveryRoot: containedPath(runDir, join(runDir, "providers", provider, "delivery"), "provider delivery"),
 					artifact, validation: selectedValidations[provider],
 					validationReceipt: selectedValidationReceipts[provider],
 					input: candidate, signal, lifecycle: deps.lifecycle,
@@ -1366,6 +1354,8 @@ async function executeFacade(config, deps, stopAfterStage = null) {
 					memory_record: persistedDeliveryMemory(runDir, delivery?.memory_record),
 				};
 				states[provider].delivery = deliveryRecord;
+				const acceptedVersion = states[provider].versions.find((version) => version.status === "accepted");
+				if (acceptedVersion) acceptedVersion.delivery = deliveryRecord.memory_record;
 				await writeProvider(runDir, run, normalized, provider, states[provider], deps);
 				run.delivery = deliveryRecord;
 				await persistPublicRun(runDir, run);
@@ -1384,6 +1374,22 @@ async function executeFacade(config, deps, stopAfterStage = null) {
 				await persistPublicRun(runDir, run);
 			}
 		}
+		for (const candidate of evaluationCandidates) {
+			const views = states[candidate.provider].delivery?.memory_record?.views;
+			if (views) candidate.artifacts.delivery_views = Object.values(views);
+		}
+		const evaluationReport = buildFacadeEvaluationReport({
+			candidateId: normalized.candidateId,
+			runId: normalized.runId,
+			recommendation,
+			candidates: evaluationCandidates,
+		});
+		const evaluationPath = join(runDir, "evaluation", "evaluation.json");
+		const evaluationWritten = await atomicJson(evaluationPath, evaluationReport, runDir);
+		run.evaluation_manifest = {
+			path: relativePath(runDir, evaluationPath, "evaluation report"),
+			sha256: evaluationWritten.sha256,
+		};
 
 		let final;
 		if (decision?.status === "winner" && selectedArtifacts[decision.provider]) {

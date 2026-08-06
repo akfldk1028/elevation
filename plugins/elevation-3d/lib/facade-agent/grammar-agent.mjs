@@ -27,6 +27,7 @@ const MAX_TIMEOUT_MS = 300_000;
 const MAX_PROPOSAL_BYTES = 32 * 1024 * 1024;
 const MAX_MANIFEST_BYTES = 1024 * 1024;
 const MAX_RESPONSE_BYTES = 1024 * 1024;
+const PROPOSAL_PROVIDERS = new Set(["gpt-image-2", "seedream-5-pro", "qwen-image-2", "nano-banana-pro"]);
 const verifiedProposalAuthorities = new WeakMap();
 const verifiedGrammarAuthorities = new WeakMap();
 const claimedProviderResults = new WeakSet();
@@ -292,7 +293,7 @@ function validateConfig(config) {
 		throw failure("GRAMMAR_CREDENTIALS_INVALID", "OpenAI credential is invalid", { definitiveNonSubmission: true });
 	}
 	const proposalProvider = fields.proposalProvider;
-	if (!new Set(["gpt-image-2", "nano-banana-pro"]).has(proposalProvider)) {
+	if (!PROPOSAL_PROVIDERS.has(proposalProvider)) {
 		throw failure("GRAMMAR_PROPOSAL_INVALID", "An approved proposal provider identity is required", { definitiveNonSubmission: true });
 	}
 	return { candidateId: fields.candidateId, proposalProvider, ceilingUsd, estimateUsd, timeoutMs, apiKey };

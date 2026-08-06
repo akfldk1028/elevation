@@ -1,4 +1,4 @@
-import { join, resolve } from "node:path";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 
 import { renderAllViews } from "./all-views.mjs";
 import { resolveMaterialPalette } from "./material-palettes.mjs";
@@ -93,9 +93,14 @@ function memoryRecord(run, browser, deliveryRoot) {
 	};
 }
 
-export async function deliverSelectedAllViews({ runDir, candidateId, artifact, validation, validationReceipt, input, signal, lifecycle, deps = {} }) {
+export async function deliverSelectedAllViews({ runDir, deliveryRoot: deliveryRootInput, candidateId, artifact, validation, validationReceipt, input, signal, lifecycle, deps = {} }) {
 	throwIfAborted(signal);
-	const deliveryRoot = join(resolve(runDir), "delivery");
+	const absoluteRunDir = resolve(runDir);
+	const deliveryRoot = deliveryRootInput ? resolve(deliveryRootInput) : join(absoluteRunDir, "delivery");
+	const deliveryChild = relative(absoluteRunDir, deliveryRoot);
+	if (!deliveryChild || deliveryChild === ".." || deliveryChild.startsWith(`..${sep}`) || isAbsolute(deliveryChild)) {
+		fail("DELIVERY_PATH_INVALID", "delivery root must remain beneath the run directory");
+	}
 	const cameras = deriveDeliveryCameras(input);
 	const render = deps.renderAllViews ?? renderAllViews;
 	const verify = deps.verifyAllViewsViewer ?? verifyAllViewsViewer;
