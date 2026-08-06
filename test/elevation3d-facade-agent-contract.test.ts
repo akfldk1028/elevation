@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { resolve } from "node:path";
 import {
+	FACADE_AGENT_PROVIDERS,
 	FacadeAgentContractError,
 	facadeRequestFingerprint,
 	normalizeFacadeAgentConfig,
@@ -52,8 +53,11 @@ test("fingerprint is stable and excludes consent-free defaults", () => {
 });
 
 test("rejects altered provider comparisons and invalid budget ceilings", () => {
-	assert.throws(() => normalizeFacadeAgentConfig(approvedConfig({ providers: ["nano-banana-pro", "gpt-image-2"] })), FacadeAgentContractError);
-	assert.throws(() => normalizeFacadeAgentConfig(approvedConfig({ providers: ["gpt-image-2"] })), FacadeAgentContractError);
+	assert.deepEqual(normalizeFacadeAgentConfig(approvedConfig({ providers: ["nano-banana-pro", "gpt-image-2"] })).providers, ["nano-banana-pro", "gpt-image-2"]);
+	assert.deepEqual(normalizeFacadeAgentConfig(approvedConfig({ providers: ["gpt-image-2"], imageBudgetUsd: { "gpt-image-2": 1 } })).providers, ["gpt-image-2"]);
+	for (const providers of [[], ["gpt-image-2", "gpt-image-2"], ["unknown-provider"]]) {
+		assert.throws(() => normalizeFacadeAgentConfig(approvedConfig({ providers })), (error: any) => error.code === "PROVIDER_SET_INVALID");
+	}
 	for (const value of [undefined, Number.NaN, Infinity, -1]) {
 		assert.throws(() => normalizeFacadeAgentConfig(approvedConfig({ imageBudgetUsd: { "gpt-image-2": value, "nano-banana-pro": 1 } })), /finite nonnegative/i);
 		assert.throws(() => normalizeFacadeAgentConfig(approvedConfig({ grammarBudgetUsd: value })), /finite nonnegative/i);
@@ -64,6 +68,19 @@ test("rejects altered provider comparisons and invalid budget ceilings", () => {
 	assert.throws(() => normalizeFacadeAgentConfig(approvedConfig({
 		imageEstimateUsd: { "gpt-image-2": Number.NaN, "nano-banana-pro": 1 },
 	})), /finite nonnegative/i);
+});
+
+test("defaults to the approved three-provider evaluation and rejects missing or unselected positive budgets", () => {
+	assert.deepEqual(FACADE_AGENT_PROVIDERS, ["gpt-image-2", "seedream-5-pro", "qwen-image-2"]);
+	const value = normalizeFacadeAgentConfig(approvedConfig({
+		providers: ["gpt-image-2", "seedream-5-pro", "qwen-image-2"],
+		imageBudgetUsd: { "gpt-image-2": 0.5, "seedream-5-pro": 0.1, "qwen-image-2": 0.05 },
+		grammarBudgetUsd: 0.35,
+	}));
+	assert.deepEqual(value.providers, ["gpt-image-2", "seedream-5-pro", "qwen-image-2"]);
+	assert.equal(value.runBudgetUsd, 1);
+	assert.throws(() => normalizeFacadeAgentConfig(approvedConfig({ providers: ["gpt-image-2", "seedream-5-pro"], imageBudgetUsd: { "gpt-image-2": 0.5 } })), (error: any) => error.code === "BUDGET_INVALID");
+	assert.throws(() => normalizeFacadeAgentConfig(approvedConfig({ providers: ["gpt-image-2"], imageBudgetUsd: { "gpt-image-2": 0.5, "qwen-image-2": 0.05 } })), (error: any) => error.code === "BUDGET_INVALID");
 });
 
 test("normalizes filesystem roots, coercion, and secrets", () => {

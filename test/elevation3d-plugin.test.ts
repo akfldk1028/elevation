@@ -32,12 +32,14 @@ test("facade agent tool exposes only bounded safe inputs", async () => {
 	await register({ config: {}, registerTool: (tool: any) => tools.push(tool), addPrompt() {}, registerMemoryLayer() {}, logger: console });
 	const tool = tools.find((item) => item.name === "elevation_3d_facade_agent_run");
 	assert.deepEqual(Object.keys(tool.inputSchema.properties).sort(), [
-		"brief_id", "candidate_id", "confirm_live", "dataset_root", "dry_run", "grammar_budget_usd",
+		"brief_id", "candidate_id", "confirm_live", "confirm_total_usd", "dataset_root", "dry_run", "grammar_budget_usd",
 		"image_budget_usd", "output_root", "providers", "run_id",
 	]);
 	assert.deepEqual(tool.inputSchema.properties.candidate_id.enum, ["creative-020"]);
 	assert.deepEqual(tool.inputSchema.properties.brief_id.enum, ["brick-punched-window-v1"]);
-	assert.deepEqual(tool.inputSchema.properties.providers.items.enum, ["gpt-image-2", "nano-banana-pro"]);
+	assert.deepEqual(tool.inputSchema.properties.providers.items.enum, ["gpt-image-2", "seedream-5-pro", "qwen-image-2", "nano-banana-pro"]);
+	assert.equal(tool.inputSchema.properties.providers.minItems, 1);
+	assert.equal(tool.inputSchema.properties.providers.maxItems, 4);
 	assert.equal(tool.inputSchema.properties.dry_run.type, "boolean");
 	assert.equal(tool.inputSchema.properties.confirm_live.type, "boolean");
 });
@@ -74,7 +76,7 @@ test("facade agent tool forwards a safe dry-run into the approved preflight harn
 			return {
 				signal, loadCandidate: async () => ({ candidate: { candidate_id: "creative-020" }, identity: { geometry_hash: "fixture" } }),
 				buildEvidence: async ({ runDir }: any) => ({ manifestSha256: "e".repeat(64), manifestPath: join(runDir, "evidence", "manifest.json") }), extractGrammar: transport,
-				providers: { "gpt-image-2": provider, "nano-banana-pro": provider },
+				providers: { "gpt-image-2": provider, "seedream-5-pro": provider, "qwen-image-2": provider },
 				build: async () => ({}), validate: async () => ({}), renderDelivery: async () => ({}),
 			};
 		});
@@ -139,7 +141,11 @@ test("plugin-created status verifies its persisted config before returning read-
 		const factory = createFacadeAgentDependencyFactory(async () => ({
 			loadCandidate: async () => ({ candidate: { candidate_id: "creative-020" }, identity: { geometry_hash: "fixture" } }),
 			buildEvidence: async ({ runDir }: any) => ({ manifestSha256: "e".repeat(64), manifestPath: join(runDir, "evidence", "manifest.json") }), extractGrammar: transport,
-			providers: { "gpt-image-2": createFacadeFixtureTransport({ generate: transport }), "nano-banana-pro": createFacadeFixtureTransport({ generate: transport }) },
+			providers: {
+				"gpt-image-2": createFacadeFixtureTransport({ generate: transport }),
+				"seedream-5-pro": createFacadeFixtureTransport({ generate: transport }),
+				"qwen-image-2": createFacadeFixtureTransport({ generate: transport }),
+			},
 			build: async () => ({}), validate: async () => ({}), renderDelivery: async () => ({}),
 		}));
 		await register({ config: {}, facadeAgentDependencyFactory: factory, registerTool: (tool: any) => tools.push(tool), addPrompt() {}, registerMemoryLayer() {}, logger: console });

@@ -5,6 +5,7 @@ import { types as utilTypes } from "node:util";
 import { redactSecrets, sha256, stableJson } from "../core.mjs";
 import {
 	FACADE_AGENT_PROVIDERS,
+	FACADE_AGENT_PROVIDER_IDS,
 	FACADE_AGENT_STAGES,
 	FacadeAgentContractError,
 	normalizeFacadeAgentConfig,
@@ -13,9 +14,16 @@ import { readFacadeAgentStatus, runFacadeAgent, runFacadeStage } from "./harness
 import { createProductionFacadeAgentDependencies } from "./production-dependencies.mjs";
 
 const CONFIG_FILE = "facade-agent-config.json";
-const TOOL_FIELDS = new Set(["candidate_id", "dataset_root", "output_root", "run_id", "providers", "brief_id", "dry_run", "confirm_live", "image_budget_usd", "grammar_budget_usd"]);
-const BUDGET_FIELDS = new Set(FACADE_AGENT_PROVIDERS);
+const TOOL_FIELDS = new Set(["candidate_id", "dataset_root", "output_root", "run_id", "providers", "brief_id", "dry_run", "confirm_live", "confirm_total_usd", "image_budget_usd", "grammar_budget_usd"]);
+const BUDGET_FIELDS = new Set(FACADE_AGENT_PROVIDER_IDS);
 const factoryCapabilities = new WeakSet();
+const DEFAULT_IMAGE_BUDGET_USD = Object.freeze({
+	"gpt-image-2": 0.50,
+	"seedream-5-pro": 0.10,
+	"qwen-image-2": 0.05,
+	"nano-banana-pro": 0.10,
+});
+const DEFAULT_GRAMMAR_BUDGET_USD = 0.35;
 
 function codedError(code, message) {
 	const error = new Error(message);
@@ -33,10 +41,14 @@ function throwIfAborted(signal) {
 	if (signal?.aborted) throw signal.reason ?? new DOMException("The operation was aborted", "AbortError");
 }
 
-function parseNumber(value, label) {
-	const number = Number(value);
-	if (!Number.isFinite(number) || number < 0) throw new FacadeAgentContractError("BUDGET_INVALID", `${label} must be a finite nonnegative number`);
-	return number;
+function parseUsd(value, label) {
+	if (typeof value !== "string" || !/^(?:0|[1-9][0-9]*)(?:\.[0-9]{1,6})?$/.test(value)) {
+		throw new FacadeAgentContractError("BUDGET_INVALID", `${label} must be a nonnegative decimal with at most six places`);
+	}
+	const [whole, fraction = ""] = value.split(".");
+	const micros = BigInt(whole) * 1_000_000n + BigInt(fraction.padEnd(6, "0"));
+	if (micros > BigInt(Number.MAX_SAFE_INTEGER)) throw new FacadeAgentContractError("BUDGET_INVALID", `${label} exceeds the supported amount`);
+	return { usd: Number(micros) / 1_000_000, micros };
 }
 
 function aliasedValue(values, canonical, legacy) {
@@ -65,15 +77,20 @@ function parseOptions(argv) {
 		if (!name.startsWith("--") || index + 1 >= argv.length || argv[index + 1].startsWith("--")) {
 			throw new FacadeAgentContractError("ARGUMENT_INVALID", `Invalid argument: ${name}`);
 		}
-		if (Object.hasOwn(values, name)) throw new FacadeAgentContractError("ARGUMENT_DUPLICATE", `Duplicate argument: ${name}`);
-		values[name] = argv[index + 1];
+		if (name === "--image-budget") {
+			(values[name] ??= []).push(argv[index + 1]);
+		} else {
+			if (Object.hasOwn(values, name)) throw new FacadeAgentContractError("ARGUMENT_DUPLICATE", `Duplicate argument: ${name}`);
+			values[name] = argv[index + 1];
+		}
 		index += 1;
 	}
 	const allowed = command === "status" || command === "resume"
 		? new Set(["--run-dir"])
 		: new Set(["--candidate", "--brief", "--dataset-root", "--output-root", "--run-id", "--providers",
 			"--gpt-image-max-usd", "--nano-banana-max-usd", "--grammar-max-usd",
-			"--image-budget-gpt-image-2", "--image-budget-nano-banana-pro", "--grammar-budget", "--confirm-cost-usd"]);
+			"--image-budget", "--image-budget-gpt-image-2", "--image-budget-nano-banana-pro", "--grammar-budget",
+			"--confirm-cost-usd", "--confirm-total-usd"]);
 	for (const key of Object.keys(values)) if (!allowed.has(key)) throw new FacadeAgentContractError("ARGUMENT_INVALID", `Unsupported argument: ${key}`);
 	if ((command === "status" || command === "resume") && flags.size > 0) throw new FacadeAgentContractError("ARGUMENT_INVALID", `${command} accepts only --run-dir`);
 	if (command === "status" || command === "resume") {
@@ -83,25 +100,46 @@ function parseOptions(argv) {
 	for (const required of ["--candidate", "--brief", "--dataset-root", "--output-root", "--run-id"]) {
 		if (values[required] === undefined) throw new FacadeAgentContractError("ARGUMENT_REQUIRED", `${required} is required`);
 	}
-	const gptImageBudget = aliasedValue(values, "--gpt-image-max-usd", "--image-budget-gpt-image-2");
-	const nanoImageBudget = aliasedValue(values, "--nano-banana-max-usd", "--image-budget-nano-banana-pro");
+	const providers = values["--providers"]?.split(",").filter(Boolean) ?? [...FACADE_AGENT_PROVIDERS];
+	const imageBudgetParts = values["--image-budget"] ?? [];
+	const parsedBudgetMicros = {};
+	const imageBudgetUsd = {};
+	for (const entry of imageBudgetParts) {
+		const match = /^([^=]+)=(.+)$/.exec(entry);
+		if (!match || !FACADE_AGENT_PROVIDER_IDS.includes(match[1])) throw new FacadeAgentContractError("PROVIDER_SET_INVALID", "--image-budget requires an allowlisted provider=usd entry");
+		if (Object.hasOwn(imageBudgetUsd, match[1])) throw new FacadeAgentContractError("ARGUMENT_DUPLICATE", `Duplicate image budget: ${match[1]}`);
+		const parsed = parseUsd(match[2], `imageBudgetUsd.${match[1]}`);
+		imageBudgetUsd[match[1]] = parsed.usd;
+		parsedBudgetMicros[match[1]] = parsed.micros;
+	}
+	const gptImageBudget = values["--gpt-image-max-usd"] !== undefined || values["--image-budget-gpt-image-2"] !== undefined
+		? aliasedValue(values, "--gpt-image-max-usd", "--image-budget-gpt-image-2") : undefined;
+	const nanoImageBudget = values["--nano-banana-max-usd"] !== undefined || values["--image-budget-nano-banana-pro"] !== undefined
+		? aliasedValue(values, "--nano-banana-max-usd", "--image-budget-nano-banana-pro") : undefined;
+	for (const [provider, value] of [["gpt-image-2", gptImageBudget], ["nano-banana-pro", nanoImageBudget]]) {
+		if (value === undefined) continue;
+		if (Object.hasOwn(imageBudgetUsd, provider)) throw new FacadeAgentContractError("ARGUMENT_DUPLICATE", `Conflicting image budget aliases for ${provider}`);
+		const parsed = parseUsd(value, `imageBudgetUsd.${provider}`);
+		imageBudgetUsd[provider] = parsed.usd;
+		parsedBudgetMicros[provider] = parsed.micros;
+	}
 	const grammarBudget = aliasedValue(values, "--grammar-max-usd", "--grammar-budget");
 	const dryRun = flags.has("--dry-run");
 	const confirmLive = flags.has("--confirm-live");
 	if (dryRun && confirmLive) throw new FacadeAgentContractError("LIVE_CONFIRMATION_INVALID", "Dry-run cannot confirm live execution");
-	const imageBudgetUsd = {
-		"gpt-image-2": parseNumber(gptImageBudget, "imageBudgetUsd.gpt-image-2"),
-		"nano-banana-pro": parseNumber(nanoImageBudget, "imageBudgetUsd.nano-banana-pro"),
-	};
-	const grammarBudgetUsd = parseNumber(grammarBudget, "grammarBudgetUsd");
+	const parsedGrammar = parseUsd(grammarBudget, "grammarBudgetUsd");
+	const grammarBudgetUsd = parsedGrammar.usd;
+	let confirmedTotalUsd;
 	if (confirmLive) {
-		const expected = imageBudgetUsd["gpt-image-2"] + imageBudgetUsd["nano-banana-pro"] + grammarBudgetUsd;
-		const confirmed = parseNumber(values["--confirm-cost-usd"], "confirmCostUsd");
-		if (confirmed !== expected) throw new FacadeAgentContractError("LIVE_COST_CONFIRMATION_INVALID", "Live cost confirmation must exactly equal all provider ceilings");
-	} else if (values["--confirm-cost-usd"] !== undefined) {
+		const confirmation = values["--confirm-total-usd"] !== undefined || values["--confirm-cost-usd"] !== undefined
+			? aliasedValue(values, "--confirm-total-usd", "--confirm-cost-usd") : undefined;
+		const confirmed = parseUsd(confirmation, "confirmTotalUsd");
+		const expectedMicros = providers.reduce((sum, provider) => sum + (parsedBudgetMicros[provider] ?? 0n), parsedGrammar.micros);
+		if (confirmed.micros !== expectedMicros) throw new FacadeAgentContractError("LIVE_COST_CONFIRMATION_INVALID", "Live cost confirmation must exactly equal all selected provider ceilings");
+		confirmedTotalUsd = confirmed.usd;
+	} else if (values["--confirm-cost-usd"] !== undefined || values["--confirm-total-usd"] !== undefined) {
 		throw new FacadeAgentContractError("LIVE_COST_CONFIRMATION_INVALID", "Cost confirmation requires --confirm-live");
 	}
-	const providers = values["--providers"]?.split(",").filter(Boolean) ?? [...FACADE_AGENT_PROVIDERS];
 	return {
 		command,
 		dryRun,
@@ -109,7 +147,7 @@ function parseOptions(argv) {
 			candidateId: values["--candidate"], briefId: values["--brief"], runId: values["--run-id"],
 			datasetRoot: values["--dataset-root"], outputRoot: values["--output-root"], providers,
 			imageBudgetUsd, grammarBudgetUsd, grammarModel: "gpt-5.6", maxLocalAttempts: 2,
-			confirmLive,
+			confirmLive, ...(confirmLive ? { confirmedTotalUsd } : {}),
 		}),
 	};
 }
@@ -122,13 +160,13 @@ function persistedConfig(config) {
 	return {
 		candidateId: config.candidateId, briefId: config.briefId, runId: config.runId,
 		datasetRoot: config.datasetRoot, outputRoot: config.outputRoot, providers: config.providers,
-		imageBudgetUsd: config.imageBudgetUsd, grammarBudgetUsd: config.grammarBudgetUsd,
+		imageBudgetUsd: config.imageBudgetUsd, imageEstimateUsd: config.imageEstimateUsd, grammarBudgetUsd: config.grammarBudgetUsd,
 		grammarEstimateUsd: config.grammarEstimateUsd,
 		grammarBudgetAllocationUsd: config.grammarBudgetAllocationUsd,
 		grammarEstimateAllocationUsd: config.grammarEstimateAllocationUsd,
 		runBudgetUsd: config.runBudgetUsd, runEstimateUsd: config.runEstimateUsd,
 		grammarModel: config.grammarModel, maxLocalAttempts: config.maxLocalAttempts,
-		confirmLive: config.confirmLive,
+		confirmLive: config.confirmLive, ...(config.confirmLive ? { confirmedTotalUsd: config.confirmedTotalUsd } : {}),
 	};
 }
 
@@ -362,10 +400,11 @@ export function facadeAgentToolSchema() {
 		properties: {
 			candidate_id: { type: "string", enum: ["creative-020"] },
 			dataset_root: { type: "string" }, output_root: { type: "string" }, run_id: { type: "string" },
-			providers: { type: "array", items: { type: "string", enum: [...FACADE_AGENT_PROVIDERS] }, minItems: 2, maxItems: 2 },
+			providers: { type: "array", items: { type: "string", enum: [...FACADE_AGENT_PROVIDER_IDS] }, minItems: 1, maxItems: 4 },
 			brief_id: { type: "string", enum: ["brick-punched-window-v1"] }, dry_run: { type: "boolean", default: true },
 			confirm_live: { type: "boolean", default: false },
-			image_budget_usd: { type: "object", properties: Object.fromEntries(FACADE_AGENT_PROVIDERS.map((provider) => [provider, { type: "number", minimum: 0 }])), additionalProperties: false },
+			confirm_total_usd: { type: "number", minimum: 0 },
+			image_budget_usd: { type: "object", properties: Object.fromEntries(FACADE_AGENT_PROVIDER_IDS.map((provider) => [provider, { type: "number", exclusiveMinimum: 0 }])), additionalProperties: false },
 			grammar_budget_usd: { type: "number", minimum: 0 },
 		},
 		required: ["run_id"], additionalProperties: false,
@@ -377,16 +416,19 @@ export async function runFacadeAgentTool(args, signal, defaults = {}, dependency
 	const input = safeToolInput(args);
 	const dryRun = input.dry_run !== false;
 	if (dryRun && input.confirm_live === true) throw new FacadeAgentContractError("LIVE_CONFIRMATION_INVALID", "Dry-run cannot confirm live execution");
-	if (!dryRun && input.confirm_live === true && (input.image_budget_usd === undefined || input.grammar_budget_usd === undefined)) {
+	if (!dryRun && input.confirm_live === true && (input.image_budget_usd === undefined || input.grammar_budget_usd === undefined || input.confirm_total_usd === undefined)) {
 		throw new FacadeAgentContractError("LIVE_COST_CONFIRMATION_INVALID", "Live execution requires explicit provider cost ceilings");
 	}
+	const providers = input.providers ?? [...FACADE_AGENT_PROVIDERS];
+	const imageBudgetUsd = input.image_budget_usd ?? Object.fromEntries(providers.map((provider) => [provider, DEFAULT_IMAGE_BUDGET_USD[provider]]));
 	const config = normalizeFacadeAgentConfig({
 		candidateId: input.candidate_id ?? "creative-020", briefId: input.brief_id ?? "brick-punched-window-v1",
 		runId: input.run_id, datasetRoot: input.dataset_root ?? defaults.datasetRoot,
-		outputRoot: input.output_root ?? defaults.outputRoot, providers: input.providers ?? [...FACADE_AGENT_PROVIDERS],
-		imageBudgetUsd: input.image_budget_usd ?? Object.fromEntries(FACADE_AGENT_PROVIDERS.map((provider) => [provider, 0])),
-		grammarBudgetUsd: input.grammar_budget_usd ?? 0, grammarModel: "gpt-5.6", maxLocalAttempts: 2,
+		outputRoot: input.output_root ?? defaults.outputRoot, providers,
+		imageBudgetUsd,
+		grammarBudgetUsd: input.grammar_budget_usd ?? DEFAULT_GRAMMAR_BUDGET_USD, grammarModel: "gpt-5.6", maxLocalAttempts: 2,
 		confirmLive: dryRun ? false : input.confirm_live === true,
+		...(!dryRun && input.confirm_live === true ? { confirmedTotalUsd: input.confirm_total_usd } : {}),
 	});
 	const outcome = await executeFacadeAgentCommand({ command: dryRun ? "preflight" : "run", dryRun, config }, { signal, dependencyFactory, fetchImpl });
 	return redactSecrets(outcome.summary);
