@@ -10,7 +10,8 @@ import { sha256, stableJson } from "../plugins/elevation-3d/lib/core.mjs";
 import { FacadeProviderError } from "../plugins/elevation-3d/lib/facade-agent/provider.mjs";
 import { verifyFacadeEvidencePack } from "../plugins/elevation-3d/lib/facade-agent/evidence.mjs";
 import { createFacadeFixtureTransport } from "../plugins/elevation-3d/lib/facade-agent/fixture-transport.mjs";
-import { extractFacadeGrammar, preflightFacadeGrammar, verifyFacadeProposal } from "../plugins/elevation-3d/lib/facade-agent/grammar-agent.mjs";
+import { normalizeFacadeGrammarResult } from "../plugins/elevation-3d/lib/facade-agent/providers/grammar/contract.mjs";
+import { createProvider as createOpenAIGrammarProvider } from "../plugins/elevation-3d/lib/facade-agent/providers/grammar/openai/adapter.mjs";
 import { buildRequest as buildOpenAIRequest, createProvider as createOpenAIProvider } from "../plugins/elevation-3d/lib/facade-agent/providers/openai-image.mjs";
 import { buildRequest as buildGeminiRequest, createProvider as createGeminiProvider } from "../plugins/elevation-3d/lib/facade-agent/providers/gemini-image.mjs";
 import {
@@ -18,7 +19,6 @@ import {
 	createPaidOperationLedger,
 } from "../plugins/elevation-3d/lib/facade-agent/paid-operation-ledger.mjs";
 import {
-	consumeFacadeGrammarSubmissionCapability,
 	readFacadeAgentStatus,
 	runFacadeAgent,
 	runFacadeStage,
@@ -94,6 +94,24 @@ function grammar() {
 	};
 }
 
+function fixtureGrammarResult(input: any, actualUsd = 0) {
+	assert.equal(consumePaidOperationSubmissionCapability(input.submission, {
+		requestKey: input.request.fingerprint,
+		provider: "byteplus-seed-mini",
+		kind: "grammar-extraction",
+	}), true);
+	return normalizeFacadeGrammarResult({
+		request: input.request,
+		provider: "byteplus-seed-mini",
+		resolvedModel: "seed-2-0-mini-260428",
+		transport: "fixture",
+		grammarCandidate: grammar(),
+		remoteId: `grammar-${input.provider}`,
+		actualUsd,
+		usage: { fixture: true },
+	});
+}
+
 async function fixture(overrides: any = {}) {
 	const selectedProviders = overrides.providers ?? [...PROVIDERS];
 	const root = await mkdtemp(join(tmpdir(), "elevation3d-harness-"));
@@ -147,22 +165,23 @@ async function fixture(overrides: any = {}) {
 			}), true);
 			calls.generate.push(provider);
 			if (overrides.generateFailure?.provider === provider) throw overrides.generateFailure.error;
-			const bytes = Buffer.from(`fixture-proposal:${provider}`);
+			const bytes = PROVIDER_PNG;
 			return { bytes, mimeType: "image/png", remoteId: `fixture-${provider}`, usage: { fixture: true }, actualUsd: overrides.imageCosts?.[provider] ?? 0 };
 		},
 	})]));
-	const extractGrammar = createFacadeFixtureTransport(async ({ provider, proposal, evidence, submission, requestKey, config }: any) => {
-		assert.equal(consumeFacadeGrammarSubmissionCapability(submission, {
-			requestKey, proposalProvider: provider, proposalSha256: proposal.sha256,
-			evidenceSha256: evidence.manifestSha256, model: config.grammarModel,
-		}), true);
-		calls.grammar.push(provider);
-		return { grammar: grammar(), remoteId: `grammar-${provider}`, actualUsd: overrides.grammarCosts?.[provider] ?? 0 };
+	const grammarProvider = createFacadeFixtureTransport({
+		id: "byteplus-seed-mini",
+		model: "seed-2-0-mini-260428",
+		preflight({ ceilingUsd, estimateUsd }: any) {
+			calls.preflight.push({ provider: "byteplus-seed-mini", model: "seed-2-0-mini-260428", ceilingUsd, estimateUsd });
+			return { provider: "byteplus-seed-mini", model: "seed-2-0-mini-260428", transport: "fixture", ceilingUsd, estimateUsd };
+		},
+		async extract(input: any) {
+			calls.grammar.push(input.provider);
+			if (overrides.grammarFailure) throw overrides.grammarFailure;
+			return fixtureGrammarResult(input, overrides.grammarCosts?.[input.provider] ?? 0);
+		},
 	});
-	(extractGrammar as any).preflight = ({ ceilingUsd, estimateUsd }: any) => {
-		calls.preflight.push({ provider: "openai-grammar", model: "gpt-5.6", ceilingUsd, estimateUsd });
-		return { provider: "openai", model: "gpt-5.6", ceilingUsd, estimateUsd, fixture: true };
-	};
 
 	const deps: any = {
 		loadCandidate: async () => ({ candidate: { candidate_id: "creative-020" }, identity: { geometry_hash: "geometry-fixture" } }),
@@ -171,7 +190,7 @@ async function fixture(overrides: any = {}) {
 			manifestSha256: EVIDENCE_SHA, contactSheetBytes: Buffer.from("fixture-evidence"),
 		}),
 		providers,
-		extractGrammar,
+		grammarProvider,
 		build: overrides.build ?? (async ({ provider, versionId, grammar: value, runDir: target }: any) => {
 			calls.build.push({ provider, versionId, windowHeight: value.window_height_m });
 			const directory = join(target, "fixture-artifacts", provider);
@@ -203,7 +222,7 @@ async function fixture(overrides: any = {}) {
 			candidateId: "creative-020", datasetRoot: root, outputRoot, runId,
 			providers: [...selectedProviders], briefId: "brick-punched-window-v1", confirmLive: false,
 			imageBudgetUsd: Object.fromEntries(selectedProviders.map((provider: string) => [provider, 1])), grammarBudgetUsd: 1,
-			grammarModel: "gpt-5.6", maxLocalAttempts: 2,
+			grammarProvider: "byteplus-seed-mini", maxLocalAttempts: 2,
 		},
 	};
 }
@@ -225,6 +244,8 @@ test("persists a redacted three-provider cost and practical-equivalence recommen
 	assert.equal(result.final.recommended_default, "qwen-image-2");
 	assert.equal(result.final.quality_fallback, "gpt-image-2");
 	assert.equal(result.final.cost.actual_total_usd, 0.65);
+	assert.equal(result.providers["gpt-image-2"].generation.transport, "fixture");
+	assert.equal(result.providers["gpt-image-2"].grammar.transport, "fixture");
 	assert.deepEqual(result.comparison_memory.selected_providers, providers);
 	assert.equal(result.comparison_memory.recommended_default, "qwen-image-2");
 	assert.match(result.evaluation_manifest.path, /^evaluation\/evaluation\.json$/);
@@ -295,6 +316,32 @@ test("submits each image and grammar exactly once, applies only v002 locally, an
 	const persisted = await readFacadeAgentStatus(value.runDir);
 	assert.deepEqual(persisted, result);
 	assert.match(await readFile(join(value.runDir, "run.json"), "utf8"), /"input_sha256"/);
+	for (const provider of PROVIDERS) {
+		const proposalSha256 = result.providers[provider].proposal.sha256;
+		const identity = {
+			provider: "byteplus-seed-mini",
+			model: "seed-2-0-mini-260428",
+			proposalProvider: provider,
+			proposalSha256,
+			evidenceSha256: EVIDENCE_SHA,
+		};
+		assert.deepEqual(result.providers[provider].grammar.identity, identity);
+		const grammarStage = JSON.parse(await readFile(join(value.runDir, "providers", provider, "stages", "grammar.json"), "utf8"));
+		assert.deepEqual(grammarStage.input, {
+			provider,
+			grammar_provider: identity.provider,
+			grammar_model: identity.model,
+			proposal_sha256: proposalSha256,
+			evidence_sha256: EVIDENCE_SHA,
+		});
+		const receipt = JSON.parse(await readFile(join(value.runDir, result.providers[provider].grammar_receipt.path), "utf8"));
+		assert.equal(receipt.schema_version, "arr.elevation3d.facade-grammar-receipt.v1");
+		assert.deepEqual(receipt.identity, identity);
+		assert.equal(receipt.result.provider, identity.provider);
+		assert.equal(receipt.result.model, identity.model);
+		assert.equal(receipt.result.transport, "fixture");
+		assert.equal(receipt.artifact.sha256, result.providers[provider].grammar.artifact_sha256);
+	}
 	assert.match(await readFile(join(value.runDir, "providers", "gpt-image-2", "stages", "validate-v002.json"), "utf8"), /"previous"/);
 	const v002Build = JSON.parse(await readFile(join(value.runDir, "providers", "gpt-image-2", "stages", "build-v002.json"), "utf8"));
 	assert.equal(v002Build.previous.stage, "validate");
@@ -360,6 +407,8 @@ test("refuses an unconfirmed non-fixture transport before any paid callback", as
 test("preflight and evidence build verified request evidence and capability receipts without paid callbacks", async () => {
 	for (const stage of ["preflight", "evidence"] as const) {
 		const value = await fixture({ runId: `unconfirmed-local-${stage}` });
+		assert.equal(value.deps.providers["nano-banana-pro"].transport, "fixture");
+		assert.equal(value.deps.grammarProvider.transport, "fixture");
 		value.deps.providers["gpt-image-2"] = { ...value.deps.providers["gpt-image-2"], transport: "live" };
 		const result = await runFacadeStage(stage, value.config, value.deps);
 		assert.equal(result.stage_manifests[stage].status, "succeeded");
@@ -372,6 +421,10 @@ test("preflight and evidence build verified request evidence and capability rece
 		assert.equal(receipt.budget.run.ceiling_usd, 3);
 		assert.equal(receipt.budget.grammar.ceiling_usd, 1);
 		assert.equal(Object.keys(receipt.requests).length, 2);
+		assert.deepEqual(receipt.capabilities["grammar:byteplus-seed-mini"], {
+			available: true, provider: "byteplus-seed-mini", model: "seed-2-0-mini-260428",
+			transport: "fixture", ceilingUsd: 1, estimateUsd: 1,
+		});
 	}
 });
 
@@ -390,38 +443,88 @@ test("a caller-set fixture label cannot authorize an unconfirmed transport", asy
 	assert.deepEqual(value.calls.generate, []);
 });
 
-test("grammar extraction must consume the harness-owned one-shot submission capability", async () => {
-	const value = await fixture({ runId: "grammar-capability-ignored" });
-	let callbacks = 0;
-	value.deps.extractGrammar = createFacadeFixtureTransport(async () => {
-		callbacks += 1;
-		return grammar();
-	});
-
-	const first = await runFacadeAgent(value.config, value.deps);
-	assert.equal(callbacks, 2);
-	assert.equal(first.providers["gpt-image-2"].failure.code, "PAID_OPERATION_SUBMISSION_UNCERTAIN");
-
-	const resumed = await runFacadeAgent(value.config, value.deps);
-	assert.equal(callbacks, 2);
-	assert.equal(resumed.providers["gpt-image-2"].failure.code, "PAID_OPERATION_SUBMISSION_UNCERTAIN");
-});
-
-test("grammar submission capabilities are bound and consumable only once", async () => {
+test("grammar provider receives a provider-bound capability consumable only once", async () => {
 	const value = await fixture({ runId: "grammar-capability-once" });
-	value.deps.extractGrammar = createFacadeFixtureTransport(async ({ provider, proposal, evidence, submission, requestKey, config }: any) => {
-		const expected = {
-			requestKey, proposalProvider: provider, proposalSha256: proposal.sha256,
-			evidenceSha256: evidence.manifestSha256, model: config.grammarModel,
-		};
-		assert.equal(consumeFacadeGrammarSubmissionCapability(submission, { ...expected, proposalProvider: "forged" }), false);
-		assert.equal(consumeFacadeGrammarSubmissionCapability(submission, expected), true);
-		assert.equal(consumeFacadeGrammarSubmissionCapability(submission, expected), false);
-		return { grammar: grammar(), remoteId: `grammar-${provider}`, actualUsd: 0 };
+	value.deps.grammarProvider = createFacadeFixtureTransport({
+		id: "byteplus-seed-mini",
+		model: "seed-2-0-mini-260428",
+		preflight: value.deps.grammarProvider.preflight,
+		async extract(input: any) {
+			const expected = {
+				requestKey: input.request.fingerprint,
+				provider: "byteplus-seed-mini",
+				kind: "grammar-extraction",
+			};
+			assert.equal(consumePaidOperationSubmissionCapability(input.submission, expected), true);
+			assert.equal(consumePaidOperationSubmissionCapability(input.submission, expected), false);
+			return normalizeFacadeGrammarResult({
+				request: input.request, provider: expected.provider, resolvedModel: "seed-2-0-mini-260428",
+				transport: "fixture", grammarCandidate: grammar(), remoteId: `grammar-${input.provider}`, actualUsd: 0,
+			});
+		},
 	});
 
 	const result = await runFacadeAgent(value.config, value.deps);
 	assert.equal(result.final.status, "winner");
+});
+
+test("selected grammar adapter errors never fall back or retry", async () => {
+	const value = await fixture({
+		runId: "grammar-no-fallback", providers: ["gpt-image-2"],
+		grammarFailure: new FacadeProviderError("SUBMISSION_UNCERTAIN", "BytePlus outcome is uncertain", {
+			provider: "byteplus-seed-mini", stage: "grammar",
+		}),
+	});
+	let openAICalls = 0;
+	value.deps.extractGrammar = async () => { openAICalls += 1; throw new Error("OpenAI fallback must not run"); };
+
+	const first = await runFacadeAgent(value.config, value.deps);
+	assert.deepEqual(value.calls.grammar, ["gpt-image-2"]);
+	assert.equal(openAICalls, 0);
+	assert.equal(first.providers["gpt-image-2"].failure.code, "SUBMISSION_UNCERTAIN");
+
+	const resumed = await runFacadeAgent(value.config, value.deps);
+	assert.deepEqual(value.calls.grammar, ["gpt-image-2"]);
+	assert.equal(openAICalls, 0);
+	assert.equal(resumed.providers["gpt-image-2"].failure.code, "SUBMISSION_UNCERTAIN");
+});
+
+test("a submitting grammar stage without a receipt resumes uncertain with zero adapter calls", async () => {
+	let crash = true;
+	const value = await fixture({
+		runId: "grammar-submitting-resume", providers: ["gpt-image-2"],
+		lifecycle: { onTransition(event: any) {
+			if (crash && event.stage === "grammar" && event.status === "submitting") {
+				crash = false;
+				throw new Error("crash before grammar adapter");
+			}
+		} },
+	});
+	await assert.rejects(() => runFacadeAgent(value.config, value.deps), /crash before grammar adapter/);
+	assert.deepEqual(value.calls.grammar, []);
+	const persisted = JSON.parse(await readFile(join(value.runDir, "providers", "gpt-image-2", "state.json"), "utf8"));
+	assert.equal(persisted.grammar.status, "submitting");
+	assert.equal(persisted.grammar_receipt, undefined);
+
+	const resumed = await runFacadeAgent(value.config, value.deps);
+	assert.deepEqual(value.calls.grammar, []);
+	assert.equal(resumed.providers["gpt-image-2"].failure.code, "SUBMISSION_UNCERTAIN");
+});
+
+test("an abort before grammar submission remains a cancellation without an adapter call", async () => {
+	const controller = new AbortController();
+	const value = await fixture({
+		runId: "grammar-pre-submission-abort", providers: ["gpt-image-2"],
+		lifecycle: { onTransition(event: any) {
+			if (event.stage === "generate" && event.status === "succeeded") controller.abort();
+		} },
+	});
+	value.deps.signal = controller.signal;
+
+	const result = await runFacadeAgent(value.config, value.deps);
+	assert.equal(result.final.status, "cancelled");
+	assert.deepEqual(value.calls.grammar, []);
+	assert.equal(result.providers["gpt-image-2"].failure.code, "FACADE_AGENT_CANCELLED");
 });
 
 test("a missing shared grammar ledger fails closed before any paid callback", async () => {
@@ -451,7 +554,7 @@ test("a crash after grammar ledger success cannot repeat the grammar callback", 
 	assert.deepEqual(value.calls.grammar, ["gpt-image-2"]);
 	const resumed = await runFacadeAgent(value.config, value.deps);
 	assert.deepEqual(value.calls.grammar, ["gpt-image-2", "nano-banana-pro"]);
-	assert.equal(resumed.providers["gpt-image-2"].failure.code, "PAID_OPERATION_SUBMISSION_UNCERTAIN");
+	assert.equal(resumed.providers["gpt-image-2"].failure.code, "SUBMISSION_UNCERTAIN");
 });
 
 test("resume after canonical grammar persistence continues local work without paid calls", async () => {
@@ -666,6 +769,13 @@ test("terminal status rejects a missing durable receipt", async () => {
 	await assert.rejects(() => readFacadeAgentStatus(value.runDir), (error: any) => error.code === "FACADE_AGENT_STATE_UNCERTAIN");
 });
 
+test("terminal status rejects a grammar artifact that no longer matches its receipt", async () => {
+	const value = await fixture({ runId: "terminal-tampered-grammar" });
+	const result = await runFacadeAgent(value.config, value.deps);
+	await writeFile(join(value.runDir, result.providers["gpt-image-2"].grammar.path), "{}\n");
+	await assert.rejects(() => readFacadeAgentStatus(value.runDir), (error: any) => error.code === "FACADE_AGENT_STATE_UNCERTAIN");
+});
+
 test("preserves request identity through actual provider factories with mocked fetch", async () => {
 	const value = await fixture({ runId: "actual-provider-request-identity" });
 	const verifiedEvidence = await verifiedEvidenceFixture(value.runDir);
@@ -693,12 +803,7 @@ test("preserves request identity through actual provider factories with mocked f
 		"gpt-image-2": Object.freeze({ buildRequest: buildOpenAIRequest, preflight: openai.preflight, generate: openai.generate }),
 		"nano-banana-pro": Object.freeze({ buildRequest: buildGeminiRequest, preflight: gemini.preflight, generate: gemini.generate }),
 	};
-	const actualExtractGrammar: any = async (input: any) => extractFacadeGrammar({
-		...input,
-		proposalPath: await verifyFacadeProposal({
-			proposalPath: input.proposal.path, providerResult: input.providerResult,
-			evidence: input.evidence, config: input.config,
-		}),
+	const grammarProvider = createOpenAIGrammarProvider({ OPENAI_API_KEY: "sk-fixture" }, {
 		fetchImpl: async () => {
 			fetchCalls.grammar += 1;
 			const { floor_elevations_m: _floors, facade_lengths_m: _lengths, ...value } = grammar();
@@ -708,11 +813,13 @@ test("preserves request identity through actual provider factories with mocked f
 				usage: { input_tokens: 1, output_tokens: 1, cost_usd: 0.04 },
 			});
 		},
+		timeoutMs: 1_000,
 	});
-	actualExtractGrammar.preflight = (input: any) => preflightFacadeGrammar({
-		...input, config: { ...input.config, openAIApiKey: "sk-fixture" },
+	value.deps.grammarProvider = Object.freeze({
+		id: "openai-gpt-5.6", model: "gpt-5.6", transport: "live",
+		preflight: grammarProvider.preflight, extract: grammarProvider.extract,
 	});
-	value.deps.extractGrammar = actualExtractGrammar;
+	value.config.grammarProvider = "openai-gpt-5.6";
 	value.config.confirmLive = true;
 	value.config.confirmedTotalUsd = 3;
 

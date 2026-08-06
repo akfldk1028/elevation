@@ -5,11 +5,20 @@ import { NodeIO } from "@gltf-transform/core";
 
 import { redactSecrets, sha256, stableJson } from "../core.mjs";
 import { readVerifiedFacadeValidationAuthority, rehydrateVerifiedFacadeValidationAuthority } from "../enrichment-validation.mjs";
-import { correctGrammar } from "../facade-grammar.mjs";
+import { correctGrammar, validatePunchedFacadeGrammar } from "../facade-grammar.mjs";
 import { facadeRequestFingerprint, FACADE_AGENT_STAGES, normalizeFacadeAgentConfig } from "./contract.mjs";
+import { readVerifiedFacadeEvidenceAuthority } from "./evidence.mjs";
 import { isFacadeFixtureTransport } from "./fixture-transport.mjs";
-import { readVerifiedFacadeGrammarAuthority, rehydrateVerifiedFacadeGrammar, serializeVerifiedFacadeGrammarAuthority } from "./grammar-agent.mjs";
+import {
+	FACADE_GRAMMAR_SCHEMA,
+	readVerifiedFacadeGrammarAuthority,
+	rehydrateVerifiedFacadeGrammar,
+	serializeVerifiedFacadeGrammarAuthority,
+	verifyFacadeProposal,
+} from "./grammar-agent.mjs";
 import { consumePaidOperationSubmissionCapability } from "./paid-operation-ledger.mjs";
+import { createFacadeGrammarRequest } from "./providers/grammar/contract.mjs";
+import { buildFacadeGrammarPrompt } from "./providers/grammar/prompt.mjs";
 import { rehydrateFacadeScoreResult } from "./score.mjs";
 import { normalizeFacadeEvaluationCost } from "./evaluation/cost.mjs";
 import { buildFacadeEvaluationReport } from "./evaluation/report.mjs";
@@ -216,7 +225,8 @@ async function callLifecycle(deps, event) {
 }
 
 async function writeStage({ runDir, path, stage, status, input, output, previous, provider, versionId, deps }) {
-	const inputSha256 = sha256(stableJson(persistent(input)));
+	const safeInput = persistent(input);
+	const inputSha256 = sha256(stableJson(safeInput));
 	const absolute = containedPath(runDir, join(runDir, path), "stage manifest");
 	let existing = null;
 	if (await exists(absolute)) existing = await readJson(absolute, runDir);
@@ -231,6 +241,7 @@ async function writeStage({ runDir, path, stage, status, input, output, previous
 		schema_version: "arr.elevation3d.facade-agent-stage.v1",
 		stage,
 		status,
+		input: safeInput,
 		input_sha256: inputSha256,
 		previous: previousRecord(previous),
 		output: safeOutput,
@@ -329,6 +340,21 @@ function providerEntry(deps, provider) {
 	const entry = deps.providers?.[provider];
 	if (!entry || typeof entry.generate !== "function") throw codedError("FACADE_PROVIDER_MISSING", `Missing provider dependency: ${provider}`);
 	return entry;
+}
+
+function grammarProviderEntry(deps, config) {
+	const entry = deps.grammarProvider;
+	if (!entry || typeof entry !== "object" || typeof entry.extract !== "function") {
+		throw codedError("FACADE_GRAMMAR_PROVIDER_MISSING", "A selected grammar provider dependency is required");
+	}
+	if (entry.id !== config.grammarProvider || typeof entry.model !== "string" || entry.model.length === 0) {
+		throw codedError("GRAMMAR_PROVIDER_INVALID", "Grammar provider dependency does not match the canonical route");
+	}
+	return entry;
+}
+
+function transportType(entry) {
+	return isFacadeFixtureTransport(entry) ? "fixture" : "live";
 }
 
 function buildProviderRequest(entry, { provider, evidence, brief, output }) {
@@ -465,6 +491,7 @@ async function generateProvider({ config, deps, runDir, run, state, provider, ev
 		});
 		state.generation = {
 			status: "succeeded", request_sha256: request.fingerprint, artifact_sha256: digest,
+			transport: transportType(entry),
 			cost_receipt: { actualUsd: publicResult.actualUsd },
 		};
 		state.proposal = { path: relativePath(runDir, proposalPath, "proposal artifact"), sha256: digest, mime_type: generated.mimeType ?? null };
@@ -487,99 +514,256 @@ async function generateProvider({ config, deps, runDir, run, state, provider, ev
 	}
 }
 
+function parseGrammarCandidate(candidate, evidence) {
+	let raw = typeof candidate === "string" ? candidate : persistent(candidate);
+	if (typeof candidate === "string") {
+		if (Buffer.byteLength(candidate, "utf8") > 1024 * 1024) throw codedError("GRAMMAR_RESPONSE_TOO_LARGE", "Grammar output exceeds the configured size limit");
+		const keys = [];
+		for (const match of candidate.matchAll(/"(?:\\.|[^"\\])*"\s*:/g)) {
+			try { keys.push(JSON.parse(match[0].slice(0, match[0].lastIndexOf(":")))); }
+			catch { throw codedError("GRAMMAR_OUTPUT_INVALID", "Grammar output contains invalid object keys"); }
+		}
+		if (new Set(keys).size !== keys.length) throw codedError("GRAMMAR_OUTPUT_INVALID", "Grammar output contains duplicate or ambiguous elements");
+		try { raw = JSON.parse(candidate); }
+		catch { throw codedError("GRAMMAR_OUTPUT_INVALID", "Grammar output must be one JSON object"); }
+	}
+	try {
+		const grammar = validatePunchedFacadeGrammar(raw, {
+			...(Array.isArray(evidence?.manifest?.floor_guides_m) ? { floorGuides: { floor_guides_m: evidence.manifest.floor_guides_m } } : {}),
+			allowDerived: true,
+		});
+		return {
+			...grammar,
+			...(raw.wall_opacity !== undefined ? { wall_opacity: raw.wall_opacity } : {}),
+			...(raw.curtain_wall_allowed !== undefined ? { curtain_wall_allowed: raw.curtain_wall_allowed } : {}),
+			...(raw.floor_elevations_m !== undefined ? { floor_elevations_m: [...raw.floor_elevations_m] } : {}),
+			...(raw.facade_lengths_m !== undefined ? { facade_lengths_m: { ...raw.facade_lengths_m } } : {}),
+		};
+	} catch (error) {
+		throw codedError("GRAMMAR_OUTPUT_INVALID", "Grammar output does not match the approved typed facade contract", error);
+	}
+}
+
+function grammarAuthority(grammar, evidence, proposalProvider, proposalSha256) {
+	const authority = readVerifiedFacadeEvidenceAuthority(evidence);
+	if (!authority) return null;
+	return {
+		candidateId: authority.candidateId,
+		geometryHash: authority.geometryHash,
+		geometryContentSha256: authority.geometryContentSha256,
+		geometrySignedVolumeOrientation: authority.geometrySignedVolumeOrientation,
+		facadeSegmentAuthority: authority.facadeSegmentAuthority ? {
+			sha256: authority.facadeSegmentAuthority.sha256,
+			segmentIds: [...authority.facadeSegmentAuthority.segmentIds],
+		} : null,
+		provider: proposalProvider,
+		evidenceManifestSha256: authority.manifestSha256,
+		camerasSha256: authority.camerasSha256,
+		floorGuides: [...authority.floorGuides],
+		facadeLengths: { ...authority.facadeLengths },
+		proposalSha256,
+		grammarSha256: sha256(stableJson(grammar)),
+	};
+}
+
+async function buildGrammarRequest({ config, deps, provider, proposal, evidence, entry }) {
+	if (!isFacadeFixtureTransport(deps.providers?.[provider])) {
+		await verifyFacadeProposal({
+			proposalPath: proposal.path,
+			providerResult: proposal.providerResult,
+			evidence,
+			config: {
+				...config,
+				grammarModel: "gpt-5.6",
+				proposalProvider: provider,
+				grammarBudgetUsd: config.grammarBudgetAllocationUsd[provider],
+				grammarEstimateUsd: config.grammarEstimateAllocationUsd[provider],
+			},
+		});
+	}
+	const manifestText = `${stableJson(persistent(evidence.manifest ?? { manifest_sha256: evidence.manifestSha256 }))}\n`;
+	const prompt = buildFacadeGrammarPrompt({
+		proposalSha256: proposal.sha256,
+		evidenceManifestSha256: evidence.manifestSha256,
+		manifestText,
+	});
+	const boundPrompt = `${prompt.prompt}\nProposal provider identity: ${provider}.`;
+	return createFacadeGrammarRequest({
+		provider: config.grammarProvider,
+		model: entry.model,
+		proposalSha256: proposal.sha256,
+		evidenceManifestSha256: evidence.manifestSha256,
+		promptRevision: prompt.revision,
+		prompt: boundPrompt,
+		promptSha256: sha256(boundPrompt),
+		imageBytes: proposal.bytes,
+		imageMimeType: proposal.mimeType,
+		schema: FACADE_GRAMMAR_SCHEMA,
+		ceilingUsd: config.grammarBudgetAllocationUsd[provider],
+		estimateUsd: config.grammarEstimateAllocationUsd[provider],
+	});
+}
+
 async function extractProviderGrammar({ config, deps, runDir, run, state, provider, proposal, evidence, previous, signal }) {
 	if (!proposal || state.status === "rejected" || state.status === "cancelled") return { state, grammar: null };
+	const entry = grammarProviderEntry(deps, config);
+	const expectedTransport = transportType(entry);
+	const grammarIdentity = Object.freeze({
+		provider: config.grammarProvider,
+		model: entry.model,
+		proposalProvider: provider,
+		proposalSha256: proposal.sha256,
+		evidenceSha256: evidence.manifestSha256,
+	});
 	const grammarPath = join(runDir, "providers", provider, "grammar.json");
 	if (state.grammar?.status === "submitting") {
 		state.status = "rejected";
-		state.failure = { code: "PAID_OPERATION_SUBMISSION_UNCERTAIN", message: "Refusing to resubmit a grammar extraction recorded as submitting" };
+		state.failure = { code: "SUBMISSION_UNCERTAIN", message: "Refusing to resubmit a grammar extraction recorded as submitting without a receipt" };
 		await writeProvider(runDir, run, config, provider, state, deps);
 		return { state, grammar: null };
 	}
 	if (state.grammar?.status === "succeeded") {
 		try {
+			if (stableJson(state.grammar.identity) !== stableJson(grammarIdentity) || !state.grammar_receipt) throw new Error();
+			const receipt = await verifyDurableReceipt(runDir, state.grammar_receipt);
 			const persistedPath = containedPath(runDir, join(runDir, state.grammar.path), "grammar artifact");
 			const bytes = await safeRead(runDir, persistedPath, "grammar artifact");
-			if (sha256(bytes) !== state.grammar.artifact_sha256) throw new Error();
+			if (sha256(bytes) !== state.grammar.artifact_sha256
+				|| receipt.schema_version !== "arr.elevation3d.facade-grammar-receipt.v1"
+				|| stableJson(receipt.identity) !== stableJson(grammarIdentity)
+				|| receipt.artifact?.path !== state.grammar.path
+				|| receipt.artifact?.sha256 !== state.grammar.artifact_sha256
+				|| receipt.artifact?.content_sha256 !== state.grammar.content_sha256
+				|| receipt.result?.provider !== grammarIdentity.provider
+				|| receipt.result?.model !== grammarIdentity.model
+				|| receipt.result?.transport !== expectedTransport
+				|| receipt.result?.request_sha256 !== state.grammar.request_sha256) throw new Error();
 			const grammar = state.grammar.authority
 				? await rehydrateVerifiedFacadeGrammar({
 					path: persistedPath, artifactSha256: state.grammar.artifact_sha256,
 					authority: state.grammar.authority, evidence, provider,
 					proposalSha256: proposal.sha256,
 				})
-				: JSON.parse(bytes.toString("utf8"));
-			if (!state.grammar.authority && !isFacadeFixtureTransport(deps.extractGrammar)) {
-				throw codedError("GRAMMAR_REHYDRATION_INVALID", "Persisted grammar is missing its durable authority binding");
-			}
+				: parseGrammarCandidate(JSON.parse(bytes.toString("utf8")), evidence);
+			if (!state.grammar.authority && expectedTransport !== "fixture") throw new Error();
 			return { state, grammar };
 		} catch {
 			state.status = "rejected";
-			state.failure = { code: "GRAMMAR_RESULT_UNAVAILABLE", message: "Persisted grammar is unavailable; refusing resubmission" };
+			state.failure = { code: "GRAMMAR_RESULT_UNAVAILABLE", message: "Persisted grammar identity, receipt, or artifact is unavailable; refusing resubmission" };
 			await writeProvider(runDir, run, config, provider, state, deps);
 			return { state, grammar: null };
 		}
 	}
 	const submittingStagePath = `providers/${provider}/stages/grammar-submitting.json`;
 	const stagePath = `providers/${provider}/stages/grammar.json`;
-	const stageInput = { provider, proposal_sha256: proposal.sha256, evidence_sha256: evidence.manifestSha256, model: config.grammarModel };
+	const stageInput = {
+		provider,
+		grammar_provider: grammarIdentity.provider,
+		grammar_model: grammarIdentity.model,
+		proposal_sha256: grammarIdentity.proposalSha256,
+		evidence_sha256: grammarIdentity.evidenceSha256,
+	};
 	const submitting = await writeStage({
 		runDir, path: submittingStagePath, stage: "grammar", status: "submitting", input: stageInput,
-		output: { proposal_sha256: proposal.sha256 }, previous, provider, deps,
+		output: { identity: grammarIdentity }, previous, provider, deps,
 	});
-	state.grammar = { status: "submitting", proposal_sha256: proposal.sha256 };
+	state.grammar = { status: "submitting", identity: grammarIdentity, proposal_sha256: proposal.sha256 };
 	state.stage_manifests.grammar = submitting.ref;
 	await writeProvider(runDir, run, config, provider, state, deps, { stage: "grammar", status: "submitting", provider });
 	try {
 		throwIfAborted(signal);
-		const requestKey = sha256(stableJson(stageInput));
+		const request = await buildGrammarRequest({ config, deps, provider, proposal, evidence, entry });
+		const requestKey = request.fingerprint;
 		let extracted = null;
+		let adapterResult = null;
 		const publicResult = await grammarLedger(deps).executeOnce({
-			requestKey, provider: "openai", kind: "grammar-extraction",
-			ceilingUsd: config.grammarBudgetAllocationUsd[provider], estimateUsd: config.grammarEstimateAllocationUsd[provider],
-			runCeilingUsd: config.runBudgetUsd, kindCeilingUsd: config.grammarBudgetUsd,
+			requestKey,
+			provider: grammarIdentity.provider,
+			kind: "grammar-extraction",
+			ceilingUsd: config.grammarBudgetAllocationUsd[provider],
+			estimateUsd: config.grammarEstimateAllocationUsd[provider],
+			runCeilingUsd: config.runBudgetUsd,
+			kindCeilingUsd: config.grammarBudgetUsd,
 			signal,
-			operation: async (ledgerSubmission) => {
-				const binding = {
-					requestKey, proposalProvider: provider, proposalSha256: proposal.sha256,
-					evidenceSha256: evidence.manifestSha256, model: config.grammarModel,
-				};
-				const issued = issueGrammarSubmissionCapability(binding, ledgerSubmission);
-				const result = await deps.extractGrammar({
-					provider, proposal, proposalPath: proposal, providerResult: proposal.providerResult,
-					evidence, config: {
-						...config, proposalProvider: provider, candidateId: config.candidateId,
-						grammarBudgetUsd: config.grammarBudgetAllocationUsd[provider],
-						grammarEstimateUsd: config.grammarEstimateAllocationUsd[provider],
-					},
-					submission: issued.capability, requestKey, signal,
-				});
-				if (!issued.record.consumed) throw codedError("GRAMMAR_SUBMISSION_CAPABILITY_UNUSED", "Grammar transport did not consume its one-shot submission capability");
-				extracted = result?.grammar ?? result;
-				if (!extracted || typeof extracted !== "object" || Array.isArray(extracted)) throw codedError("GRAMMAR_OUTPUT_INVALID", "Grammar extraction returned an invalid value");
+			operation: async (submission) => {
+				const adapterInput = { request, submission, signal };
+				if (entry.id === "openai-gpt-5.6") {
+					if (!consumePaidOperationSubmissionCapability(submission, {
+						requestKey: request.fingerprint, provider: entry.id, kind: "grammar-extraction",
+					})) throw codedError("GRAMMAR_SUBMISSION_UNAUTHORIZED", "Grammar submission capability is unavailable");
+					adapterResult = await entry.extract({ request, signal });
+				} else {
+					adapterResult = await entry.extract(isFacadeFixtureTransport(entry) ? { ...adapterInput, provider } : adapterInput);
+				}
+				if (adapterResult?.provider !== grammarIdentity.provider
+					|| adapterResult?.resolvedModel !== grammarIdentity.model
+					|| adapterResult?.requestFingerprint !== request.fingerprint
+					|| adapterResult?.transport !== expectedTransport) {
+					throw codedError("GRAMMAR_RESPONSE_INVALID", "Grammar adapter result identity does not match the selected route");
+				}
+				extracted = parseGrammarCandidate(adapterResult.grammarCandidate, evidence);
 				return {
-					remoteId: result?.remoteId,
-					artifactSha256: sha256(stableJson(persistent(extracted))),
-					actualUsd: result?.actualUsd ?? config.grammarEstimateAllocationUsd[provider],
+					remoteId: adapterResult.remoteId,
+					artifactSha256: sha256(stableJson(extracted)),
+					actualUsd: adapterResult.actualUsd ?? config.grammarEstimateAllocationUsd[provider],
 				};
 			},
 		});
 		await callLifecycle(deps, { stage: "grammar", status: "returned", provider, proposal_sha256: proposal.sha256 });
-		if (!extracted) throw codedError("GRAMMAR_RESULT_UNAVAILABLE", "Persisted grammar cannot be reconstructed without resubmission");
-		if (!extracted || typeof extracted !== "object" || Array.isArray(extracted)) throw codedError("GRAMMAR_OUTPUT_INVALID", "Grammar extraction returned an invalid value");
-		if (publicResult?.artifactSha256 !== sha256(stableJson(persistent(extracted)))) throw codedError("PAID_OPERATION_RESULT_MISMATCH", "Grammar ledger hash does not match extracted grammar");
-		const bytes = Buffer.from(`${JSON.stringify(persistent(extracted), null, 2)}\n`);
+		if (!adapterResult || !extracted) throw codedError("GRAMMAR_RESULT_UNAVAILABLE", "Persisted grammar cannot be reconstructed without resubmission");
+		const contentSha256 = sha256(stableJson(extracted));
+		if (publicResult?.artifactSha256 !== contentSha256) throw codedError("PAID_OPERATION_RESULT_MISMATCH", "Grammar ledger hash does not match extracted grammar");
+		const bytes = Buffer.from(`${JSON.stringify(extracted, null, 2)}\n`);
 		await atomicWrite(grammarPath, bytes, runDir);
 		const digest = sha256(bytes);
+		let authority = grammarAuthority(extracted, evidence, provider, proposal.sha256);
+		if (authority) {
+			extracted = await rehydrateVerifiedFacadeGrammar({
+				path: grammarPath, artifactSha256: digest, authority, evidence, provider, proposalSha256: proposal.sha256,
+			});
+			authority = serializeVerifiedFacadeGrammarAuthority(extracted);
+		} else if (expectedTransport !== "fixture") {
+			throw codedError("GRAMMAR_REHYDRATION_INVALID", "Live grammar results require verified evidence authority");
+		}
+		const resultRecord = persistent({
+			provider: adapterResult.provider,
+			model: adapterResult.resolvedModel,
+			transport: adapterResult.transport,
+			request_sha256: adapterResult.requestFingerprint,
+			...(adapterResult.remoteId ? { remote_id_sha256: sha256(adapterResult.remoteId) } : {}),
+			actual_usd: adapterResult.actualUsd,
+			usage: adapterResult.usage,
+		});
+		state.grammar_receipt = await writeReceipt(runDir, `providers/${provider}/receipts/grammar.json`, {
+			schema_version: "arr.elevation3d.facade-grammar-receipt.v1",
+			identity: grammarIdentity,
+			result: resultRecord,
+			artifact: {
+				path: relativePath(runDir, grammarPath, "grammar artifact"),
+				sha256: digest,
+				content_sha256: contentSha256,
+			},
+		});
 		const succeeded = await writeStage({
 			runDir, path: stagePath, stage: "grammar", status: "succeeded", input: stageInput,
-			output: { grammar_sha256: digest, grammar_path: relativePath(runDir, grammarPath, "grammar artifact") }, previous, provider, deps,
+			output: {
+				identity: grammarIdentity,
+				grammar_sha256: digest,
+				grammar_path: relativePath(runDir, grammarPath, "grammar artifact"),
+				receipt_sha256: state.grammar_receipt.receipt_sha256,
+				transport: expectedTransport,
+			},
+			previous, provider, deps,
 		});
-		let authority = null;
-		try { authority = serializeVerifiedFacadeGrammarAuthority(extracted); }
-		catch (error) { if (!isFacadeFixtureTransport(deps.extractGrammar)) throw error; }
 		state.grammar = {
-			status: "succeeded", proposal_sha256: proposal.sha256, artifact_sha256: digest,
+			status: "succeeded",
+			identity: grammarIdentity,
+			proposal_sha256: proposal.sha256,
+			request_sha256: request.fingerprint,
+			artifact_sha256: digest,
+			content_sha256: contentSha256,
 			path: relativePath(runDir, grammarPath, "grammar artifact"),
+			transport: expectedTransport,
 			cost_receipt: { actualUsd: publicResult.actualUsd },
 			...(authority ? { authority } : {}),
 		};
@@ -589,8 +773,13 @@ async function extractProviderGrammar({ config, deps, runDir, run, state, provid
 		return { state, grammar: extracted };
 	} catch (error) {
 		if (error instanceof LifecycleHookError) throw error;
-		state.status = isAbort(error, signal) ? "cancelled" : "rejected";
-		state.failure = safeError(error, isAbort(error, signal) ? "FACADE_AGENT_CANCELLED" : "GRAMMAR_EXTRACTION_FAILED");
+		const aborted = isAbort(error, signal);
+		state.status = aborted ? "cancelled" : "rejected";
+		state.failure = aborted
+			? safeError(error, "FACADE_AGENT_CANCELLED")
+			: error?.definitiveNonSubmission === true
+				? safeError(error, "GRAMMAR_EXTRACTION_FAILED")
+			: { code: "SUBMISSION_UNCERTAIN", message: "Grammar submission outcome is uncertain; refusing replay" };
 		if (error?.definitiveNonSubmission === true) state.grammar.status = "failed";
 		await writeProvider(runDir, run, config, provider, state, deps);
 		return { state, grammar: null, cancelled: state.status === "cancelled" };
@@ -993,6 +1182,34 @@ async function verifyDurableReceipt(runDir, ref) {
 }
 
 async function verifyProviderReceipts(runDir, state) {
+	if (state?.grammar_receipt) {
+		const receipt = await verifyDurableReceipt(runDir, state.grammar_receipt);
+		if (state.grammar?.status !== "succeeded"
+			|| receipt.schema_version !== "arr.elevation3d.facade-grammar-receipt.v1"
+			|| stableJson(receipt.identity) !== stableJson(state.grammar.identity)
+			|| receipt.artifact?.path !== state.grammar.path
+			|| receipt.artifact?.sha256 !== state.grammar.artifact_sha256
+			|| receipt.artifact?.content_sha256 !== state.grammar.content_sha256
+			|| receipt.result?.provider !== state.grammar.identity?.provider
+			|| receipt.result?.model !== state.grammar.identity?.model
+			|| receipt.result?.transport !== state.grammar.transport
+			|| receipt.result?.request_sha256 !== state.grammar.request_sha256) {
+			throw codedError("FACADE_AGENT_STATE_UNCERTAIN", "Grammar receipt bindings do not match durable grammar state");
+		}
+		let bytes;
+		let grammar;
+		try {
+			bytes = await safeRead(runDir, join(runDir, receipt.artifact.path), "grammar artifact");
+			grammar = JSON.parse(bytes.toString("utf8"));
+		} catch (error) {
+			throw codedError("FACADE_AGENT_STATE_UNCERTAIN", "Grammar receipt artifact is unavailable or invalid", error);
+		}
+		if (sha256(bytes) !== receipt.artifact.sha256 || sha256(stableJson(grammar)) !== receipt.artifact.content_sha256) {
+			throw codedError("FACADE_AGENT_STATE_UNCERTAIN", "Grammar receipt artifact hash mismatch");
+		}
+	} else if (state?.grammar?.status === "succeeded") {
+		throw codedError("FACADE_AGENT_STATE_UNCERTAIN", "Completed grammar is missing its durable receipt");
+	}
 	if (state?.correction_v002) {
 		const { grammar, correction } = state.correction_v002;
 		if (!grammar?.path || !HEX_SHA256.test(grammar.sha256 ?? "") || !correction?.path || !HEX_SHA256.test(correction.sha256 ?? "")) {
@@ -1095,8 +1312,11 @@ async function initialize(config, deps, signal) {
 
 async function executeFacade(config, deps, stopAfterStage = null) {
 	if (!deps || typeof deps !== "object") throw new TypeError("Facade agent dependencies are required");
-	for (const name of ["loadCandidate", "buildEvidence", "extractGrammar", "build", "validate", "renderDelivery"]) {
+	for (const name of ["loadCandidate", "buildEvidence", "build", "validate", "renderDelivery"]) {
 		if (typeof deps[name] !== "function") throw new TypeError(`deps.${name} must be a function`);
+	}
+	if (!deps.grammarProvider || typeof deps.grammarProvider !== "object" || typeof deps.grammarProvider.extract !== "function") {
+		throw new TypeError("deps.grammarProvider.extract must be a function");
 	}
 	const signal = deps.signal ?? config?.signal;
 	const initialized = await initialize(config, deps, signal);
@@ -1143,13 +1363,17 @@ async function executeFacade(config, deps, stopAfterStage = null) {
 				else if (isFacadeFixtureTransport(entry)) capabilities[provider] = { available: true, provider, model: provider, fixture: true };
 				else throw codedError("PREFLIGHT_CAPABILITY_MISSING", `Provider ${provider} has no non-network preflight capability`);
 			}
-			if (typeof deps.extractGrammar.preflight === "function") {
-				capabilities["openai-grammar"] = preflightCapability(() => deps.extractGrammar.preflight({
-					model: normalized.grammarModel, ceilingUsd: normalized.grammarBudgetUsd, estimateUsd: normalized.grammarEstimateUsd,
-					config: normalized,
+			const selectedGrammarProvider = grammarProviderEntry(deps, normalized);
+			const grammarCapabilityKey = `grammar:${normalized.grammarProvider}`;
+			if (typeof selectedGrammarProvider.preflight === "function") {
+				capabilities[grammarCapabilityKey] = preflightCapability(() => selectedGrammarProvider.preflight({
+					model: selectedGrammarProvider.model, ceilingUsd: normalized.grammarBudgetUsd, estimateUsd: normalized.grammarEstimateUsd,
 				}));
-			} else if (isFacadeFixtureTransport(deps.extractGrammar)) {
-				capabilities["openai-grammar"] = { available: true, provider: "openai", model: normalized.grammarModel, fixture: true };
+			} else if (isFacadeFixtureTransport(selectedGrammarProvider)) {
+				capabilities[grammarCapabilityKey] = {
+					available: true, provider: normalized.grammarProvider,
+					model: selectedGrammarProvider.model, transport: "fixture",
+				};
 			} else throw codedError("PREFLIGHT_CAPABILITY_MISSING", "Grammar transport has no non-network preflight capability");
 			const persistedEvidenceManifestPath = evidence.manifestPath && await exists(evidence.manifestPath)
 				? relativePath(runDir, evidence.manifestPath, "evidence manifest") : null;
@@ -1202,7 +1426,7 @@ async function executeFacade(config, deps, stopAfterStage = null) {
 		assertSharedRunLedger(deps);
 		if (normalized.confirmLive !== true) {
 			const unconfirmed = normalized.providers.some((provider) => !isFacadeFixtureTransport(deps.providers?.[provider]))
-				|| !isFacadeFixtureTransport(deps.extractGrammar);
+				|| !isFacadeFixtureTransport(deps.grammarProvider);
 			if (unconfirmed) throw codedError("LIVE_CONFIRMATION_REQUIRED", "Live facade transports require explicit confirmation");
 		}
 
@@ -1464,6 +1688,7 @@ async function readStageRef(runDir, ref) {
 	if (sha256(bytes) !== ref.sha256) throw codedError("FACADE_AGENT_STATE_UNCERTAIN", `Stage manifest hash mismatch: ${ref.path}`);
 	const manifest = JSON.parse(bytes.toString("utf8"));
 	if (!HEX_SHA256.test(manifest.input_sha256 ?? "") || manifest.output_sha256 !== manifestOutputHash(manifest.output)
+		|| (manifest.input !== undefined && manifest.input_sha256 !== sha256(stableJson(persistent(manifest.input))))
 		|| manifest.stage !== ref.stage || manifest.status !== ref.status || manifest.output_sha256 !== ref.output_sha256) {
 		throw codedError("FACADE_AGENT_STATE_UNCERTAIN", `Stage manifest binding mismatch: ${ref.path}`);
 	}
