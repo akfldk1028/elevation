@@ -1,0 +1,22 @@
+{
+  "id": "resp_byteplus_facade_grammar_fixture",
+  "status": "completed",
+  "output": [
+    {
+      "type": "message",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "output_text",
+          "text": "{\"system\":\"brick-punched-window-v1\",\"surfaces\":[\"front\",\"right\",\"back\",\"left\"],\"materials\":[\"brick\",\"precast\",\"window-frame\",\"glass\"],\"corner_datum_m\":0,\"bay_width_m\":2.4,\"window_width_m\":1.2,\"window_height_m\":1.65,\"sill_height_m\":0.85,\"reveal_depth_m\":0.22,\"frame_width_m\":0.06,\"lintel_height_m\":0.18,\"sill_depth_m\":0.08,\"cladding_depth_m\":0.12,\"brick_module_m\":[0.215,0.065],\"confidence\":0.92,\"unresolved_surfaces\":[]}"
+        }
+      ]
+    }
+  ],
+  "usage": {
+    "input_tokens": 100,
+    "output_tokens": 50,
+    "total_tokens": 150,
+    "cost_usd": 0.008
+  }
+}
