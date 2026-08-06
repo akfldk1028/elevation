@@ -39,8 +39,8 @@ import { createFacadeAgentDependencyFactory } from ${JSON.stringify(cliUrl)};
 import { createFacadeFixtureTransport } from ${JSON.stringify(moduleUrl("plugins/elevation-3d/lib/facade-agent/fixture-transport.mjs"))};
 import { FacadeProviderError } from ${JSON.stringify(moduleUrl("plugins/elevation-3d/lib/facade-agent/provider.mjs"))};
 import { createPaidOperationLedger, consumePaidOperationSubmissionCapability } from ${JSON.stringify(moduleUrl("plugins/elevation-3d/lib/facade-agent/paid-operation-ledger.mjs"))};
-import { consumeFacadeGrammarSubmissionCapability } from ${JSON.stringify(moduleUrl("plugins/elevation-3d/lib/facade-agent/harness.mjs"))};
 const GLB = Buffer.from(${JSON.stringify(glb)}, "base64");
+const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64");
 const grammar = { system: "brick-punched-window-v1", surfaces: ["front", "right", "back", "left"], materials: ["brick", "precast", "window-frame", "glass"], corner_datum_m: 0, bay_width_m: 2.4, window_width_m: 1.4, window_height_m: 1.8, sill_height_m: 0.8, reveal_depth_m: 0.2, frame_width_m: 0.06, lintel_height_m: 0.15, sill_depth_m: 0.1, cladding_depth_m: 0.1, brick_module_m: [0.22, 0.07], confidence: 0.92, unresolved_surfaces: [], floor_elevations_m: [0, 3, 6], facade_lengths_m: { front: 8, right: 6, back: 8, left: 6 } };
 const note = async (value) => { if (process.env.FACADE_TEST_CALL_LOG) await appendFile(process.env.FACADE_TEST_CALL_LOG, value + "\\n"); };
 export const fixtureFactory = createFacadeAgentDependencyFactory(async (config) => {
@@ -51,11 +51,18 @@ export const fixtureFactory = createFacadeAgentDependencyFactory(async (config) 
   const ledger = createPaidOperationLedger(join(ledgerRoot, "paid.json"), { approvedRoot: ledgerRoot });
   const providers = Object.fromEntries(config.providers.map((provider) => [provider, createFacadeFixtureTransport({
     buildRequest({ evidence, brief }) { return { provider, fingerprint: sha256(stableJson({ provider, evidence: evidence.manifestSha256, brief: brief.id })) }; },
-    async generate({ request, submission }) { if (!consumePaidOperationSubmissionCapability(submission, { requestKey: request.fingerprint, provider, kind: "image-generation" })) throw new Error("submission rejected"); await note("generate:" + provider); if (process.env.FACADE_TEST_PROVIDER_FAILURE) throw new FacadeProviderError(process.env.FACADE_TEST_PROVIDER_FAILURE, "fixture provider failure", { provider, stage: "generate", definitiveNonSubmission: true }); return { bytes: Buffer.from("proposal:" + provider), mimeType: "image/png", remoteId: "fixture-" + provider, actualUsd: 0 }; }
+    async generate({ request, submission }) { if (!consumePaidOperationSubmissionCapability(submission, { requestKey: request.fingerprint, provider, kind: "image-generation" })) throw new Error("submission rejected"); await note("generate:" + provider); if (process.env.FACADE_TEST_PROVIDER_FAILURE) throw new FacadeProviderError(process.env.FACADE_TEST_PROVIDER_FAILURE, "fixture provider failure", { provider, stage: "generate", definitiveNonSubmission: true }); return { bytes: PNG, mimeType: "image/png", remoteId: "fixture-" + provider, actualUsd: 0 }; }
   })]));
-  const extractGrammar = createFacadeFixtureTransport(async ({ provider, proposal, evidence, submission, requestKey, config: runConfig }) => {
-    if (!consumeFacadeGrammarSubmissionCapability(submission, { requestKey, proposalProvider: provider, proposalSha256: proposal.sha256, evidenceSha256: evidence.manifestSha256, model: runConfig.grammarModel })) throw new Error("grammar submission rejected");
-    await note("grammar:" + provider); return { grammar, remoteId: "grammar-" + provider, actualUsd: 0 };
+  const grammarModels = { "byteplus-seed-mini": "seed-2-0-mini-260428", "openai-gpt-5.6": "gpt-5.6" };
+  const grammarId = config.grammarProvider;
+  const grammarModel = grammarModels[grammarId];
+  const grammarProvider = createFacadeFixtureTransport({
+    id: grammarId, model: grammarModel,
+    async extract({ provider, request, submission }) {
+      if (grammarId !== "openai-gpt-5.6" && !consumePaidOperationSubmissionCapability(submission, { requestKey: request.fingerprint, provider: grammarId, kind: "grammar-extraction" })) throw new Error("grammar submission rejected");
+      await note("grammar:" + (provider ?? "openai"));
+      return { provider: grammarId, resolvedModel: grammarModel, transport: "fixture", requestFingerprint: request.fingerprint, grammarCandidate: grammar, remoteId: "grammar-" + (provider ?? "openai"), actualUsd: 0 };
+    }
   });
   const score = async ({ provider }) => process.env.FACADE_TEST_REJECT === "1"
     ? ({ status: "rejected", accepted: false, provider, reason: "FIXTURE_REJECTED" })
@@ -64,7 +71,7 @@ export const fixtureFactory = createFacadeAgentDependencyFactory(async (config) 
     signal: config.signal,
     loadCandidate: async () => ({ candidate: { candidate_id: "creative-020" }, identity: { geometry_hash: "fixture" } }),
     buildEvidence: async ({ runDir }) => { if (process.env.FACADE_TEST_EVIDENCE_FAILURE) throw new Error("fixture crash during evidence"); return { manifest: { candidate_id: "creative-020" }, manifestPath: join(runDir, "evidence", "manifest.json"), manifestSha256: "e".repeat(64) }; },
-    providers, extractGrammar, ledger, score,
+    providers, grammarProvider, ledger, score,
     build: async ({ provider, versionId, runDir }) => { await note("build:" + provider); const dir = join(runDir, "artifacts", provider); await mkdir(dir, { recursive: true }); const path = join(dir, versionId + ".glb"); await writeFile(path, GLB); return { artifact: { path, sha256: sha256(GLB) } }; },
     validate: async ({ provider, artifact }) => { await note("validate:" + provider); return { accepted: true, codes: [], metrics: {}, artifacts: { glb: artifact.path, glb_sha256: artifact.sha256 } }; },
     renderDelivery: async ({ provider }) => ({ provider })
@@ -125,6 +132,95 @@ function base(root: string, runId: string) {
 		"--image-budget-gpt-image-2", "1", "--image-budget-nano-banana-pro", "1", "--grammar-budget", "1",
 	];
 }
+
+test("canonical router flags persist the selected routes and exact confirmation without exposing environment secrets", async () => {
+	const root = await mkdtemp(join(tmpdir(), "elevation3d-cli-canonical-router-")); roots.push(root);
+	const secrets = {
+		OPENAI_API_KEY: "sk-task6-openai-secret",
+		ARK_API_KEY: "task6-byteplus-secret",
+		DASHSCOPE_API_KEY: "task6-dashscope-secret",
+		GEMINI_API_KEY: "task6-gemini-secret",
+	};
+	const result = invoke([
+		"run", "--candidate", "creative-020", "--brief", "brick-punched-window-v1",
+		"--dataset-root", root, "--output-root", join(root, "output"), "--run-id", "router-cli-001",
+		"--image-provider", "seedream-5-pro", "--image-budget", "seedream-5-pro=0.06",
+		"--grammar-provider", "byteplus-seed-mini", "--grammar-budget", "0.01",
+		"--confirm-live", "--confirm-total-usd", "0.07",
+	], secrets);
+	assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
+	const summary = JSON.parse(result.stdout);
+	assert.deepEqual(summary.router, { image_providers: ["seedream-5-pro"], grammar_provider: "byteplus-seed-mini" });
+	const envelope = JSON.parse(await readFile(join(root, "output", "creative-020", "router-cli-001", "facade-agent-config.json"), "utf8"));
+	assert.deepEqual(envelope.config.imageProviders, ["seedream-5-pro"]);
+	assert.equal(envelope.config.grammarProvider, "byteplus-seed-mini");
+	assert.deepEqual(envelope.config.imageBudgetUsd, { "seedream-5-pro": 0.06 });
+	assert.equal(envelope.config.grammarBudgetUsd, 0.01);
+	assert.equal(envelope.config.confirmedTotalUsd, 0.07);
+	const status = invoke(["status", "--run-dir", join(root, "output", "creative-020", "router-cli-001")], secrets);
+	assert.equal(status.status, 0, `${status.stderr}\n${status.stdout}`);
+	assert.deepEqual(JSON.parse(status.stdout).router, { image_providers: ["seedream-5-pro"], grammar_provider: "byteplus-seed-mini" });
+	for (const secret of Object.values(secrets)) assert.doesNotMatch(`${result.stdout}\n${result.stderr}\n${status.stdout}\n${status.stderr}`, new RegExp(secret));
+});
+
+test("repeatable canonical image-provider flags preserve caller order", async () => {
+	const root = await mkdtemp(join(tmpdir(), "elevation3d-cli-router-order-")); roots.push(root);
+	const result = invoke([
+		"preflight", "--candidate", "creative-020", "--brief", "brick-punched-window-v1",
+		"--dataset-root", root, "--output-root", join(root, "output"), "--run-id", "router-order",
+		"--image-provider", "qwen-image-2", "--image-provider", "seedream-5-pro",
+		"--image-budget", "qwen-image-2=0.02", "--image-budget", "seedream-5-pro=0.06",
+		"--grammar-provider", "byteplus-seed-mini", "--grammar-budget", "0.01",
+	]);
+	assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
+	const envelope = JSON.parse(await readFile(join(root, "output", "creative-020", "router-order", "facade-agent-config.json"), "utf8"));
+	assert.deepEqual(envelope.config.imageProviders, ["qwen-image-2", "seedream-5-pro"]);
+	assert.deepEqual(JSON.parse(result.stdout).router.image_providers, ["qwen-image-2", "seedream-5-pro"]);
+});
+
+test("legacy providers alias maps to canonical image selection and conflicting representations fail locally", async () => {
+	const root = await mkdtemp(join(tmpdir(), "elevation3d-cli-router-alias-")); roots.push(root);
+	const legacy = invoke(["preflight", ...base(root, "legacy-router")]);
+	assert.equal(legacy.status, 0, `${legacy.stderr}\n${legacy.stdout}`);
+	const envelope = JSON.parse(await readFile(join(root, "output", "creative-020", "legacy-router", "facade-agent-config.json"), "utf8"));
+	assert.deepEqual(envelope.config.imageProviders, ["gpt-image-2", "nano-banana-pro"]);
+	assert.deepEqual(JSON.parse(legacy.stdout).router.image_providers, ["gpt-image-2", "nano-banana-pro"]);
+
+	const conflictRun = "conflicting-router";
+	const conflict = invoke([
+		"preflight", ...base(root, conflictRun),
+		"--image-provider", "seedream-5-pro", "--image-budget", "seedream-5-pro=0.06",
+	]);
+	assert.equal(conflict.status, 30);
+	await assert.rejects(() => readFile(join(root, "output", "creative-020", conflictRun, "facade-agent-config.json")), /ENOENT/);
+});
+
+test("canonical router rejects missing and unselected positive image budgets before persistence", async () => {
+	const root = await mkdtemp(join(tmpdir(), "elevation3d-cli-router-budget-")); roots.push(root);
+	const prefix = ["preflight", "--candidate", "creative-020", "--brief", "brick-punched-window-v1", "--dataset-root", root, "--output-root", join(root, "output")];
+	const missing = invoke([...prefix, "--run-id", "missing-selected-budget", "--image-provider", "seedream-5-pro", "--grammar-provider", "byteplus-seed-mini", "--grammar-budget", "0.01"]);
+	assert.equal(missing.status, 30);
+	const unselected = invoke([...prefix, "--run-id", "unselected-positive-budget", "--image-provider", "seedream-5-pro", "--image-budget", "seedream-5-pro=0.06", "--image-budget", "qwen-image-2=0.02", "--grammar-provider", "byteplus-seed-mini", "--grammar-budget", "0.01"]);
+	assert.equal(unselected.status, 30);
+	for (const runId of ["missing-selected-budget", "unselected-positive-budget"]) {
+		await assert.rejects(() => readFile(join(root, "output", "creative-020", runId, "facade-agent-config.json")), /ENOENT/);
+	}
+});
+
+test("canonical live confirmation compares exact decimal micros", async () => {
+	const root = await mkdtemp(join(tmpdir(), "elevation3d-cli-router-confirm-")); roots.push(root);
+	const runId = "inexact-router-total";
+	const result = invoke([
+		"run", "--candidate", "creative-020", "--brief", "brick-punched-window-v1",
+		"--dataset-root", root, "--output-root", join(root, "output"), "--run-id", runId,
+		"--image-provider", "seedream-5-pro", "--image-budget", "seedream-5-pro=0.06",
+		"--grammar-provider", "byteplus-seed-mini", "--grammar-budget", "0.01",
+		"--confirm-live", "--confirm-total-usd", "0.070001",
+	]);
+	assert.equal(result.status, 30);
+	assert.deepEqual(JSON.parse(result.stdout), { state: "error", category: "configuration", code: "LIVE_COST_CONFIRMATION_INVALID" });
+	await assert.rejects(() => readFile(join(root, "output", "creative-020", runId, "facade-agent-config.json")), /ENOENT/);
+});
 
 test("accepts repeatable provider-keyed budgets and exact decimal live confirmation for three providers", async () => {
 	const root = await mkdtemp(join(tmpdir(), "elevation3d-cli-provider-budgets-")); roots.push(root);
@@ -264,18 +360,23 @@ test("live intent without every exact ceiling and total confirmation fails befor
 test("normal CLI preflight constructs production dependencies without secrets or transport", async () => {
 	const root = await mkdtemp(join(tmpdir(), "elevation3d-cli-production-")); roots.push(root);
 	const datasetRoot = resolve("D:/Data/50_ELE/MAAS_ELEVATION_TEST_SET_20260730");
-	const result = invokeProduction(["preflight",
+	const productionArgs = (runId: string) => [
 		"--candidate", "creative-020", "--brief", "brick-punched-window-v1",
-		"--dataset-root", datasetRoot, "--output-root", join(root, "output"), "--run-id", "production-preflight",
+		"--dataset-root", datasetRoot, "--output-root", join(root, "output"), "--run-id", runId,
 		"--providers", "gpt-image-2,nano-banana-pro",
 		"--image-budget-gpt-image-2", "1", "--image-budget-nano-banana-pro", "1", "--grammar-budget", "1",
-	]);
+	];
+	const result = invokeProduction(["preflight", ...productionArgs("production-preflight")]);
 	assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
 	assert.equal(JSON.parse(result.stdout).stage, "preflight");
 	const receipt = JSON.parse(await readFile(join(root, "output", "creative-020", "production-preflight", "stages", "preflight-receipt.json"), "utf8"));
 	assert.equal(receipt.capabilities["gpt-image-2"].code, "PROVIDER_CREDENTIALS_MISSING");
 	assert.equal(receipt.capabilities["nano-banana-pro"].code, "PROVIDER_CREDENTIALS_MISSING");
-	assert.equal(receipt.capabilities["openai-grammar"].code, "GRAMMAR_CREDENTIALS_MISSING");
+	assert.equal(receipt.capabilities["grammar:openai-gpt-5.6"].code, "GRAMMAR_CREDENTIALS_MISSING");
+
+	const evidence = invokeProduction(["evidence", ...productionArgs("production-evidence")]);
+	assert.equal(evidence.status, 0, `${evidence.stderr}\n${evidence.stdout}`);
+	assert.equal(JSON.parse(evidence.stdout).stage, "evidence");
 });
 
 test("resume fails closed when persisted normalized configuration is tampered", async () => {
