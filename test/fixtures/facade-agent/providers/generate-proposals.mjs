@@ -45,10 +45,7 @@ export const BYTEPLUS_GRAMMAR_FIXTURE = Object.freeze({
 
 export const BYTEPLUS_ROUTED_FACADE_FIXTURE = Object.freeze({
 	grammar: BYTEPLUS_GRAMMAR_FIXTURE,
-	architecturalIntent: Object.freeze({
-		facadeSystem: "fixture-derived-punched-window-masonry-with-entrance-door-zone",
-		wall_opacity: "opaque",
-		curtain_wall_allowed: false,
+	proposalIntent: Object.freeze({
 		entranceDoorZone: Object.freeze({ x: 475, width: 250, height: 182 }),
 	}),
 });
