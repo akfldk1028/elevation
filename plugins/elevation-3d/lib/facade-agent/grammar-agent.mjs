@@ -16,6 +16,8 @@ import { consumePaidOperationSubmissionCapability } from "./paid-operation-ledge
 import { FacadeProviderError } from "./provider.mjs";
 import { readVerifiedProposalResultAuthority as readOpenAIProposalResultAuthority } from "./providers/openai-image.mjs";
 import { readVerifiedProposalResultAuthority as readGeminiProposalResultAuthority } from "./providers/gemini-image.mjs";
+import { readVerifiedProposalResultAuthority as readBytePlusProposalResultAuthority } from "./image-providers/providers/byteplus/adapter.mjs";
+import { readVerifiedProposalResultAuthority as readAlibabaProposalResultAuthority } from "./image-providers/providers/alibaba/adapter.mjs";
 
 const PROVIDER = "openai";
 const MODEL = "gpt-5.6";
@@ -313,10 +315,14 @@ export function preflightFacadeGrammar(input = {}) {
 }
 
 function providerResultAuthority(providerResult) {
-	const openAI = readOpenAIProposalResultAuthority(providerResult);
-	const gemini = readGeminiProposalResultAuthority(providerResult);
-	if (openAI && gemini) throw failure("GRAMMAR_PROPOSAL_INVALID", "Verified proposal provider identity is ambiguous", { definitiveNonSubmission: true });
-	return openAI ?? gemini;
+	const authorities = [
+		readOpenAIProposalResultAuthority,
+		readBytePlusProposalResultAuthority,
+		readAlibabaProposalResultAuthority,
+		readGeminiProposalResultAuthority,
+	].map((read) => read(providerResult)).filter(Boolean);
+	if (authorities.length > 1) throw failure("GRAMMAR_PROPOSAL_INVALID", "Verified proposal provider identity is ambiguous", { definitiveNonSubmission: true });
+	return authorities[0] ?? null;
 }
 
 export async function verifyFacadeProposal(input) {
