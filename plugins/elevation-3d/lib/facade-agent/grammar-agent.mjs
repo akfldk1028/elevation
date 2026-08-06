@@ -444,7 +444,11 @@ export async function extractFacadeGrammar(input) {
 			throw error;
 		}
 		const artifactSha256 = sha256(stableJson(parsedGrammar));
-		transportReceipt = { remoteId: result.remoteId, artifactSha256, actualUsd: result.actualUsd };
+		transportReceipt = {
+			remoteId: result.remoteId ?? `openai-${artifactSha256}`,
+			artifactSha256,
+			actualUsd: result.actualUsd,
+		};
 		return transportReceipt;
 	};
 	if (harnessMode) {
