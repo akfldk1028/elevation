@@ -227,28 +227,96 @@ test("BytePlus grammar rejects malformed, duplicate-key, and invalid grammar res
 	}
 });
 
-test("BytePlus grammar bounds declared, streamed, and reported-cost response data", async () => {
-	const oversizedLength = new Response("{}", { headers: { "content-length": String(1024 * 1024 + 1) } });
-	const oversizedStream = new Response(new ReadableStream({
-		start(controller) {
-			controller.enqueue(new Uint8Array(600 * 1024));
-			controller.enqueue(new Uint8Array(600 * 1024));
-			controller.close();
-		},
-	}));
+test("BytePlus grammar rejects reported cost above the fixed ceiling after one fetch", async () => {
 	const overCost = structuredClone(successFixture);
 	overCost.usage.cost_usd = 0.010001;
-	for (const [name, response, code] of [
-		["declared overflow", oversizedLength, "RESPONSE_TOO_LARGE"],
-		["streamed overflow", oversizedStream, "RESPONSE_TOO_LARGE"],
-		["reported cost", Response.json(overCost), "INVALID_PROVIDER_RESPONSE"],
+	let fetchCalls = 0;
+	const provider = createProvider({ ARK_API_KEY: "key" }, {
+		fetchImpl: async () => { fetchCalls += 1; return Response.json(overCost); },
+	});
+	await assert.rejects(() => authorizedExtract(provider),
+		(error: any) => assertFailure(error, "INVALID_PROVIDER_RESPONSE", false));
+	assert.equal(fetchCalls, 1);
+});
+
+test("BytePlus grammar retains header provenance across every post-fetch response failure and blocks replay", async () => {
+	for (const [name, expectedCode, timeoutMs, setup] of [
+		["declared overflow", "RESPONSE_TOO_LARGE", 1_000, () => ({
+			makeResponse: () => new Response("{}", { headers: { "content-length": String(1024 * 1024 + 1) } }),
+		})],
+		["streamed overflow", "RESPONSE_TOO_LARGE", 1_000, () => ({
+			makeResponse: () => new Response(new ReadableStream({
+				start(controller) {
+					controller.enqueue(new Uint8Array(600 * 1024));
+					controller.enqueue(new Uint8Array(600 * 1024));
+					controller.close();
+				},
+			})),
+		})],
+		["missing body", "INVALID_PROVIDER_RESPONSE", 1_000, () => ({ makeResponse: () => new Response(null) })],
+		["invalid body", "INVALID_PROVIDER_RESPONSE", 1_000, () => {
+			return { makeResponse: () => {
+				const response = new Response("{}");
+				Object.defineProperty(response, "body", { value: { getReader: () => ({
+					read: async () => ({ done: false, value: "not-bytes" }),
+					releaseLock() {},
+				}) } });
+				return response;
+			} };
+		}],
+		["malformed JSON", "INVALID_PROVIDER_RESPONSE", 1_000, () => ({ makeResponse: () => new Response("{") })],
+		["duplicate JSON", "INVALID_PROVIDER_RESPONSE", 1_000, () => ({ makeResponse: () => new Response('{"id":"first","id":"second"}') })],
+		["timeout after response", "REQUEST_TIMEOUT", 10, () => ({
+			makeResponse: () => new Response(new ReadableStream({
+				start(controller) { setTimeout(() => controller.close(), 40); },
+			})),
+		})],
+		["caller abort after response", "SUBMISSION_UNCERTAIN", 1_000, () => {
+			const caller = new AbortController();
+			return {
+				signal: caller.signal,
+				makeResponse: () => new Response(new ReadableStream({
+					start(controller) {
+						setTimeout(() => caller.abort(new DOMException("caller stopped", "AbortError")), 0);
+						setTimeout(() => controller.close(), 40);
+					},
+				})),
+			};
+		}],
 	] as const) {
+		const commonRequest = request();
+		const remoteId = `byteplus-${name.replaceAll(" ", "-")}`;
+		const ledger = createPaidOperationLedger(join(root, `provenance-${ledgerSequence++}.json`), { approvedRoot: root });
 		let fetchCalls = 0;
+		const prepared = setup();
 		const provider = createProvider({ ARK_API_KEY: "key" }, {
-			fetchImpl: async () => { fetchCalls += 1; return response; },
+			timeoutMs,
+			fetchImpl: async () => {
+				fetchCalls += 1;
+				const response = prepared.makeResponse();
+				response.headers.set("x-request-id", remoteId);
+				return response;
+			},
 		});
-		await assert.rejects(() => authorizedExtract(provider), (error: any) => assertFailure(error, code, false), name);
-		assert.equal(fetchCalls, 1, `${name} must make exactly one attempt`);
+		const execute = () => ledger.executeOnce({
+			requestKey: commonRequest.fingerprint,
+			provider: PROVIDER,
+			kind: "grammar-extraction",
+			ceilingUsd: commonRequest.ceilingUsd,
+			estimateUsd: commonRequest.estimateUsd,
+			operation: async (submission: object) => {
+				const result = await provider.extract({ request: commonRequest, submission, signal: prepared.signal });
+				return { remoteId: result.remoteId, artifactSha256: "c".repeat(64), actualUsd: result.actualUsd };
+			},
+		});
+		await assert.rejects(execute, (error: any) => {
+			assertFailure(error, expectedCode, false);
+			assert.doesNotMatch(`${error.message}\n${error.stack}\n${JSON.stringify(error)}`, new RegExp(remoteId));
+			return true;
+		}, name);
+		assert.equal((await ledger.summary()).operations[0].remoteIdHash, sha256(remoteId), name);
+		await assert.rejects(execute, (error: any) => error.code === "PAID_OPERATION_SUBMISSION_UNCERTAIN", name);
+		assert.equal(fetchCalls, 1, `${name} must not perform a replay fetch`);
 	}
 });
 
