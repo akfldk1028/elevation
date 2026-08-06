@@ -523,6 +523,26 @@ test("grammar provider receives a provider-bound capability consumable only once
 	assert.equal(result.final.status, "winner");
 });
 
+test("OpenAI and BytePlus grammar routes receive the same unconsumed ledger submission capability", async () => {
+	const value = await fixture({ runId: "openai-common-grammar-capability", providers: ["gpt-image-2"] });
+	value.config.grammarProvider = "openai-gpt-5.6";
+	value.deps.grammarProvider = createFacadeFixtureTransport({
+		id: "openai-gpt-5.6",
+		model: "gpt-5.6",
+		async extract(input: any) {
+			const expected = { requestKey: input.request.fingerprint, provider: "openai-gpt-5.6", kind: "grammar-extraction" };
+			assert.equal(consumePaidOperationSubmissionCapability(input.submission, expected), true);
+			assert.equal(consumePaidOperationSubmissionCapability(input.submission, expected), false);
+			return normalizeFacadeGrammarResult({
+				request: input.request, provider: expected.provider, resolvedModel: "gpt-5.6",
+				transport: "fixture", grammarCandidate: grammar(), remoteId: "openai-common-capability", actualUsd: 0,
+			});
+		},
+	});
+	const result = await runFacadeAgent(value.config, value.deps);
+	assert.equal(result.final.status, "winner");
+});
+
 test("selected grammar adapter errors never fall back or retry", async () => {
 	const value = await fixture({
 		runId: "grammar-no-fallback", providers: ["gpt-image-2"],

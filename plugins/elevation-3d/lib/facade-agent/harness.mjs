@@ -280,6 +280,10 @@ function initialRun(config, runDir, inputSha256) {
 		providers: {},
 		image_submissions: { total: 0, by_provider: Object.fromEntries(config.providers.map((provider) => [provider, 0])) },
 		budget: {
+			run_ceiling_micros: config.runBudgetMicros,
+			image_ceiling_micros: { ...config.imageBudgetMicros },
+			grammar_ceiling_micros: config.grammarBudgetMicros,
+			grammar_per_call_ceiling_micros: { ...config.grammarBudgetAllocationMicros },
 			run_ceiling_usd: config.runBudgetUsd,
 			image_ceiling_usd: { ...config.imageBudgetUsd },
 			grammar_ceiling_usd: config.grammarBudgetUsd,
@@ -287,6 +291,22 @@ function initialRun(config, runDir, inputSha256) {
 		},
 		final: null,
 	};
+}
+
+function adapterActualMicros(result, fallbackMicros) {
+	const direct = result?.actualMicros;
+	if (direct !== undefined && (!Number.isSafeInteger(direct) || direct < 0)) {
+		throw codedError("PROVIDER_BILLING_INVALID", "Provider actualMicros must be a nonnegative safe integer");
+	}
+	const actualUsd = result?.actualUsd ?? result?.usage?.cost_usd;
+	if (actualUsd === undefined) return direct ?? fallbackMicros;
+	if (!Number.isFinite(actualUsd) || actualUsd < 0) throw codedError("PROVIDER_BILLING_INVALID", "Provider actualUsd must be finite and nonnegative");
+	const fromUsd = Math.round(actualUsd * 1_000_000);
+	if (!Number.isSafeInteger(fromUsd) || Math.abs(fromUsd / 1_000_000 - actualUsd) > Number.EPSILON) {
+		throw codedError("PROVIDER_BILLING_INVALID", "Provider actualUsd must use at most six decimal places");
+	}
+	if (direct !== undefined && direct !== fromUsd) throw codedError("PROVIDER_BILLING_INVALID", "Provider micro-dollar and USD actual costs disagree");
+	return direct ?? fromUsd;
 }
 
 async function writeRun(runDir, run) {
@@ -462,10 +482,10 @@ async function generateProvider({ config, deps, runDir, run, state, provider, ev
 			requestKey: request.fingerprint,
 			provider,
 			kind: "image-generation",
-			ceilingUsd: config.imageBudgetUsd[provider],
-			estimateUsd: config.imageEstimateUsd?.[provider] ?? config.imageBudgetUsd[provider],
-			runCeilingUsd: config.runBudgetUsd,
-			kindCeilingUsd: Object.values(config.imageBudgetUsd).reduce((sum, value) => sum + value, 0),
+			ceilingMicros: config.imageBudgetMicros[provider],
+			estimateMicros: config.imageEstimateMicros[provider],
+			runCeilingMicros: config.runBudgetMicros,
+			kindCeilingMicros: Object.values(config.imageBudgetMicros).reduce((sum, value) => sum + value, 0),
 			signal,
 			operation: async (submission) => {
 				generated = await entry.generate({ request, submission, signal });
@@ -475,7 +495,7 @@ async function generateProvider({ config, deps, runDir, run, state, provider, ev
 				return {
 					remoteId: generated.remoteId,
 					artifactSha256: sha256(generated.bytes),
-					actualUsd: generated.actualUsd ?? generated.usage?.cost_usd ?? config.imageEstimateUsd?.[provider] ?? config.imageBudgetUsd[provider],
+					actualMicros: adapterActualMicros(generated, config.imageEstimateMicros[provider]),
 				};
 			},
 		});
@@ -576,10 +596,7 @@ async function buildGrammarRequest({ config, deps, provider, proposal, evidence,
 			evidence,
 			config: {
 				...config,
-				grammarModel: "gpt-5.6",
 				proposalProvider: provider,
-				grammarBudgetUsd: config.grammarBudgetAllocationUsd[provider],
-				grammarEstimateUsd: config.grammarEstimateAllocationUsd[provider],
 			},
 		});
 	}
@@ -694,21 +711,14 @@ async function extractProviderGrammar({ config, deps, runDir, run, state, provid
 			requestKey,
 			provider: grammarIdentity.provider,
 			kind: "grammar-extraction",
-			ceilingUsd: config.grammarBudgetAllocationUsd[provider],
-			estimateUsd: config.grammarEstimateAllocationUsd[provider],
-			runCeilingUsd: config.runBudgetUsd,
-			kindCeilingUsd: config.grammarBudgetUsd,
+			ceilingMicros: config.grammarBudgetAllocationMicros[provider],
+			estimateMicros: config.grammarEstimateAllocationMicros[provider],
+			runCeilingMicros: config.runBudgetMicros,
+			kindCeilingMicros: config.grammarBudgetMicros,
 			signal,
 			operation: async (submission) => {
 				const adapterInput = { request, submission, signal };
-				if (entry.id === "openai-gpt-5.6") {
-					if (!consumePaidOperationSubmissionCapability(submission, {
-						requestKey: request.fingerprint, provider: entry.id, kind: "grammar-extraction",
-					})) throw codedError("GRAMMAR_SUBMISSION_UNAUTHORIZED", "Grammar submission capability is unavailable");
-					adapterResult = await entry.extract({ request, signal });
-				} else {
-					adapterResult = await entry.extract(isFacadeFixtureTransport(entry) ? { ...adapterInput, provider } : adapterInput);
-				}
+				adapterResult = await entry.extract(isFacadeFixtureTransport(entry) ? { ...adapterInput, provider } : adapterInput);
 				if (adapterResult?.provider !== grammarIdentity.provider
 					|| adapterResult?.resolvedModel !== grammarIdentity.model
 					|| adapterResult?.requestFingerprint !== request.fingerprint
@@ -719,7 +729,7 @@ async function extractProviderGrammar({ config, deps, runDir, run, state, provid
 				return {
 					remoteId: adapterResult.remoteId,
 					artifactSha256: sha256(stableJson(extracted)),
-					actualUsd: adapterResult.actualUsd ?? config.grammarEstimateAllocationUsd[provider],
+					actualMicros: adapterActualMicros(adapterResult, config.grammarEstimateAllocationMicros[provider]),
 				};
 			},
 		});

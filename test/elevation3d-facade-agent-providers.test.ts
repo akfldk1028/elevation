@@ -302,6 +302,31 @@ test("Gemini sends the fixed Nano Banana Pro JSON contract with identical semant
 	assert.doesNotMatch(JSON.stringify(result.rawMeta), /gemini-secret|iVBOR/);
 });
 
+test("direct OpenAI and Gemini billed POSTs reject redirects without forwarding credentials or bodies", async () => {
+	for (const [create, env, build, responsePayload] of [
+		[createOpenAIProvider, { OPENAI_API_KEY: "sk-redirect-secret" }, buildOpenAIRequest, {
+			id: "redirected-openai", data: [{ b64_json: PNG.toString("base64") }],
+		}],
+		[createGeminiProvider, { GEMINI_API_KEY: "gemini-redirect-secret" }, buildGeminiRequest, {
+			responseId: "redirected-gemini", candidates: [{ finishReason: "STOP", content: { parts: [{ inlineData: { mimeType: "image/png", data: PNG.toString("base64") } }] } }],
+		}],
+	] as const) {
+		let requests = 0;
+		let forwarded = false;
+		const provider = create(env, { fetchImpl: async (_url: string, init: any) => {
+			requests += 1;
+			if (init.redirect === "error") throw new TypeError("redirect rejected by fetch");
+			forwarded = Boolean(init.body || init.headers?.Authorization || init.headers?.["x-goog-api-key"]);
+			requests += 1;
+			return Response.json(responsePayload);
+		} });
+		const request = build({ evidence: evidence(), brief: BRIEF, output: OUTPUT });
+		await assert.rejects(() => authorizedGenerate(provider, request), (error: any) => error.code === "PROVIDER_REQUEST_FAILED");
+		assert.equal(requests, 1);
+		assert.equal(forwarded, false);
+	}
+});
+
 test("preflight rejects credentials, models, request size, and budget ceiling without transport", () => {
 	let calls = 0;
 	const noFetch = async () => { calls += 1; throw new Error("must not fetch"); };

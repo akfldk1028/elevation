@@ -1,4 +1,5 @@
 import { FacadeProviderError } from "../../../provider.mjs";
+import { consumePaidOperationSubmissionCapability } from "../../../paid-operation-ledger.mjs";
 import { normalizeFacadeGrammarResult, readVerifiedFacadeGrammarRequestAuthority } from "../contract.mjs";
 
 const PROVIDER = "openai-gpt-5.6";
@@ -127,6 +128,7 @@ async function fetchWithDeadline(fetchImpl, body, apiKey, signal, timeoutMs) {
 			headers: { "content-type": "application/json", Authorization: `Bearer ${apiKey}` },
 			body: JSON.stringify(body),
 			signal: controller.signal,
+			redirect: "error",
 		})).then(async (response) => ({ response, payload: await readBoundedJson(response) }));
 		return await Promise.race([work, aborted]);
 	} catch (error) {
@@ -143,10 +145,14 @@ async function fetchWithDeadline(fetchImpl, body, apiKey, signal, timeoutMs) {
 
 export function createProvider(env = {}, options = {}) {
 	const envFields = constructorRecord(env, "OpenAI grammar environment", new Set(["OPENAI_API_KEY"]));
-	const optionFields = constructorRecord(options, "OpenAI grammar options", new Set(["fetchImpl", "timeoutMs"]));
+	const optionFields = constructorRecord(options, "OpenAI grammar options", new Set(["fetchImpl", "timeoutMs", "submissionAuthorizer"]));
 	const apiKey = envFields.OPENAI_API_KEY;
 	const fetchImpl = optionFields.fetchImpl;
 	const timeoutMs = optionFields.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+	const submissionAuthorizer = optionFields.submissionAuthorizer ?? ((submission, request) => consumePaidOperationSubmissionCapability(submission, {
+		requestKey: request.fingerprint, provider: PROVIDER, kind: "grammar-extraction",
+	}));
+	if (typeof submissionAuthorizer !== "function") throw failure("GRAMMAR_BOUNDARY_INVALID", "submissionAuthorizer must be a function", { definitiveNonSubmission: true });
 
 	function preflight(input = {}) {
 		const fields = constructorRecord(input, "OpenAI grammar preflight input", new Set(["request", "model", "ceilingUsd", "estimateUsd"]));
@@ -168,12 +174,13 @@ export function createProvider(env = {}, options = {}) {
 	}
 
 	async function extract(input = {}) {
-		const fields = constructorRecord(input, "OpenAI grammar extraction input", new Set(["request", "signal"]));
-		const { request, signal } = fields;
+		const fields = constructorRecord(input, "OpenAI grammar extraction input", new Set(["request", "submission", "signal"]));
+		const { request, submission, signal } = fields;
 		preflight({ request });
 		authenticSignal(signal);
 		throwIfAborted(signal, true);
 		if (typeof fetchImpl !== "function") throw failure("GRAMMAR_BOUNDARY_INVALID", "fetchImpl is required", { definitiveNonSubmission: true });
+		if (!submissionAuthorizer(submission, request)) throw failure("SUBMISSION_UNCERTAIN", "OpenAI grammar submission capability is unavailable");
 		const { response, payload } = await fetchWithDeadline(fetchImpl, requestBody(request), apiKey, signal, timeoutMs);
 		const headerRemoteId = response?.headers?.get?.("x-request-id") ?? null;
 		const payloadRemoteId = typeof payload?.id === "string" ? payload.id : null;

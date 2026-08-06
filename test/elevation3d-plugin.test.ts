@@ -40,6 +40,10 @@ test("facade agent tool exposes only bounded safe inputs", async () => {
 	assert.deepEqual(tool.inputSchema.properties.providers.items.enum, ["gpt-image-2", "seedream-5-pro", "qwen-image-2", "nano-banana-pro"]);
 	assert.deepEqual(tool.inputSchema.properties.image_providers.items.enum, ["gpt-image-2", "seedream-5-pro", "qwen-image-2", "nano-banana-pro"]);
 	assert.deepEqual(tool.inputSchema.properties.grammar_provider.enum, ["byteplus-seed-mini", "openai-gpt-5.6"]);
+	assert.deepEqual(tool.inputSchema.properties.image_providers.default, ["seedream-5-pro"]);
+	assert.equal(tool.inputSchema.properties.grammar_provider.default, "byteplus-seed-mini");
+	assert.deepEqual(tool.inputSchema.properties.image_budget_usd.default, { "seedream-5-pro": 0.06 });
+	assert.equal(tool.inputSchema.properties.grammar_budget_usd.default, 0.01);
 	assert.deepEqual(tool.inputSchema.properties.grammar_model.enum, ["gpt-5.6"]);
 	assert.equal(tool.inputSchema.properties.providers.minItems, 1);
 	assert.equal(tool.inputSchema.properties.providers.maxItems, 4);
@@ -57,14 +61,29 @@ test("facade agent tool rejects unsafe identifiers and an already-aborted signal
 	await assert.rejects(() => tool.handler({ candidate_id: "creative-020", run_id: "safe-run" }, controller.signal), { name: "AbortError" });
 });
 
-test("facade agent tool cannot confirm live work without explicit provider cost ceilings", async () => {
-	const tools: any[] = [];
-	await register({ config: {}, registerTool: (tool: any) => tools.push(tool), addPrompt() {}, registerMemoryLayer() {}, logger: console });
-	const tool = tools.find((item) => item.name === "elevation_3d_facade_agent_run");
-	await assert.rejects(() => tool.handler({
-		candidate_id: "creative-020", brief_id: "brick-punched-window-v1", run_id: "live-without-ceilings",
-		dry_run: false, confirm_live: true,
-	}), /cost ceilings/i);
+test("facade agent tool applies canonical default routes and accepts only exact 0.07 live confirmation", async () => {
+	const root = await mkdtemp(join(tmpdir(), "elevation3d-plugin-default-router-"));
+	try {
+		let captured: any;
+		const stop = new Error("captured-default-config");
+		const factory = createFacadeAgentDependencyFactory(async (config: any) => { captured = config; throw stop; });
+		await assert.rejects(() => runFacadeAgentTool({
+			run_id: "default-live", dataset_root: root, output_root: join(root, "output"),
+			dry_run: false, confirm_live: true, confirm_total_usd: 0.07,
+		}, undefined, {}, factory, async () => new Response()), stop);
+		assert.deepEqual(captured.imageProviders, ["seedream-5-pro"]);
+		assert.equal(captured.grammarProvider, "byteplus-seed-mini");
+		assert.deepEqual(captured.imageBudgetMicros, { "seedream-5-pro": 60_000 });
+		assert.equal(captured.grammarBudgetMicros, 10_000);
+		assert.equal(captured.confirmedTotalMicros, 70_000);
+
+		captured = undefined;
+		await assert.rejects(() => runFacadeAgentTool({
+			run_id: "default-live-wrong-total", dataset_root: root, output_root: join(root, "output"),
+			dry_run: false, confirm_live: true, confirm_total_usd: 0.070001,
+		}, undefined, {}, factory, async () => new Response()), (error: any) => error.code === "LIVE_COST_CONFIRMATION_INVALID");
+		assert.equal(captured, undefined);
+	} finally { await rm(root, { recursive: true, force: true }); }
 });
 
 test("facade agent tool forwards a safe dry-run into the approved preflight harness", async () => {
@@ -122,8 +141,8 @@ test("facade agent tool defaults to production preflight without dependency inje
 		const response = await tool.handler({ run_id: "production-preflight", dataset_root: "D:/Data/50_ELE/MAAS_ELEVATION_TEST_SET_20260730", output_root: join(root, "output") }, new AbortController().signal);
 		assert.equal(JSON.parse(response.text).stage, "preflight");
 		const receipt = JSON.parse(await readFile(join(root, "output", "creative-020", "production-preflight", "stages", "preflight-receipt.json"), "utf8"));
-		assert.equal(receipt.capabilities["gpt-image-2"].available, false);
-		assert.equal(receipt.capabilities["grammar:openai-gpt-5.6"].available, false);
+		assert.equal(receipt.capabilities["seedream-5-pro"].available, false);
+		assert.equal(receipt.capabilities["grammar:byteplus-seed-mini"].available, false);
 	} finally { await rm(root, { recursive: true, force: true }); }
 });
 
@@ -160,7 +179,7 @@ test("plugin-created status verifies its persisted config before returning read-
 		const factory = createFacadeAgentDependencyFactory(async () => ({
 			loadCandidate: async () => ({ candidate: { candidate_id: "creative-020" }, identity: { geometry_hash: "fixture" } }),
 			buildEvidence: async ({ runDir }: any) => ({ manifestSha256: "e".repeat(64), manifestPath: join(runDir, "evidence", "manifest.json") }),
-			grammarProvider: createFacadeFixtureTransport({ id: "openai-gpt-5.6", model: "gpt-5.6", extract: transport }),
+			grammarProvider: createFacadeFixtureTransport({ id: "byteplus-seed-mini", model: "seed-2-0-mini-260428", extract: transport }),
 			providers: {
 				"gpt-image-2": createFacadeFixtureTransport({ generate: transport }),
 				"seedream-5-pro": createFacadeFixtureTransport({ generate: transport }),

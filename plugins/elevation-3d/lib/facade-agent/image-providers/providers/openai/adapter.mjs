@@ -395,7 +395,7 @@ export function createProvider(envInput = {}, optionsInput = {}) {
 				})) throw preflightFailure("PROVIDER_SUBMISSION_UNAUTHORIZED", "A one-shot paid-operation submission authorization is required");
 				const form = serializeOpenAIImageEditRequest(request);
 				const { response, payload, parseFailed, headerRemoteId } = await fetchWithDeadline(fetchImpl, ENDPOINT, {
-					method: "POST", headers: { Authorization: `Bearer ${apiKey}` }, body: form,
+					method: "POST", headers: { Authorization: `Bearer ${apiKey}` }, body: form, redirect: "error",
 				}, signal, timeoutMs, async (response) => {
 					const headerRemoteId = response.headers.get("x-request-id");
 					return { response, ...await readBoundedJsonResponse(response), headerRemoteId };

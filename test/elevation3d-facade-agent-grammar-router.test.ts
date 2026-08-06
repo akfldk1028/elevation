@@ -143,3 +143,26 @@ test("production dependencies expose only the selected image map and grammar ada
 		await rm(root, { recursive: true, force: true });
 	}
 });
+
+test("selected BytePlus production dependencies neither expose an OpenAI closure nor read OPENAI_API_KEY", async () => {
+	const root = await mkdtemp(join(tmpdir(), "facade-router-byteplus-isolation-"));
+	try {
+		let openAIReads = 0;
+		const env = Object.defineProperties({}, {
+			ARK_API_KEY: { enumerable: true, value: "byteplus-only" },
+			OPENAI_API_KEY: { enumerable: true, get() { openAIReads += 1; throw new Error("unselected OpenAI credential read"); } },
+		});
+		const dependencies: any = await createProductionFacadeAgentDependencies({
+			outputRoot: root, candidateId: "creative-020", runId: "byteplus-production-isolation",
+			imageProviders: ["seedream-5-pro"], grammarProvider: "byteplus-seed-mini",
+			imageBudgetUsd: { "seedream-5-pro": 0.06 }, imageEstimateUsd: { "seedream-5-pro": 0.06 },
+		}, {
+			env, fetchImpl,
+			imageProviderFactories: { "seedream-5-pro": () => Object.freeze({ preflight() {}, async generate() {} }) },
+			grammarProviderFactories: { "byteplus-seed-mini": () => Object.freeze({ preflight() {}, async extract() {} }) },
+		});
+		assert.equal(openAIReads, 0);
+		assert.equal(Object.hasOwn(dependencies, "extractGrammar"), false);
+		assert.equal(dependencies.grammarProvider.id, "byteplus-seed-mini");
+	} finally { await rm(root, { recursive: true, force: true }); }
+});

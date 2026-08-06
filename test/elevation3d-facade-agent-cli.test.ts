@@ -164,6 +164,25 @@ test("canonical router flags persist the selected routes and exact confirmation 
 	for (const secret of Object.values(secrets)) assert.doesNotMatch(`${result.stdout}\n${result.stderr}\n${status.stdout}\n${status.stderr}`, new RegExp(secret));
 });
 
+test("CLI no-selection live defaults are Seedream plus BytePlus with exact 0.07 confirmation", async () => {
+	const root = await mkdtemp(join(tmpdir(), "elevation3d-cli-default-router-")); roots.push(root);
+	const result = invoke([
+		"run", "--candidate", "creative-020", "--brief", "brick-punched-window-v1",
+		"--dataset-root", root, "--output-root", join(root, "output"), "--run-id", "default-router-live",
+		"--confirm-live", "--confirm-total-usd", "0.07",
+	]);
+	assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
+	const envelope = JSON.parse(await readFile(join(root, "output", "creative-020", "default-router-live", "facade-agent-config.json"), "utf8"));
+	assert.deepEqual(envelope.config.imageProviders, ["seedream-5-pro"]);
+	assert.equal(envelope.config.grammarProvider, "byteplus-seed-mini");
+	assert.deepEqual(envelope.config.imageBudgetUsd, { "seedream-5-pro": 0.06 });
+	assert.deepEqual(envelope.config.imageBudgetMicros, { "seedream-5-pro": 60_000 });
+	assert.equal(envelope.config.grammarBudgetUsd, 0.01);
+	assert.equal(envelope.config.grammarBudgetMicros, 10_000);
+	assert.equal(envelope.config.runBudgetMicros, 70_000);
+	assert.equal(envelope.config.confirmedTotalMicros, 70_000);
+});
+
 test("repeatable canonical image-provider flags preserve caller order", async () => {
 	const root = await mkdtemp(join(tmpdir(), "elevation3d-cli-router-order-")); roots.push(root);
 	const result = invoke([

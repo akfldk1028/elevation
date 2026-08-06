@@ -9,7 +9,7 @@ import { correctGrammar } from "../facade-grammar.mjs";
 import { deliverSelectedAllViews } from "../final-delivery.mjs";
 import { renderUnifiedDrawings } from "../unified-render.mjs";
 import { buildFacadeEvidencePack, verifyFacadeEvidencePack } from "./evidence.mjs";
-import { extractFacadeGrammar, preflightFacadeGrammar, verifyFacadeProposal } from "./grammar-agent.mjs";
+import { verifyFacadeProposal } from "./grammar-agent.mjs";
 import { createPaidOperationLedger } from "./paid-operation-ledger.mjs";
 import { deriveFacadeSegmentsFromMass } from "./punched-facade.mjs";
 import { createFacadeGrammarProviderRegistry } from "./routers/grammar-provider-registry.mjs";
@@ -51,20 +51,6 @@ export async function createProductionFacadeAgentDependencies(config, options = 
 	const score = async (input) => scoreFacadeCandidate(input);
 	score.select = selectFacadeWinner;
 	score.rehydrate = (value) => rehydrateFacadeScoreResult(value);
-	const extractGrammar = async (input) => extractFacadeGrammar({
-		...input,
-		proposalPath: await verifyFacadeProposal({
-			proposalPath: input.proposal.path,
-			providerResult: input.providerResult,
-			evidence: input.evidence,
-			config: input.config,
-		}),
-		fetchImpl,
-		config: { ...input.config, openAIApiKey: env.OPENAI_API_KEY },
-	});
-	extractGrammar.preflight = (input) => preflightFacadeGrammar({
-		...input, config: { ...input.config, openAIApiKey: env.OPENAI_API_KEY },
-	});
 	return {
 		ledger,
 		providers,
@@ -80,7 +66,6 @@ export async function createProductionFacadeAgentDependencies(config, options = 
 			const built = await buildFacadeEvidencePack({ input, runDir: target, signal });
 			return verifyFacadeEvidencePack({ manifestPath: built.manifestPath, input });
 		},
-		extractGrammar,
 		build: async ({ provider, versionId, grammar, candidate, runDir: target }) => {
 			const outputDir = join(target, "providers", provider, "artifacts");
 			await mkdir(outputDir, { recursive: true });
