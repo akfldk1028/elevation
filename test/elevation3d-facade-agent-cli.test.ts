@@ -6,6 +6,7 @@ import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { after, before, test } from "node:test";
 import { Document, NodeIO } from "@gltf-transform/core";
+import { sha256, stableJson } from "../plugins/elevation-3d/lib/core.mjs";
 
 const projectRoot = resolve(import.meta.dirname, "..");
 const script = join(projectRoot, "scripts", "elevation-3d-facade.mjs");
@@ -294,6 +295,37 @@ test("run refuses overwrite, status is read-only, and resume uses only persisted
 	assert.equal(JSON.parse(resumed.stdout).state, "accepted");
 	const duplicate = invoke(["run", ...args]);
 	assert.equal(duplicate.status, 30);
+});
+
+test("resume accepts a verified pre-router config envelope without rewriting it and rejects semantic tampering", async () => {
+	const root = await mkdtemp(join(tmpdir(), "elevation3d-cli-legacy-config-resume-")); roots.push(root);
+	const runId = "legacy-config-resume";
+	assert.equal(invoke(["run", ...base(root, runId)]).status, 0);
+	const runDir = join(root, "output", "creative-020", runId);
+	const configPath = join(runDir, "facade-agent-config.json");
+	const canonical = JSON.parse(await readFile(configPath, "utf8"));
+	const { schemaVersion: _schemaVersion, imageProviders: _imageProviders, grammarProvider: _grammarProvider, ...legacyConfig } = canonical.config;
+	const legacyEnvelope = {
+		schema_version: "arr.elevation3d.facade-agent-config.v1",
+		config: legacyConfig,
+		config_sha256: sha256(stableJson(legacyConfig)),
+	};
+	const legacyBytes = `${JSON.stringify(legacyEnvelope, null, 2)}\n`;
+	await writeFile(configPath, legacyBytes);
+	const callLog = join(root, "resume-calls.log");
+	const resumed = invoke(["resume", "--run-dir", runDir], { FACADE_TEST_CALL_LOG: callLog });
+	assert.equal(resumed.status, 0, `${resumed.stderr}\n${resumed.stdout}`);
+	assert.equal(JSON.parse(resumed.stdout).state, "accepted");
+	assert.equal(await readFile(configPath, "utf8"), legacyBytes);
+	await assert.rejects(() => readFile(callLog), /ENOENT/);
+
+	legacyEnvelope.config.grammarBudgetUsd = 7;
+	legacyEnvelope.config_sha256 = sha256(stableJson(legacyEnvelope.config));
+	await writeFile(configPath, `${JSON.stringify(legacyEnvelope, null, 2)}\n`);
+	const tampered = invoke(["resume", "--run-dir", runDir], { FACADE_TEST_CALL_LOG: callLog });
+	assert.equal(tampered.status, 50, `${tampered.stderr}\n${tampered.stdout}`);
+	assert.deepEqual(JSON.parse(tampered.stdout), { state: "error", category: "security", code: "FACADE_AGENT_RESUME_MISMATCH" });
+	await assert.rejects(() => readFile(callLog), /ENOENT/);
 });
 
 test("resume retains normalized configuration when execution crashes after durable state", async () => {
