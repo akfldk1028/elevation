@@ -10,6 +10,19 @@ import { verifyFacadeEvidencePack } from "../plugins/elevation-3d/lib/facade-age
 import { createPaidOperationLedger } from "../plugins/elevation-3d/lib/facade-agent/paid-operation-ledger.mjs";
 import { buildRequest as buildOpenAIRequest, createProvider as createOpenAIProvider } from "../plugins/elevation-3d/lib/facade-agent/providers/openai-image.mjs";
 import { buildRequest as buildGeminiRequest, createProvider as createGeminiProvider } from "../plugins/elevation-3d/lib/facade-agent/providers/gemini-image.mjs";
+import {
+	buildRequest as buildModularOpenAIRequest,
+	createProvider as createModularOpenAIProvider,
+} from "../plugins/elevation-3d/lib/facade-agent/image-providers/providers/openai/adapter.mjs";
+import { serializeOpenAIImageEditRequest } from "../plugins/elevation-3d/lib/facade-agent/image-providers/providers/openai/request.mjs";
+import { selectOpenAIImageResponse } from "../plugins/elevation-3d/lib/facade-agent/image-providers/providers/openai/response.mjs";
+import {
+	buildRequest as buildModularGoogleRequest,
+	createProvider as createModularGoogleProvider,
+} from "../plugins/elevation-3d/lib/facade-agent/image-providers/providers/google/adapter.mjs";
+import { serializeGoogleImageEditRequest } from "../plugins/elevation-3d/lib/facade-agent/image-providers/providers/google/request.mjs";
+import { selectGoogleImageResponse } from "../plugins/elevation-3d/lib/facade-agent/image-providers/providers/google/response.mjs";
+import { buildFacadeArchitecturalPrompt } from "../plugins/elevation-3d/lib/facade-agent/image-providers/prompt.mjs";
 
 const PNG = await sharp({ create: { width: 1, height: 1, channels: 3, background: { r: 7, g: 8, b: 9 } } }).png().toBuffer();
 const EVIDENCE = await sharp({ create: { width: 1, height: 1, channels: 3, background: { r: 1, g: 2, b: 3 } } }).png().toBuffer();
@@ -153,6 +166,49 @@ function injectParsedPayload(payload: unknown) {
 	return { response, restore: () => { JSON.parse = originalParse; } };
 }
 
+test("keeps legacy provider imports as aliases of modular adapters and isolates wire mappings", () => {
+	assert.equal(buildOpenAIRequest, buildModularOpenAIRequest);
+	assert.equal(createOpenAIProvider, createModularOpenAIProvider);
+	assert.equal(buildGeminiRequest, buildModularGoogleRequest);
+	assert.equal(createGeminiProvider, createModularGoogleProvider);
+
+	const legacyRequest = Object.freeze({
+		model: "gpt-image-2", prompt: "fixed prompt", evidenceBytes: EVIDENCE,
+	});
+	const openAI = serializeOpenAIImageEditRequest(legacyRequest);
+	assert.equal(openAI.get("model"), "gpt-image-2");
+	assert.equal(openAI.get("prompt"), "fixed prompt");
+	assert.equal(openAI.get("quality"), "high");
+	assert.equal(openAI.get("n"), "1");
+	const google = serializeGoogleImageEditRequest(Object.freeze({ ...legacyRequest, model: "gemini-3-pro-image" }));
+	assert.deepEqual(google, {
+		contents: [{ role: "user", parts: [
+			{ text: "fixed prompt" },
+			{ inlineData: { mimeType: "image/png", data: EVIDENCE.toString("base64") } },
+		] }],
+		generationConfig: { responseModalities: ["IMAGE"] },
+	});
+	assert.deepEqual(selectOpenAIImageResponse(openAIResponsePayload()), {
+		remoteId: "openai-image-fixture-id", imageCount: 1, encodedImage: PNG.toString("base64"), usage: null,
+	});
+	assert.deepEqual(selectGoogleImageResponse(geminiResponsePayload()), {
+		remoteId: "gemini-image-fixture-id", resolvedModel: null, imageCount: 1, encodedImage: PNG.toString("base64"), declaredMimeType: "image/png", usage: null, finishReasons: ["STOP"], moderationBlocked: false,
+	});
+});
+
+test("uses one shared architectural prompt across OpenAI and Google compatibility builders", () => {
+	const expected = buildFacadeArchitecturalPrompt({
+		candidateId: "creative-020",
+		briefId: "brick-punched-window-v1",
+		evidenceManifestSha256: VERIFIED_EVIDENCE.manifestSha256,
+	});
+	const openAI = buildOpenAIRequest({ evidence: evidence(), brief: BRIEF, output: OUTPUT });
+	const google = buildGeminiRequest({ evidence: evidence(), brief: BRIEF, output: OUTPUT });
+	assert.equal(openAI.prompt, expected.prompt);
+	assert.equal(google.prompt, expected.prompt);
+	assert.equal(openAI.prompt, google.prompt);
+});
+
 test("OpenAI sends the fixed GPT Image 2 multipart edit contract and decodes one PNG", async () => {
 	const request = buildOpenAIRequest({ evidence: evidence(), brief: BRIEF, output: OUTPUT });
 	const { calls, provider } = openAISuccess();
@@ -167,7 +223,7 @@ test("OpenAI sends the fixed GPT Image 2 multipart edit contract and decodes one
 	assert.equal(calls[0].body.get("prompt"), request.prompt);
 	assert.match(request.prompt, /creative-020/);
 	assert.match(request.prompt, /brick-punched-window-v1/);
-	assert.match(request.prompt, /NO CURTAIN WALL/);
+	assert.match(request.prompt, /Do not create a curtain wall/);
 	assert.deepEqual(Buffer.from(await calls[0].body.get("image").arrayBuffer()), EVIDENCE);
 	assert.equal(calls[0].body.get("image").name, "evidence.png");
 	assert.match(calls[0].wireContentType, /^multipart\/form-data; boundary=/);
