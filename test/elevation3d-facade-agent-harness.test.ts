@@ -94,7 +94,7 @@ function grammar() {
 	};
 }
 
-function fixtureGrammarResult(input: any, actualUsd = 0) {
+function fixtureGrammarResult(input: any, actualUsd = 0, grammarCandidate = grammar()) {
 	assert.equal(consumePaidOperationSubmissionCapability(input.submission, {
 		requestKey: input.request.fingerprint,
 		provider: "byteplus-seed-mini",
@@ -105,7 +105,7 @@ function fixtureGrammarResult(input: any, actualUsd = 0) {
 		provider: "byteplus-seed-mini",
 		resolvedModel: "seed-2-0-mini-260428",
 		transport: "fixture",
-		grammarCandidate: grammar(),
+		grammarCandidate,
 		remoteId: `grammar-${input.provider}`,
 		actualUsd,
 		usage: { fixture: true },
@@ -179,7 +179,7 @@ async function fixture(overrides: any = {}) {
 		async extract(input: any) {
 			calls.grammar.push(input.provider);
 			if (overrides.grammarFailure) throw overrides.grammarFailure;
-			return fixtureGrammarResult(input, overrides.grammarCosts?.[input.provider] ?? 0);
+			return fixtureGrammarResult(input, overrides.grammarCosts?.[input.provider] ?? 0, overrides.grammarCandidate ?? grammar());
 		},
 	});
 
@@ -225,6 +225,61 @@ async function fixture(overrides: any = {}) {
 			grammarProvider: "byteplus-seed-mini", maxLocalAttempts: 2,
 		},
 	};
+}
+
+async function rewriteJson(path: string, value: any) {
+	const bytes = Buffer.from(`${JSON.stringify(value, null, 2)}\n`);
+	await writeFile(path, bytes);
+	return sha256(bytes);
+}
+
+async function rewriteProviderState(value: any, provider: string, mutate: (state: any) => Promise<void> | void) {
+	const runPath = join(value.runDir, "run.json");
+	const run = JSON.parse(await readFile(runPath, "utf8"));
+	const statePath = join(value.runDir, run.provider_manifests[provider].path);
+	const state = JSON.parse(await readFile(statePath, "utf8"));
+	await mutate(state);
+	const stateSha256 = await rewriteJson(statePath, state);
+	run.providers[provider] = state;
+	run.provider_manifests[provider] = { ...run.provider_manifests[provider], sha256: stateSha256, status: state.status };
+	await rewriteJson(runPath, run);
+	return { run, state };
+}
+
+async function rewriteGrammarAsLegacy(value: any, provider: string, providerSchema = "arr.elevation3d.facade-agent-provider.v1") {
+	return rewriteProviderState(value, provider, async (state) => {
+		const grammar = state.grammar;
+		const receiptPath = state.grammar_receipt?.path;
+		const stagePath = join(value.runDir, state.stage_manifests.grammar.path);
+		const stage = JSON.parse(await readFile(stagePath, "utf8"));
+		const legacyInput = {
+			provider,
+			proposal_sha256: grammar.proposal_sha256,
+			evidence_sha256: grammar.identity.evidenceSha256,
+		};
+		const legacyOutput = { grammar_sha256: grammar.artifact_sha256, grammar_path: grammar.path };
+		delete stage.input;
+		stage.input_sha256 = sha256(stableJson(legacyInput));
+		stage.output = legacyOutput;
+		stage.output_sha256 = sha256(stableJson(legacyOutput));
+		const stageSha256 = await rewriteJson(stagePath, stage);
+		state.schema_version = providerSchema;
+		state.grammar = {
+			status: "succeeded",
+			proposal_sha256: grammar.proposal_sha256,
+			artifact_sha256: grammar.artifact_sha256,
+			path: grammar.path,
+			cost_receipt: grammar.cost_receipt,
+			...(grammar.authority ? { authority: grammar.authority } : {}),
+		};
+		state.stage_manifests.grammar = {
+			...state.stage_manifests.grammar,
+			sha256: stageSha256,
+			output_sha256: stage.output_sha256,
+		};
+		delete state.grammar_receipt;
+		if (receiptPath) await rm(join(value.runDir, receiptPath));
+	});
 }
 
 test("persists a redacted three-provider cost and practical-equivalence recommendation", async () => {
@@ -511,6 +566,69 @@ test("a submitting grammar stage without a receipt resumes uncertain with zero a
 	assert.equal(resumed.providers["gpt-image-2"].failure.code, "SUBMISSION_UNCERTAIN");
 });
 
+test("a persisted legacy v1 grammar result remains readable and resumes without another adapter call", async () => {
+	const { floor_elevations_m: _floors, facade_lengths_m: _lengths, ...canonicalGrammar } = grammar();
+	const value = await fixture({
+		runId: "legacy-v1-grammar-resume", providers: ["gpt-image-2"], grammarCandidate: canonicalGrammar,
+	});
+	const verifiedEvidence = await verifiedEvidenceFixture(value.runDir);
+	value.deps.buildEvidence = async () => verifiedEvidence;
+	await runFacadeStage("grammar", value.config, value.deps);
+	assert.deepEqual(value.calls.grammar, ["gpt-image-2"]);
+	await rewriteGrammarAsLegacy(value, "gpt-image-2");
+	const beforeStatus = await readFile(join(value.runDir, "run.json"), "utf8");
+	const providerStatePath = join(value.runDir, "providers", "gpt-image-2", "state.json");
+	const beforeProviderStatus = await readFile(providerStatePath, "utf8");
+
+	const status = await readFacadeAgentStatus(value.runDir);
+	assert.equal(status.providers["gpt-image-2"].grammar.status, "succeeded");
+	assert.equal(await readFile(join(value.runDir, "run.json"), "utf8"), beforeStatus);
+	assert.equal(await readFile(providerStatePath, "utf8"), beforeProviderStatus);
+	assert.deepEqual(value.calls.grammar, ["gpt-image-2"]);
+
+	const resumed = await runFacadeAgent(value.config, value.deps);
+	assert.equal(resumed.final.status, "winner");
+	assert.deepEqual(value.calls.grammar, ["gpt-image-2"]);
+});
+
+test("a new provider-state schema cannot downgrade missing grammar receipt into legacy compatibility", async () => {
+	const value = await fixture({ runId: "new-schema-missing-grammar-receipt", providers: ["gpt-image-2"] });
+	await runFacadeStage("grammar", value.config, value.deps);
+	await rewriteGrammarAsLegacy(value, "gpt-image-2", "arr.elevation3d.facade-agent-provider.v2");
+
+	await assert.rejects(() => readFacadeAgentStatus(value.runDir), (error: any) => error.code === "FACADE_AGENT_STATE_UNCERTAIN");
+	assert.deepEqual(value.calls.grammar, ["gpt-image-2"]);
+});
+
+test("a crash at grammar returned observes a hash-bound receipt and resumes without another adapter call", async () => {
+	let crash = true;
+	const value = await fixture({
+		runId: "grammar-returned-durable", providers: ["gpt-image-2"],
+		lifecycle: { onTransition(event: any) {
+			if (crash && event.stage === "grammar" && event.status === "returned") {
+				crash = false;
+				throw new Error("crash after grammar returned");
+			}
+		} },
+	});
+	await assert.rejects(() => runFacadeAgent(value.config, value.deps), /crash after grammar returned/);
+	assert.deepEqual(value.calls.grammar, ["gpt-image-2"]);
+
+	const status = await readFacadeAgentStatus(value.runDir);
+	const persisted = status.providers["gpt-image-2"];
+	assert.equal(persisted.grammar.status, "succeeded");
+	const artifactBytes = await readFile(join(value.runDir, persisted.grammar.path));
+	const receiptBytes = await readFile(join(value.runDir, persisted.grammar_receipt.path));
+	const receipt = JSON.parse(receiptBytes.toString("utf8"));
+	assert.equal(sha256(artifactBytes), persisted.grammar.artifact_sha256);
+	assert.equal(receipt.artifact.sha256, persisted.grammar.artifact_sha256);
+	assert.equal(sha256(receiptBytes), persisted.grammar_receipt.sha256);
+
+	const resumed = await runFacadeAgent(value.config, value.deps);
+	assert.equal(resumed.final.status, "winner");
+	assert.deepEqual(value.calls.grammar, ["gpt-image-2"]);
+});
+
 test("an abort before grammar submission remains a cancellation without an adapter call", async () => {
 	const controller = new AbortController();
 	const value = await fixture({
@@ -554,7 +672,9 @@ test("a crash after grammar ledger success cannot repeat the grammar callback", 
 	assert.deepEqual(value.calls.grammar, ["gpt-image-2"]);
 	const resumed = await runFacadeAgent(value.config, value.deps);
 	assert.deepEqual(value.calls.grammar, ["gpt-image-2", "nano-banana-pro"]);
-	assert.equal(resumed.providers["gpt-image-2"].failure.code, "SUBMISSION_UNCERTAIN");
+	assert.equal(resumed.providers["gpt-image-2"].grammar.status, "succeeded");
+	assert.equal(resumed.providers["gpt-image-2"].failure, null);
+	assert.equal(resumed.final.status, "winner");
 });
 
 test("resume after canonical grammar persistence continues local work without paid calls", async () => {

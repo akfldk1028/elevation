@@ -25,6 +25,8 @@ import { buildFacadeEvaluationReport } from "./evaluation/report.mjs";
 import { selectFacadeRecommendation } from "./evaluation/scorecard.mjs";
 
 const HEX_SHA256 = /^[a-f0-9]{64}$/;
+const LEGACY_PROVIDER_SCHEMA = "arr.elevation3d.facade-agent-provider.v1";
+const PROVIDER_SCHEMA = "arr.elevation3d.facade-agent-provider.v2";
 const TERMINAL_RUN_STATES = new Set(["winner", "no-winner", "human-review", "cancelled", "delivery-failed"]);
 const LOCAL_REPAIR_CODES = new Set([
 	"WINDOW_CROSSES_FLOOR_BAND",
@@ -316,7 +318,7 @@ async function writeProvider(runDir, run, config, provider, state, deps, event =
 async function loadProvider(runDir, run, provider) {
 	const ref = run.provider_manifests?.[provider];
 	if (!ref) return {
-		schema_version: "arr.elevation3d.facade-agent-provider.v1",
+		schema_version: PROVIDER_SCHEMA,
 		provider,
 		status: "pending",
 		generation: { status: "pending" },
@@ -624,7 +626,19 @@ async function extractProviderGrammar({ config, deps, runDir, run, state, provid
 	}
 	if (state.grammar?.status === "succeeded") {
 		try {
-			if (stableJson(state.grammar.identity) !== stableJson(grammarIdentity) || !state.grammar_receipt) throw new Error();
+			if (!state.grammar_receipt) {
+				const legacy = await verifyLegacyGrammarResult(runDir, state);
+				const grammar = state.grammar.authority
+					? await rehydrateVerifiedFacadeGrammar({
+						path: legacy.path, artifactSha256: state.grammar.artifact_sha256,
+						authority: state.grammar.authority, evidence, provider,
+						proposalSha256: proposal.sha256,
+					})
+					: parseGrammarCandidate(legacy.value, evidence);
+				if (!state.grammar.authority && expectedTransport !== "fixture") throw new Error();
+				return { state, grammar };
+			}
+			if (stableJson(state.grammar.identity) !== stableJson(grammarIdentity)) throw new Error();
 			const receipt = await verifyDurableReceipt(runDir, state.grammar_receipt);
 			const persistedPath = containedPath(runDir, join(runDir, state.grammar.path), "grammar artifact");
 			const bytes = await safeRead(runDir, persistedPath, "grammar artifact");
@@ -709,7 +723,6 @@ async function extractProviderGrammar({ config, deps, runDir, run, state, provid
 				};
 			},
 		});
-		await callLifecycle(deps, { stage: "grammar", status: "returned", provider, proposal_sha256: proposal.sha256 });
 		if (!adapterResult || !extracted) throw codedError("GRAMMAR_RESULT_UNAVAILABLE", "Persisted grammar cannot be reconstructed without resubmission");
 		const contentSha256 = sha256(stableJson(extracted));
 		if (publicResult?.artifactSha256 !== contentSha256) throw codedError("PAID_OPERATION_RESULT_MISMATCH", "Grammar ledger hash does not match extracted grammar");
@@ -769,6 +782,8 @@ async function extractProviderGrammar({ config, deps, runDir, run, state, provid
 		};
 		state.stage_manifests.grammar = succeeded.ref;
 		state.status = "grammar-ready";
+		await writeProvider(runDir, run, config, provider, state, deps);
+		await callLifecycle(deps, { stage: "grammar", status: "returned", provider, proposal_sha256: proposal.sha256 });
 		await writeProvider(runDir, run, config, provider, state, deps, { stage: "grammar", status: "succeeded", provider });
 		return { state, grammar: extracted };
 	} catch (error) {
@@ -1181,6 +1196,66 @@ async function verifyDurableReceipt(runDir, ref) {
 	return receipt;
 }
 
+function hasCurrentGrammarBindings(grammar) {
+	return ["identity", "request_sha256", "content_sha256", "transport"].some((key) => Object.hasOwn(grammar ?? {}, key));
+}
+
+function validLegacyGrammarAuthority(authority, state, grammar, contentSha256) {
+	const segmentAuthority = authority?.facadeSegmentAuthority;
+	return authority && typeof authority === "object" && !Array.isArray(authority)
+		&& typeof authority.candidateId === "string" && authority.candidateId.length > 0
+		&& typeof authority.geometryHash === "string" && authority.geometryHash.length > 0
+		&& (authority.geometryContentSha256 === null || HEX_SHA256.test(authority.geometryContentSha256 ?? ""))
+		&& [null, -1, 1].includes(authority.geometrySignedVolumeOrientation)
+		&& (segmentAuthority === null || (HEX_SHA256.test(segmentAuthority?.sha256 ?? "")
+			&& Array.isArray(segmentAuthority.segmentIds) && segmentAuthority.segmentIds.length > 0
+			&& segmentAuthority.segmentIds.every((id) => typeof id === "string" && id.length > 0)
+			&& new Set(segmentAuthority.segmentIds).size === segmentAuthority.segmentIds.length))
+		&& authority.provider === state.provider && authority.proposalSha256 === grammar.proposal_sha256
+		&& authority.grammarSha256 === contentSha256 && HEX_SHA256.test(authority.evidenceManifestSha256 ?? "")
+		&& HEX_SHA256.test(authority.camerasSha256 ?? "")
+		&& Array.isArray(authority.floorGuides) && authority.floorGuides.length >= 2
+		&& authority.floorGuides.every((value) => Number.isFinite(value))
+		&& authority.facadeLengths && typeof authority.facadeLengths === "object" && !Array.isArray(authority.facadeLengths)
+		&& Object.values(authority.facadeLengths).every((value) => Number.isFinite(value));
+}
+
+async function verifyLegacyGrammarResult(runDir, state) {
+	const grammar = state?.grammar;
+	const ref = state?.stage_manifests?.grammar;
+	if (state?.schema_version !== LEGACY_PROVIDER_SCHEMA || grammar?.status !== "succeeded"
+		|| hasCurrentGrammarBindings(grammar) || !ref || ref.status !== "succeeded") {
+		throw codedError("FACADE_AGENT_STATE_UNCERTAIN", "Completed grammar is missing its durable receipt");
+	}
+	const stage = await readStageRef(runDir, ref);
+	const outputKeys = Object.keys(stage.output ?? {}).sort();
+	if (stage.input !== undefined || stableJson(outputKeys) !== stableJson(["grammar_path", "grammar_sha256"])
+		|| stage.output.grammar_path !== grammar.path || stage.output.grammar_sha256 !== grammar.artifact_sha256
+		|| typeof grammar.path !== "string" || !HEX_SHA256.test(grammar.artifact_sha256 ?? "")
+		|| !HEX_SHA256.test(grammar.proposal_sha256 ?? "")) {
+		throw codedError("FACADE_AGENT_STATE_UNCERTAIN", "Legacy grammar stage bindings are invalid");
+	}
+	let bytes;
+	let value;
+	try {
+		bytes = await safeRead(runDir, join(runDir, grammar.path), "legacy grammar artifact");
+		value = JSON.parse(bytes.toString("utf8"));
+		parseGrammarCandidate(value, null);
+	} catch (error) {
+		throw codedError("FACADE_AGENT_STATE_UNCERTAIN", "Legacy grammar artifact is unavailable or invalid", error);
+	}
+	const contentSha256 = sha256(stableJson(value));
+	if (sha256(bytes) !== grammar.artifact_sha256) {
+		throw codedError("FACADE_AGENT_STATE_UNCERTAIN", "Legacy grammar artifact hash mismatch");
+	}
+	if (grammar.authority) {
+		if (!validLegacyGrammarAuthority(grammar.authority, state, grammar, contentSha256)) {
+			throw codedError("FACADE_AGENT_STATE_UNCERTAIN", "Legacy grammar authority bindings are invalid");
+		}
+	}
+	return { bytes, value, path: containedPath(runDir, join(runDir, grammar.path), "legacy grammar artifact") };
+}
+
 async function verifyProviderReceipts(runDir, state) {
 	if (state?.grammar_receipt) {
 		const receipt = await verifyDurableReceipt(runDir, state.grammar_receipt);
@@ -1208,7 +1283,7 @@ async function verifyProviderReceipts(runDir, state) {
 			throw codedError("FACADE_AGENT_STATE_UNCERTAIN", "Grammar receipt artifact hash mismatch");
 		}
 	} else if (state?.grammar?.status === "succeeded") {
-		throw codedError("FACADE_AGENT_STATE_UNCERTAIN", "Completed grammar is missing its durable receipt");
+		await verifyLegacyGrammarResult(runDir, state);
 	}
 	if (state?.correction_v002) {
 		const { grammar, correction } = state.correction_v002;
