@@ -26,9 +26,12 @@ const FACADE_SEGMENT_AUTHORITY_SHA256 = "3784872ef9066362896f52f170f0a1c1a9518b4
 const VIEW_NAMES = ["front", "back", "left", "right", "plan", "top", "axon", "opposite-axon"];
 const REQUIRED_KINDS = ["brick-cladding", "window-reveal", "glazing", "precast-lintel", "precast-sill", "corner-return"];
 
-const providerImages = {
-	"gpt-image-2": await sharp({ create: { width: 2048, height: 2048, channels: 3, background: { r: 126, g: 58, b: 42 } } }).png().toBuffer(),
-	"nano-banana-pro": await sharp({ create: { width: 2048, height: 2048, channels: 3, background: { r: 136, g: 72, b: 48 } } }).png().toBuffer(),
+const PROVIDERS = ["gpt-image-2", "seedream-5-pro", "qwen-image-2"] as const;
+const fixtureRoot = resolve("test/fixtures/facade-agent/providers");
+const providerImages: Record<string, Buffer> = {
+	"gpt-image-2": await readFile(join(fixtureRoot, "openai", "proposal.png")),
+	"seedream-5-pro": await readFile(join(fixtureRoot, "byteplus", "proposal.png")),
+	"qwen-image-2": await readFile(join(fixtureRoot, "alibaba", "proposal.png")),
 };
 
 function grammar(confidence: number, overrides: Record<string, number> = {}) {
@@ -86,12 +89,17 @@ test("runs the complete creative-020 comparison fixture without network or paid 
 	else roots.push(root);
 	const outputRoot = join(root, "output");
 	const memoryRoot = join(root, "memory");
-	const runId = "creative-020-brick-fixture-v1";
+	const runId = "creative-020-three-provider-fixture-v1";
 	const runDir = join(outputRoot, "creative-020", runId);
-	const fetchCounts = { "gpt-image-2": 0, "nano-banana-pro": 0, grammar: 0, unexpected: 0 };
-	let selectedDelivery: any = null;
+	const fetchCounts = { "gpt-image-2": 0, "seedream-5-pro": 0, "qwen-image-2": 0, qwen_download: 0, grammar: 0, unexpected: 0 };
+	const deliveries: Record<string, any> = {};
 	let deliveryFailure: any = null;
-	const grammarFixtures = [grammar(0.99, { cladding_depth_m: 0.25 }), grammar(0.85)];
+	const grammarFixtures = [
+		grammar(0.99, { cladding_depth_m: 0.25 }),
+		grammar(0.96, { bay_width_m: 1.5, window_width_m: 0.9, window_height_m: 1.7 }),
+		grammar(0.92, { bay_width_m: 1.8, window_width_m: 1.1, window_height_m: 1.55 }),
+	];
+	const grammarCosts = [0.04, 0.08, 0.01];
 
 	const fixtureFetch = async (url: string | URL, init?: RequestInit) => {
 		const target = String(url);
@@ -99,24 +107,36 @@ test("runs the complete creative-020 comparison fixture without network or paid 
 			fetchCounts["gpt-image-2"] += 1;
 			return Response.json({ id: "fixture-openai-image", data: [{ b64_json: providerImages["gpt-image-2"].toString("base64") }], usage: { input_tokens: 1, output_tokens: 1, cost_usd: 0.2 } });
 		}
-		if (target.includes(":generateContent")) {
-			fetchCounts["nano-banana-pro"] += 1;
+		if (target.includes("ark.ap-southeast.bytepluses.com/api/v3/images/generations")) {
+			fetchCounts["seedream-5-pro"] += 1;
 			return Response.json({
-				responseId: "fixture-gemini-image", modelVersion: "gemini-3-pro-image",
-				candidates: [{ finishReason: "STOP", content: { parts: [{ inlineData: { mimeType: "image/png", data: providerImages["nano-banana-pro"].toString("base64") } }] } }],
-				usageMetadata: { promptTokenCount: 1, candidatesTokenCount: 1 },
+				model: "dola-seedream-5-0-pro-260628", request_id: "fixture-byteplus-image",
+				data: [{ b64_json: providerImages["seedream-5-pro"].toString("base64") }],
+				usage: { generated_images: 1, output_pixels: 1536 * 1536 },
 			});
 		}
+		if (target.includes(".ap-southeast-1.maas.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation")) {
+			fetchCounts["qwen-image-2"] += 1;
+			return Response.json({
+				output: { choices: [{ message: { content: [{ image: "https://images.example.com/signed/qwen-output.png?Expires=1785988800&Signature=fixture-secret" }] } }] },
+				usage: { width: 1536, height: 1536, image_count: 1 }, request_id: "fixture-alibaba-image",
+			});
+		}
+		if (target.startsWith("https://images.example.com/signed/qwen-output.png")) {
+			fetchCounts.qwen_download += 1;
+			return new Response(providerImages["qwen-image-2"], { status: 200, headers: { "content-type": "image/png" } });
+		}
 		if (target.endsWith("/v1/responses")) {
-			const fixture = grammarFixtures[fetchCounts.grammar];
-			assert.ok(fixture, "exactly two grammar fixtures are authorized");
+			const grammarIndex = fetchCounts.grammar;
+			const fixture = grammarFixtures[grammarIndex];
+			assert.ok(fixture, "exactly three grammar fixtures are authorized");
 			fetchCounts.grammar += 1;
 			const body = JSON.parse(String(init?.body));
 			assert.equal(body.model, "gpt-5.6");
 			return Response.json({
 				id: `fixture-grammar-${fetchCounts.grammar}`, status: "completed",
 				output: [{ type: "message", role: "assistant", content: [{ type: "output_text", text: stableJson(fixture) }] }],
-				usage: { input_tokens: 1, output_tokens: 1, cost_usd: 0.04 },
+				usage: { input_tokens: 1, output_tokens: 1, cost_usd: grammarCosts[grammarIndex] },
 			});
 		}
 		fetchCounts.unexpected += 1;
@@ -125,8 +145,12 @@ test("runs the complete creative-020 comparison fixture without network or paid 
 
 	const dependencyFactory = createFacadeAgentDependencyFactory(async (config: any) => {
 		const production: any = await createProductionFacadeAgentDependencies(config, {
-			env: { OPENAI_API_KEY: "fixture-openai-key", GEMINI_API_KEY: "fixture-gemini-key" },
+			env: {
+				OPENAI_API_KEY: "fixture-openai-key", ARK_API_KEY: "fixture-byteplus-key",
+				DASHSCOPE_API_KEY: "fixture-alibaba-key", DASHSCOPE_WORKSPACE_ID: "fixture-workspace",
+			},
 			fetchImpl: fixtureFetch,
+			lookupImpl: async () => [{ address: "93.184.216.34", family: 4 }],
 		});
 		const renderDelivery = production.renderDelivery;
 		return {
@@ -135,8 +159,8 @@ test("runs the complete creative-020 comparison fixture without network or paid 
 			extractGrammar: createFacadeFixtureTransport(production.extractGrammar),
 			renderDelivery: async (input: any) => {
 				try {
-					selectedDelivery = await renderDelivery(input);
-					return selectedDelivery;
+					deliveries[input.provider] = await renderDelivery(input);
+					return deliveries[input.provider];
 				} catch (error) {
 					deliveryFailure = error;
 					throw error;
@@ -148,8 +172,9 @@ test("runs the complete creative-020 comparison fixture without network or paid 
 	const args = [
 		"run", "--candidate", "creative-020", "--brief", "brick-punched-window-v1",
 		"--dataset-root", DATASET_ROOT, "--output-root", outputRoot, "--run-id", runId,
-		"--providers", "gpt-image-2,nano-banana-pro",
-		"--image-budget-gpt-image-2", "1", "--image-budget-nano-banana-pro", "1", "--grammar-budget", "1",
+		"--providers", PROVIDERS.join(","),
+		"--image-budget", "gpt-image-2=0.50", "--image-budget", "seedream-5-pro=0.10",
+		"--image-budget", "qwen-image-2=0.05", "--grammar-budget", "0.35",
 	];
 	const runIo = ioCapture();
 	const exitCode = await runFacadeAgentCli(args, { ...runIo, dependencyFactory } as any);
@@ -157,33 +182,39 @@ test("runs the complete creative-020 comparison fixture without network or paid 
 	assert.equal(JSON.parse(runIo.read().stdout).state, "accepted");
 	const result = JSON.parse(await readFile(join(runDir, "run.json"), "utf8"));
 
-	assert.deepEqual(fetchCounts, { "gpt-image-2": 1, "nano-banana-pro": 1, grammar: 2, unexpected: 0 });
-	assert.equal(result.image_submissions.total, 2);
-	assert.deepEqual(result.image_submissions.by_provider, { "gpt-image-2": 1, "nano-banana-pro": 1 });
+	assert.deepEqual(fetchCounts, { "gpt-image-2": 1, "seedream-5-pro": 1, "qwen-image-2": 1, qwen_download: 1, grammar: 3, unexpected: 0 });
+	assert.equal(result.image_submissions.total, 3);
+	assert.deepEqual(result.image_submissions.by_provider, { "gpt-image-2": 1, "seedream-5-pro": 1, "qwen-image-2": 1 });
 	assert.deepEqual(result.providers["gpt-image-2"].versions.map((version: any) => [version.id, version.status]), [["v001", "rejected"], ["v002", "accepted"]]);
 	assert.deepEqual(result.providers["gpt-image-2"].versions[0].validation.codes, ["DETAIL_BOUNDS_EXCEEDED"]);
 	assert.equal(result.providers["gpt-image-2"].versions[0].validation.metrics.maximum_outward_depth_m, 0.25);
 	assert.equal(result.providers["gpt-image-2"].versions[0].validation.metrics.allowed_outward_depth_m, 0.2);
 	assert.equal(result.providers["gpt-image-2"].versions[1].validation.metrics.maximum_outward_depth_m, 0.1875);
 	assert.equal(result.providers["gpt-image-2"].versions[1].validation.metrics.allowed_outward_depth_m, 0.2);
-	assert.deepEqual(result.providers["nano-banana-pro"].versions.map((version: any) => [version.id, version.status]), [["v001", "accepted"]]);
+	assert.deepEqual(result.providers["seedream-5-pro"].versions.map((version: any) => [version.id, version.status]), [["v001", "accepted"]]);
+	assert.deepEqual(result.providers["qwen-image-2"].versions.map((version: any) => [version.id, version.status]), [["v001", "accepted"]]);
 	assert.equal(result.final.status, "winner");
-	assert.equal(result.final.selected_provider, "gpt-image-2");
-	assert.equal(result.final.selected_version, "v002");
+	assert.equal(result.final.selected_provider, "seedream-5-pro");
+	assert.equal(result.final.selected_version, "v001");
+	assert.equal(result.final.technical_winner, "seedream-5-pro");
+	assert.equal(result.final.recommended_default, "qwen-image-2");
+	assert.equal(result.final.quality_fallback, "seedream-5-pro");
 	assert.deepEqual(result.providers["gpt-image-2"].score.components, { implementability: 85.3, multiview: 100, grammar: 99, visual: result.providers["gpt-image-2"].score.components.visual });
-	assert.ok(result.providers["gpt-image-2"].score.score > result.providers["nano-banana-pro"].score.score);
+	assert.ok(result.providers["seedream-5-pro"].score.score > result.providers["gpt-image-2"].score.score);
+	assert.ok(result.providers["seedream-5-pro"].score.score > result.providers["qwen-image-2"].score.score);
 
 	const evidence = JSON.parse(await readFile(join(runDir, "evidence", "evidence-manifest.json"), "utf8"));
 	assert.equal(evidence.geometry_hash, MASS_GEOMETRY_SHA256);
 	assert.equal(evidence.geometry_content_sha256, MASS_CONTENT_SHA256);
 	assert.equal(evidence.geometry_signed_volume_orientation, 1);
 	assert.equal(evidence.facade_segment_authority_sha256, FACADE_SEGMENT_AUTHORITY_SHA256);
-	for (const provider of ["gpt-image-2", "nano-banana-pro"]) {
+	for (const provider of PROVIDERS) {
 		const accepted = result.providers[provider].versions.find((version: any) => version.status === "accepted");
 		assert.equal(accepted.validation.metrics.canonical_surface_match, 1);
 		assert.ok(accepted.validation.metrics.minimum_reveal_depth_m >= 0.12);
 		assert.deepEqual(accepted.validation.codes, []);
 	}
+	assert.equal(new Set(PROVIDERS.map((provider) => result.providers[provider].proposal.sha256)).size, 3);
 
 	const selectedVersion = result.providers[result.final.selected_provider].versions.find((version: any) => version.id === result.final.selected_version);
 	const selectedGlbPath = join(runDir, selectedVersion.artifact.path);
@@ -212,17 +243,40 @@ test("runs the complete creative-020 comparison fixture without network or paid 
 		assert.equal(decoded.data.length, 2048 * 2048 * decoded.info.channels);
 	}
 
-	assert.ok(selectedDelivery);
-	assert.equal(selectedDelivery.manifest.selected_glb.sha256, result.final.selected_glb_sha256);
-	assert.deepEqual(Object.keys(selectedDelivery.views).sort(), [...VIEW_NAMES].sort());
-	assert.equal(new Set(Object.values(selectedDelivery.views).map((view: any) => view.selected_glb_sha256)).size, 1);
-	assert.deepEqual(selectedDelivery.browser_verification.console_errors, []);
-	assert.deepEqual(selectedDelivery.browser_verification.blocked_external_requests, []);
-	assert.equal(selectedDelivery.browser_verification.settled_frames_identical, true);
-	assert.equal(new Set(selectedDelivery.browser_verification.settled_frame_hashes).size, 1);
-	assert.equal(["front", "back", "left", "right"].every(
-		(name) => selectedDelivery.views[name].validation.metrics.typed_facade_receipt_bound === true,
-	), true);
+	const allViewHashes = new Set<string>();
+	for (const provider of PROVIDERS) {
+		const accepted = result.providers[provider].versions.find((version: any) => version.status === "accepted");
+		const glbPath = join(runDir, accepted.artifact.path);
+		assert.equal(sha256(await readFile(glbPath)), accepted.artifact.sha256);
+		await new NodeIO().read(glbPath);
+		const delivery = deliveries[provider];
+		assert.ok(delivery, `${provider} delivery must exist`);
+		assert.equal(delivery.manifest.selected_glb.sha256, accepted.artifact.sha256);
+		assert.deepEqual(Object.keys(delivery.views).sort(), [...VIEW_NAMES].sort());
+		assert.equal(new Set(Object.values(delivery.views).map((view: any) => view.selected_glb_sha256)).size, 1);
+		assert.deepEqual(delivery.browser_verification.console_errors, []);
+		assert.deepEqual(delivery.browser_verification.blocked_external_requests, []);
+		assert.equal(delivery.browser_verification.settled_frames_identical, true);
+		assert.equal(new Set(delivery.browser_verification.settled_frame_hashes).size, 1);
+		assert.equal(["front", "back", "left", "right"].every(
+			(name) => delivery.views[name].validation.metrics.typed_facade_receipt_bound === true,
+		), true);
+		const providerHashes = new Set<string>();
+		for (const view of Object.values(delivery.views) as any[]) {
+			const bytes = await readFile(view.path);
+			assert.equal(sha256(bytes), view.sha256);
+			const metadata = await sharp(bytes, { failOn: "error", limitInputPixels: 2400 * 2400 }).metadata();
+			assert.equal(metadata.width, 2400);
+			assert.equal(metadata.height, 2400);
+			const stats = await sharp(bytes, { failOn: "error", limitInputPixels: 2400 * 2400 }).stats();
+			assert.ok(stats.entropy > 0.1, `${provider} ${view.path} must not be blank`);
+			providerHashes.add(view.sha256);
+			allViewHashes.add(view.sha256);
+		}
+		assert.equal(providerHashes.size, 8, `${provider} must produce eight distinct views`);
+		assert.equal(Object.keys(accepted.delivery.views).length, 8);
+	}
+	assert.equal(allViewHashes.size, 24);
 
 	const beforeStatus = await treeSnapshot(runDir);
 	const statusIo = ioCapture();
@@ -237,17 +291,21 @@ test("runs the complete creative-020 comparison fixture without network or paid 
 	assert.equal(memory.final.selected_glb_sha256, result.final.selected_glb_sha256);
 	assert.deepEqual(memory.budget, result.budget);
 	assert.deepEqual(memory.budget, {
-		run_ceiling_usd: 3,
-		image_ceiling_usd: { "gpt-image-2": 1, "nano-banana-pro": 1 },
-		grammar_ceiling_usd: 1,
-		grammar_per_call_ceiling_usd: { "gpt-image-2": 0.5, "nano-banana-pro": 0.5 },
+		run_ceiling_usd: 1,
+		image_ceiling_usd: { "gpt-image-2": 0.5, "seedream-5-pro": 0.1, "qwen-image-2": 0.05 },
+		grammar_ceiling_usd: 0.35,
+		grammar_per_call_ceiling_usd: result.budget.grammar_per_call_ceiling_usd,
 	});
 	assert.deepEqual(memory.providers["gpt-image-2"].score.components, result.providers["gpt-image-2"].score.components);
 	assert.equal(Object.keys(memory.delivery.views).length, 8);
 	assert.deepEqual(memory.costs, {
-		total_usd: 1.28,
-		image_usd: { "gpt-image-2": 0.2, "nano-banana-pro": 1 },
-		grammar_usd: 0.08,
+		total_usd: 0.41,
+		image_usd: { "gpt-image-2": 0.2, "seedream-5-pro": 0.045, "qwen-image-2": 0.035 },
+		grammar_usd: 0.13,
+	});
+	assert.deepEqual(memory.comparison, {
+		technical_winner: "seedream-5-pro", recommended_default: "qwen-image-2", quality_fallback: "seedream-5-pro",
+		evaluation_report: { path: "evaluation/evaluation.json", sha256: result.evaluation_manifest.sha256 },
 	});
 	assert.equal(JSON.stringify(memory).includes("fixture-openai-key"), false);
 	context.diagnostic(stableJson({
@@ -257,8 +315,8 @@ test("runs the complete creative-020 comparison fixture without network or paid 
 		detail_primitive_count: selectedVersion.validation.metrics.detail_primitive_count,
 		kind_counts: kindCounts,
 		fetch_counts: fetchCounts,
-		delivery_view_count: Object.keys(selectedDelivery.views).length,
-		blocked_external_requests: selectedDelivery.browser_verification.blocked_external_requests.length,
+		delivery_view_count: allViewHashes.size,
+		blocked_external_requests: Object.values(deliveries).reduce((sum: number, delivery: any) => sum + delivery.browser_verification.blocked_external_requests.length, 0),
 		costs: memory.costs,
 	}));
 });

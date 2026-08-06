@@ -345,13 +345,13 @@ async function facadeCosts(runDir) {
 	const operations = (summary?.operations ?? []).filter((operation) => operation?.status === "succeeded");
 	const image = operations.filter((operation) => operation.kind === "image-generation");
 	const grammar = operations.filter((operation) => operation.kind === "grammar-extraction");
-	const imageUsd = {};
-	for (const operation of image) imageUsd[operation.provider] = (imageUsd[operation.provider] ?? 0)
-		+ (Number.isFinite(operation.actualUsd) ? operation.actualUsd : 0);
+	const micros = (value) => Number.isFinite(value) ? Math.round(value * 1_000_000) : 0;
+	const imageMicros = {};
+	for (const operation of image) imageMicros[operation.provider] = (imageMicros[operation.provider] ?? 0) + micros(operation.actualUsd);
 	return {
-		total_usd: [...image, ...grammar].reduce((sum, operation) => sum + (Number.isFinite(operation.actualUsd) ? operation.actualUsd : 0), 0),
-		image_usd: imageUsd,
-		grammar_usd: grammar.reduce((sum, operation) => sum + (Number.isFinite(operation.actualUsd) ? operation.actualUsd : 0), 0),
+		total_usd: [...image, ...grammar].reduce((sum, operation) => sum + micros(operation.actualUsd), 0) / 1_000_000,
+		image_usd: Object.fromEntries(Object.entries(imageMicros).map(([provider, value]) => [provider, value / 1_000_000])),
+		grammar_usd: grammar.reduce((sum, operation) => sum + micros(operation.actualUsd), 0) / 1_000_000,
 	};
 }
 
@@ -385,6 +385,12 @@ export async function appendFacadeAgentMemory(result, memoryRoot) {
 		grammar_submissions: Object.fromEntries(Object.entries(result.providers ?? {}).map(([provider, state]) => [provider, state?.grammar?.status === "succeeded" ? 1 : 0])),
 		budget: result.budget ?? null,
 		costs: await facadeCosts(runDir),
+		comparison: {
+			technical_winner: result.final.technical_winner ?? null,
+			recommended_default: result.final.recommended_default ?? null,
+			quality_fallback: result.final.quality_fallback ?? null,
+			evaluation_report: facadeArtifact(runDir, result.evaluation_manifest, "facade evaluation report"),
+		},
 		providers,
 		delivery: facadeDelivery(runDir, result.selected_delivery ?? result.delivery?.memory_record),
 		winner: result.final.status === "winner" ? {
