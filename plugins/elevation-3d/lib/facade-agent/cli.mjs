@@ -7,6 +7,7 @@ import {
 	FACADE_AGENT_PROVIDERS,
 	FACADE_AGENT_PROVIDER_IDS,
 	FACADE_AGENT_STAGES,
+	FACADE_GRAMMAR_PROVIDER_IDS,
 	FacadeAgentContractError,
 	normalizeFacadeAgentConfig,
 } from "./contract.mjs";
@@ -14,7 +15,7 @@ import { readFacadeAgentStatus, runFacadeAgent, runFacadeStage } from "./harness
 import { createProductionFacadeAgentDependencies } from "./production-dependencies.mjs";
 
 const CONFIG_FILE = "facade-agent-config.json";
-const TOOL_FIELDS = new Set(["candidate_id", "dataset_root", "output_root", "run_id", "providers", "brief_id", "dry_run", "confirm_live", "confirm_total_usd", "image_budget_usd", "grammar_budget_usd"]);
+const TOOL_FIELDS = new Set(["candidate_id", "dataset_root", "output_root", "run_id", "providers", "image_providers", "grammar_model", "grammar_provider", "brief_id", "dry_run", "confirm_live", "confirm_total_usd", "image_budget_usd", "grammar_budget_usd"]);
 const BUDGET_FIELDS = new Set(FACADE_AGENT_PROVIDER_IDS);
 const factoryCapabilities = new WeakSet();
 const DEFAULT_IMAGE_BUDGET_USD = Object.freeze({
@@ -77,7 +78,7 @@ function parseOptions(argv) {
 		if (!name.startsWith("--") || index + 1 >= argv.length || argv[index + 1].startsWith("--")) {
 			throw new FacadeAgentContractError("ARGUMENT_INVALID", `Invalid argument: ${name}`);
 		}
-		if (name === "--image-budget") {
+		if (["--image-provider", "--image-budget"].includes(name)) {
 			(values[name] ??= []).push(argv[index + 1]);
 		} else {
 			if (Object.hasOwn(values, name)) throw new FacadeAgentContractError("ARGUMENT_DUPLICATE", `Duplicate argument: ${name}`);
@@ -88,6 +89,7 @@ function parseOptions(argv) {
 	const allowed = command === "status" || command === "resume"
 		? new Set(["--run-dir"])
 		: new Set(["--candidate", "--brief", "--dataset-root", "--output-root", "--run-id", "--providers",
+			"--image-provider", "--grammar-provider",
 			"--gpt-image-max-usd", "--nano-banana-max-usd", "--grammar-max-usd",
 			"--image-budget", "--image-budget-gpt-image-2", "--image-budget-nano-banana-pro", "--grammar-budget",
 			"--confirm-cost-usd", "--confirm-total-usd"]);
@@ -100,7 +102,9 @@ function parseOptions(argv) {
 	for (const required of ["--candidate", "--brief", "--dataset-root", "--output-root", "--run-id"]) {
 		if (values[required] === undefined) throw new FacadeAgentContractError("ARGUMENT_REQUIRED", `${required} is required`);
 	}
-	const providers = values["--providers"]?.split(",").filter(Boolean) ?? [...FACADE_AGENT_PROVIDERS];
+	const canonicalImageProviders = values["--image-provider"];
+	const legacyProviders = values["--providers"]?.split(",").filter(Boolean);
+	const imageProviders = canonicalImageProviders ?? legacyProviders ?? [...FACADE_AGENT_PROVIDERS];
 	const imageBudgetParts = values["--image-budget"] ?? [];
 	const parsedBudgetMicros = {};
 	const imageBudgetUsd = {};
@@ -134,7 +138,7 @@ function parseOptions(argv) {
 		const confirmation = values["--confirm-total-usd"] !== undefined || values["--confirm-cost-usd"] !== undefined
 			? aliasedValue(values, "--confirm-total-usd", "--confirm-cost-usd") : undefined;
 		const confirmed = parseUsd(confirmation, "confirmTotalUsd");
-		const expectedMicros = providers.reduce((sum, provider) => sum + (parsedBudgetMicros[provider] ?? 0n), parsedGrammar.micros);
+		const expectedMicros = imageProviders.reduce((sum, provider) => sum + (parsedBudgetMicros[provider] ?? 0n), parsedGrammar.micros);
 		if (confirmed.micros !== expectedMicros) throw new FacadeAgentContractError("LIVE_COST_CONFIRMATION_INVALID", "Live cost confirmation must exactly equal all selected provider ceilings");
 		confirmedTotalUsd = confirmed.usd;
 	} else if (values["--confirm-cost-usd"] !== undefined || values["--confirm-total-usd"] !== undefined) {
@@ -145,8 +149,11 @@ function parseOptions(argv) {
 		dryRun,
 		config: normalizeFacadeAgentConfig({
 			candidateId: values["--candidate"], briefId: values["--brief"], runId: values["--run-id"],
-			datasetRoot: values["--dataset-root"], outputRoot: values["--output-root"], providers,
-			imageBudgetUsd, grammarBudgetUsd, grammarModel: "gpt-5.6", maxLocalAttempts: 2,
+			datasetRoot: values["--dataset-root"], outputRoot: values["--output-root"], imageProviders,
+			...(legacyProviders ? { providers: legacyProviders } : {}),
+			imageBudgetUsd, grammarBudgetUsd,
+			...(values["--grammar-provider"] ? { grammarProvider: values["--grammar-provider"] } : { grammarModel: "gpt-5.6" }),
+			maxLocalAttempts: 2,
 			confirmLive, ...(confirmLive ? { confirmedTotalUsd } : {}),
 		}),
 	};
@@ -159,13 +166,15 @@ function configPath(config) {
 function persistedConfig(config) {
 	return {
 		candidateId: config.candidateId, briefId: config.briefId, runId: config.runId,
-		datasetRoot: config.datasetRoot, outputRoot: config.outputRoot, providers: config.providers,
+		datasetRoot: config.datasetRoot, outputRoot: config.outputRoot,
+		schemaVersion: config.schemaVersion, imageProviders: config.imageProviders, providers: config.providers,
 		imageBudgetUsd: config.imageBudgetUsd, imageEstimateUsd: config.imageEstimateUsd, grammarBudgetUsd: config.grammarBudgetUsd,
 		grammarEstimateUsd: config.grammarEstimateUsd,
 		grammarBudgetAllocationUsd: config.grammarBudgetAllocationUsd,
 		grammarEstimateAllocationUsd: config.grammarEstimateAllocationUsd,
 		runBudgetUsd: config.runBudgetUsd, runEstimateUsd: config.runEstimateUsd,
-		grammarModel: config.grammarModel, maxLocalAttempts: config.maxLocalAttempts,
+		grammarProvider: config.grammarProvider, ...(config.grammarModel ? { grammarModel: config.grammarModel } : {}),
+		maxLocalAttempts: config.maxLocalAttempts,
 		confirmLive: config.confirmLive, ...(config.confirmLive ? { confirmedTotalUsd: config.confirmedTotalUsd } : {}),
 	};
 }
@@ -298,7 +307,7 @@ function plainProviderArray(value) {
 	try { descriptors = Object.getOwnPropertyDescriptors(value); }
 	catch { throw inputFailure(); }
 	const length = descriptors.length?.value;
-	if (!Number.isSafeInteger(length) || length < 0 || length > FACADE_AGENT_PROVIDERS.length) throw inputFailure();
+	if (!Number.isSafeInteger(length) || length < 0 || length > FACADE_AGENT_PROVIDER_IDS.length) throw inputFailure();
 	const output = [];
 	const allowedKeys = new Set(["length", ...Array.from({ length }, (_, index) => String(index))]);
 	for (let index = 0; index < length; index += 1) {
@@ -313,11 +322,12 @@ function plainProviderArray(value) {
 function safeToolInput(value) {
 	const input = plainDataRecord(value, TOOL_FIELDS);
 	if (Object.hasOwn(input, "providers")) input.providers = plainProviderArray(input.providers);
+	if (Object.hasOwn(input, "image_providers")) input.image_providers = plainProviderArray(input.image_providers);
 	if (Object.hasOwn(input, "image_budget_usd")) input.image_budget_usd = plainDataRecord(input.image_budget_usd, BUDGET_FIELDS);
 	return input;
 }
 
-export function summarizeFacadeAgentResult(result, stage = null) {
+export function summarizeFacadeAgentResult(result, stage = null, config = null) {
 	const status = result?.final?.status ?? result?.status ?? "running";
 	const state = status === "winner" ? "accepted"
 		: ["no-winner", "human-review", "delivery-failed", "blocked"].includes(status) ? "rejected"
@@ -325,6 +335,7 @@ export function summarizeFacadeAgentResult(result, stage = null) {
 	return redactSecrets({
 		state, status, ...(stage ? { stage } : {}),
 		run_id: result?.run_id ?? null, candidate_id: result?.candidate_id ?? null, brief_id: result?.brief_id ?? null,
+		...(config ? { router: { image_providers: [...config.imageProviders], grammar_provider: config.grammarProvider } } : {}),
 		...(result?.final?.selected_provider ? { selected_provider: result.final.selected_provider } : {}),
 		...(result?.final?.selected_version ? { selected_version: result.final.selected_version } : {}),
 		...(result?.failure?.code ? { failure: { code: result.failure.code } } : {}),
@@ -359,8 +370,8 @@ export async function executeFacadeAgentCommand(input, { signal, dependencyFacto
 	throwIfAborted(signal);
 	const parsed = Array.isArray(input) ? parseOptions(input) : input;
 	if (parsed.command === "status") {
-		await loadPersistedConfig(parsed.runDir);
-		return { summary: summarizeFacadeAgentResult(await readFacadeAgentStatus(parsed.runDir)), exitCode: 0 };
+		const config = await loadPersistedConfig(parsed.runDir);
+		return { summary: summarizeFacadeAgentResult(await readFacadeAgentStatus(parsed.runDir), null, config), exitCode: 0 };
 	}
 	validateDependencyAuthority(dependencyFactory, fetchImpl);
 	let config = parsed.config;
@@ -371,7 +382,7 @@ export async function executeFacadeAgentCommand(input, { signal, dependencyFacto
 	const deps = await dependencies(config, signal, dependencyFactory, fetchImpl);
 	const stage = parsed.dryRun ? "preflight" : FACADE_AGENT_STAGES.includes(parsed.command) ? parsed.command : null;
 	const result = stage ? await runFacadeStage(stage, config, deps) : await runFacadeAgent(config, deps);
-	const summary = summarizeFacadeAgentResult(result, stage);
+	const summary = summarizeFacadeAgentResult(result, stage, config);
 	return { summary, exitCode: outcomeExit(summary) };
 }
 
@@ -401,6 +412,9 @@ export function facadeAgentToolSchema() {
 			candidate_id: { type: "string", enum: ["creative-020"] },
 			dataset_root: { type: "string" }, output_root: { type: "string" }, run_id: { type: "string" },
 			providers: { type: "array", items: { type: "string", enum: [...FACADE_AGENT_PROVIDER_IDS] }, minItems: 1, maxItems: 4 },
+			image_providers: { type: "array", items: { type: "string", enum: [...FACADE_AGENT_PROVIDER_IDS] }, minItems: 1, maxItems: 4 },
+			grammar_model: { type: "string", enum: ["gpt-5.6"] },
+			grammar_provider: { type: "string", enum: [...FACADE_GRAMMAR_PROVIDER_IDS] },
 			brief_id: { type: "string", enum: ["brick-punched-window-v1"] }, dry_run: { type: "boolean", default: true },
 			confirm_live: { type: "boolean", default: false },
 			confirm_total_usd: { type: "number", minimum: 0 },
@@ -419,14 +433,22 @@ export async function runFacadeAgentTool(args, signal, defaults = {}, dependency
 	if (!dryRun && input.confirm_live === true && (input.image_budget_usd === undefined || input.grammar_budget_usd === undefined || input.confirm_total_usd === undefined)) {
 		throw new FacadeAgentContractError("LIVE_COST_CONFIRMATION_INVALID", "Live execution requires explicit provider cost ceilings");
 	}
-	const providers = input.providers ?? [...FACADE_AGENT_PROVIDERS];
-	const imageBudgetUsd = input.image_budget_usd ?? Object.fromEntries(providers.map((provider) => [provider, DEFAULT_IMAGE_BUDGET_USD[provider]]));
+	if (Object.hasOwn(input, "grammar_model") && input.grammar_model !== "gpt-5.6") {
+		throw new FacadeAgentContractError("GRAMMAR_PROVIDER_INVALID", "grammar_model must be gpt-5.6");
+	}
+	const imageProviders = input.image_providers ?? input.providers ?? [...FACADE_AGENT_PROVIDERS];
+	const imageBudgetUsd = input.image_budget_usd ?? Object.fromEntries(imageProviders.map((provider) => [provider, DEFAULT_IMAGE_BUDGET_USD[provider]]));
 	const config = normalizeFacadeAgentConfig({
 		candidateId: input.candidate_id ?? "creative-020", briefId: input.brief_id ?? "brick-punched-window-v1",
 		runId: input.run_id, datasetRoot: input.dataset_root ?? defaults.datasetRoot,
-		outputRoot: input.output_root ?? defaults.outputRoot, providers,
+		outputRoot: input.output_root ?? defaults.outputRoot, imageProviders,
+		...(input.providers !== undefined ? { providers: input.providers } : {}),
 		imageBudgetUsd,
-		grammarBudgetUsd: input.grammar_budget_usd ?? DEFAULT_GRAMMAR_BUDGET_USD, grammarModel: "gpt-5.6", maxLocalAttempts: 2,
+		grammarBudgetUsd: input.grammar_budget_usd ?? DEFAULT_GRAMMAR_BUDGET_USD,
+		...(input.grammar_provider !== undefined ? { grammarProvider: input.grammar_provider } : {}),
+		...(input.grammar_model !== undefined ? { grammarModel: input.grammar_model }
+			: input.grammar_provider === undefined ? { grammarModel: "gpt-5.6" } : {}),
+		maxLocalAttempts: 2,
 		confirmLive: dryRun ? false : input.confirm_live === true,
 		...(!dryRun && input.confirm_live === true ? { confirmedTotalUsd: input.confirm_total_usd } : {}),
 	});
