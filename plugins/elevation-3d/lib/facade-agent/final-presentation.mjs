@@ -1,10 +1,10 @@
-import { randomUUID } from "node:crypto";
-import { lstat, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
-import { isAbsolute, join, parse, relative, resolve, sep } from "node:path";
+import { lstat, readFile } from "node:fs/promises";
+import { isAbsolute, join, resolve } from "node:path";
 
-import { sha256 } from "../core.mjs";
+import { sha256, stableJson } from "../core.mjs";
 import { deriveDeliveryCameras } from "../final-delivery.mjs";
 import { renderEmbeddedPbrViews } from "../texturing/render-validator.mjs";
+import { atomicWrite, assertNoReparsePoints, containedPath } from "./harness.mjs";
 
 const VIEW_NAMES = Object.freeze(["front", "back", "left", "right", "plan", "top", "axon", "opposite-axon"]);
 
@@ -26,29 +26,14 @@ function throwIfAborted(signal) {
 	throw signal.reason ?? new DOMException("The operation was aborted", "AbortError");
 }
 
-function containedPath(root, path) {
-	const absoluteRoot = resolve(root);
-	const absolute = resolve(path);
-	const child = relative(absoluteRoot, absolute);
-	if (!child || child === ".." || child.startsWith(`..${sep}`) || isAbsolute(child)) {
-		fail("FACADE_PRESENTATION_PATH_INVALID", "presentation root must remain beneath the run directory");
-	}
-	return absolute;
+function safeContainedPath(root, path, label) {
+	try { return containedPath(root, path, label); }
+	catch (error) { fail("FACADE_PRESENTATION_PATH_INVALID", `${label} is unsafe`, error); }
 }
 
-async function assertNoReparsePoints(path) {
-	const absolute = resolve(path);
-	const root = parse(absolute).root;
-	const parts = absolute.slice(root.length).split(/[\\/]+/).filter(Boolean);
-	let current = root;
-	for (let index = 0; index < parts.length; index += 1) {
-		current = resolve(current, parts[index]);
-		let stats;
-		try { stats = await lstat(current); }
-		catch (error) { if (error?.code === "ENOENT") return; throw error; }
-		if (stats.isSymbolicLink()) fail("FACADE_PRESENTATION_PATH_INVALID", "presentation path contains a symlink or junction");
-		if (index < parts.length - 1 && !stats.isDirectory()) fail("FACADE_PRESENTATION_PATH_INVALID", "presentation path parent must be a directory");
-	}
+async function safeNoReparsePoints(path) {
+	try { await assertNoReparsePoints(path); }
+	catch (error) { fail("FACADE_PRESENTATION_PATH_INVALID", "presentation path contains a link or reparse point", error); }
 }
 
 function exactViewNames(value) {
@@ -60,20 +45,48 @@ function viewHash(view) {
 }
 
 async function writeJsonAtomic(path, value, root) {
-	await assertNoReparsePoints(root);
-	await mkdir(root, { recursive: true });
-	await assertNoReparsePoints(root);
 	const bytes = Buffer.from(`${JSON.stringify(value, null, 2)}\n`);
-	const temporary = `${path}.tmp-${process.pid}-${randomUUID()}`;
-	try {
-		await writeFile(temporary, bytes, { flag: "wx" });
-		await assertNoReparsePoints(temporary);
-		await assertNoReparsePoints(path);
-		await rename(temporary, path);
-	} finally {
-		await rm(temporary, { force: true });
-	}
+	await atomicWrite(path, bytes, root);
 	return { path, sha256: sha256(bytes) };
+}
+
+async function rejectExistingOutput(path) {
+	try {
+		await lstat(path);
+		fail("FACADE_PRESENTATION_OUTPUT_EXISTS", "final presentation output already exists");
+	} catch (error) {
+		if (error?.code !== "ENOENT") throw error;
+	}
+}
+
+async function verifyValidationReceipt(runDir, validationReceipt, selectedGlbSha256, validation) {
+	if (!validationReceipt || typeof validationReceipt.path !== "string" || !/^[a-f0-9]{64}$/i.test(validationReceipt.sha256 ?? "")) {
+		fail("FACADE_PRESENTATION_VALIDATION_RECEIPT_INVALID", "validation receipt reference is invalid");
+	}
+	const requestedPath = isAbsolute(validationReceipt.path) ? validationReceipt.path : resolve(runDir, validationReceipt.path);
+	const receiptPath = safeContainedPath(runDir, requestedPath, "validation receipt");
+	let bytes;
+	try {
+		await safeNoReparsePoints(receiptPath);
+		bytes = await readFile(receiptPath);
+	} catch (error) {
+		if (error?.code === "FACADE_PRESENTATION_PATH_INVALID") throw error;
+		fail("FACADE_PRESENTATION_VALIDATION_RECEIPT_INVALID", "validation receipt is unavailable", error);
+	}
+	if (sha256(bytes) !== validationReceipt.sha256) fail("FACADE_PRESENTATION_VALIDATION_RECEIPT_INVALID", "validation receipt file hash does not match", undefined);
+	let receipt;
+	try { receipt = JSON.parse(bytes.toString("utf8")); }
+	catch (error) { fail("FACADE_PRESENTATION_VALIDATION_RECEIPT_INVALID", "validation receipt is not valid JSON", error); }
+	if (validationReceipt.receipt_sha256 && sha256(stableJson(receipt)) !== validationReceipt.receipt_sha256) {
+		fail("FACADE_PRESENTATION_VALIDATION_RECEIPT_INVALID", "validation receipt content hash does not match");
+	}
+	if (receipt?.schema_version !== "arr.elevation3d.facade-validation-receipt.v1"
+		|| receipt?.artifact_sha256 !== selectedGlbSha256
+		|| receipt?.validation?.accepted !== true
+		|| stableJson(receipt.validation) !== stableJson(validation)) {
+		fail("FACADE_PRESENTATION_VALIDATION_RECEIPT_INVALID", "validation receipt is not bound to the accepted validation and GLB");
+	}
+	return { path: validationReceipt.path, sha256: validationReceipt.sha256, ...(validationReceipt.receipt_sha256 ? { receipt_sha256: validationReceipt.receipt_sha256 } : {}) };
 }
 
 function validateRender(render, selectedGlbSha256) {
@@ -92,17 +105,23 @@ export async function deliverFacadeFinalPresentation({
 } = {}) {
 	throwIfAborted(signal);
 	const absoluteRunDir = resolve(runDir);
-	const root = containedPath(absoluteRunDir, presentationRoot);
-	await assertNoReparsePoints(absoluteRunDir);
-	await assertNoReparsePoints(root);
+	const root = safeContainedPath(absoluteRunDir, presentationRoot, "presentation root");
+	await safeNoReparsePoints(absoluteRunDir);
+	await safeNoReparsePoints(root);
 
-	const glbBytes = await readFile(resolve(artifact.path));
+	const glbPath = resolve(artifact.path);
+	await safeNoReparsePoints(glbPath);
+	const glbBytes = await readFile(glbPath);
 	const selectedGlbSha256 = sha256(glbBytes);
 	if (selectedGlbSha256 !== artifact.sha256) fail("FACADE_PRESENTATION_GLB_HASH_MISMATCH", "selected GLB hash does not match the artifact authority");
 	if (validation?.accepted !== true) fail("FACADE_PRESENTATION_VALIDATION_REQUIRED", "accepted facade validation is required");
+	const receipt = await verifyValidationReceipt(absoluteRunDir, validationReceipt, selectedGlbSha256, validation);
 	if (technicalDelivery?.manifest?.selected_glb?.sha256 !== selectedGlbSha256) {
 		fail("FACADE_PRESENTATION_TECHNICAL_BINDING_MISMATCH", "technical delivery is bound to a different selected GLB");
 	}
+	const manifestPath = join(root, "final-presentation.json");
+	await safeNoReparsePoints(manifestPath);
+	await rejectExistingOutput(manifestPath);
 	const cameras = deriveDeliveryCameras(input);
 	throwIfAborted(signal);
 
@@ -129,10 +148,13 @@ export async function deliverFacadeFinalPresentation({
 		fail("FACADE_PRESENTATION_RENDER_REJECTED", "embedded-PBR renderer failed", error);
 	}
 	throwIfAborted(signal);
-	await assertNoReparsePoints(root);
+	await safeNoReparsePoints(root);
+	await safeNoReparsePoints(glbPath);
+	if (sha256(await readFile(glbPath)) !== selectedGlbSha256) {
+		fail("FACADE_PRESENTATION_GLB_MUTATED", "selected GLB changed during presentation rendering");
+	}
 	validateRender(render, selectedGlbSha256);
 
-	const receipt = { path: validationReceipt.path, sha256: validationReceipt.sha256 };
 	const record = {
 		schema_version: "arr.elevation3d.facade-final-presentation.v1",
 		selected_glb: { path: artifact.path, sha256: selectedGlbSha256 },
@@ -141,7 +163,6 @@ export async function deliverFacadeFinalPresentation({
 		memory_record: { presentation: null },
 		receipt,
 	};
-	const manifestPath = join(root, "final-presentation.json");
 	const presentation = await writeJsonAtomic(manifestPath, record, root);
 	// The content hash cannot be embedded in the bytes it hashes; the returned
 	// memory record therefore carries the content address for the durable file.
