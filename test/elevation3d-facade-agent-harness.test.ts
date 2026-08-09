@@ -264,6 +264,53 @@ async function rewriteJson(path: string, value: any) {
 	return sha256(bytes);
 }
 
+async function rewriteWinnerAsLegacy(value: any) {
+	const runPath = join(value.runDir, "run.json");
+	const run = JSON.parse(await readFile(runPath, "utf8"));
+	delete run.presentation_execution;
+	delete run.presentation_receipt;
+	delete run.final.presentation_sha256;
+	await rm(join(value.runDir, "final-presentation"), { recursive: true, force: true });
+	run.final_manifest.sha256 = await rewriteJson(join(value.runDir, "final.json"), run.final);
+	await rewriteJson(runPath, run);
+	return run;
+}
+
+function recoveryDependencies(value: any, overrides: any = {}) {
+	const calls = {
+		candidate: 0,
+		presentation: 0,
+		paid: { image: 0, grammar: 0 },
+		pipeline: { evidence: 0, build: 0, validate: 0, score: 0, delivery: 0 },
+	};
+	const deps = {
+		...value.deps,
+		providers: Object.fromEntries(Object.entries(value.deps.providers).map(([provider, entry]: [string, any]) => [provider, {
+			...entry,
+			async generate(input: any) { calls.paid.image += 1; return entry.generate(input); },
+		}])),
+		grammarProvider: {
+			...value.deps.grammarProvider,
+			async extract(input: any) { calls.paid.grammar += 1; return value.deps.grammarProvider.extract(input); },
+		},
+		async loadCandidate(input: any) {
+			calls.candidate += 1;
+			return overrides.loadCandidate ? overrides.loadCandidate(input) : value.deps.loadCandidate(input);
+		},
+		async buildEvidence(input: any) { calls.pipeline.evidence += 1; return value.deps.buildEvidence(input); },
+		async build(input: any) { calls.pipeline.build += 1; return value.deps.build(input); },
+		async validate(input: any) { calls.pipeline.validate += 1; return value.deps.validate(input); },
+		async score(input: any) { calls.pipeline.score += 1; return value.deps.score(input); },
+		async renderDelivery(input: any) { calls.pipeline.delivery += 1; return value.deps.renderDelivery(input); },
+		async renderPresentation(input: any) {
+			calls.presentation += 1;
+			return overrides.renderPresentation ? overrides.renderPresentation(input) : value.deps.renderPresentation(input);
+		},
+		...(overrides.lifecycle ? { lifecycle: overrides.lifecycle } : {}),
+	};
+	return { calls, deps };
+}
+
 async function rewriteProviderState(value: any, provider: string, mutate: (state: any) => Promise<void> | void) {
 	const runPath = join(value.runDir, "run.json");
 	const run = JSON.parse(await readFile(runPath, "utf8"));
@@ -1094,6 +1141,134 @@ test("persists one durable Task 1-shaped beauty presentation for the technical w
 	assert.equal(receipt.technical_manifest.path.includes(":"), false);
 	assert.equal(receipt.presentation_manifest.path.includes(":"), false);
 	assert.deepEqual(receipt.technical_manifest, result.providers[result.final.selected_provider].delivery.memory_record.manifest);
+});
+
+test("recovers a legacy terminal winner through presentation only", async () => {
+	const value = await fixture({ runId: "legacy-terminal-presentation-recovery" });
+	await runFacadeAgent(value.config, value.deps);
+	await rewriteWinnerAsLegacy(value);
+	const recovery = recoveryDependencies(value);
+
+	const recovered = await runFacadeAgent(value.config, recovery.deps);
+
+	assert.equal(recovered.final.status, "winner");
+	assert.equal(recovery.calls.presentation, 1);
+	assert.deepEqual(recovery.calls.paid, { image: 0, grammar: 0 });
+	assert.deepEqual(recovery.calls.pipeline, { evidence: 0, build: 0, validate: 0, score: 0, delivery: 0 });
+});
+
+test("a valid terminal presentation receipt is idempotent zero work", async () => {
+	const value = await fixture({ runId: "terminal-presentation-idempotent" });
+	const persisted = await runFacadeAgent(value.config, value.deps);
+	const recovery = recoveryDependencies(value);
+
+	const resumed = await runFacadeAgent(value.config, recovery.deps);
+
+	assert.deepEqual(resumed.presentation_receipt, persisted.presentation_receipt);
+	assert.equal(recovery.calls.candidate, 0);
+	assert.equal(recovery.calls.presentation, 0);
+	assert.deepEqual(recovery.calls.paid, { image: 0, grammar: 0 });
+	assert.deepEqual(recovery.calls.pipeline, { evidence: 0, build: 0, validate: 0, score: 0, delivery: 0 });
+});
+
+test("terminal presentation recovery refuses in-flight or unreceipted success states", async (context) => {
+	for (const status of ["submitting", "succeeded"] as const) await context.test(status, async () => {
+		const value = await fixture({ runId: `terminal-presentation-${status}` });
+		await runFacadeAgent(value.config, value.deps);
+		const run = await rewriteWinnerAsLegacy(value);
+		run.presentation_execution = { status, provider: run.final.selected_provider, selected_glb_sha256: run.final.selected_glb_sha256 };
+		await rewriteJson(join(value.runDir, "run.json"), run);
+		const recovery = recoveryDependencies(value);
+
+		await assert.rejects(() => runFacadeAgent(value.config, recovery.deps), (error: any) => error.code === "FACADE_PRESENTATION_RECOVERY_UNSAFE");
+		assert.equal(recovery.calls.presentation, 0);
+		assert.deepEqual(recovery.calls.paid, { image: 0, grammar: 0 });
+		assert.deepEqual(recovery.calls.pipeline, { evidence: 0, build: 0, validate: 0, score: 0, delivery: 0 });
+	});
+});
+
+test("terminal presentation recovery rejects every replaced durable authority", async (context) => {
+	for (const tamper of ["glb", "validation-receipt", "provider-manifest", "technical-manifest", "technical-state", "candidate"] as const) await context.test(tamper, async () => {
+		const value = await fixture({ runId: `terminal-presentation-tamper-${tamper}` });
+		await runFacadeAgent(value.config, value.deps);
+		const run = await rewriteWinnerAsLegacy(value);
+		const provider = run.final.selected_provider;
+		const state = run.providers[provider];
+		const version = state.versions.find((item: any) => item.id === run.final.selected_version);
+		if (tamper === "glb") await writeFile(join(value.runDir, version.artifact.path), REPLACEMENT_GLB_BYTES);
+		if (tamper === "validation-receipt") await writeFile(join(value.runDir, version.validation_receipt.path), "{}\n");
+		if (tamper === "provider-manifest") await writeFile(join(value.runDir, run.provider_manifests[provider].path), "{}\n");
+		if (tamper === "technical-manifest") await writeFile(join(value.runDir, state.delivery.memory_record.manifest.path), "{}\n");
+		if (tamper === "technical-state") {
+			run.delivery = { ...run.delivery, delivery_sha256: "0".repeat(64) };
+			await rewriteJson(join(value.runDir, "run.json"), run);
+		}
+		const recovery = recoveryDependencies(value, tamper === "candidate" ? {
+			loadCandidate: async () => ({ candidate: { candidate_id: "creative-020" }, identity: { geometry_hash: "replacement" } }),
+		} : {});
+
+		await assert.rejects(() => runFacadeAgent(value.config, recovery.deps), (error: any) => error.code === "FACADE_PRESENTATION_RECOVERY_UNSAFE");
+		assert.equal(recovery.calls.presentation, 0);
+		assert.deepEqual(recovery.calls.paid, { image: 0, grammar: 0 });
+		assert.deepEqual(recovery.calls.pipeline, { evidence: 0, build: 0, validate: 0, score: 0, delivery: 0 });
+	});
+});
+
+test("a pre-return local presentation failure is explicitly retryable from the same GLB", async () => {
+	const value = await fixture({ runId: "terminal-presentation-local-retry" });
+	await runFacadeAgent(value.config, value.deps);
+	const legacy = await rewriteWinnerAsLegacy(value);
+	const rejected = Object.assign(new Error("local renderer unavailable"), { code: "FACADE_PRESENTATION_RENDER_REJECTED" });
+	const first = recoveryDependencies(value, { renderPresentation: async () => { throw rejected; } });
+
+	const failed = await runFacadeAgent(value.config, first.deps);
+	assert.deepEqual(failed.presentation_execution, {
+		status: "failed", provider: legacy.final.selected_provider, selected_glb_sha256: legacy.final.selected_glb_sha256,
+		retryable: true, failure: { code: "FACADE_PRESENTATION_RENDER_REJECTED", name: "Error", message: "local renderer unavailable" },
+	});
+	const second = recoveryDependencies(value);
+	const recovered = await runFacadeAgent(value.config, second.deps);
+
+	assert.equal(recovered.final.status, "winner");
+	assert.equal(recovered.presentation_execution.status, "succeeded");
+	assert.equal(first.calls.presentation, 1);
+	assert.equal(second.calls.presentation, 1);
+	assert.equal(recovered.final.selected_glb_sha256, legacy.final.selected_glb_sha256);
+	assert.deepEqual(second.calls.paid, { image: 0, grammar: 0 });
+	assert.deepEqual(second.calls.pipeline, { evidence: 0, build: 0, validate: 0, score: 0, delivery: 0 });
+});
+
+test("a crash after local render return is uncertain and cannot auto-replay", async () => {
+	const value = await fixture({ runId: "terminal-presentation-returned-crash" });
+	await runFacadeAgent(value.config, value.deps);
+	await rewriteWinnerAsLegacy(value);
+	const crash = new Error("crash after render return");
+	const first = recoveryDependencies(value, { lifecycle: { onTransition(event: any) {
+		if (event.stage === "presentation" && event.status === "returned") throw crash;
+	} } });
+
+	await assert.rejects(() => runFacadeAgent(value.config, first.deps), crash);
+	const persisted = JSON.parse(await readFile(join(value.runDir, "run.json"), "utf8"));
+	assert.equal(persisted.presentation_execution.status, "uncertain");
+	assert.equal(persisted.presentation_receipt, undefined);
+	const second = recoveryDependencies(value);
+	await assert.rejects(() => runFacadeAgent(value.config, second.deps), (error: any) => error.code === "FACADE_PRESENTATION_RECOVERY_UNSAFE");
+	assert.equal(first.calls.presentation, 1);
+	assert.equal(second.calls.presentation, 0);
+	assert.deepEqual(second.calls.paid, { image: 0, grammar: 0 });
+	assert.deepEqual(second.calls.pipeline, { evidence: 0, build: 0, validate: 0, score: 0, delivery: 0 });
+});
+
+test("a tampered terminal presentation receipt fails closed without rerendering", async () => {
+	const value = await fixture({ runId: "terminal-presentation-tampered-receipt" });
+	const persisted = await runFacadeAgent(value.config, value.deps);
+	await writeFile(join(value.runDir, persisted.presentation_receipt.path), "{}\n");
+	const recovery = recoveryDependencies(value);
+
+	await assert.rejects(() => runFacadeAgent(value.config, recovery.deps), (error: any) => error.code === "FACADE_AGENT_STATE_UNCERTAIN");
+	assert.equal(recovery.calls.presentation, 0);
+	assert.deepEqual(recovery.calls.paid, { image: 0, grammar: 0 });
+	assert.deepEqual(recovery.calls.pipeline, { evidence: 0, build: 0, validate: 0, score: 0, delivery: 0 });
 });
 
 test("rejects a receipt whose technical manifest is not the selected provider delivery manifest", async () => {
