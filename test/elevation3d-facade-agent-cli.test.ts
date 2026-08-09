@@ -75,7 +75,25 @@ export const fixtureFactory = createFacadeAgentDependencyFactory(async (config) 
     providers, grammarProvider, ledger, score,
     build: async ({ provider, versionId, runDir }) => { await note("build:" + provider); const dir = join(runDir, "artifacts", provider); await mkdir(dir, { recursive: true }); const path = join(dir, versionId + ".glb"); await writeFile(path, GLB); return { artifact: { path, sha256: sha256(GLB) } }; },
     validate: async ({ provider, artifact }) => { await note("validate:" + provider); return { accepted: true, codes: [], metrics: {}, artifacts: { glb: artifact.path, glb_sha256: artifact.sha256 } }; },
-    renderDelivery: async ({ provider }) => ({ provider })
+    renderDelivery: async ({ provider, artifact, deliveryRoot }) => {
+      await mkdir(deliveryRoot, { recursive: true });
+      const manifest = { selected_glb: { sha256: artifact.sha256 } };
+      const manifestPath = join(deliveryRoot, "technical-delivery.json");
+      const manifestBytes = Buffer.from(JSON.stringify(manifest));
+      await writeFile(manifestPath, manifestBytes);
+      return { provider, run_dir: deliveryRoot, manifest, memory_record: { manifest: { path: manifestPath, sha256: sha256(manifestBytes) } } };
+    },
+    renderPresentation: async ({ artifact, presentationRoot }) => {
+      await mkdir(presentationRoot, { recursive: true });
+      const presentation = { selected_glb: { sha256: artifact.sha256 } };
+      const presentationPath = join(presentationRoot, "presentation.json");
+      const presentationBytes = Buffer.from(JSON.stringify(presentation));
+      await writeFile(presentationPath, presentationBytes);
+      return {
+        memory_record: { presentation: { path: presentationPath, sha256: sha256(presentationBytes) }, selected_glb: { sha256: artifact.sha256 } },
+        render: { selected_glb: { sha256: artifact.sha256 }, provider_calls: 0, credits_consumed: 0 },
+      };
+    }
   };
 });
 registerHooks({ resolve(specifier, context, nextResolve) { const resolved = nextResolve(specifier, context); if (resolved.url === ${JSON.stringify(cliUrl)} && context.parentURL === ${JSON.stringify(scriptUrl)}) return { url: ${JSON.stringify(shimUrl)}, shortCircuit: true }; return resolved; } });
