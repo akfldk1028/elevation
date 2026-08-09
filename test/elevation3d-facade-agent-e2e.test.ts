@@ -15,6 +15,7 @@ import {
 import { createFacadeFixtureTransport } from "../plugins/elevation-3d/lib/facade-agent/fixture-transport.mjs";
 import { normalizeFacadeGrammarResult } from "../plugins/elevation-3d/lib/facade-agent/providers/grammar/contract.mjs";
 import { createProductionFacadeAgentDependencies } from "../plugins/elevation-3d/lib/facade-agent/production-dependencies.mjs";
+import { renderEmbeddedPbrViews } from "../plugins/elevation-3d/lib/texturing/render-validator.mjs";
 import {
 	BYTEPLUS_ROUTED_FACADE_FIXTURE,
 	facadeProposalFixture,
@@ -55,6 +56,8 @@ test("routes the offline Seedream and BytePlus fixture through an opaque punched
 	assert.deepEqual([proposalMetadata.format, proposalMetadata.width, proposalMetadata.height], ["png", 1536, 1536]);
 	const fetchCounts = { image: 0, grammar: 0, unexpected: 0 };
 	let deliveryFailure: any = null;
+	let presentationFailure: any = null;
+	let presentationReport: any = null;
 
 	const fixtureFetch = async (url: string | URL, init?: RequestInit) => {
 		const target = String(url);
@@ -88,10 +91,15 @@ test("routes the offline Seedream and BytePlus fixture through an opaque punched
 		const production: any = await createProductionFacadeAgentDependencies(config, {
 			env: { ARK_API_KEY: "fixture-byteplus-key" },
 			fetchImpl: fixtureFetch,
+			presentationRenderer: async (input: any) => {
+				presentationReport = await renderEmbeddedPbrViews(input);
+				return presentationReport;
+			},
 		});
 		const imageAdapter = production.providers["seedream-5-pro"];
 		const grammarAdapter = production.grammarProvider;
 		const renderDelivery = production.renderDelivery;
+		const renderPresentation = production.renderPresentation;
 		return {
 			...production,
 			providers: {
@@ -127,6 +135,14 @@ test("routes the offline Seedream and BytePlus fixture through an opaque punched
 					throw error;
 				}
 			},
+			renderPresentation: async (input: any) => {
+				try {
+					return await renderPresentation(input);
+				} catch (error) {
+					presentationFailure = error;
+					throw error;
+				}
+			},
 		};
 	});
 
@@ -140,7 +156,19 @@ test("routes the offline Seedream and BytePlus fixture through an opaque punched
 	const exitCode = await runFacadeAgentCli(args, { ...runIo, dependencyFactory } as any);
 	assert.equal(exitCode, 0, `${runIo.read().stderr}\n${runIo.read().stdout}\n${deliveryFailure?.stack ?? deliveryFailure ?? ""}\nCAUSE: ${deliveryFailure?.cause?.stack ?? deliveryFailure?.cause ?? ""}`);
 	const summary = JSON.parse(runIo.read().stdout);
-	assert.equal(summary.state, "accepted");
+	assert.equal(summary.state, "accepted", `${stableJson(summary)}\n${presentationFailure?.stack ?? presentationFailure ?? ""}\nCAUSE: ${presentationFailure?.cause?.stack ?? presentationFailure?.cause ?? ""}\nREPORT: ${stableJson({
+		validation: presentationReport?.validation,
+		console_errors: presentationReport?.console_errors,
+		pbr_evidence: presentationReport?.pbr_evidence,
+		presentation_evidence: presentationReport?.presentation_evidence,
+		semantic_role_evidence: presentationReport?.semantic_role_evidence,
+		view_metrics: presentationReport?.views && Object.fromEntries(VIEW_NAMES.map((name) => [name, {
+			foregroundFraction: presentationReport.views[name]?.foregroundFraction,
+			baselineProjectedExtentDelta: presentationReport.views[name]?.baselineProjectedExtentDelta,
+			projectedBoundsPx: presentationReport.views[name]?.projectedBoundsPx,
+		}])),
+		cameras: presentationReport?.views && Object.fromEntries(VIEW_NAMES.map((name) => [name, presentationReport.views[name]?.cameraEvidence])),
+	})}`);
 	const configEnvelope = JSON.parse(await readFile(join(runDir, "facade-agent-config.json"), "utf8"));
 	assert.equal(configEnvelope.config_sha256, sha256(stableJson(configEnvelope.config)));
 	assert.equal(configEnvelope.config.grammarProvider, "byteplus-seed-mini");
@@ -204,6 +232,19 @@ test("routes the offline Seedream and BytePlus fixture through an opaque punched
 	const document = await new NodeIO().read(glbPath);
 	assert.ok(document.getRoot().listMeshes().length > 0, "selected GLB must contain meshes");
 	assert.ok(document.getRoot().listMaterials().length > 0, "selected GLB must contain materials");
+	for (const name of ["brick", "precast"]) {
+		const material = document.getRoot().listMaterials().find((candidate) => candidate.getName() === name);
+		assert.ok(material, `${name} must exist as a semantic material in the selected GLB`);
+		for (const [channel, texture] of [
+			["base-color", material.getBaseColorTexture()],
+			["normal", material.getNormalTexture()],
+			["metallic-roughness", material.getMetallicRoughnessTexture()],
+		] as const) {
+			assert.ok(texture, `${name} ${channel} texture must be embedded in the selected GLB`);
+			assert.match(String(texture.getExtras().sha256 ?? ""), /^[a-f0-9]{64}$/, `${name} ${channel} texture must retain provenance`);
+			assert.match(String(texture.getExtras().grammar_sha256 ?? ""), /^[a-f0-9]{64}$/, `${name} ${channel} texture must retain grammar provenance`);
+		}
+	}
 	const kindCounts = Object.fromEntries(REQUIRED_KINDS.map((kind) => [kind, 0]));
 	const segmentIds = new Set<string>();
 	const floorIds = new Set<number>();
@@ -229,6 +270,39 @@ test("routes the offline Seedream and BytePlus fixture through an opaque punched
 	assert.equal(Object.keys(deliveryManifest.views).length, 8);
 	assert.deepEqual(Object.keys(deliveryManifest.views).sort(), [...VIEW_NAMES].sort());
 
+	const presentationReceiptBytes = await readFile(join(runDir, persisted.presentation_receipt.path));
+	assert.equal(sha256(presentationReceiptBytes), persisted.presentation_receipt.sha256);
+	const presentationReceipt = JSON.parse(presentationReceiptBytes.toString("utf8"));
+	const presentationRecordBytes = await readFile(join(runDir, presentationReceipt.presentation_manifest.path));
+	assert.equal(sha256(presentationRecordBytes), presentationReceipt.presentation_manifest.sha256);
+	const presentationRecord = JSON.parse(presentationRecordBytes.toString("utf8"));
+	const presentation = presentationRecord.render;
+	assert.equal(presentation.schema_version, "arr.elevation3d.embedded-pbr-render.v2");
+	assert.equal(presentation.selected_glb.sha256, accepted.artifact.sha256);
+	assert.equal(presentation.validation.accepted, true);
+	assert.equal(presentation.provider_calls, 0);
+	assert.equal(presentation.credits_consumed, 0);
+	assert.equal(presentation.material_mode, "embedded-pbr");
+	assert.equal(presentation.render_style.id, "competition-daylight-v1");
+	assert.deepEqual(presentation.console_errors, []);
+	assert.equal(presentation.pbr_evidence.base_color_maps > 0, true);
+	assert.equal(presentation.pbr_evidence.normal_maps > 0, true);
+	assert.equal(presentation.pbr_evidence.metallic_roughness_maps > 0, true);
+	const presentationViewHashes = new Set<string>();
+	for (const name of VIEW_NAMES) {
+		assert.equal(presentation.views[name].selectedGlbSha256, accepted.artifact.sha256);
+		assert.match(presentation.views[name].sha256, /^[a-f0-9]{64}$/);
+		presentationViewHashes.add(presentation.views[name].sha256);
+		assert.ok(Object.keys(presentation.semantic_role_evidence[name].roles).length > 0, `${name} must retain non-empty semantic material roles`);
+	}
+	assert.equal(presentationViewHashes.size, 8, "all presentation views must have distinct PNG hashes");
+	for (const name of ["front", "back", "left", "right"]) {
+		assert.equal(deliveryManifest.views[name].selected_glb_sha256, accepted.artifact.sha256);
+		assert.equal(deliveryManifest.views[name].camera_type, "orthographic");
+	}
+	assert.match(presentation.contact_sheet.sha256, /^[a-f0-9]{64}$/);
+	assert.equal(sha256(await readFile(presentation.contact_sheet.path)), presentation.contact_sheet.sha256);
+
 	const browserReportBytes = await readFile(join(runDir, accepted.delivery.browser_verification.path));
 	assert.equal(sha256(browserReportBytes), accepted.delivery.browser_verification.sha256);
 	assert.equal(accepted.delivery.browser_verification.sha256, persisted.delivery.memory_record.browser_verification.sha256);
@@ -247,6 +321,8 @@ test("routes the offline Seedream and BytePlus fixture through an opaque punched
 	const openedPaths = new Set(browserReport.opened_artifacts.map((artifact: any) => new URL(artifact.url).pathname));
 	for (const name of VIEW_NAMES) assert.equal(openedPaths.has(`/${deliveryManifest.views[name].path.replaceAll("\\", "/")}`), true);
 	assert.equal(browserReport.glb_load_count, 1);
+	assert.equal(browserReport.material_stability.transparent_depth_writers, 0);
+	assert.equal(browserReport.material_stability.facade_detail_meshes > 0, true);
 	assert.equal(browserReport.material_stability.deterministic_render_order, true);
 
 	const hashes = new Set<string>();
@@ -273,6 +349,7 @@ test("routes the offline Seedream and BytePlus fixture through an opaque punched
 	}
 	assert.equal(hashes.size, 8, "all named views must have distinct PNG hashes");
 	assert.equal(visualSignatures.size, 8, "all named views must have distinct visual signatures");
+	assert.deepEqual(fetchCounts, { image: 1, grammar: 1, unexpected: 0 });
 	context.diagnostic(stableJson({
 		transport: { image: provider.generation.transport, grammar: provider.grammar.transport },
 		selected_glb: { path: glbPath, sha256: accepted.artifact.sha256 },

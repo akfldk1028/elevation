@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import sharp from "sharp";
-import { renderAllViews, validateAllViewsRun, verifyPersistedAllViewsArtifacts } from "../plugins/elevation-3d/lib/all-views.mjs";
+import { createAllViewsViewRecord, renderAllViews, validateAllViewsRun, verifyPersistedAllViewsArtifacts } from "../plugins/elevation-3d/lib/all-views.mjs";
 import { sha256 } from "../plugins/elevation-3d/lib/core.mjs";
 import { deriveDeliveryCameras } from "../plugins/elevation-3d/lib/final-delivery.mjs";
 import { resolveMaterialPalette } from "../plugins/elevation-3d/lib/material-palettes.mjs";
@@ -58,6 +58,18 @@ test("derived axon cameras retain opposite horizontal depth headings", async () 
 	const axon = horizontalDepth(cameras.axon);
 	const opposite = horizontalDepth(cameras["opposite-axon"]);
 	assert.ok(axon[0] * opposite[0] + axon[1] * opposite[1] < -0.8);
+});
+
+test("durable view records derive camera_type only from the validated camera", () => {
+	for (const name of ["front", "back", "left", "right", "plan", "top", "axon", "opposite-axon"]) {
+		const type = ["axon", "opposite-axon"].includes(name) ? "perspective" : "orthographic";
+		const record = createAllViewsViewRecord("D:/verified-run", {
+			path: `D:/verified-run/${name}.png`, sha256: "a".repeat(64), width: 2400, height: 2400,
+			selected_glb_sha256: "b".repeat(64), camera: { type }, camera_type: "caller-supplied-invalid",
+			validation: { accepted: true, codes: [] },
+		});
+		assert.equal(record.camera_type, type, `${name} must derive camera_type from camera.type`);
+	}
 });
 
 test("packages one inspectable GLB and eight accepted views", { timeout: 600_000 }, async () => {
