@@ -28,6 +28,7 @@ const HEX_SHA256 = /^[a-f0-9]{64}$/;
 const LEGACY_PROVIDER_SCHEMA = "arr.elevation3d.facade-agent-provider.v1";
 const PROVIDER_SCHEMA = "arr.elevation3d.facade-agent-provider.v2";
 const TERMINAL_RUN_STATES = new Set(["winner", "no-winner", "human-review", "cancelled", "delivery-failed", "presentation-failed"]);
+const RETRYABLE_PRESENTATION_FAILURE_CODES = new Set(["FACADE_PRESENTATION_RENDER_REJECTED"]);
 const LOCAL_REPAIR_CODES = new Set([
 	"WINDOW_CROSSES_FLOOR_BAND",
 	"DETAIL_BOUNDS_EXCEEDED",
@@ -953,9 +954,10 @@ function technicalManifestForPresentation(delivery, technicalDelivery, selectedG
 
 async function executePresentationStage({
 	config, deps, runDir, run, provider, artifact: claimedArtifact, delivery, technicalDelivery,
-	validation, validationReceipt, candidate, signal,
+	validation, validationReceipt, candidate, signal, recovery = false,
 }) {
 	let artifact = claimedArtifact;
+	let renderInvoked = false;
 	let renderReturned = false;
 	try {
 		throwIfAborted(signal);
@@ -966,6 +968,7 @@ async function executePresentationStage({
 		await callLifecycle(deps, { stage: "presentation", status: "submitting", provider, selected_glb_sha256: artifact.sha256 });
 		throwIfAborted(signal);
 		artifact = await authorizeGlb(runDir, artifact);
+		renderInvoked = true;
 		const result = await deps.renderPresentation({
 			runDir, candidateId: config.candidateId, provider,
 			presentationRoot: containedPath(runDir, join(runDir, "final-presentation"), "final presentation"),
@@ -996,12 +999,18 @@ async function executePresentationStage({
 		return { presentation: { receipt, memory }, failure: null, aborted: false };
 	} catch (error) {
 		const aborted = isAbort(error, signal);
-		const failure = safeError(error, aborted ? "FACADE_AGENT_CANCELLED" : renderReturned ? "FACADE_PRESENTATION_RECOVERY_UNSAFE" : "FINAL_PRESENTATION_FAILED");
+		const retryableLocalFailure = recovery && renderInvoked && !renderReturned && !aborted
+			&& RETRYABLE_PRESENTATION_FAILURE_CODES.has(error?.code);
+		const recoveryAuthorityFailure = recovery && !renderReturned && !aborted && !retryableLocalFailure;
+		const persistedError = recoveryAuthorityFailure
+			? codedError("FACADE_PRESENTATION_RECOVERY_UNSAFE", "Presentation recovery failed before the local renderer returned", error)
+			: error;
+		const failure = safeError(persistedError, aborted ? "FACADE_AGENT_CANCELLED" : renderReturned ? "FACADE_PRESENTATION_RECOVERY_UNSAFE" : "FINAL_PRESENTATION_FAILED");
 		run.presentation_execution = {
 			status: renderReturned ? "uncertain" : "failed",
 			provider,
 			selected_glb_sha256: artifact.sha256,
-			...(renderReturned ? { failure } : { retryable: !aborted, failure }),
+			...(renderReturned ? { failure } : { retryable: recovery ? retryableLocalFailure : !aborted, failure }),
 		};
 		await persistPublicRun(runDir, run);
 		if (error instanceof LifecycleHookError) throw error;
@@ -1355,12 +1364,17 @@ function terminalPresentationRecoveryCandidate(run) {
 	return run?.status === "winner"
 		&& typeof run.final?.selected_provider === "string" && run.final.selected_provider.length > 0
 		&& HEX_SHA256.test(run.final?.selected_glb_sha256 ?? "")
+		&& run.final?.presentation_sha256 === undefined
 		&& !run.presentation_receipt;
 }
 
 function presentationRecoveryAttemptAllowed(run) {
-	return run.presentation_execution === undefined
-		|| (run.presentation_execution?.status === "failed" && run.presentation_execution.retryable === true);
+	if (run.presentation_execution === undefined) return true;
+	const execution = run.presentation_execution;
+	return execution?.status === "failed" && execution.retryable === true
+		&& RETRYABLE_PRESENTATION_FAILURE_CODES.has(execution.failure?.code)
+		&& execution.provider === run.final?.selected_provider
+		&& execution.selected_glb_sha256 === run.final?.selected_glb_sha256;
 }
 
 async function verifyPresentationReceipt(runDir, run, allowTerminalRecovery = false) {
@@ -1614,7 +1628,7 @@ async function recoverTerminalPresentation({ normalized, runDir, run, deps, sign
 		config: normalized, deps, runDir, run, signal,
 		provider: authorized.provider, artifact: authorized.artifact, delivery: authorized.delivery,
 		technicalDelivery: authorized.technicalDelivery, validation: authorized.validation,
-		validationReceipt: authorized.validationReceipt, candidate: authorized.candidate,
+		validationReceipt: authorized.validationReceipt, candidate: authorized.candidate, recovery: true,
 	});
 	if (!outcome.presentation?.receipt) return run;
 	run.final = { ...run.final, presentation_sha256: outcome.presentation.receipt.receipt_sha256 };
