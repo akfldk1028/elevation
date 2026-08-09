@@ -245,14 +245,20 @@ test("production presentation dependency renders through only the local renderer
 		};
 		const receiptBytes = Buffer.from(JSON.stringify(validationReceipt));
 		const receiptPath = join(runDir, "facade-validation.json");
-		const localRenderer = async () => ({
+		let localRendererCalls = 0;
+		let localRendererInput: any;
+		const localRenderer = async (input: any) => {
+			localRendererCalls += 1;
+			localRendererInput = input;
+			return {
 			schema_version: "arr.elevation3d.embedded-pbr-render.v2",
 			selected_glb: { sha256: selectedGlbSha256 },
 			views: Object.fromEntries(["front", "back", "left", "right", "plan", "top", "axon", "opposite-axon"].map((name) => [name, {
 				selectedGlbSha256, sha256: sha256(name),
 			}])),
 			validation: { accepted: true, codes: [] }, provider_calls: 0, credits_consumed: 0,
-		});
+			};
+		};
 		const deps: any = await createProductionFacadeAgentDependencies(config, {
 			env,
 			fetchImpl: async () => { fetchCalls += 1; throw new Error("presentation must not fetch"); },
@@ -266,7 +272,7 @@ test("production presentation dependency renders through only the local renderer
 		fetchCalls = 0;
 
 		assert.equal(typeof deps.renderPresentation, "function");
-		const result = await deps.renderPresentation({
+		const localPresentationInput = {
 			runDir, presentationRoot: join(runDir, "final-presentation"), candidateId: config.candidateId,
 			artifact: { path: glbPath, sha256: selectedGlbSha256 }, validation,
 			validationReceipt: { path: receiptPath, sha256: sha256(receiptBytes) },
@@ -277,8 +283,14 @@ test("production presentation dependency renders through only the local renderer
 					projection: "orthographic", projection_axes: { depth: [0, 1, 0], vertical: [0, 0, 1] },
 				}])) },
 			},
-		});
+		};
+		const result = await deps.renderPresentation(localPresentationInput);
 		assert.equal(result.selected_glb.sha256, selectedGlbSha256);
+		assert.equal(localRendererCalls, 1);
+		assert.equal(localRendererInput.glbPath, localPresentationInput.artifact.path);
+		assert.equal(localRendererInput.runDir, localPresentationInput.presentationRoot);
+		assert.equal(localRendererInput.candidateId, localPresentationInput.candidateId);
+		assert.equal(localRendererInput.canonicalSelection.selected_glb_sha256, localPresentationInput.artifact.sha256);
 		assert.equal(fetchCalls, 0);
 		assert.equal(credentialReads, 0);
 	} finally { await rm(root, { recursive: true, force: true }); }
