@@ -167,7 +167,7 @@ export function createEmbeddedPbrPresentation({
 	renderer.toneMapping = THREE.ACESFilmicToneMapping;
 	renderer.toneMappingExposure = style.exposure;
 	renderer.shadowMap.enabled = true;
-	renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+	renderer.shadowMap.type = THREE.VSMShadowMap;
 	renderer.setClearColor(style.background, 1);
 
 	let roomEnvironment = null;
@@ -198,37 +198,65 @@ export function createEmbeddedPbrPresentation({
 		new THREE.HemisphereLight(style.hemisphere.sky, style.hemisphere.ground, style.hemisphere.intensity),
 		"competition-daylight-hemisphere",
 	);
-	const sun = markPresentationOnly(
-		new THREE.DirectionalLight(style.sun.color, style.sun.intensity),
-		"competition-daylight-sun",
-	);
-	markPresentationOnly(sun.target, "competition-daylight-sun-target");
-	sun.position.set(...style.sun.position);
 	const target = [
 		(bounds.min.x + bounds.max.x) / 2,
 		(bounds.min.y + bounds.max.y) / 2,
 		(bounds.min.z + bounds.max.z) / 2,
 	];
-	sun.target.position.set(...target);
-	sun.castShadow = true;
-	sun.shadow.mapSize.set(style.sun.shadowMapSize, style.sun.shadowMapSize);
-	sun.shadow.radius = style.sun.radius;
-	sun.shadow.bias = clamp(style.sun.bias, -0.001, 0.001);
-	sun.shadow.normalBias = clamp(style.sun.normalBias, 0, 0.1);
+	function createSun(name) {
+		const light = markPresentationOnly(
+			new THREE.DirectionalLight(style.sun.color, style.sun.intensity / 2),
+			`competition-daylight-sun-${name}`,
+		);
+		markPresentationOnly(light.target, `competition-daylight-sun-${name}-target`);
+		light.target.position.set(...target);
+		light.castShadow = true;
+		light.shadow.mapSize.set(style.sun.shadowMapSize, style.sun.shadowMapSize);
+		light.shadow.intensity = 0.5;
+		light.shadow.radius = style.sun.radius;
+		light.shadow.bias = clamp(style.sun.bias, -0.001, 0.001);
+		light.shadow.normalBias = clamp(style.sun.normalBias, 0, 0.1);
+		return light;
+	}
+	const suns = [createSun("primary"), createSun("soft")];
+	const sun = suns[0];
 	const receiverWidth = (bounds.max.x - bounds.min.x) * (1 + style.ground.padding * 2);
 	const receiverHeight = (bounds.max.y - bounds.min.y) * (1 + style.ground.padding * 2);
 	const shadowExtent = Math.hypot(receiverWidth, receiverHeight, bounds.max.z - bounds.min.z) * 0.55;
-	const sunDistance = Math.hypot(
-		sun.position.x - target[0], sun.position.y - target[1], sun.position.z - target[2],
-	);
-	Object.assign(sun.shadow.camera, {
-		left: -shadowExtent, right: shadowExtent, top: shadowExtent, bottom: -shadowExtent,
-		near: Math.max(0.1, sunDistance - shadowExtent), far: sunDistance + shadowExtent,
-	});
-	sun.target.updateMatrixWorld();
-	sun.updateMatrixWorld();
-	sun.shadow.camera.updateProjectionMatrix();
-	scene.add(hemisphere, sun, sun.target);
+	const styledSunPosition = [...style.sun.position];
+	const mirroredSunPosition = [
+		target[0] * 2 - styledSunPosition[0],
+		target[1] * 2 - styledSunPosition[1],
+		styledSunPosition[2],
+	];
+	const softSunOffset = Math.PI / 12;
+	function softSunPosition(position) {
+		const x = position[0] - target[0], y = position[1] - target[1];
+		return [
+			target[0] + x * Math.cos(softSunOffset) - y * Math.sin(softSunOffset),
+			target[1] + x * Math.sin(softSunOffset) + y * Math.cos(softSunOffset),
+			position[2],
+		];
+	}
+	function configureSun(viewName) {
+		const primaryPosition = viewName === "axon" ? mirroredSunPosition : styledSunPosition;
+		for (const [index, light] of suns.entries()) {
+			const position = index === 0 ? primaryPosition : softSunPosition(primaryPosition);
+			light.position.set(...position);
+			const sunDistance = Math.hypot(
+				light.position.x - target[0], light.position.y - target[1], light.position.z - target[2],
+			);
+			Object.assign(light.shadow.camera, {
+				left: -shadowExtent, right: shadowExtent, top: shadowExtent, bottom: -shadowExtent,
+				near: Math.max(0.1, sunDistance - shadowExtent), far: sunDistance + shadowExtent,
+			});
+			light.target.updateMatrixWorld();
+			light.updateMatrixWorld();
+			light.shadow.camera.updateProjectionMatrix();
+		}
+	}
+	configureSun(null);
+	scene.add(hemisphere, ...suns.flatMap((light) => [light, light.target]));
 
 	const materialRoles = new Map();
 	for (const record of materialRecords) for (const [index, material] of materialsFor(record).entries()) {
@@ -326,6 +354,7 @@ export function createEmbeddedPbrPresentation({
 		const policy = viewPresentationPolicy(viewName, style);
 		removeReceiver();
 		activeView = viewName;
+		configureSun(viewName);
 		if (policy.ground) {
 			receiver = createReceiver();
 			scene.add(receiver);
@@ -341,16 +370,16 @@ export function createEmbeddedPbrPresentation({
 			},
 			toneMapping: { mode: style.toneMapping, exposure: style.exposure, outputColorSpace: THREE.SRGBColorSpace },
 			environment: environmentEvidence,
-			lights: { hemisphere: 1, sun: 1 },
+			lights: { hemisphere: 1, sun: suns.length },
 			shadows: {
-				enabled: true, type: THREE.PCFSoftShadowMap, casters: opaqueMeshes,
+				enabled: true, type: renderer.shadowMap.type, casters: opaqueMeshes,
 				receivers: opaqueMeshes + (receiver ? 1 : 0), bias: sun.shadow.bias, normalBias: sun.shadow.normalBias,
 				target: target.map(evidenceNumber),
 				camera: Object.fromEntries(["left", "right", "top", "bottom", "near", "far"]
 					.map((field) => [field, evidenceNumber(sun.shadow.camera[field])])),
 			},
 			materialRoles: Object.fromEntries(Object.entries(roleCounts).sort(([left], [right]) => left.localeCompare(right))),
-			presentationObjects: { helpers: 3, receivers: receiver ? 1 : 0, total: 3 + (receiver ? 1 : 0) },
+			presentationObjects: { helpers: 5, receivers: receiver ? 1 : 0, total: 5 + (receiver ? 1 : 0) },
 			view: activeView,
 		};
 	}
@@ -360,8 +389,10 @@ export function createEmbeddedPbrPresentation({
 		disposed = true;
 		removeReceiver();
 		scene.remove(hemisphere);
-		scene.remove(sun);
-		scene.remove(sun.target);
+		for (const light of suns) {
+			scene.remove(light);
+			scene.remove(light.target);
+		}
 		for (const [material, values] of materialState) {
 			const { color, ...scalars } = values;
 			Object.assign(material, scalars);

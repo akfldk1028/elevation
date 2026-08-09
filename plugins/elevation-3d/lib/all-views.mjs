@@ -66,12 +66,13 @@ export async function inspectBuiltViewer({ runDir }) {
 	};
 }
 
-function viewRecord(runDir, artifact) {
+export function createAllViewsViewRecord(runDir, artifact) {
+	const camera = artifact.camera ?? artifact.manifest?.camera;
 	return {
 		path: portable(relative(runDir, artifact.path)), sha256: artifact.sha256, width: artifact.width, height: artifact.height,
 		selected_glb_sha256: artifact.selected_glb_sha256 ?? artifact.manifest?.selected_glb?.sha256,
 		palette: artifact.palette ?? artifact.manifest?.palette,
-		camera: artifact.camera ?? artifact.manifest?.camera, validation: artifact.validation,
+		camera, camera_type: camera?.type, validation: artifact.validation,
 		manifest: artifact.manifest_record ? { path: portable(relative(runDir, artifact.manifest_record.path)), sha256: artifact.manifest_record.sha256 } : undefined,
 		validation_report: artifact.validation_report ? { path: portable(relative(runDir, artifact.validation_report.path)), sha256: artifact.validation_report.sha256 } : undefined,
 	};
@@ -181,7 +182,7 @@ export async function renderAllViews(inputs) {
 		verified = { artifacts, palette: artifacts.front.palette, verified_evidence: { schema_version: "arr.elevation3d.all-views-evidence.v1", views: Object.fromEntries(VIEW_NAMES.map((name) => [name, artifacts[name].verified_evidence])) } };
 	}
 	const { artifacts } = verified;
-	const views = Object.fromEntries(VIEW_NAMES.map((name) => [name, viewRecord(root, artifacts[name])]));
+	const views = Object.fromEntries(VIEW_NAMES.map((name) => [name, createAllViewsViewRecord(root, artifacts[name])]));
 	const cameraViews = Object.fromEntries(VIEW_NAMES.map((name) => [name, cameraPreset(name, artifacts[name])]));
 	const palettes = Object.fromEntries(["warm", "neutral", "stone"].map((name) => [name, resolveMaterialPalette(`competition-${name}`)]));
 	const config = {

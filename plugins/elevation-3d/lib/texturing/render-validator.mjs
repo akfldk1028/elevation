@@ -31,23 +31,45 @@ function cameraNumbersFinite(value) {
 
 export function deriveExpectedCameraContract({ name, preset, buildingBounds }) {
 	const clipping = preset.cut ?? { enabled: false, elevation_m: null, plane_world: null };
-	if (preset.type === "perspective") return normalizeCameraValue({
+	const type = preset.type ?? preset.projection;
+	if (type === "perspective") return normalizeCameraValue({
 		type: "perspective", position: preset.position, target: preset.target, up: preset.up,
-		perspective: { fov: preset.fov_degrees, near: preset.near, far: preset.far, aspect: preset.aspect }, orthographic: null,
+		perspective: { fov: preset.fov_degrees, near: preset.near ?? 0.1, far: preset.far ?? 10000, aspect: preset.aspect ?? 1 }, orthographic: null,
 		configured: { projection_axes: null, depth: preset.depth ?? null }, clipping,
 	});
-	if (preset.type !== "orthographic") throw new Error(`unsupported camera preset: ${name}`);
+	if (type !== "orthographic") throw new Error(`unsupported camera preset: ${name}`);
 	const center = buildingBounds.center;
 	const rawDepth = preset.projection_axes.depth;
 	const length = Math.hypot(...rawDepth);
 	const depth = rawDepth.map((value) => value / length);
 	const direction = name === "plan" || name === "top" ? 1 : -1;
 	const position = center.map((value, index) => value + direction * depth[index] * buildingBounds.radius * 4);
+	const projectedBounds = preset.projected_bounds_m;
+	const projectedSpan = Array.isArray(projectedBounds) && projectedBounds.length === 2
+		? Math.max(projectedBounds[1][0] - projectedBounds[0][0], projectedBounds[1][1] - projectedBounds[0][1]) * 1.08
+		: buildingBounds.radius * 2;
+	const frustum = preset.frustum ?? {
+		left: -projectedSpan / 2, right: projectedSpan / 2, top: projectedSpan / 2, bottom: -projectedSpan / 2,
+		near: 0.01, far: 10000,
+	};
 	return normalizeCameraValue({
 		type: "orthographic", position, target: preset.target ?? center, up: preset.projection_axes.vertical,
-		perspective: null, orthographic: { ...preset.frustum, zoom: 1 },
+		perspective: null, orthographic: { ...frustum, zoom: 1 },
 		configured: { projection_axes: preset.projection_axes, depth: null }, clipping,
 	});
+}
+
+function presentationCameraPresets(cameras, proceduralBaseline) {
+	const source = { ...(cameras ?? {}) };
+	if (!source.plan && source.top) source.plan = { ...structuredClone(source.top), name: "plan" };
+	return Object.fromEntries(VIEW_NAMES.map((name) => {
+		const preset = proceduralBaseline?.[name]?.camera ?? source[name];
+		if (!preset) throw new Error(`presentation camera preset is missing: ${name}`);
+		const cut = name === "plan"
+			? { enabled: true, elevation_m: 1.2, plane_world: [0, 0, 1, -1.2] }
+			: { enabled: false, elevation_m: null, plane_world: null };
+		return [name, { ...structuredClone(preset), cut }];
+	}));
 }
 
 function validCameraIdentity(views) {
@@ -158,6 +180,7 @@ async function loadProceduralBaseline(runDir) {
 		result[name] = {
 			minX: bounds.min_x / view.width, minY: bounds.min_y / view.height,
 			maxX: bounds.max_x / view.width, maxY: bounds.max_y / view.height,
+			camera: detailed?.camera ?? view.camera,
 		};
 	}
 	return result;
@@ -165,8 +188,15 @@ async function loadProceduralBaseline(runDir) {
 
 function baselineExtentDelta(bounds, width, height, baseline) {
 	if (!baseline) return Infinity;
-	const normalized = { minX: bounds.minX / width, minY: bounds.minY / height, maxX: bounds.maxX / width, maxY: bounds.maxY / height };
-	return Math.max(...Object.keys(normalized).map((key) => Math.abs(normalized[key] - baseline[key])));
+	const normalized = {
+		width: (bounds.maxX - bounds.minX) / width,
+		height: (bounds.maxY - bounds.minY) / height,
+	};
+	const baselineExtent = {
+		width: baseline.maxX - baseline.minX,
+		height: baseline.maxY - baseline.minY,
+	};
+	return Math.max(...Object.keys(normalized).map((key) => Math.abs(normalized[key] - baselineExtent[key])));
 }
 
 async function writeJsonAtomic(path, value) {
@@ -270,12 +300,13 @@ export async function renderEmbeddedPbrViews({
 	const proceduralBaseline = await loadProceduralBaseline(baselineRunDir);
 	const renderStyle = resolvePbrRenderStyle({ ...(renderStyleOverrides ?? {}), id: renderStyleId });
 	const renderStyleSha256 = renderStyleHash(renderStyle);
+	const presentationCameras = presentationCameraPresets(cameras, proceduralBaseline);
 	const styleArtifact = await writeJsonAtomic(join(root, "render-style.json"), renderStyle);
 	const config = {
 		schema_version: "arr.elevation3d.embedded-pbr-viewer.v1",
 		candidate_id: candidateId,
 		strategies: { hunyuan: { glb: "../textured.glb" } },
-		cameras: { views: cameras },
+		cameras: { views: presentationCameras },
 		all_views: {
 			material_mode: "embedded-pbr",
 			selected_glb: { path: "../textured.glb", sha256: selectedGlbSha256 },
@@ -303,7 +334,14 @@ export async function renderEmbeddedPbrViews({
 		page.on("console", (message) => { if (message.type() === "error") consoleErrors.push(message.text()); });
 		await page.setViewport({ width: outputSize, height: outputSize, deviceScaleFactor: 1 });
 		await page.goto(`${base}?strategy=hunyuan`, { waitUntil: "networkidle0" });
-		await page.waitForFunction(() => globalThis.__ELEVATION3D_READY__ === true, { timeout: 60_000 });
+		try {
+			await page.waitForFunction(() => globalThis.__ELEVATION3D_READY__ === true, { timeout: 60_000 });
+		} catch (cause) {
+			if (!consoleErrors.length) throw cause;
+			const error = new Error(`embedded-PBR viewer startup failed: ${consoleErrors.join("; ")}`, { cause });
+			error.code = "PBR_VIEWER_STARTUP_FAILED";
+			throw error;
+		}
 		const views = {};
 		const presentationEvidence = {};
 		const semanticRoleEvidence = {}, semanticRoleMasks = {};
@@ -318,7 +356,7 @@ export async function renderEmbeddedPbrViews({
 			});
 			const first = decodePng(firstUrl), second = decodePng(secondUrl);
 			const browserState = await page.evaluate(() => globalThis.__ELEVATION3D_VIEWER_STATE__);
-			const expectedCameraContract = deriveExpectedCameraContract({ name, preset: cameras[name], buildingBounds: browserState.building_bounds });
+			const expectedCameraContract = deriveExpectedCameraContract({ name, preset: presentationCameras[name], buildingBounds: browserState.building_bounds });
 			const browserPresentation = await page.evaluate(() => globalThis.__ELEVATION3D_TEST_CONTROLS__.presentationEvidence());
 			const semanticRoleMask = decodePng(await page.evaluate(() => globalThis.__ELEVATION3D_TEST_CONTROLS__.semanticRolePng()));
 			semanticRoleMasks[name] = semanticRoleMask;
@@ -339,12 +377,8 @@ export async function renderEmbeddedPbrViews({
 			const semanticRoleMaskPath = join(directory, `${name}-semantic-roles.png`);
 			await writeFile(path, second);
 			await writeFile(semanticRoleMaskPath, semanticRoleMask);
-			const presentationBounds = proceduralBaseline?.[name] ? {
-				minX: proceduralBaseline[name].minX * outputSize, minY: proceduralBaseline[name].minY * outputSize,
-				maxX: proceduralBaseline[name].maxX * outputSize, maxY: proceduralBaseline[name].maxY * outputSize,
-			} : evidence.projectedBoundsPx;
 			const imagePresentation = await analyzePresentationPng({
-				png: await readFile(path), buildingBounds: presentationBounds, background: renderStyle.background,
+				png: await readFile(path), buildingBounds: evidence.projectedBoundsPx, background: renderStyle.background,
 			});
 			presentationEvidence[name] = { browser: browserPresentation ?? browserState.presentation, image: imagePresentation };
 			semanticRoleEvidence[name] = await analyzeSemanticRolePng({ finalPng: second, roleMaskPng: semanticRoleMask, geometry: semanticGeometryEvidence });
@@ -372,7 +406,7 @@ export async function renderEmbeddedPbrViews({
 		const semanticRoleArtifact = await writeJsonAtomic(join(root, "semantic-role-evidence.json"), {
 			schema_version: "arr.elevation3d.semantic-role-evidence.v1", views: semanticRoleEvidence,
 		});
-		const baseline = await loadPresentationBaseline(presentationBaselineRunDir, { selectedGlbSha256, cameras, currentViews: views });
+		const baseline = await loadPresentationBaseline(presentationBaselineRunDir, { selectedGlbSha256, cameras: presentationCameras, currentViews: views });
 		const baselineSemanticRoleEvidence = baseline.status === "legacy_reanalyzed" ? Object.fromEntries(await Promise.all(VIEW_NAMES.map(async (name) => [
 			name, await analyzeSemanticRolePng({ finalPng: baseline.pngs[name], roleMaskPng: semanticRoleMasks[name], geometry: semanticGeometryEvidence }),
 		]))) : null;

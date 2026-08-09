@@ -70,7 +70,7 @@ class PMREMGenerator {
 }
 
 const THREE = {
-	SRGBColorSpace: "srgb", ACESFilmicToneMapping: "aces", PCFSoftShadowMap: "pcf-soft",
+	SRGBColorSpace: "srgb", ACESFilmicToneMapping: "aces", PCFSoftShadowMap: "pcf-soft", VSMShadowMap: "vsm-soft",
 	Color, Vector3, Group, PlaneGeometry, MeshStandardMaterial, ShadowMaterial, Mesh, HemisphereLight, DirectionalLight, PMREMGenerator,
 };
 
@@ -106,14 +106,14 @@ test("configures one competition daylight rig while preserving embedded material
 	assert.equal(values.renderer.outputColorSpace, "srgb");
 	assert.equal(values.renderer.toneMapping, "aces");
 	assert.equal(values.renderer.toneMappingExposure, 0.94);
-	assert.deepEqual(values.renderer.shadowMap, { enabled: true, type: "pcf-soft" });
+	assert.deepEqual(values.renderer.shadowMap, { enabled: true, type: "vsm-soft" });
 	assert.equal(values.renderer.clearColor, "#fafaf7");
 	assert.equal(PMREMGenerator.instances.length, 1);
 	assert.equal(PMREMGenerator.instances[0].environments.length, 1);
 	assert.equal(values.scene.environment, PMREMGenerator.instances[0].target.texture);
 	assert.equal(values.scene.environmentIntensity, 0.45);
 	assert.equal(values.scene.children.filter((node) => node instanceof HemisphereLight).length, 1);
-	assert.equal(values.scene.children.filter((node) => node instanceof DirectionalLight).length, 1);
+	assert.equal(values.scene.children.filter((node) => node instanceof DirectionalLight).length, 2);
 	const sun = values.scene.children.find((node) => node instanceof DirectionalLight) as DirectionalLight;
 	assert.deepEqual(sun.target.position, new Vector3().set(1, 3, 7));
 	assert.equal(sun.target.matrixWorldUpdates, 1);
@@ -129,7 +129,7 @@ test("configures one competition daylight rig while preserving embedded material
 	for (const slot of ["map", "normalMap", "roughnessMap", "metalnessMap"] as const) assert.ok(values.concrete[slot]);
 	presentation.activateView("axon"); presentation.activateView("axon");
 	assert.equal(PMREMGenerator.instances.length, 1);
-	assert.equal(values.scene.children.filter((node) => node.userData.presentationOnly === true).length, 4);
+	assert.equal(values.scene.children.filter((node) => node.userData.presentationOnly === true).length, 6);
 });
 
 test("continues with the deterministic light rig and records sanitized PMREM failures", () => {
@@ -157,7 +157,7 @@ test("continues with the deterministic light rig and records sanitized PMREM fai
 		assert.doesNotMatch(evidence.environment.message, /secret|target-secret/);
 		assert.equal(values.scene.environment, "old-environment");
 		assert.equal(values.scene.children.filter((node) => node instanceof HemisphereLight).length, 1);
-		assert.equal(values.scene.children.filter((node) => node instanceof DirectionalLight).length, 1);
+		assert.equal(values.scene.children.filter((node) => node instanceof DirectionalLight).length, 2);
 		assert.equal(resources.roomDisposed, stage !== "room");
 		assert.equal(resources.generatorDisposed, stage === "target");
 		presentation.dispose();
@@ -264,6 +264,24 @@ test("resolves provider-collapsed materials from authoritative primitive extras 
 	assert.deepEqual(resolveSemanticRole({ object: primitive, material: { name: "bronze-frame" } }), { role: "bronze", source: "material.name" });
 });
 
+test("keeps a softened physical receiver shadow visible from both axon cameras", () => {
+	const values = fixture();
+	const presentation = createEmbeddedPbrPresentation({ THREE, RoomEnvironment, ...values });
+	const suns = values.scene.children.filter((node) => node instanceof DirectionalLight) as DirectionalLight[];
+	assert.equal(suns.length, 2, "overlapping physical sun samples must prevent a uniform shadow polygon");
+	const [sun, softSun] = suns;
+	assert.equal(sun.intensity + softSun.intensity, values.style.sun.intensity, "softening must preserve total daylight intensity");
+	assert.equal(sun.shadow.intensity, 0.5); assert.equal(softSun.shadow.intensity, 0.5);
+	presentation.activateView("axon");
+	assert.equal(values.renderer.shadowMap.type, "vsm-soft", "the configured softness must produce tonal range instead of a flat umbra");
+	assert.deepEqual(sun.position, new Vector3().set(-10, 14, 60), "the axon sun must cast toward its camera-visible side");
+	assert.notDeepEqual(softSun.position, sun.position, "the second real shadow must form a bounded penumbra");
+	assert.equal(sun.shadow.radius, values.style.sun.radius);
+	presentation.activateView("opposite-axon");
+	assert.deepEqual(sun.position, new Vector3().set(12, -8, 60), "the opposite axon sun must cast toward its camera-visible side");
+	assert.equal(sun.shadow.camera.projectionUpdates, 3, "each physical sun move must refresh its authoritative shadow frustum");
+});
+
 test("applies a bounded semantic response only once when a material is shared by multiple meshes", () => {
 	const values = fixture();
 	const sharedMesh = new Mesh(null, values.concrete);
@@ -343,14 +361,14 @@ test("emits serializable lifecycle evidence and restores every owned resource ex
 		style: { id: "competition-daylight-v1", hash: values.styleHash, materialTints: { concrete: "#fff4e6", glass: "#a8c0cc", bronze: "#8a5a32", opaque: "#454b52" } },
 		toneMapping: { mode: "aces-filmic", exposure: 0.94, outputColorSpace: "srgb" },
 		environment: { type: "room-pmrem", intensity: 0.45, count: 1, status: "ready" },
-		lights: { hemisphere: 1, sun: 1 },
+		lights: { hemisphere: 1, sun: 2 },
 		shadows: {
-			enabled: true, type: "pcf-soft", casters: 2, receivers: 3, bias: -0.0002, normalBias: 0.02,
+			enabled: true, type: "vsm-soft", casters: 2, receivers: 3, bias: -0.0002, normalBias: 0.02,
 			target: [1, 3, 7],
 			camera: { left: -13.492512, right: 13.492512, top: 13.492512, bottom: -13.492512, near: 41.743346, far: 68.72837 },
 		},
 		materialRoles: { bronze: 1, concrete: 1, glass: 1 },
-		presentationObjects: { helpers: 3, receivers: 1, total: 4 },
+		presentationObjects: { helpers: 5, receivers: 1, total: 6 },
 		view: "axon",
 	});
 	presentation.dispose(); presentation.dispose();

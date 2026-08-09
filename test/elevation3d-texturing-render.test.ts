@@ -265,6 +265,26 @@ test("presentation gates do not alter existing geometry, camera, PBR, or stabili
 	}
 });
 
+test("renderer readiness failures preserve the browser error that prevented evidence", async () => {
+	const root = await mkdtemp(join(tmpdir(), "elevation3d-render-readiness-"));
+	temporaryRoots.push(root);
+	const glbPath = join(root, "textured.glb");
+	await writeFile(glbPath, Buffer.from("unchanged textured glb"));
+	const listeners: Record<string, Function> = {};
+	const page = {
+		on: (name: string, callback: Function) => { listeners[name] = callback; },
+		setViewport: async () => {},
+		goto: async () => { listeners.pageerror?.(new Error("fixture viewer startup failed")); },
+		waitForFunction: async () => { throw new Error("fixture readiness timeout"); },
+		close: async () => {},
+	};
+	const browser = { newPage: async () => page, close: async () => {} };
+	await assert.rejects(() => renderEmbeddedPbrViews({
+		glbPath, runDir: join(root, "render"), candidateId: "creative-020", cameras: cameraPresets(), outputSize: 100,
+		lifecycle: { startPreview: async () => "http://127.0.0.1:4173/", stopPreview: async () => {}, launchBrowser: async () => browser },
+	}), /fixture viewer startup failed/);
+});
+
 async function presentationPng(viewIndex: number, diagnostic = false, presentation = true) {
 	const width = 100, height = 100;
 	const data = Buffer.alloc(width * height * 3, 0);
@@ -376,7 +396,9 @@ async function writeProceduralBaseline(root: string) {
 	for (const name of names) {
 		const manifestPath = join("views", name, "view.json");
 		await mkdir(join(root, "views", name), { recursive: true });
-		await writeFile(join(root, manifestPath), JSON.stringify({ building_content: { bounds_px: { min_x: 10, min_y: 5, max_x: 89, max_y: 84 } } }));
+		await writeFile(join(root, manifestPath), JSON.stringify({
+			building_content: { bounds_px: { min_x: 10, min_y: 0, max_x: 89, max_y: 79 } },
+		}));
 		views[name] = { width: 100, height: 100, manifest: { path: manifestPath } };
 	}
 	await writeFile(join(root, "all-views-manifest.json"), JSON.stringify({ views }));
@@ -444,7 +466,7 @@ test("render-only v2 delivery persists resolved style, per-view evidence, baseli
 	assert.equal(report.schema_version, "arr.elevation3d.embedded-pbr-render.v2");
 	assert.equal(report.provider_calls, 0); assert.equal(report.credits_consumed, 0);
 	assert.equal(report.validation.accepted, true, JSON.stringify({ validation: report.validation, cameraEvidence: Object.fromEntries(names.map((name) => [name, report.views[name].cameraEvidence])) }));
-	assert.equal(report.views.axon.baselineProjectedExtentDelta, 0, "presentation-only pixels must not expand procedural geometry bounds");
+	assert.equal(report.views.axon.baselineProjectedExtentDelta, 0, "raster layout offsets must not be treated as projected-geometry extent drift");
 	assert.equal(report.semantic_role_evidence.front.roles.concrete.pixelCount, 1600);
 	assert.equal(report.semantic_role_evidence.front.roles.bronze.visibility.geometryTriangles, 6104);
 	assert.equal(report.semantic_role_evidence.front.roles.bronze.coverageFraction, 0.25);

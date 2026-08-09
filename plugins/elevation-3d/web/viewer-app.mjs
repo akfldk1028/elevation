@@ -67,6 +67,7 @@ function renderInteractiveAllViews(root, gltf = null) {
 	let camera, controls;
 	const materialRecords = [];
 	const embeddedMaps = new Map();
+	const punchedFacadeRoles = { "window-frame": "bronze" };
 	root.traverse((object) => {
 		if (!object.isMesh) return;
 		const materials = Array.isArray(object.material) ? object.material : [object.material];
@@ -77,7 +78,9 @@ function renderInteractiveAllViews(root, gltf = null) {
 			ancestor = ancestor.parent;
 		}
 		const primitiveExtras = resolveGltfPrimitiveExtras({ gltf, object });
-		const resolvedRoles = materials.map((material) => resolveSemanticRole({ object, material, primitiveExtras }));
+		const resolvedRoles = materials.map((material) => punchedFacadeRoles[primitiveExtras?.kind]
+			? { role: punchedFacadeRoles[primitiveExtras.kind], source: "primitive.extras.kind" }
+			: resolveSemanticRole({ object, material, primitiveExtras }));
 		materialRecords.push({
 			object,
 			roles: resolvedRoles.map((entry) => entry.role),
@@ -166,16 +169,24 @@ function renderInteractiveAllViews(root, gltf = null) {
 	}
 	function createPresetCamera(name) {
 		const preset = config.cameras.views[name];
-		if (preset.type === "orthographic") {
-			const frustum = preset.frustum;
+		const type = preset.type ?? preset.projection;
+		if (type === "orthographic") {
+			const projectedBounds = preset.projected_bounds_m;
+			const projectedSpan = Array.isArray(projectedBounds) && projectedBounds.length === 2
+				? Math.max(projectedBounds[1][0] - projectedBounds[0][0], projectedBounds[1][1] - projectedBounds[0][1]) * 1.08
+				: radius * 2;
+			const frustum = preset.frustum ?? {
+				left: -projectedSpan / 2, right: projectedSpan / 2, top: projectedSpan / 2, bottom: -projectedSpan / 2,
+				near: 0.01, far: 10000,
+			};
 			const result = new THREE.OrthographicCamera(frustum.left, frustum.right, frustum.top, frustum.bottom, frustum.near, frustum.far);
 			const depth = new THREE.Vector3(...preset.projection_axes.depth).normalize();
 			result.position.copy(center).addScaledVector(depth, (name === "plan" || name === "top" ? 1 : -1) * radius * 4);
 			result.up.set(...preset.projection_axes.vertical); result.lookAt(center); result.updateProjectionMatrix();
 			return result;
 		}
-		if (preset.type === "perspective") {
-			const result = new THREE.PerspectiveCamera(preset.fov_degrees, innerWidth / innerHeight, preset.near, preset.far);
+		if (type === "perspective") {
+			const result = new THREE.PerspectiveCamera(preset.fov_degrees, innerWidth / innerHeight, preset.near ?? 0.1, preset.far ?? 10000);
 			result.position.set(...preset.position); result.up.set(...preset.up); result.lookAt(new THREE.Vector3(...preset.target)); result.updateProjectionMatrix();
 			return result;
 		}

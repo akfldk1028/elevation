@@ -7,6 +7,7 @@ import { test } from "node:test";
 
 import { deliverFacadeFinalPresentation } from "../plugins/elevation-3d/lib/facade-agent/final-presentation.mjs";
 import { stableJson } from "../plugins/elevation-3d/lib/core.mjs";
+import { rehydrateVerifiedFacadeValidationAuthority } from "../plugins/elevation-3d/lib/enrichment-validation.mjs";
 
 const VIEW_NAMES = ["front", "back", "left", "right", "plan", "top", "axon", "opposite-axon"];
 
@@ -60,6 +61,29 @@ async function fixture() {
 	};
 }
 
+function authoritativeValidation(glbSha256: string) {
+	const metrics = { canonical_surface_match: 1, segment_authority_match: true };
+	const artifacts = { provenance: "drawing-provenance.json" };
+	const authority = {
+		provider: "local-fixture", candidateId: "creative-020",
+		bindings: { glb_sha256: glbSha256, grammar_sha256: "a".repeat(64) },
+		grammar: { system: "brick-punched-window-v1" }, metrics, visualScore: 92,
+	};
+	const validation = rehydrateVerifiedFacadeValidationAuthority({ accepted: true, codes: [], metrics, artifacts }, authority);
+	return { validation, authority, normalized: { accepted: true, codes: [], retryable: false, metrics, artifacts } };
+}
+
+async function replaceValidationReceipt(f: any, validation: any, validationAuthority: any) {
+	const value = {
+		schema_version: "arr.elevation3d.facade-validation-receipt.v1",
+		provider: "local-fixture", version_id: "v001", artifact_sha256: f.glbSha256,
+		validation, validation_authority: validationAuthority,
+	};
+	const bytes = Buffer.from(JSON.stringify(value, null, 2));
+	await writeFile(f.receiptPath, bytes);
+	return { path: f.receiptPath, sha256: sha256(bytes), receipt_sha256: sha256(stableJson(value)) };
+}
+
 test("renders one validated facade GLB into a bound final presentation", async () => {
 	const f = await fixture();
 	try {
@@ -84,6 +108,40 @@ test("renders one validated facade GLB into a bound final presentation", async (
 		assert.deepEqual(Object.keys(result.render.views).sort(), [...VIEW_NAMES].sort());
 		assert.equal(JSON.parse(await readFile(result.memory_record.presentation.path, "utf8")).selected_glb.sha256, f.glbSha256);
 	} finally { await rm(f.runDir, { recursive: true, force: true }); }
+});
+
+test("accepts a normalized receipt for its authoritative runtime validation and rejects semantic drift", async () => {
+	const acceptedFixture = await fixture();
+	try {
+		const authoritative = authoritativeValidation(acceptedFixture.glbSha256);
+		const receipt = await replaceValidationReceipt(acceptedFixture, authoritative.normalized, authoritative.authority);
+		const calls: any[] = [];
+		await deliverFacadeFinalPresentation({
+			runDir: acceptedFixture.runDir, presentationRoot: join(acceptedFixture.runDir, "authoritative-presentation"), candidateId: "creative-020",
+			artifact: { path: acceptedFixture.glbPath, sha256: acceptedFixture.glbSha256 }, validation: authoritative.validation,
+			validationReceipt: receipt, technicalDelivery: acceptedTechnicalDelivery(acceptedFixture.glbSha256), input: candidate(),
+			deps: { renderEmbeddedPbrViews: fakeAcceptedPbrRenderer(calls, acceptedFixture.glbSha256) },
+		});
+		assert.equal(calls.length, 1);
+	} finally { await rm(acceptedFixture.runDir, { recursive: true, force: true }); }
+
+	const mismatchedFixture = await fixture();
+	try {
+		const authoritative = authoritativeValidation(mismatchedFixture.glbSha256);
+		const mismatchedValidation = {
+			...authoritative.normalized,
+			metrics: { ...authoritative.normalized.metrics, canonical_surface_match: 0 },
+		};
+		const receipt = await replaceValidationReceipt(mismatchedFixture, mismatchedValidation, authoritative.authority);
+		const calls: any[] = [];
+		await assert.rejects(() => deliverFacadeFinalPresentation({
+			runDir: mismatchedFixture.runDir, presentationRoot: join(mismatchedFixture.runDir, "mismatched-presentation"), candidateId: "creative-020",
+			artifact: { path: mismatchedFixture.glbPath, sha256: mismatchedFixture.glbSha256 }, validation: authoritative.validation,
+			validationReceipt: receipt, technicalDelivery: acceptedTechnicalDelivery(mismatchedFixture.glbSha256), input: candidate(),
+			deps: { renderEmbeddedPbrViews: fakeAcceptedPbrRenderer(calls, mismatchedFixture.glbSha256) },
+		}), (error: any) => error?.code === "FACADE_PRESENTATION_VALIDATION_RECEIPT_INVALID");
+		assert.equal(calls.length, 0);
+	} finally { await rm(mismatchedFixture.runDir, { recursive: true, force: true }); }
 });
 
 test("rejects unsafe presentation inputs before invoking the renderer", async () => {

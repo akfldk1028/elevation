@@ -3,6 +3,7 @@ import { isAbsolute, join, resolve } from "node:path";
 
 import { sha256, stableJson } from "../core.mjs";
 import { deriveDeliveryCameras } from "../final-delivery.mjs";
+import { readVerifiedFacadeValidationAuthority } from "../enrichment-validation.mjs";
 import { renderEmbeddedPbrViews } from "../texturing/render-validator.mjs";
 import { atomicWrite, assertNoReparsePoints, containedPath } from "./harness.mjs";
 
@@ -44,6 +45,26 @@ function viewHash(view) {
 	return view?.selectedGlbSha256 ?? view?.selected_glb_sha256;
 }
 
+function validationReceiptBound(receipt, validation, selectedGlbSha256) {
+	const receiptValidation = receipt?.validation;
+	if (!receiptValidation || typeof receiptValidation !== "object" || Array.isArray(receiptValidation)) return false;
+	const allowedKeys = new Set(["accepted", "codes", "retryable", "metrics", "artifacts"]);
+	if (Object.keys(receiptValidation).some((key) => !allowedKeys.has(key))) return false;
+	if (Object.hasOwn(receiptValidation, "retryable") && receiptValidation.retryable !== false) return false;
+	const semanticRecord = (value) => Object.fromEntries(["accepted", "codes", "metrics", "artifacts"]
+		.filter((key) => Object.hasOwn(value ?? {}, key)).map((key) => [key, value[key]]));
+	if (stableJson(semanticRecord(receiptValidation)) !== stableJson(semanticRecord(validation))) return false;
+
+	const runtimeAuthority = readVerifiedFacadeValidationAuthority(validation);
+	const receiptAuthority = receipt.validation_authority ?? null;
+	if (Boolean(runtimeAuthority) !== Boolean(receiptAuthority)) return false;
+	if (!runtimeAuthority) return true;
+	return stableJson(runtimeAuthority) === stableJson(receiptAuthority)
+		&& receiptAuthority.provider === receipt.provider
+		&& receiptAuthority.bindings?.glb_sha256 === selectedGlbSha256
+		&& stableJson(receiptAuthority.metrics) === stableJson(receiptValidation.metrics);
+}
+
 async function writeJsonAtomic(path, value, root) {
 	const bytes = Buffer.from(`${JSON.stringify(value, null, 2)}\n`);
 	await atomicWrite(path, bytes, root);
@@ -83,7 +104,7 @@ async function verifyValidationReceipt(runDir, validationReceipt, selectedGlbSha
 	if (receipt?.schema_version !== "arr.elevation3d.facade-validation-receipt.v1"
 		|| receipt?.artifact_sha256 !== selectedGlbSha256
 		|| receipt?.validation?.accepted !== true
-		|| stableJson(receipt.validation) !== stableJson(validation)) {
+		|| !validationReceiptBound(receipt, validation, selectedGlbSha256)) {
 		fail("FACADE_PRESENTATION_VALIDATION_RECEIPT_INVALID", "validation receipt is not bound to the accepted validation and GLB");
 	}
 	return { path: validationReceipt.path, sha256: validationReceipt.sha256, ...(validationReceipt.receipt_sha256 ? { receipt_sha256: validationReceipt.receipt_sha256 } : {}) };
