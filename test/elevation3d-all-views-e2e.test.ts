@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import sharp from "sharp";
@@ -17,7 +17,7 @@ const assets = resolveElevation3dAssets({
 	glbOverride: process.env.ELEVATION3D_SELECTED_GLB,
 });
 const massRoot = join(assets.datasetRoot, "candidates", "creative-013", "mass");
-const runDir = join(dirname(assets.datasetRoot), "elevation-3d-e2e-results", "creative-013", "competition-all-views-20260806-facade-semantics-v1");
+const runDir = join(dirname(assets.datasetRoot), "elevation-3d-e2e-results", "creative-013", "competition-all-views-20260810-final-hardening-v3");
 
 async function realInputs() {
 	const [sourceMesh, floorGuides, facadePlanes, cameraManifest] = await Promise.all([
@@ -90,6 +90,8 @@ test("packages one inspectable GLB and eight accepted views", { timeout: 600_000
 	for (const view of Object.values(run.views)) {
 		assert.deepEqual(await sharp(view.path).metadata().then(({ width, height }) => [width, height]), [2400, 2400]);
 		assert.equal(view.selected_glb_sha256, run.manifest.selected_glb.sha256);
+		const detail = JSON.parse(await readFile(join(runDir, view.manifest.path), "utf8"));
+		if (detail.selected_glb?.path) assert.equal(resolve(detail.selected_glb.path), resolve(runDir, "enriched.glb"));
 	}
 });
 

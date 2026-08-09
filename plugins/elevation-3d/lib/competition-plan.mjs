@@ -1,4 +1,4 @@
-import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import puppeteer from "puppeteer-core";
 import sharp from "sharp";
@@ -7,6 +7,7 @@ import { validateCompetitionPlanTopArtifact, validateCompetitionPlanTopPair } fr
 import { startPreview, stopPreview } from "./preview.mjs";
 import { findChrome } from "./results.mjs";
 import { buildViewerBundle } from "./viewer.mjs";
+import { atomicCopy, atomicWrite, prepareSafeDirectory } from "./facade-agent/path-safety.mjs";
 
 const OUTPUT_SIZE = 2400;
 
@@ -58,10 +59,10 @@ function contentBounds(raw, width, height) {
 	return { bounds: { min_x: minX, min_y: minY, max_x: maxX, max_y: maxY }, foreground_fraction: foreground / (width * height) };
 }
 
-async function writeBrowserPng(page, renderMode, path) {
+async function writeBrowserPng(page, renderMode, path, approvedRoot) {
 	const dataUrl = await page.evaluate(async (mode) => globalThis.__ELEVATION3D_RENDER_MODE__(mode), renderMode);
 	const bytes = decodeDataUrl(dataUrl);
-	await writeFile(path, bytes);
+	await atomicWrite(path, bytes, approvedRoot);
 	return bytes;
 }
 
@@ -72,7 +73,7 @@ export async function renderCompetitionPlan({
 }) {
 	assertInputs({ mode, cutElevationM, camera, palette, sourceMesh });
 	const root = join(resolve(runDir), "views", mode);
-	await mkdir(root, { recursive: true });
+	await prepareSafeDirectory(resolve(runDir), root, "competition plan directory");
 	const selectedBytes = await readFile(glbPath);
 	const selectedGlbSha256 = sha256(selectedBytes);
 	const exactBounds = { min: camera.projected_bounds_m[0], max: camera.projected_bounds_m[1] };
@@ -94,7 +95,7 @@ export async function renderCompetitionPlan({
 	};
 	const viewerConfigSha256 = sha256(stableJson(config));
 	await buildViewerBundle({ runDir: root, config });
-	await copyFile(glbPath, join(root, "viewer", "selected.glb"));
+	await atomicCopy(glbPath, join(root, "viewer", "selected.glb"), root);
 	const start = lifecycle.startPreview ?? startPreview;
 	const stop = lifecycle.stopPreview ?? stopPreview;
 	const launch = lifecycle.launchBrowser ?? (async () => puppeteer.launch({
@@ -121,10 +122,10 @@ export async function renderCompetitionPlan({
 			normal: join(root, `${mode}-normal.png`),
 		};
 		// Canvas render state is shared, so captures must remain sequential.
-		const bytes = await writeBrowserPng(page, "base", path);
-		const materialBytes = await writeBrowserPng(page, "material-id", diagnosticPaths.material_id);
-		const depthBytes = await writeBrowserPng(page, "depth", diagnosticPaths.depth);
-		const normalBytes = await writeBrowserPng(page, "normal", diagnosticPaths.normal);
+		const bytes = await writeBrowserPng(page, "base", path, root);
+		const materialBytes = await writeBrowserPng(page, "material-id", diagnosticPaths.material_id, root);
+		const depthBytes = await writeBrowserPng(page, "depth", diagnosticPaths.depth, root);
+		const normalBytes = await writeBrowserPng(page, "normal", diagnosticPaths.normal, root);
 		const browserArtifact = await page.evaluate(() => globalThis.__ELEVATION3D_ARTIFACT__);
 		const decoded = await sharp(bytes).removeAlpha().raw().toBuffer({ resolveWithObject: true });
 		if (decoded.info.width !== OUTPUT_SIZE || decoded.info.height !== OUTPUT_SIZE) throw new Error("competition plan PNG size invalid");
@@ -155,7 +156,7 @@ export async function renderCompetitionPlan({
 			diagnostics,
 		};
 		const manifestPath = join(root, `${mode}-manifest.json`);
-		await writeFile(manifestPath, JSON.stringify(manifest, null, 2));
+		await atomicWrite(manifestPath, Buffer.from(JSON.stringify(manifest, null, 2)), root);
 		const result = {
 			path, sha256: sha256(bytes), width: decoded.info.width, height: decoded.info.height,
 			manifest, diagnostics,
@@ -163,7 +164,7 @@ export async function renderCompetitionPlan({
 		};
 		const validation = await validateCompetitionPlanTopArtifact({ artifact: result, sourceMesh, camera, selectedGlbPath: glbPath, mode, cutElevationM });
 		const validationPath = join(root, `${mode}-validation.json`);
-		await writeFile(validationPath, JSON.stringify(validation, null, 2));
+		await atomicWrite(validationPath, Buffer.from(JSON.stringify(validation, null, 2)), root);
 		return { ...result, validation, validation_report: { path: validationPath, sha256: sha256(await readFile(validationPath)) } };
 	} finally {
 		try { if (page) await page.close(); }

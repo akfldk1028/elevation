@@ -264,6 +264,14 @@ test("resolves provider-collapsed materials from authoritative primitive extras 
 	assert.deepEqual(resolveSemanticRole({ object: primitive, material: { name: "bronze-frame" } }), { role: "bronze", source: "material.name" });
 });
 
+test("resolves a window-frame kind as bronze without a viewer-local override", () => {
+	const resolveSemanticRole = (embeddedPresentationModule as any).resolveSemanticRole;
+	assert.deepEqual(
+		resolveSemanticRole({ object: new Node(), material: { name: "facade-details_material", userData: {} }, primitiveExtras: { kind: "window-frame" } }),
+		{ role: "bronze", source: "primitive.extras.kind" },
+	);
+});
+
 test("keeps a softened physical receiver shadow visible from both axon cameras", () => {
 	const values = fixture();
 	const presentation = createEmbeddedPbrPresentation({ THREE, RoomEnvironment, ...values });

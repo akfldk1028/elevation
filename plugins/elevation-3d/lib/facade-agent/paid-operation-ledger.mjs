@@ -378,16 +378,25 @@ function publicResult(record) {
 	};
 }
 
+function checkedAddMicros(total, value, label) {
+	const next = total + value;
+	if (!Number.isSafeInteger(next)) {
+		throw codedError("PAID_OPERATION_AGGREGATE_UNSAFE", `Paid operation ${label} exceeds the supported exact micro-dollar range`);
+	}
+	return next;
+}
+
 function assertAggregateBudget(ledger, input) {
-	if (input.runCeilingMicros === undefined && input.kindCeilingMicros === undefined) return;
 	const operations = Object.values(ledger.operations);
-	const runReserved = operations.reduce((sum, operation) => sum + operation.ceilingMicros, 0);
+	const runReserved = operations.reduce((sum, operation) => checkedAddMicros(sum, operation.ceilingMicros, "run reservation aggregate"), 0);
 	const kindReserved = operations.filter((operation) => operation.kind === input.kind)
-		.reduce((sum, operation) => sum + operation.ceilingMicros, 0);
-	if (input.runCeilingMicros !== undefined && runReserved + input.ceilingMicros > input.runCeilingMicros) {
+		.reduce((sum, operation) => checkedAddMicros(sum, operation.ceilingMicros, "kind reservation aggregate"), 0);
+	const nextRunReserved = checkedAddMicros(runReserved, input.ceilingMicros, "run reservation aggregate");
+	const nextKindReserved = checkedAddMicros(kindReserved, input.ceilingMicros, "kind reservation aggregate");
+	if (input.runCeilingMicros !== undefined && nextRunReserved > input.runCeilingMicros) {
 		throw codedError("PAID_OPERATION_AGGREGATE_BUDGET_EXCEEDED", "Paid operation reservations exceed the approved run budget");
 	}
-	if (input.kindCeilingMicros !== undefined && kindReserved + input.ceilingMicros > input.kindCeilingMicros) {
+	if (input.kindCeilingMicros !== undefined && nextKindReserved > input.kindCeilingMicros) {
 		throw codedError("PAID_OPERATION_AGGREGATE_BUDGET_EXCEEDED", "Paid operation reservations exceed the approved kind budget");
 	}
 }
@@ -398,9 +407,9 @@ function costSummary(operations) {
 	const byKind = Object.fromEntries([...ALLOWED_KINDS].map((kind) => [kind, empty()]));
 	for (const operation of operations) {
 		for (const target of [total, byKind[operation.kind]]) {
-			target.reserved_ceiling_micros += operation.ceilingMicros;
-			target.estimated_micros += operation.estimateMicros;
-			target.actual_micros += operation.actualMicros ?? 0;
+			target.reserved_ceiling_micros = checkedAddMicros(target.reserved_ceiling_micros, operation.ceilingMicros, "reserved ceiling aggregate");
+			target.estimated_micros = checkedAddMicros(target.estimated_micros, operation.estimateMicros, "estimate aggregate");
+			target.actual_micros = checkedAddMicros(target.actual_micros, operation.actualMicros ?? 0, "actual cost aggregate");
 		}
 	}
 	for (const target of [total, ...Object.values(byKind)]) {

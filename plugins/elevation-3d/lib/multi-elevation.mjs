@@ -1,8 +1,9 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { renderCompetitionElevation } from "./competition-elevation.mjs";
 import { sha256 } from "./core.mjs";
 import { deriveElevationDimensions } from "./elevation-dimensions.mjs";
+import { atomicWrite, prepareSafeDirectory } from "./facade-agent/path-safety.mjs";
 
 const ELEVATION_NAMES = ["front", "back", "left", "right"];
 
@@ -103,9 +104,9 @@ export async function renderCompetitionElevations(inputs) {
 	}
 	const manifest = await buildMultiElevationManifest(views);
 	const root = resolve(inputs.runDir);
-	await mkdir(root, { recursive: true });
+	await prepareSafeDirectory(root, root, "multi-elevation root");
 	const manifestPath = join(root, "multi-elevation-manifest.json");
-	await writeFile(manifestPath, JSON.stringify(manifest, null, 2));
+	await atomicWrite(manifestPath, Buffer.from(JSON.stringify(manifest, null, 2)), root);
 	return {
 		...manifest,
 		manifest: { path: manifestPath, sha256: sha256(await readFile(manifestPath)) },

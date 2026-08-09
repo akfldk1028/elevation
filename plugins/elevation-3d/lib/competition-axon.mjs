@@ -1,4 +1,4 @@
-import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import puppeteer from "puppeteer-core";
 import sharp from "sharp";
@@ -6,6 +6,7 @@ import { sha256, stableJson } from "./core.mjs";
 import { startPreview, stopPreview } from "./preview.mjs";
 import { findChrome } from "./results.mjs";
 import { buildViewerBundle } from "./viewer.mjs";
+import { atomicCopy, atomicWrite, prepareSafeDirectory } from "./facade-agent/path-safety.mjs";
 
 const OUTPUT_SIZE = 2400;
 const VIEW_NAMES = ["axon", "opposite-axon"];
@@ -180,7 +181,7 @@ export function validateCompetitionAxonManifest(manifest) {
 
 async function renderView({ runDir, glbPath, palette, cameras, candidateId, view, selectedGlbSha256, signal, lifecycle }) {
 	const root = join(resolve(runDir), "views", view);
-	await mkdir(root, { recursive: true });
+	await prepareSafeDirectory(resolve(runDir), root, "competition axon directory");
 	const config = {
 		schema_version: "arr.elevation3d.competition-viewer.v1",
 		candidate_id: candidateId,
@@ -200,7 +201,7 @@ async function renderView({ runDir, glbPath, palette, cameras, candidateId, view
 	};
 	const viewerConfigSha256 = sha256(stableJson(config));
 	await buildViewerBundle({ runDir: root, config });
-	await copyFile(glbPath, join(root, "viewer", "selected.glb"));
+	await atomicCopy(glbPath, join(root, "viewer", "selected.glb"), root);
 	const start = lifecycle.startPreview ?? startPreview;
 	const stop = lifecycle.stopPreview ?? stopPreview;
 	const launch = lifecycle.launchBrowser ?? (async () => puppeteer.launch({
@@ -224,7 +225,7 @@ async function renderView({ runDir, glbPath, palette, cameras, candidateId, view
 		const materialUrl = await page.evaluate(async () => globalThis.__ELEVATION3D_RENDER_MODE__("material-id"));
 		const bytes = decodeDataUrl(baseUrl), materialBytes = decodeDataUrl(materialUrl);
 		const path = join(root, `${view}.png`), materialPath = join(root, `${view}-material-id.png`);
-		await Promise.all([writeFile(path, bytes), writeFile(materialPath, materialBytes)]);
+		await Promise.all([atomicWrite(path, bytes, root), atomicWrite(materialPath, materialBytes, root)]);
 		const [decoded, decodedMaterial] = await Promise.all([
 			sharp(bytes).removeAlpha().raw().toBuffer({ resolveWithObject: true }),
 			sharp(materialBytes).removeAlpha().raw().toBuffer({ resolveWithObject: true }),
@@ -247,8 +248,8 @@ async function renderView({ runDir, glbPath, palette, cameras, candidateId, view
 		};
 		const validation = validateCompetitionAxonManifest(manifest);
 		const manifestPath = join(root, `${view}-manifest.json`), validationPath = join(root, `${view}-validation.json`);
-		await writeFile(manifestPath, JSON.stringify(manifest, null, 2));
-		await writeFile(validationPath, JSON.stringify(validation, null, 2));
+		await atomicWrite(manifestPath, Buffer.from(JSON.stringify(manifest, null, 2)), root);
+		await atomicWrite(validationPath, Buffer.from(JSON.stringify(validation, null, 2)), root);
 		return {
 			path, sha256: sha256(bytes), width: manifest.width, height: manifest.height,
 			selected_glb_sha256: selectedGlbSha256, camera: manifest.camera, loaded_bounds: manifest.loaded_bounds,
@@ -290,8 +291,8 @@ export async function renderCompetitionAxons({ runDir, glbPath, palette, cameras
 		camera_depth_dot: oppositionDot,
 	};
 	const pairManifestPath = join(resolve(runDir), "paired-axon-manifest.json"), pairValidationPath = join(resolve(runDir), "paired-axon-validation.json");
-	await writeFile(pairManifestPath, JSON.stringify(pairManifest, null, 2));
-	await writeFile(pairValidationPath, JSON.stringify(validation, null, 2));
+	await atomicWrite(pairManifestPath, Buffer.from(JSON.stringify(pairManifest, null, 2)), resolve(runDir));
+	await atomicWrite(pairValidationPath, Buffer.from(JSON.stringify(validation, null, 2)), resolve(runDir));
 	return {
 		views, validation,
 		manifest_record: { path: pairManifestPath, sha256: sha256(await readFile(pairManifestPath)) },

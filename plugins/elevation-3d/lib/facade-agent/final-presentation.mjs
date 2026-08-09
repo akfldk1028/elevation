@@ -1,11 +1,14 @@
-import { lstat, readFile } from "node:fs/promises";
+import { lstat, readFile, unlink } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 
 import { sha256, stableJson } from "../core.mjs";
 import { deriveDeliveryCameras } from "../final-delivery.mjs";
 import { readVerifiedFacadeValidationAuthority } from "../enrichment-validation.mjs";
+import { cameraContractHash, deriveExpectedCameraContract, normalizeCameraValue, presentationCameraPresets, technicalCameraAuthorityFromGlb } from "../camera-authority.mjs";
 import { loadVerifiedProceduralBaseline, renderEmbeddedPbrViews } from "../texturing/render-validator.mjs";
-import { atomicWrite, assertNoReparsePoints, containedPath } from "./harness.mjs";
+import { buildFacadeArtifactClosure } from "./artifact-closure.mjs";
+import { facadeCandidateHash } from "./candidate-authority.mjs";
+import { atomicWrite, assertNoReparsePoints, containedPath, safeRead } from "./path-safety.mjs";
 
 const VIEW_NAMES = Object.freeze(["front", "back", "left", "right", "plan", "top", "axon", "opposite-axon"]);
 
@@ -80,6 +83,19 @@ async function rejectExistingOutput(path) {
 	}
 }
 
+async function rollbackOwnedManifest(runDir, path, reference) {
+	let bytes;
+	try { bytes = await safeRead(runDir, path, "failed presentation wrapper"); }
+	catch (error) { if (error?.code === "ENOENT") return; throw error; }
+	if (sha256(bytes) !== reference.sha256) {
+		fail("FACADE_PRESENTATION_ARTIFACT_CLOSURE_INVALID", "failed presentation wrapper changed before rollback");
+	}
+	containedPath(runDir, path, "failed presentation wrapper");
+	await assertNoReparsePoints(path);
+	await unlink(path);
+	await assertNoReparsePoints(path);
+}
+
 async function verifyValidationReceipt(runDir, validationReceipt, selectedGlbSha256, validation) {
 	if (!validationReceipt || typeof validationReceipt.path !== "string" || !/^[a-f0-9]{64}$/i.test(validationReceipt.sha256 ?? "")) {
 		fail("FACADE_PRESENTATION_VALIDATION_RECEIPT_INVALID", "validation receipt reference is invalid");
@@ -107,10 +123,20 @@ async function verifyValidationReceipt(runDir, validationReceipt, selectedGlbSha
 		|| !validationReceiptBound(receipt, validation, selectedGlbSha256)) {
 		fail("FACADE_PRESENTATION_VALIDATION_RECEIPT_INVALID", "validation receipt is not bound to the accepted validation and GLB");
 	}
-	return { path: validationReceipt.path, sha256: validationReceipt.sha256, ...(validationReceipt.receipt_sha256 ? { receipt_sha256: validationReceipt.receipt_sha256 } : {}) };
+	return {
+		ref: { path: validationReceipt.path, sha256: validationReceipt.sha256, ...(validationReceipt.receipt_sha256 ? { receipt_sha256: validationReceipt.receipt_sha256 } : {}) },
+		value: receipt,
+	};
 }
 
-function validateRender(render, selectedGlbSha256) {
+function normalizedEqual(left, right) {
+	return stableJson(normalizeCameraValue(left)) === stableJson(normalizeCameraValue(right));
+}
+
+function validateRender(render, { selectedGlbSha256, canonicalSelection, presentationCameras, buildingBounds }) {
+	if (render?.schema_version !== "arr.elevation3d.embedded-pbr-render.v2") {
+		fail("FACADE_PRESENTATION_RENDER_REJECTED", "embedded-PBR render-v2 authority is required");
+	}
 	if (render?.validation?.accepted !== true) fail("FACADE_PRESENTATION_RENDER_REJECTED", "embedded-PBR render validation was rejected");
 	if (render.provider_calls !== 0 || render.credits_consumed !== 0) fail("FACADE_PRESENTATION_REMOTE_ACTIVITY", "final presentation renderer reported remote activity");
 	if (!exactViewNames(render.views)) fail("FACADE_PRESENTATION_RENDER_REJECTED", "embedded-PBR render must contain exactly eight named views");
@@ -118,10 +144,38 @@ function validateRender(render, selectedGlbSha256) {
 		|| VIEW_NAMES.some((name) => viewHash(render.views[name]) !== selectedGlbSha256)) {
 		fail("FACADE_PRESENTATION_RENDER_REJECTED", "embedded-PBR render is not bound to the selected GLB");
 	}
+	if (stableJson(render.canonical_selection) !== stableJson(canonicalSelection)) {
+		fail("FACADE_PRESENTATION_RENDER_REJECTED", "embedded-PBR render canonical selection differs from selected authority");
+	}
+	const cameraSha256 = cameraContractHash(presentationCameras);
+	if (render.camera_authority?.sha256 !== cameraSha256 || !normalizedEqual(render.camera_authority?.views, presentationCameras)) {
+		fail("FACADE_PRESENTATION_RENDER_REJECTED", "embedded-PBR render camera authority differs from candidate authority");
+	}
+	for (const name of VIEW_NAMES) {
+		const evidence = render.views[name]?.cameraEvidence;
+		let independentExpected;
+		try {
+			independentExpected = deriveExpectedCameraContract({ name, preset: presentationCameras[name], buildingBounds });
+		} catch {
+			fail("FACADE_PRESENTATION_RENDER_REJECTED", `embedded-PBR ${name} camera lacks independently derivable building bounds`);
+		}
+		if (!evidence || !normalizedEqual(evidence.building_bounds, buildingBounds)
+			|| !normalizedEqual(evidence.expected, evidence.actual)
+			|| !normalizedEqual(evidence.expected, independentExpected)
+			|| evidence.expected_hash !== cameraContractHash(evidence.expected)
+			|| evidence.actual_hash !== cameraContractHash(evidence.actual)) {
+			fail("FACADE_PRESENTATION_RENDER_REJECTED", `embedded-PBR ${name} browser camera differs from its independent expected contract`);
+		}
+	}
+	if (render.material_mode !== "embedded-pbr" || render.render_style?.id !== "competition-daylight-v1"
+		|| !["material_count", "base_color_maps", "normal_maps", "metallic_roughness_maps"]
+			.every((key) => Number.isFinite(render.pbr_evidence?.[key]) && render.pbr_evidence[key] > 0)) {
+		fail("FACADE_PRESENTATION_RENDER_REJECTED", "embedded-PBR material, style, or map evidence is invalid");
+	}
 }
 
 export async function deliverFacadeFinalPresentation({
-	runDir, presentationRoot, candidateId, artifact, validation, validationReceipt, technicalDelivery,
+	runDir, presentationRoot, candidateId, candidateSha256, provider, selectedVersion, artifact, validation, validationReceipt, technicalDelivery,
 	input, signal, lifecycle, deps = {},
 } = {}) {
 	throwIfAborted(signal);
@@ -135,8 +189,25 @@ export async function deliverFacadeFinalPresentation({
 	const glbBytes = await readFile(glbPath);
 	const selectedGlbSha256 = sha256(glbBytes);
 	if (selectedGlbSha256 !== artifact.sha256) fail("FACADE_PRESENTATION_GLB_HASH_MISMATCH", "selected GLB hash does not match the artifact authority");
+	const cameras = deriveDeliveryCameras(input);
+	let technicalCameraAuthority;
+	try { technicalCameraAuthority = await technicalCameraAuthorityFromGlb({ bytes: glbBytes, cameras }); }
+	catch (error) { fail("FACADE_PRESENTATION_GLB_INVALID", "selected GLB geometry bounds are unavailable", error); }
+	const buildingBounds = technicalCameraAuthority.building_bounds;
 	if (validation?.accepted !== true) fail("FACADE_PRESENTATION_VALIDATION_REQUIRED", "accepted facade validation is required");
-	const receipt = await verifyValidationReceipt(absoluteRunDir, validationReceipt, selectedGlbSha256, validation);
+	const verifiedReceipt = await verifyValidationReceipt(absoluteRunDir, validationReceipt, selectedGlbSha256, validation);
+	const inputCandidateId = input?.candidate?.candidate_id ?? input?.candidate_id;
+	const effectiveCandidateSha256 = candidateSha256;
+	const effectiveProvider = provider;
+	if (candidateId !== inputCandidateId || typeof effectiveProvider !== "string" || effectiveProvider.length === 0
+		|| !/^[a-f0-9]{64}$/i.test(effectiveCandidateSha256 ?? "")
+		|| effectiveCandidateSha256 !== facadeCandidateHash(input)
+		|| effectiveProvider !== verifiedReceipt.value.provider
+		|| typeof selectedVersion !== "string" || selectedVersion.length === 0
+		|| selectedVersion !== verifiedReceipt.value.version_id
+		|| (verifiedReceipt.value.validation_authority?.candidateId && verifiedReceipt.value.validation_authority.candidateId !== candidateId)) {
+		fail("FACADE_PRESENTATION_AUTHORITY_MISMATCH", "presentation provider or preflight candidate authority does not match");
+	}
 	if (technicalDelivery?.manifest?.selected_glb?.sha256 !== selectedGlbSha256) {
 		fail("FACADE_PRESENTATION_TECHNICAL_BINDING_MISMATCH", "technical delivery is bound to a different selected GLB");
 	}
@@ -149,10 +220,13 @@ export async function deliverFacadeFinalPresentation({
 			? technicalDelivery.run_dir : resolve(absoluteRunDir, technicalDelivery.run_dir);
 		const technicalRoot = safeContainedPath(absoluteRunDir, requestedTechnicalRoot, "technical delivery root");
 		await safeNoReparsePoints(technicalRoot);
+		const authoritativeCameras = presentationCameraPresets(deriveDeliveryCameras(input));
 		proceduralBaseline = await loadVerifiedProceduralBaseline({
 			runDir: technicalRoot,
 			manifestRecord: technicalDelivery.memory_record?.manifest,
 			selectedGlbSha256,
+			authoritativeCameras,
+			expectedTechnicalCameras: technicalCameraAuthority.cameras,
 		});
 	} catch (error) {
 		if (error?.code === "FACADE_PRESENTATION_PATH_INVALID") throw error;
@@ -165,7 +239,16 @@ export async function deliverFacadeFinalPresentation({
 	const manifestPath = join(root, "final-presentation.json");
 	await safeNoReparsePoints(manifestPath);
 	await rejectExistingOutput(manifestPath);
-	const cameras = deriveDeliveryCameras(input);
+	const presentationCameras = presentationCameraPresets(cameras);
+	const cameraAuthoritySha256 = cameraContractHash(presentationCameras);
+	const canonicalSelection = {
+		provider: effectiveProvider,
+		candidate_id: candidateId,
+		candidate_sha256: effectiveCandidateSha256,
+		selected_glb_sha256: selectedGlbSha256,
+		facade_validation_receipt_sha256: validationReceipt.sha256,
+		camera_authority_sha256: cameraAuthoritySha256,
+	};
 	throwIfAborted(signal);
 
 	let render;
@@ -177,11 +260,7 @@ export async function deliverFacadeFinalPresentation({
 			cameras,
 			proceduralBaseline,
 			renderStyleId: "competition-daylight-v1",
-			canonicalSelection: {
-				candidate_id: candidateId,
-				selected_glb_sha256: selectedGlbSha256,
-				facade_validation_receipt_sha256: validationReceipt.sha256,
-			},
+			canonicalSelection,
 			signal,
 			lifecycle,
 		});
@@ -196,7 +275,7 @@ export async function deliverFacadeFinalPresentation({
 	if (sha256(await readFile(glbPath)) !== selectedGlbSha256) {
 		fail("FACADE_PRESENTATION_GLB_MUTATED", "selected GLB changed during presentation rendering");
 	}
-	validateRender(render, selectedGlbSha256);
+	validateRender(render, { selectedGlbSha256, canonicalSelection, presentationCameras, buildingBounds });
 
 	const record = {
 		schema_version: "arr.elevation3d.facade-final-presentation.v1",
@@ -204,11 +283,37 @@ export async function deliverFacadeFinalPresentation({
 		technical_delivery: technicalDelivery,
 		render,
 		memory_record: { presentation: null },
-		receipt,
+		receipt: verifiedReceipt.ref,
 	};
 	const presentation = await writeJsonAtomic(manifestPath, record, root);
-	// The content hash cannot be embedded in the bytes it hashes; the returned
-	// memory record therefore carries the content address for the durable file.
-	record.memory_record.presentation = presentation;
-	return record;
+	let closure;
+	try {
+		closure = await buildFacadeArtifactClosure({
+			runDir: absoluteRunDir, closurePath: join(root, "artifact-closure.json"),
+			provider: effectiveProvider, candidateId, candidateSha256: effectiveCandidateSha256, selectedVersion,
+			selectedGlb: { path: artifact.path, sha256: selectedGlbSha256 }, validationReceipt,
+			cameraAuthority: { sha256: cameraAuthoritySha256 }, technicalDelivery,
+			presentationRoot: root, render, presentationManifest: presentation,
+		});
+	} catch (error) {
+		try { await rollbackOwnedManifest(absoluteRunDir, manifestPath, presentation); }
+		catch (rollbackError) {
+			fail("FACADE_PRESENTATION_ARTIFACT_CLOSURE_INVALID", "final presentation artifact closure failed and wrapper rollback was not safe", new AggregateError([error, rollbackError]));
+		}
+		if (error?.code === "FACADE_PRESENTATION_ARTIFACT_CLOSURE_INVALID") throw error;
+		fail("FACADE_PRESENTATION_ARTIFACT_CLOSURE_INVALID", "final presentation artifact closure failed", error);
+	}
+	// The durable wrapper remains byte-identical to the document that was
+	// content-addressed. Publication metadata lives in this distinct envelope.
+	return {
+		...record,
+		memory_record: {
+			presentation, artifact_closure: closure.ref,
+			selected_glb: { path: artifact.path, sha256: selectedGlbSha256 },
+			contact_sheet: closure.closure.presentation.artifacts.contact_sheet,
+			views: Object.fromEntries(VIEW_NAMES.map((name) => [name, {
+				...closure.closure.presentation.views[name].image, selected_glb_sha256: selectedGlbSha256,
+			}])),
+		},
+	};
 }

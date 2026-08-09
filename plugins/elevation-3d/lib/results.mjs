@@ -5,6 +5,7 @@ import { loadCandidatePackage, redactSecrets, sha256 } from "./core.mjs";
 import { compareGeometry, readGeometry } from "./geometry.mjs";
 import { startPreview, stopPreview } from "./preview.mjs";
 import { buildViewerBundle } from "./viewer.mjs";
+import { atomicWrite, prepareSafeDirectory } from "./facade-agent/path-safety.mjs";
 
 const VIEW_NAMES = ["front", "right", "back", "left", "top"];
 
@@ -77,7 +78,7 @@ export async function renderDrawings(runDir, strategies, {
 }
 
 export async function verifyAllViewsViewer({ runDir, outputDir = join(runDir, "browser-verification"), signal } = {}) {
-	await mkdir(outputDir, { recursive: true });
+	await prepareSafeDirectory(runDir, outputDir, "browser verification directory");
 	const consoleErrors = [];
 	const blockedExternalRequests = [];
 	const guardLocalRequests = async (targetPage) => {
@@ -105,12 +106,13 @@ export async function verifyAllViewsViewer({ runDir, outputDir = join(runDir, "b
 		await page.setViewport({ width: 1440, height: 1000, deviceScaleFactor: 1 });
 		await page.goto(base, { waitUntil: "networkidle0" });
 		await page.waitForFunction(() => globalThis.__ELEVATION3D_READY__ === true, { timeout: 60_000 });
-		const initial = join(outputDir, "viewer-initial.png"); await page.screenshot({ path: initial });
-		const activatedViews = [], cameraPresets = {};
+		const initial = join(outputDir, "viewer-initial.png"); await atomicWrite(initial, await page.screenshot({ type: "png" }), runDir);
+		const activatedViews = [], cameraPresets = {}, cameraBuildingBounds = {};
 		for (const name of await page.$$eval("[data-view]", (items) => items.map((item) => item.dataset.view))) {
 			signal?.throwIfAborted(); await page.click(`[data-view="${name}"]`);
 			const state = await page.evaluate(() => globalThis.__ELEVATION3D_VIEWER_STATE__); activatedViews.push(state.view);
 			cameraPresets[name] = { ...state.camera, clipping: state.clipping };
+			cameraBuildingBounds[name] = state.building_bounds;
 		}
 		const activatedPalettes = [];
 		for (const name of ["warm", "neutral", "stone"]) {
@@ -126,7 +128,7 @@ export async function verifyAllViewsViewer({ runDir, outputDir = join(runDir, "b
 		const fullscreenState = await page.evaluate(() => globalThis.__ELEVATION3D_VIEWER_STATE__);
 		if (fullscreenState.fullscreen_active) await page.evaluate(() => globalThis.__ELEVATION3D_TEST_CONTROLS__.toggleFullscreen());
 		const distance = (state) => Math.hypot(...state.camera.position.map((value, index) => value - state.camera.target[index]));
-		const interacted = join(outputDir, "viewer-interacted.png"); await page.screenshot({ path: interacted });
+		const interacted = join(outputDir, "viewer-interacted.png"); await atomicWrite(interacted, await page.screenshot({ type: "png" }), runDir);
 		await page.click("[data-reset]");
 		await page.evaluate(async () => {
 			for (let frame = 0; frame < 30; frame++) await new Promise((resolve) => requestAnimationFrame(resolve));
@@ -148,6 +150,7 @@ export async function verifyAllViewsViewer({ runDir, outputDir = join(runDir, "b
 		const report = {
 			schema_version: "arr.elevation3d.browser-verification.v1", page_loaded: true,
 			activated_views: activatedViews, activated_palettes: activatedPalettes, camera_presets: cameraPresets,
+			camera_building_bounds: cameraBuildingBounds,
 			validation_badge: await page.$eval("[data-validation-badge]", (item) => item.textContent),
 			glb_download: await page.$eval("[data-glb-download]", (item) => item.href), glb_load_count: after.glb_load_count,
 			rotated: JSON.stringify(after.camera.position) !== JSON.stringify(before.camera.position),
@@ -157,10 +160,13 @@ export async function verifyAllViewsViewer({ runDir, outputDir = join(runDir, "b
 			settled_frame_hashes: settledFrameHashes,
 			settled_frames_identical: new Set(settledFrameHashes).size === 1,
 			opened_artifacts: openedArtifacts, blocked_external_requests: blockedExternalRequests,
-			console_errors: consoleErrors, screenshots: { initial, interacted },
+			console_errors: consoleErrors, screenshots: { initial, interacted }, screenshot_artifacts: {
+				initial: { path: initial, sha256: sha256(await readFile(initial)) },
+				interacted: { path: interacted, sha256: sha256(await readFile(interacted)) },
+			},
 		};
 		const reportPath = join(outputDir, "browser-verification.json");
-		await writeFile(reportPath, JSON.stringify(report, null, 2));
+		await atomicWrite(reportPath, Buffer.from(JSON.stringify(report, null, 2)), runDir);
 		return { ...report, path: reportPath, sha256: sha256(await readFile(reportPath)) };
 	} finally {
 		try { if (page) await page.close(); }

@@ -1,4 +1,4 @@
-import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
 import sharp from "sharp";
 import { renderCompetitionAxons } from "./competition-axon.mjs";
@@ -7,6 +7,7 @@ import { sha256, stableJson } from "./core.mjs";
 import { resolveMaterialPalette } from "./material-palettes.mjs";
 import { renderCompetitionElevations } from "./multi-elevation.mjs";
 import { buildViewerBundle } from "./viewer.mjs";
+import { atomicCopy, atomicWrite, prepareSafeDirectory, safeRead } from "./facade-agent/path-safety.mjs";
 
 const VIEW_NAMES = ["front", "back", "left", "right", "plan", "top", "axon", "opposite-axon"];
 const REQUIRED_CONTROLS = ["orbit", "pan", "zoom", "reset", "fullscreen", "view-buttons", "palette-selector", "glb-download"];
@@ -162,20 +163,22 @@ export async function verifyPersistedAllViewsArtifacts({ runDir, allowMissing = 
 
 export async function renderAllViews(inputs) {
 	const root = resolve(inputs.runDir);
-	await mkdir(root, { recursive: true });
-	const selectedBytes = await readFile(inputs.glbPath);
-	const selectedGlbSha256 = sha256(selectedBytes);
+	await prepareSafeDirectory(root, root, "all-views root");
 	const selectedPath = join(root, "enriched.glb");
-	if (resolve(inputs.glbPath) !== selectedPath) await copyFile(inputs.glbPath, selectedPath);
+	const selectedBytes = resolve(inputs.glbPath) === selectedPath
+		? await safeRead(root, selectedPath, "contained selected GLB")
+		: await atomicCopy(inputs.glbPath, selectedPath, root);
+	const selectedGlbSha256 = sha256(selectedBytes);
+	const containedInputs = { ...inputs, glbPath: selectedPath };
 	let verified = await verifyPersistedAllViewsArtifacts({ runDir: root, allowMissing: true });
 	if (!verified) {
 		const elevationNames = ["front", "back", "left", "right"];
-		await renderCompetitionElevations({ ...inputs, cameras: Object.fromEntries(elevationNames.map((name) => [name, inputs.cameras[name]])) });
-		const plan = await renderCompetitionPlan({ ...inputs, camera: inputs.cameras.top, mode: "plan", cutElevationM: inputs.cutElevationM });
-		const top = await renderCompetitionPlan({ ...inputs, camera: inputs.cameras.top, mode: "top" });
-		const planTopValidation = await validateCompetitionPlanTopPair({ plan, top, sourceMesh: inputs.sourceMesh, camera: inputs.cameras.top, selectedGlbPath: inputs.glbPath });
+		await renderCompetitionElevations({ ...containedInputs, cameras: Object.fromEntries(elevationNames.map((name) => [name, inputs.cameras[name]])) });
+		const plan = await renderCompetitionPlan({ ...containedInputs, camera: inputs.cameras.top, mode: "plan", cutElevationM: inputs.cutElevationM });
+		const top = await renderCompetitionPlan({ ...containedInputs, camera: inputs.cameras.top, mode: "top" });
+		const planTopValidation = await validateCompetitionPlanTopPair({ plan, top, sourceMesh: inputs.sourceMesh, camera: inputs.cameras.top, selectedGlbPath: selectedPath });
 		if (!planTopValidation.accepted) throw new Error(`plan/top pair validation failed: ${planTopValidation.codes.join(", ")}`);
-		await renderCompetitionAxons({ ...inputs, cameras: { axon: inputs.cameras.axon, "opposite-axon": inputs.cameras["opposite-axon"] } });
+		await renderCompetitionAxons({ ...containedInputs, cameras: { axon: inputs.cameras.axon, "opposite-axon": inputs.cameras["opposite-axon"] } });
 		const artifacts = await reviewedGroup(root, VIEW_NAMES, undefined, false);
 		const paletteIdentities = new Set(Object.values(artifacts).map((artifact) => `${artifact.palette.preset}:${artifact.palette.sha256}`));
 		if (paletteIdentities.size !== 1) throw new Error("all views must use one persisted palette identity");
@@ -200,11 +203,11 @@ export async function renderAllViews(inputs) {
 	const preliminaryEvidence = await inspectBuiltViewer({ runDir: root });
 	const preliminaryValidation = validateAllViewsRun({ views, selectedGlbSha256, palette: verified.palette, viewer: { evidence: preliminaryEvidence, config: preliminaryEvidence.config_value } });
 	config.all_views.validation = preliminaryValidation;
-	await writeFile(configPath, JSON.stringify(config, null, 2));
+	await atomicWrite(configPath, Buffer.from(JSON.stringify(config, null, 2)), root);
 	const viewerEvidence = await inspectBuiltViewer({ runDir: root });
 	const validation = validateAllViewsRun({ views, selectedGlbSha256, palette: verified.palette, viewer: { evidence: viewerEvidence, config: viewerEvidence.config_value } });
 	const validationPath = join(root, "validation.json");
-	await writeFile(validationPath, JSON.stringify(validation, null, 2));
+	await atomicWrite(validationPath, Buffer.from(JSON.stringify(validation, null, 2)), root);
 	const manifest = {
 		schema_version: "arr.elevation3d.all-views.v1",
 		selected_glb: { path: "enriched.glb", sha256: selectedGlbSha256 },
@@ -216,7 +219,7 @@ export async function renderAllViews(inputs) {
 		validation: { accepted: validation.accepted, codes: validation.codes },
 	};
 	const manifestPath = join(root, "all-views-manifest.json");
-	await writeFile(manifestPath, JSON.stringify(manifest, null, 2));
+	await atomicWrite(manifestPath, Buffer.from(JSON.stringify(manifest, null, 2)), root);
 	return {
 		...manifest, manifest,
 		views: Object.fromEntries(VIEW_NAMES.map((name) => [name, { ...views[name], path: artifacts[name].path }])),
