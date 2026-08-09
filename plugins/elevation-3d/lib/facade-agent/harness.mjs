@@ -27,7 +27,7 @@ import { selectFacadeRecommendation } from "./evaluation/scorecard.mjs";
 const HEX_SHA256 = /^[a-f0-9]{64}$/;
 const LEGACY_PROVIDER_SCHEMA = "arr.elevation3d.facade-agent-provider.v1";
 const PROVIDER_SCHEMA = "arr.elevation3d.facade-agent-provider.v2";
-const TERMINAL_RUN_STATES = new Set(["winner", "no-winner", "human-review", "cancelled", "delivery-failed"]);
+const TERMINAL_RUN_STATES = new Set(["winner", "no-winner", "human-review", "cancelled", "delivery-failed", "presentation-failed"]);
 const LOCAL_REPAIR_CODES = new Set([
 	"WINDOW_CROSSES_FLOOR_BAND",
 	"DETAIL_BOUNDS_EXCEEDED",
@@ -877,6 +877,69 @@ function persistedDeliveryMemory(runDir, value) {
 	});
 }
 
+function plainData(value, label) {
+	if (!value || typeof value !== "object" || Array.isArray(value)
+		|| ![Object.prototype, null].includes(Object.getPrototypeOf(value))) {
+		throw codedError("FACADE_PRESENTATION_RESULT_INVALID", `${label} must be plain data`);
+	}
+	if (Object.values(Object.getOwnPropertyDescriptors(value)).some((descriptor) => !("value" in descriptor))) {
+		throw codedError("FACADE_PRESENTATION_RESULT_INVALID", `${label} must not contain accessors`);
+	}
+	return value;
+}
+
+function persistedPresentationRef(runDir, value, label) {
+	const record = plainData(value, label);
+	if (typeof record.path !== "string" || record.path.length === 0 || !HEX_SHA256.test(record.sha256 ?? "")) {
+		throw codedError("FACADE_PRESENTATION_RESULT_INVALID", `${label} must include a path and SHA-256`);
+	}
+	const absolute = isAbsolute(record.path) ? record.path : join(runDir, record.path);
+	return { path: relativePath(runDir, absolute, label), sha256: record.sha256 };
+}
+
+function persistedPresentationMemory(runDir, result, selectedGlbSha256) {
+	const returned = plainData(result, "presentation result");
+	const memory = plainData(returned.memory_record, "presentation memory record");
+	const render = returned.render === undefined ? null : plainData(returned.render, "presentation render record");
+	const selected = memory.selected_glb ?? render?.selected_glb;
+	const selectedRecord = plainData(selected, "presentation selected GLB");
+	if (selectedRecord.sha256 !== selectedGlbSha256) {
+		throw codedError("FACADE_PRESENTATION_RESULT_INVALID", "Presentation result is not bound to the selected GLB");
+	}
+	const output = {
+		presentation: persistedPresentationRef(runDir, memory.presentation, "presentation manifest"),
+		selected_glb: { sha256: selectedGlbSha256 },
+	};
+	const contactSheet = memory.contact_sheet ?? render?.contact_sheet;
+	if (contactSheet !== undefined) output.contact_sheet = persistedPresentationRef(runDir, contactSheet, "presentation contact sheet");
+	const views = memory.views ?? render?.views;
+	if (views !== undefined) {
+		const viewRecords = plainData(views, "presentation views");
+		output.views = Object.fromEntries(Object.entries(viewRecords).map(([name, view]) => {
+			const persisted = persistedPresentationRef(runDir, view, `presentation ${name} view`);
+			const viewRecord = plainData(view, `presentation ${name} view`);
+			const viewHash = viewRecord.selected_glb_sha256 ?? viewRecord.selectedGlbSha256;
+			if (viewHash !== selectedGlbSha256) {
+				throw codedError("FACADE_PRESENTATION_RESULT_INVALID", `Presentation ${name} view is not bound to the selected GLB`);
+			}
+			return [name, { ...persisted, selected_glb_sha256: selectedGlbSha256 }];
+		}));
+	}
+	return output;
+}
+
+function technicalManifestForPresentation(delivery, technicalDelivery, selectedGlbSha256) {
+	if (delivery?.selected_glb_sha256 !== selectedGlbSha256
+		|| technicalDelivery?.manifest?.selected_glb?.sha256 !== selectedGlbSha256) {
+		throw codedError("FACADE_PRESENTATION_TECHNICAL_BINDING_MISMATCH", "Technical delivery is not bound to the selected GLB");
+	}
+	const manifest = plainData(delivery.memory_record?.manifest, "technical delivery manifest");
+	if (typeof manifest.path !== "string" || !HEX_SHA256.test(manifest.sha256 ?? "")) {
+		throw codedError("FACADE_PRESENTATION_TECHNICAL_BINDING_MISMATCH", "Technical delivery manifest is unavailable");
+	}
+	return { path: manifest.path, sha256: manifest.sha256 };
+}
+
 function localRetryAllowed(validation, attempt) {
 	if (attempt !== 1 || validation?.accepted === true || validation?.retryable === false) return false;
 	const codes = validation?.codes;
@@ -1208,6 +1271,50 @@ async function verifyDurableReceipt(runDir, ref) {
 	return receipt;
 }
 
+async function verifyPresentationArtifactRef(runDir, ref, label) {
+	if (!ref || typeof ref.path !== "string" || !HEX_SHA256.test(ref.sha256 ?? "")) {
+		throw codedError("FACADE_AGENT_STATE_UNCERTAIN", `${label} reference is invalid`);
+	}
+	let bytes;
+	try { bytes = await safeRead(runDir, join(runDir, ref.path), label); }
+	catch (error) { throw codedError("FACADE_AGENT_STATE_UNCERTAIN", `${label} is unavailable`, error); }
+	if (sha256(bytes) !== ref.sha256) throw codedError("FACADE_AGENT_STATE_UNCERTAIN", `${label} hash mismatch`);
+	return bytes;
+}
+
+async function verifyPresentationReceipt(runDir, run) {
+	if (!run.presentation_receipt) {
+		if (run.presentation_execution?.status === "succeeded" || run.final?.status === "winner") {
+			throw codedError("FACADE_AGENT_STATE_UNCERTAIN", "Completed presentation is missing its durable receipt");
+		}
+		return;
+	}
+	const receipt = await verifyDurableReceipt(runDir, run.presentation_receipt);
+	const execution = run.presentation_execution;
+	if (receipt?.schema_version !== "arr.elevation3d.facade-presentation-receipt.v1"
+		|| execution?.status !== "succeeded"
+		|| receipt.provider !== execution.provider
+		|| receipt.selected_glb_sha256 !== execution.selected_glb_sha256
+		|| receipt.provider_calls !== 0 || receipt.credits_consumed !== 0
+		|| execution.receipt_sha256 !== run.presentation_receipt.receipt_sha256) {
+		throw codedError("FACADE_AGENT_STATE_UNCERTAIN", "Presentation receipt bindings are invalid");
+	}
+	await verifyPresentationArtifactRef(runDir, receipt.presentation_manifest, "presentation manifest");
+	const technicalBytes = await verifyPresentationArtifactRef(runDir, receipt.technical_manifest, "technical delivery manifest");
+	let technicalManifest;
+	try { technicalManifest = JSON.parse(technicalBytes.toString("utf8")); }
+	catch (error) { throw codedError("FACADE_AGENT_STATE_UNCERTAIN", "Technical delivery manifest is invalid", error); }
+	if (technicalManifest?.selected_glb?.sha256 !== receipt.selected_glb_sha256) {
+		throw codedError("FACADE_AGENT_STATE_UNCERTAIN", "Technical delivery manifest is not bound to the presentation GLB");
+	}
+	if (run.final?.status === "winner"
+		&& (run.final.presentation_sha256 !== run.presentation_receipt.receipt_sha256
+			|| run.final.selected_provider !== receipt.provider
+			|| run.final.selected_glb_sha256 !== receipt.selected_glb_sha256)) {
+		throw codedError("FACADE_AGENT_STATE_UNCERTAIN", "Final winner is not bound to the presentation receipt");
+	}
+}
+
 function hasCurrentGrammarBindings(grammar) {
 	return ["identity", "request_sha256", "content_sha256", "transport"].some((key) => Object.hasOwn(grammar ?? {}, key));
 }
@@ -1399,7 +1506,7 @@ async function initialize(config, deps, signal) {
 
 async function executeFacade(config, deps, stopAfterStage = null) {
 	if (!deps || typeof deps !== "object") throw new TypeError("Facade agent dependencies are required");
-	for (const name of ["loadCandidate", "buildEvidence", "build", "validate", "renderDelivery"]) {
+	for (const name of ["loadCandidate", "buildEvidence", "build", "validate", "renderDelivery", "renderPresentation"]) {
 		if (typeof deps[name] !== "function") throw new TypeError(`deps.${name} must be a function`);
 	}
 	if (!deps.grammarProvider || typeof deps.grammarProvider !== "object" || typeof deps.grammarProvider.extract !== "function") {
@@ -1637,6 +1744,7 @@ async function executeFacade(config, deps, stopAfterStage = null) {
 			? { status: "winner", provider: technicalCandidate.provider, candidate: technicalCandidate, score: technicalCandidate.score }
 			: { status: "no-winner", candidates: [] };
 		const deliveries = {};
+		const technicalDeliveries = {};
 		for (const provider of normalized.providers) {
 			if (!selectedArtifacts[provider]) continue;
 			if (states[provider].delivery?.status === "succeeded") {
@@ -1672,6 +1780,7 @@ async function executeFacade(config, deps, stopAfterStage = null) {
 				await persistPublicRun(runDir, run);
 				await callLifecycle(deps, { stage: "delivery", status: "succeeded", provider, selected_glb_sha256: artifact.sha256, delivery_sha256: deliveryRecord.delivery_sha256 });
 				deliveries[provider] = deliveryRecord;
+				technicalDeliveries[provider] = delivery;
 				run.delivery = null;
 				await persistPublicRun(runDir, run);
 			} catch (error) {
@@ -1682,6 +1791,56 @@ async function executeFacade(config, deps, stopAfterStage = null) {
 				await writeProvider(runDir, run, normalized, provider, states[provider], deps);
 				deliveries[provider] = failed;
 				run.delivery = null;
+				await persistPublicRun(runDir, run);
+			}
+		}
+		let presentation = null;
+		let presentationFailure = null;
+		if (decision?.status === "winner" && selectedArtifacts[decision.provider] && deliveries[decision.provider]?.status === "succeeded") {
+			const provider = decision.provider;
+			let artifact = selectedArtifacts[provider];
+			try {
+				throwIfAborted(signal);
+				artifact = await authorizeGlb(runDir, artifact);
+				const delivery = deliveries[provider];
+				const technicalDelivery = technicalDeliveries[provider];
+				const technicalManifest = technicalManifestForPresentation(delivery, technicalDelivery, artifact.sha256);
+				run.presentation_execution = { status: "submitting", provider, selected_glb_sha256: artifact.sha256 };
+				await persistPublicRun(runDir, run);
+				await callLifecycle(deps, { stage: "presentation", status: "submitting", provider, selected_glb_sha256: artifact.sha256 });
+				throwIfAborted(signal);
+				artifact = await authorizeGlb(runDir, artifact);
+				const result = await deps.renderPresentation({
+					runDir, candidateId: normalized.candidateId, provider,
+					presentationRoot: containedPath(runDir, join(runDir, "final-presentation"), "final presentation"),
+					artifact, validation: selectedValidations[provider], validationReceipt: selectedValidationReceipts[provider],
+					technicalDelivery, input: candidate, signal, lifecycle: deps.lifecycle,
+				});
+				await callLifecycle(deps, { stage: "presentation", status: "returned", provider, selected_glb_sha256: artifact.sha256 });
+				const memory = persistedPresentationMemory(runDir, result, artifact.sha256);
+				const receipt = await writeReceipt(runDir, "final-presentation/presentation-receipt.json", {
+					schema_version: "arr.elevation3d.facade-presentation-receipt.v1",
+					provider,
+					selected_glb_sha256: artifact.sha256,
+					presentation_manifest: memory.presentation,
+					technical_manifest: technicalManifest,
+					provider_calls: 0,
+					credits_consumed: 0,
+				});
+				run.presentation_receipt = receipt;
+				run.presentation_execution = {
+					status: "succeeded", provider, selected_glb_sha256: artifact.sha256, receipt_sha256: receipt.receipt_sha256,
+				};
+				await persistPublicRun(runDir, run);
+				await callLifecycle(deps, { stage: "presentation", status: "succeeded", provider, selected_glb_sha256: artifact.sha256, receipt_sha256: receipt.receipt_sha256 });
+				presentation = { receipt, memory };
+			} catch (error) {
+				if (error instanceof LifecycleHookError) throw error;
+				if (isAbort(error, signal)) return terminalCancellation(runDir, run, normalized, deps, provider);
+				presentationFailure = safeError(error, "FINAL_PRESENTATION_FAILED");
+				run.presentation_execution = {
+					status: "failed", provider, selected_glb_sha256: artifact.sha256, failure: presentationFailure,
+				};
 				await persistPublicRun(runDir, run);
 			}
 		}
@@ -1705,7 +1864,7 @@ async function executeFacade(config, deps, stopAfterStage = null) {
 		let final;
 		if (decision?.status === "winner" && selectedArtifacts[decision.provider]) {
 			const delivery = deliveries[decision.provider];
-			if (delivery?.status === "succeeded") {
+			if (delivery?.status === "succeeded" && presentation?.receipt) {
 				run.delivery = delivery;
 				final = {
 					status: "winner",
@@ -1714,6 +1873,13 @@ async function executeFacade(config, deps, stopAfterStage = null) {
 					selected_glb_sha256: delivery.selected_glb_sha256,
 					score_sha256: decision.candidate?.sha256 ?? states[decision.provider].score?.sha256 ?? null,
 					delivery_sha256: delivery.delivery_sha256,
+					presentation_sha256: presentation.receipt.receipt_sha256,
+				};
+			} else if (delivery?.status === "succeeded") {
+				final = {
+					status: "presentation-failed", selected_provider: decision.provider,
+					selected_glb_sha256: delivery.selected_glb_sha256,
+					failure: presentationFailure ?? { code: "FINAL_PRESENTATION_FAILED", message: "Selected provider presentation is unavailable" },
 				};
 			} else {
 				final = {
@@ -1831,6 +1997,7 @@ export async function readFacadeAgentStatus(runDirInput) {
 		for (const stageRef of Object.values(state.stage_manifests ?? {})) await readStageRef(runDir, stageRef);
 		await verifyProviderReceipts(runDir, state);
 	}
+	await verifyPresentationReceipt(runDir, run);
 	if (run.evaluation_manifest) {
 		const path = containedPath(runDir, join(runDir, run.evaluation_manifest.path), "evaluation report");
 		const bytes = await safeRead(runDir, path, "evaluation report");
