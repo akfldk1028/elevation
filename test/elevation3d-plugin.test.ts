@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { access, mkdtemp, readFile, rm } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -7,6 +8,10 @@ import { register } from "../plugins/elevation-3d/index.mjs";
 import { createFacadeAgentDependencyFactory, executeFacadeAgentCommand, runFacadeAgentTool } from "../plugins/elevation-3d/lib/facade-agent/cli.mjs";
 import { createFacadeFixtureTransport } from "../plugins/elevation-3d/lib/facade-agent/fixture-transport.mjs";
 import { createProductionFacadeAgentDependencies } from "../plugins/elevation-3d/lib/facade-agent/production-dependencies.mjs";
+
+function sha256(value: string | Buffer) {
+	return createHash("sha256").update(value).digest("hex");
+}
 
 test("plugin exposes the autonomous production flow before legacy experimental tools", async () => {
 	const tools: any[] = [];
@@ -100,7 +105,7 @@ test("facade agent tool forwards a safe dry-run into the approved preflight harn
 				buildEvidence: async ({ runDir }: any) => ({ manifestSha256: "e".repeat(64), manifestPath: join(runDir, "evidence", "manifest.json") }),
 				grammarProvider: createFacadeFixtureTransport({ id: "openai-gpt-5.6", model: "gpt-5.6", extract: transport }),
 				providers: { "gpt-image-2": provider, "seedream-5-pro": provider, "qwen-image-2": provider, "nano-banana-pro": provider },
-				build: async () => ({}), validate: async () => ({}), renderDelivery: async () => ({}),
+				build: async () => ({}), validate: async () => ({}), renderDelivery: async () => ({}), renderPresentation: async () => ({}),
 			};
 		});
 		await register({ config: {}, facadeAgentDependencyFactory, registerTool: (tool: any) => tools.push(tool), addPrompt() {}, registerMemoryLayer() {}, logger: console });
@@ -185,7 +190,7 @@ test("plugin-created status verifies its persisted config before returning read-
 				"seedream-5-pro": createFacadeFixtureTransport({ generate: transport }),
 				"qwen-image-2": createFacadeFixtureTransport({ generate: transport }),
 			},
-			build: async () => ({}), validate: async () => ({}), renderDelivery: async () => ({}),
+			build: async () => ({}), validate: async () => ({}), renderDelivery: async () => ({}), renderPresentation: async () => ({}),
 		}));
 		await register({ config: {}, facadeAgentDependencyFactory: factory, registerTool: (tool: any) => tools.push(tool), addPrompt() {}, registerMemoryLayer() {}, logger: console });
 		const tool = tools.find((item) => item.name === "elevation_3d_facade_agent_run");
@@ -207,6 +212,75 @@ test("production dependency construction requires an explicit fetch authority be
 		await assert.rejects(() => access(join(root, "creative-020")), /ENOENT/);
 		await assert.rejects(() => runFacadeAgentTool({ run_id: "missing-fetch", dataset_root: root, output_root: root }), /explicit fetch/i);
 		await assert.rejects(() => access(join(root, "creative-020")), /ENOENT/);
+	} finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("production presentation dependency renders through only the local renderer", async () => {
+	const root = await mkdtemp(join(tmpdir(), "elevation3d-production-presentation-"));
+	try {
+		let credentialReads = 0;
+		let fetchCalls = 0;
+		const env = Object.defineProperty({}, "ARK_API_KEY", {
+			enumerable: true,
+			get() { credentialReads += 1; return "construction-only-credential"; },
+		});
+		const providerFactory = () => Object.freeze({
+			preflight() { throw new Error("presentation must not access provider preflight"); },
+			async generate() { throw new Error("presentation must not access image provider"); },
+			async extract() { throw new Error("presentation must not access grammar provider"); },
+		});
+		const config = {
+			outputRoot: root, candidateId: "creative-020", runId: "local-presentation",
+			imageProviders: ["seedream-5-pro"], grammarProvider: "byteplus-seed-mini",
+			imageBudgetUsd: { "seedream-5-pro": 0.06 }, imageEstimateUsd: { "seedream-5-pro": 0.06 },
+		};
+		const runDir = join(root, config.candidateId, config.runId);
+		const glbBytes = Buffer.from("production-local-presentation-glb");
+		const selectedGlbSha256 = sha256(glbBytes);
+		const glbPath = join(runDir, "selected.glb");
+		const validation = { accepted: true, codes: [] };
+		const validationReceipt = {
+			schema_version: "arr.elevation3d.facade-validation-receipt.v1",
+			provider: "local-fixture", version_id: "v001", artifact_sha256: selectedGlbSha256, validation,
+		};
+		const receiptBytes = Buffer.from(JSON.stringify(validationReceipt));
+		const receiptPath = join(runDir, "facade-validation.json");
+		const localRenderer = async () => ({
+			schema_version: "arr.elevation3d.embedded-pbr-render.v2",
+			selected_glb: { sha256: selectedGlbSha256 },
+			views: Object.fromEntries(["front", "back", "left", "right", "plan", "top", "axon", "opposite-axon"].map((name) => [name, {
+				selectedGlbSha256, sha256: sha256(name),
+			}])),
+			validation: { accepted: true, codes: [] }, provider_calls: 0, credits_consumed: 0,
+		});
+		const deps: any = await createProductionFacadeAgentDependencies(config, {
+			env,
+			fetchImpl: async () => { fetchCalls += 1; throw new Error("presentation must not fetch"); },
+			imageProviderFactories: { "seedream-5-pro": providerFactory },
+			grammarProviderFactories: { "byteplus-seed-mini": providerFactory },
+			presentationRenderer: localRenderer,
+		});
+		await writeFile(glbPath, glbBytes);
+		await writeFile(receiptPath, receiptBytes);
+		credentialReads = 0;
+		fetchCalls = 0;
+
+		assert.equal(typeof deps.renderPresentation, "function");
+		const result = await deps.renderPresentation({
+			runDir, presentationRoot: join(runDir, "final-presentation"), candidateId: config.candidateId,
+			artifact: { path: glbPath, sha256: selectedGlbSha256 }, validation,
+			validationReceipt: { path: receiptPath, sha256: sha256(receiptBytes) },
+			technicalDelivery: { run_dir: "technical-delivery", manifest: { selected_glb: { sha256: selectedGlbSha256 } } },
+			input: {
+				mesh: { vertices: [[0, 0, 0], [10, 0, 0], [0, 8, 12]] },
+				cameras: { identity: { source: "fixture" }, views: Object.fromEntries(["front", "right", "back", "left", "top"].map((name) => [name, {
+					projection: "orthographic", projection_axes: { depth: [0, 1, 0], vertical: [0, 0, 1] },
+				}])) },
+			},
+		});
+		assert.equal(result.selected_glb.sha256, selectedGlbSha256);
+		assert.equal(fetchCalls, 0);
+		assert.equal(credentialReads, 0);
 	} finally { await rm(root, { recursive: true, force: true }); }
 });
 

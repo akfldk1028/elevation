@@ -9,6 +9,7 @@ import { correctGrammar } from "../facade-grammar.mjs";
 import { deliverSelectedAllViews } from "../final-delivery.mjs";
 import { renderUnifiedDrawings } from "../unified-render.mjs";
 import { buildFacadeEvidencePack, verifyFacadeEvidencePack } from "./evidence.mjs";
+import { deliverFacadeFinalPresentation } from "./final-presentation.mjs";
 import { verifyFacadeProposal } from "./grammar-agent.mjs";
 import { createPaidOperationLedger } from "./paid-operation-ledger.mjs";
 import { deriveFacadeSegmentsFromMass } from "./punched-facade.mjs";
@@ -28,6 +29,7 @@ function geometryBoundGrammar(grammar, candidate) {
 }
 
 export async function createProductionFacadeAgentDependencies(config, options = {}) {
+	const presentationRenderer = options.presentationRenderer;
 	const env = options.env ?? process.env;
 	const fetchImpl = options.fetchImpl;
 	if (typeof fetchImpl !== "function") throw new TypeError("An explicit fetch implementation is required for facade providers");
@@ -88,6 +90,12 @@ export async function createProductionFacadeAgentDependencies(config, options = 
 		},
 		correctGrammar: (grammar, failureCodes, candidate) => correctGrammar(geometryBoundGrammar(grammar, candidate), failureCodes),
 		renderDelivery: (input) => deliverSelectedAllViews(input),
+		renderPresentation: (input) => deliverFacadeFinalPresentation({
+			...input,
+			deps: presentationRenderer
+				? { renderEmbeddedPbrViews: presentationRenderer }
+				: undefined,
+		}),
 		score,
 	};
 }
