@@ -101,6 +101,90 @@ function exactUsdMicros(value, label) {
 	return micros;
 }
 
+function legacyUsdMicros(value, label) {
+	finiteNonnegative(value, label);
+	const micros = Math.round(value * 1_000_000);
+	if (!Number.isSafeInteger(micros)) throw new TypeError(`${label} exceeds the supported amount`);
+	return micros;
+}
+
+function legacyCeilingApportionment(entries) {
+	const allocations = entries.map(([requestKey, value]) => {
+		finiteNonnegative(value?.ceilingUsd, "persisted ceilingUsd");
+		finiteNonnegative(value?.estimateUsd, "persisted estimateUsd");
+		if (value.estimateUsd > value.ceilingUsd) throw new Error("Invalid paid operation ledger");
+		if (value.actualUsd !== null) finiteNonnegative(value.actualUsd, "persisted actualUsd");
+		if (value.actualUsd !== null && value.actualUsd > value.ceilingUsd) throw new Error("Invalid paid operation ledger");
+		const scaled = value.ceilingUsd * 1_000_000;
+		const floor = Math.floor(scaled);
+		if (!Number.isSafeInteger(floor)) throw new TypeError("persisted ceilingUsd exceeds the supported amount");
+		const estimateMicros = legacyUsdMicros(value.estimateUsd, "persisted estimateUsd");
+		const actualMicros = value.actualUsd === null ? null : legacyUsdMicros(value.actualUsd, "persisted actualUsd");
+		const dependentRoundingCost = Number(estimateMicros > floor) + Number(actualMicros !== null && actualMicros > floor);
+		return { requestKey, floor, fraction: scaled - floor, dependentRoundingCost };
+	});
+	const stableAllocations = [...allocations].sort((left, right) => left.requestKey < right.requestKey ? -1 : left.requestKey > right.requestKey ? 1 : 0);
+	let floorTotal = 0, fractionTotal = 0, fractionCompensation = 0;
+	for (const allocation of stableAllocations) {
+		floorTotal += allocation.floor;
+		if (!Number.isSafeInteger(floorTotal)) throw new TypeError("persisted aggregate ceilingUsd exceeds the supported amount");
+		const adjustedFraction = allocation.fraction - fractionCompensation;
+		const nextFractionTotal = fractionTotal + adjustedFraction;
+		fractionCompensation = (nextFractionTotal - fractionTotal) - adjustedFraction;
+		fractionTotal = nextFractionTotal;
+	}
+	const roundUpCount = Math.round(fractionTotal);
+	if (!Number.isSafeInteger(roundUpCount) || roundUpCount < 0 || roundUpCount > allocations.length) {
+		throw new TypeError("persisted aggregate ceilingUsd cannot be apportioned safely");
+	}
+	if (!Number.isSafeInteger(floorTotal + roundUpCount)) throw new TypeError("persisted aggregate ceilingUsd exceeds the supported amount");
+	allocations.sort((left, right) => right.dependentRoundingCost - left.dependentRoundingCost
+		|| right.fraction - left.fraction
+		|| (left.requestKey < right.requestKey ? -1 : left.requestKey > right.requestKey ? 1 : 0));
+	const roundUps = new Set(allocations.slice(0, roundUpCount).map(({ requestKey }) => requestKey));
+	return new Map(allocations.map(({ requestKey, floor }) => [requestKey, floor + Number(roundUps.has(requestKey))]));
+}
+
+function legacyFieldApportionment(entries, usdKey, label, ceilings, { nullable = false } = {}) {
+	const allocations = [];
+	const result = new Map();
+	for (const [requestKey, value] of entries) {
+		const raw = value[usdKey];
+		if (nullable && raw === null) {
+			result.set(requestKey, null);
+			continue;
+		}
+		finiteNonnegative(raw, label);
+		const scaled = raw * 1_000_000;
+		const floor = Math.floor(scaled);
+		if (!Number.isSafeInteger(floor)) throw new TypeError(`${label} exceeds the supported amount`);
+		const capacity = ceilings.get(requestKey) - floor;
+		if (!Number.isSafeInteger(capacity) || capacity < 0) throw new Error("Invalid paid operation ledger");
+		allocations.push({ requestKey, floor, fraction: scaled - floor, capacity });
+	}
+	const stableAllocations = [...allocations].sort((left, right) => left.requestKey < right.requestKey ? -1 : left.requestKey > right.requestKey ? 1 : 0);
+	let floorTotal = 0, fractionTotal = 0, fractionCompensation = 0;
+	for (const allocation of stableAllocations) {
+		floorTotal += allocation.floor;
+		if (!Number.isSafeInteger(floorTotal)) throw new TypeError(`persisted aggregate ${usdKey} exceeds the supported amount`);
+		const adjustedFraction = allocation.fraction - fractionCompensation;
+		const nextFractionTotal = fractionTotal + adjustedFraction;
+		fractionCompensation = (nextFractionTotal - fractionTotal) - adjustedFraction;
+		fractionTotal = nextFractionTotal;
+	}
+	const roundUpCount = Math.round(fractionTotal);
+	const candidates = allocations.filter(({ capacity }) => capacity > 0)
+		.sort((left, right) => right.fraction - left.fraction
+			|| (left.requestKey < right.requestKey ? -1 : left.requestKey > right.requestKey ? 1 : 0));
+	if (!Number.isSafeInteger(roundUpCount) || roundUpCount < 0 || roundUpCount > candidates.length
+		|| !Number.isSafeInteger(floorTotal + roundUpCount)) {
+		throw new TypeError(`persisted aggregate ${usdKey} cannot be apportioned safely`);
+	}
+	const roundUps = new Set(candidates.slice(0, roundUpCount).map(({ requestKey }) => requestKey));
+	for (const { requestKey, floor } of allocations) result.set(requestKey, floor + Number(roundUps.has(requestKey)));
+	return result;
+}
+
 function exactMicros(value, label) {
 	if (!Number.isSafeInteger(value) || value < 0) throw new TypeError(`${label} must be a nonnegative safe integer`);
 	return value;
@@ -135,19 +219,18 @@ function validRemoteId(value) {
 	return typeof value === "string" && value.length > 0 && value.length <= 4096 && !/[\r\n\0]/.test(value);
 }
 
-function validateOperationRecord(requestKey, value, version) {
+function validateOperationRecord(requestKey, value, version, legacyMoney) {
 	if (!HEX_SHA256.test(requestKey) || !value || typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid paid operation ledger");
 	if (typeof value.provider !== "string" || !PROVIDER.test(value.provider) || !ALLOWED_KINDS.has(value.kind)) throw new Error("Invalid paid operation ledger");
 	if (!new Set(["submitting", "succeeded"]).has(value.status)) throw new Error("Invalid paid operation ledger");
-	const estimateMicros = version === 1 ? exactUsdMicros(value.estimateUsd, "persisted estimateUsd") : exactMicros(value.estimateMicros, "persisted estimateMicros");
-	const ceilingMicros = version === 1 ? exactUsdMicros(value.ceilingUsd, "persisted ceilingUsd") : exactMicros(value.ceilingMicros, "persisted ceilingMicros");
+	const estimateMicros = version === 1 ? legacyMoney.estimateMicros : exactMicros(value.estimateMicros, "persisted estimateMicros");
+	const ceilingMicros = version === 1 ? legacyMoney.ceilingMicros : exactMicros(value.ceilingMicros, "persisted ceilingMicros");
 	if (estimateMicros > ceilingMicros) throw new Error("Invalid paid operation ledger");
 	if (value.remoteId !== null && !validRemoteId(value.remoteId)) throw new Error("Invalid paid operation ledger");
 	if (value.artifactSha256 !== null && (typeof value.artifactSha256 !== "string" || !HEX_SHA256.test(value.artifactSha256))) throw new Error("Invalid paid operation ledger");
 	const rawActual = version === 1 ? value.actualUsd : value.actualMicros;
-	const actualMicros = rawActual === null ? null : version === 1
-		? exactUsdMicros(rawActual, "persisted actualUsd")
-		: exactMicros(rawActual, "persisted actualMicros");
+	const actualMicros = version === 1 ? legacyMoney.actualMicros
+		: rawActual === null ? null : exactMicros(rawActual, "persisted actualMicros");
 	if (actualMicros !== null && actualMicros > ceilingMicros) throw new Error("Invalid paid operation ledger");
 	if (value.status === "succeeded" && (!validRemoteId(value.remoteId) || !HEX_SHA256.test(value.artifactSha256) || actualMicros === null)) {
 		throw new Error("Invalid paid operation ledger");
@@ -166,8 +249,18 @@ async function readLedger(path, approvedRoot) {
 		if (![1, 2].includes(parsed?.version) || !parsed.operations || typeof parsed.operations !== "object" || Array.isArray(parsed.operations)) {
 			throw new Error("Invalid paid operation ledger");
 		}
-		const operations = Object.fromEntries(Object.entries(parsed.operations)
-			.map(([key, operation]) => [key, validateOperationRecord(key, operation, parsed.version)]));
+		const entries = Object.entries(parsed.operations);
+		const legacyCeilings = parsed.version === 1 ? legacyCeilingApportionment(entries) : null;
+		const legacyEstimates = parsed.version === 1
+			? legacyFieldApportionment(entries, "estimateUsd", "persisted estimateUsd", legacyCeilings)
+			: null;
+		const legacyActuals = parsed.version === 1
+			? legacyFieldApportionment(entries, "actualUsd", "persisted actualUsd", legacyCeilings, { nullable: true })
+			: null;
+		const operations = Object.fromEntries(entries
+			.map(([key, operation]) => [key, validateOperationRecord(key, operation, parsed.version, {
+				estimateMicros: legacyEstimates?.get(key), ceilingMicros: legacyCeilings?.get(key), actualMicros: legacyActuals?.get(key),
+			})]));
 		return { version: 2, operations };
 	} catch (error) {
 		if (error?.code === "ENOENT") return { version: 2, operations: {} };

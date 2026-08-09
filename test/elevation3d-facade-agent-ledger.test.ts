@@ -431,6 +431,7 @@ test("validates paid-operation inputs and results", async () => {
 			{ requestKey: "short", provider: "gpt-image-2", kind: "image-generation", ceilingUsd: 1, estimateUsd: 0.2 },
 			{ requestKey, provider: "gpt-image-2", kind: "other", ceilingUsd: 1, estimateUsd: 0.2 },
 			{ requestKey, provider: "gpt-image-2", kind: "grammar-extraction", ceilingUsd: Number.NaN, estimateUsd: 0.2 },
+			{ requestKey, provider: "gpt-image-2", kind: "grammar-extraction", ceilingUsd: 0.35 / 3, estimateUsd: 0.1 },
 		]) {
 			await assert.rejects(() => ledger.executeOnce({ ...input, operation: async () => ({ remoteId: "x", artifactSha256, actualUsd: 0.2 }) } as any), TypeError);
 		}
@@ -588,6 +589,102 @@ test("safely reads a legacy USD ledger and rewrites it with exact micros on the 
 		assert.equal(rewritten.version, 2);
 		assert.equal(rewritten.operations[requestKey].actualMicros, 100_000);
 		assert.equal(rewritten.operations["f".repeat(64)].actualMicros, 200_000);
+	});
+});
+
+test("migrates legacy repeating USD allocations without cumulative rounding drift", async () => {
+	await withLedger(async (_root, path) => {
+		const legacyAllocationUsd = 0.35 / 3;
+		const legacyKeys = ["a".repeat(64), "b".repeat(64), "c".repeat(64)];
+		const operations = Object.fromEntries(legacyKeys.map((key, index) => [key, {
+			provider: "openai", kind: "grammar-extraction", status: "succeeded",
+			estimateUsd: legacyAllocationUsd, ceilingUsd: legacyAllocationUsd,
+			remoteId: `legacy-repeating-remote-${index}`, artifactSha256, actualUsd: legacyAllocationUsd,
+		}]));
+		await writeFile(path, `${JSON.stringify({ version: 1, operations }, null, 2)}\n`);
+		const ledger = createPaidOperationLedger(path);
+		let calls = 0;
+		for (const key of legacyKeys) {
+			await ledger.executeOnce({
+				requestKey: key, provider: "openai", kind: "grammar-extraction",
+				ceilingMicros: 116_667, estimateMicros: 116_667,
+				operation: async () => {
+					calls += 1;
+					return { remoteId: "must-not-submit", artifactSha256, actualMicros: 116_667 };
+				},
+			});
+		}
+		assert.equal(calls, 0);
+		await ledger.executeOnce({
+			requestKey: "f".repeat(64), provider: "openai", kind: "grammar-extraction",
+			ceilingMicros: 1, estimateMicros: 1,
+			runCeilingMicros: 350_001, kindCeilingMicros: 350_001,
+			operation: async () => {
+				calls += 1;
+				return { remoteId: "rewrite-trigger", artifactSha256, actualMicros: 1 };
+			},
+		});
+		assert.equal(calls, 1);
+		const rewritten = JSON.parse(await readFile(path, "utf8"));
+		assert.equal(rewritten.version, 2);
+		assert.deepEqual(legacyKeys.map((key) => rewritten.operations[key].ceilingMicros), [116_667, 116_667, 116_666]);
+		assert.equal(legacyKeys.reduce((sum, key) => sum + rewritten.operations[key].estimateMicros, 0), 350_000);
+		assert.equal(legacyKeys.reduce((sum, key) => sum + rewritten.operations[key].ceilingMicros, 0), 350_000);
+		assert.equal(legacyKeys.reduce((sum, key) => sum + rewritten.operations[key].actualMicros, 0), 350_000);
+	});
+});
+
+test("migrates legacy aggregates near the safe-integer boundary without losing a micro-dollar", async () => {
+	await withLedger(async (_root, path) => {
+		const largeKey = "d".repeat(64), tinyKey = "e".repeat(64);
+		await writeFile(path, `${JSON.stringify({ version: 1, operations: {
+			[largeKey]: {
+				provider: "openai", kind: "grammar-extraction", status: "succeeded",
+				estimateUsd: 9_000_000_000, ceilingUsd: 9_000_000_000,
+				remoteId: "legacy-large", artifactSha256, actualUsd: 9_000_000_000,
+			},
+			[tinyKey]: {
+				provider: "openai", kind: "grammar-extraction", status: "succeeded",
+				estimateUsd: 0.000001, ceilingUsd: 0.000001,
+				remoteId: "legacy-tiny", artifactSha256, actualUsd: 0.000001,
+			},
+		} }, null, 2)}\n`);
+		const summary: any = await createPaidOperationLedger(path).summary();
+		assert.equal(summary.costs.total.reserved_ceiling_micros, 9_000_000_000_000_001);
+		assert.equal(summary.costs.total.estimated_micros, 9_000_000_000_000_001);
+		assert.equal(summary.costs.total.actual_micros, 9_000_000_000_000_001);
+	});
+});
+
+test("rounds a legacy actual independently when it remains below the apportioned ceiling", async () => {
+	await withLedger(async (_root, path) => {
+		await writeFile(path, `${JSON.stringify({ version: 1, operations: {
+			[requestKey]: {
+				provider: "openai", kind: "grammar-extraction", status: "succeeded",
+				estimateUsd: 0, ceilingUsd: 1.0000001,
+				remoteId: "legacy-fractional-actual", artifactSha256, actualUsd: 0.0000009,
+			},
+		} }, null, 2)}\n`);
+		const summary: any = await createPaidOperationLedger(path).summary();
+		assert.equal(summary.operations[0].ceilingMicros, 1_000_000);
+		assert.equal(summary.operations[0].actualMicros, 1);
+	});
+});
+
+test("apportions repeating legacy estimates and actuals under integral ceilings", async () => {
+	await withLedger(async (_root, path) => {
+		const allocationUsd = 0.35 / 3;
+		const keys = ["1".repeat(64), "2".repeat(64), "3".repeat(64)];
+		await writeFile(path, `${JSON.stringify({ version: 1, operations: Object.fromEntries(keys.map((key, index) => [key, {
+			provider: "openai", kind: "grammar-extraction", status: "succeeded",
+			estimateUsd: allocationUsd, ceilingUsd: 1,
+			remoteId: `legacy-integral-ceiling-${index}`, artifactSha256, actualUsd: allocationUsd,
+		}])) }, null, 2)}\n`);
+		const summary: any = await createPaidOperationLedger(path).summary();
+		assert.deepEqual(summary.operations.map((operation: any) => operation.estimateMicros), [116_667, 116_667, 116_666]);
+		assert.deepEqual(summary.operations.map((operation: any) => operation.actualMicros), [116_667, 116_667, 116_666]);
+		assert.equal(summary.costs.total.estimated_micros, 350_000);
+		assert.equal(summary.costs.total.actual_micros, 350_000);
 	});
 });
 
