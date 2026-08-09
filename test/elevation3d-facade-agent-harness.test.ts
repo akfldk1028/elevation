@@ -123,7 +123,7 @@ async function fixture(overrides: any = {}) {
 	const ledgerRoot = join(root, "ledger");
 	await mkdir(ledgerRoot, { recursive: true });
 	const ledger = createPaidOperationLedger(join(ledgerRoot, "paid.json"), { approvedRoot: ledgerRoot });
-	const calls: any = { preflight: [], generate: [], request: [], grammar: [], build: [], validate: [], delivery: [], score: [] };
+	const calls: any = { preflight: [], generate: [], request: [], grammar: [], build: [], validate: [], delivery: [], presentation: [], score: [] };
 	const validations = overrides.validations ?? {};
 	const scores = overrides.scores ?? { "gpt-image-2": 91, "nano-banana-pro": 95 };
 	const scoreAuthorities = new WeakSet<object>();
@@ -207,9 +207,32 @@ async function fixture(overrides: any = {}) {
 			if (scripted instanceof Error) throw scripted;
 			return scripted ?? { accepted: true, codes: [], metrics: {}, artifacts: { glb: artifact.path, glb_sha256: artifact.sha256 } };
 		},
-		renderDelivery: async ({ provider, artifact }: any) => {
+		renderDelivery: async ({ provider, artifact, deliveryRoot }: any) => {
 			calls.delivery.push({ provider, artifact });
-			return { schema_version: "fixture-delivery.v1", selected_glb_sha256: artifact.sha256 };
+			await mkdir(deliveryRoot, { recursive: true });
+			const manifestPath = join(deliveryRoot, "technical-delivery.json");
+			const manifest = { selected_glb: { sha256: artifact.sha256 } };
+			const manifestBytes = Buffer.from(`${stableJson(manifest)}\n`);
+			await writeFile(manifestPath, manifestBytes);
+			return {
+				schema_version: "fixture-delivery.v1", run_dir: deliveryRoot, manifest,
+				memory_record: { manifest: { path: manifestPath, sha256: sha256(manifestBytes) } },
+			};
+		},
+		renderPresentation: async ({ provider, artifact, presentationRoot, technicalDelivery }: any) => {
+			calls.presentation.push({ provider, artifact, presentationRoot, technicalDelivery });
+			if (overrides.presentationFailure) throw overrides.presentationFailure;
+			await mkdir(presentationRoot, { recursive: true });
+			const presentationPath = join(presentationRoot, "presentation.json");
+			const presentation = { selected_glb: { sha256: artifact.sha256 } };
+			const presentationBytes = Buffer.from(`${stableJson(presentation)}\n`);
+			await writeFile(presentationPath, presentationBytes);
+			return {
+				memory_record: {
+					presentation: { path: presentationPath, sha256: sha256(presentationBytes) },
+					selected_glb: { sha256: artifact.sha256 },
+				},
+			};
 		},
 		score,
 		ledger,
@@ -1049,6 +1072,91 @@ test("breaks an authorized technical tie by provider ID after rendering both acc
 	assert.equal(result.final.selected_provider, "gpt-image-2");
 	assert.equal(result.final.technical_winner, "gpt-image-2");
 	assert.equal(value.calls.delivery.length, 2);
+});
+
+test("persists one durable beauty presentation for the technical winner only", async () => {
+	const value = await fixture({ runId: "winner-only-presentation" });
+	const result = await runFacadeAgent(value.config, value.deps);
+
+	assert.equal(result.final.status, "winner");
+	assert.deepEqual(value.calls.presentation.map((call: any) => call.provider), [result.final.selected_provider]);
+	assert.equal(result.presentation_execution.status, "succeeded");
+	assert.equal(result.presentation_receipt.receipt_sha256, result.final.presentation_sha256);
+	const receipt = JSON.parse(await readFile(join(value.runDir, result.presentation_receipt.path), "utf8"));
+	assert.equal(receipt.technical_manifest.path.includes(":"), false);
+	assert.equal(receipt.presentation_manifest.path.includes(":"), false);
+});
+
+test("a renderer rejection leaves technical delivery intact without a final winner", async () => {
+	const value = await fixture({ runId: "presentation-renderer-rejection" });
+	value.deps.renderPresentation = async ({ provider, artifact }: any) => {
+		value.calls.presentation.push({ provider, artifact });
+		throw Object.assign(new Error("local renderer rejected the presentation"), { code: "FACADE_PRESENTATION_RENDER_REJECTED" });
+	};
+	const result = await runFacadeAgent(value.config, value.deps);
+
+	assert.equal(result.final.status, "presentation-failed");
+	assert.equal(result.final.failure.code, "FACADE_PRESENTATION_RENDER_REJECTED");
+	assert.equal(result.presentation_receipt, undefined);
+	assert.equal(result.providers[result.final.selected_provider].delivery.status, "succeeded");
+	assert.deepEqual(value.calls.presentation.map((call: any) => call.provider), ["nano-banana-pro"]);
+});
+
+test("an abort before or during presentation never writes a final winner", async (context) => {
+	for (const timing of ["before", "during"] as const) await context.test(timing, async () => {
+		const controller = new AbortController();
+		const value = await fixture({ runId: `presentation-abort-${timing}`, lifecycle: { onTransition(event: any) {
+			if (timing === "before" && event.stage === "presentation" && event.status === "submitting") controller.abort();
+		} } });
+		value.deps.signal = controller.signal;
+		if (timing === "during") value.deps.renderPresentation = async ({ provider, artifact }: any) => {
+			value.calls.presentation.push({ provider, artifact });
+			controller.abort();
+			throw controller.signal.reason;
+		};
+		const result = await runFacadeAgent(value.config, value.deps);
+
+		assert.equal(result.final.status, "cancelled");
+		assert.notEqual(result.final.status, "winner");
+		assert.equal(result.presentation_receipt, undefined);
+		assert.equal(value.calls.presentation.length, timing === "before" ? 0 : 1);
+	});
+});
+
+test("a GLB changed at the presentation checkpoint fails before the local renderer", async () => {
+	let value: any;
+	value = await fixture({ runId: "presentation-tampered-glb", lifecycle: { async onTransition(event: any) {
+		if (event.stage === "presentation" && event.status === "submitting") {
+			await writeFile(join(value.runDir, "fixture-artifacts", event.provider, "v001.glb"), REPLACEMENT_GLB_BYTES);
+		}
+	} } });
+	const result = await runFacadeAgent(value.config, value.deps);
+
+	assert.equal(result.final.status, "presentation-failed");
+	assert.equal(result.final.failure.code, "FACADE_BUILD_ARTIFACT_HASH_MISMATCH");
+	assert.deepEqual(value.calls.presentation, []);
+	assert.equal(result.providers["nano-banana-pro"].delivery.status, "succeeded");
+});
+
+test("rejects forged presentation reports and receipt tampering", async () => {
+	const forged = await fixture({ runId: "forged-presentation-report" });
+	forged.deps.renderPresentation = async ({ provider, artifact, presentationRoot }: any) => {
+		forged.calls.presentation.push({ provider, artifact });
+		await mkdir(presentationRoot, { recursive: true });
+		const path = join(presentationRoot, "presentation.json");
+		await writeFile(path, "{}\n");
+		const presentation: any = { sha256: sha256("{}\n") };
+		Object.defineProperty(presentation, "path", { get: () => path });
+		return { memory_record: { presentation, selected_glb: { sha256: artifact.sha256 } } };
+	};
+	const rejected = await runFacadeAgent(forged.config, forged.deps);
+	assert.equal(rejected.final.status, "presentation-failed");
+	assert.equal(rejected.final.failure.code, "FACADE_PRESENTATION_RESULT_INVALID");
+
+	const durable = await fixture({ runId: "tampered-presentation-receipt" });
+	const persisted = await runFacadeAgent(durable.config, durable.deps);
+	await writeFile(join(durable.runDir, persisted.presentation_receipt.path), "{}\n");
+	await assert.rejects(() => readFacadeAgentStatus(durable.runDir), (error: any) => error.code === "FACADE_AGENT_STATE_UNCERTAIN");
 });
 
 test("transport, uncertain submission, geometry mismatch, unknown validation, and cancellation never create v002", async (context) => {
