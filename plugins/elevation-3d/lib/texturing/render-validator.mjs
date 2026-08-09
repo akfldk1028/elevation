@@ -3,6 +3,7 @@ import { isAbsolute, join, relative, resolve } from "node:path";
 import puppeteer from "puppeteer-core";
 import sharp from "sharp";
 import { sha256 } from "../core.mjs";
+import { assertNoReparsePoints, containedPath } from "../facade-agent/harness.mjs";
 import { findChrome } from "../results.mjs";
 import { startPreview, stopPreview } from "../preview.mjs";
 import { buildViewerBundle } from "../viewer.mjs";
@@ -10,6 +11,48 @@ import { analyzePresentationPng, analyzeSemanticRolePng, comparePresentationEvid
 import { renderStyleHash, resolvePbrRenderStyle } from "./render-style.mjs";
 
 const VIEW_NAMES = ["front", "back", "left", "right", "plan", "top", "axon", "opposite-axon"];
+const HEX_SHA256 = /^[a-f0-9]{64}$/i;
+const verifiedProceduralBaselines = new WeakSet();
+
+class ProceduralBaselineError extends Error {
+	constructor(code, message, cause) {
+		super(message, cause ? { cause } : undefined);
+		this.name = "ProceduralBaselineError";
+		this.code = code;
+	}
+}
+
+function baselineFail(code, message, cause) {
+	throw new ProceduralBaselineError(code, message, cause);
+}
+
+function safeBaselinePath(root, path, label) {
+	if (typeof path !== "string") baselineFail("PROCEDURAL_BASELINE_BINDING_INVALID", `${label} path is missing`);
+	try { return containedPath(root, isAbsolute(path) ? path : resolve(root, path), label); }
+	catch (error) { baselineFail("PROCEDURAL_BASELINE_PATH_INVALID", `${label} is outside the technical delivery`, error); }
+}
+
+async function readBaselineRecord(root, record, label) {
+	if (!record || typeof record.path !== "string" || !HEX_SHA256.test(record.sha256 ?? "")) {
+		baselineFail("PROCEDURAL_BASELINE_BINDING_INVALID", `${label} record is invalid`);
+	}
+	const path = safeBaselinePath(root, record.path, label);
+	let bytes;
+	try { await assertNoReparsePoints(path); bytes = await readFile(path); }
+	catch (error) {
+		if (error?.code === "FACADE_AGENT_PATH_UNSAFE") baselineFail("PROCEDURAL_BASELINE_PATH_INVALID", `${label} contains a link or reparse point`, error);
+		baselineFail("PROCEDURAL_BASELINE_BINDING_INVALID", `${label} is unavailable`, error);
+	}
+	if (sha256(bytes) !== record.sha256) baselineFail("PROCEDURAL_BASELINE_BINDING_INVALID", `${label} SHA-256 does not match`);
+	let value;
+	try { value = JSON.parse(bytes.toString("utf8")); }
+	catch (error) { baselineFail("PROCEDURAL_BASELINE_BINDING_INVALID", `${label} is not valid JSON`, error); }
+	return { path, value };
+}
+
+function selectedGlbHash(value) {
+	return value?.selected_glb_sha256 ?? value?.selectedGlbSha256 ?? value?.selected_glb?.sha256;
+}
 
 function normalizeCameraValue(value) {
 	if (typeof value === "number") return Number.isFinite(value) ? Math.round(value * 1e9) / 1e9 : null;
@@ -63,7 +106,7 @@ function presentationCameraPresets(cameras, proceduralBaseline) {
 	const source = { ...(cameras ?? {}) };
 	if (!source.plan && source.top) source.plan = { ...structuredClone(source.top), name: "plan" };
 	return Object.fromEntries(VIEW_NAMES.map((name) => {
-		const preset = proceduralBaseline?.[name]?.camera ?? source[name];
+		const preset = proceduralBaseline?.views?.[name]?.camera ?? source[name];
 		if (!preset) throw new Error(`presentation camera preset is missing: ${name}`);
 		const cut = name === "plan"
 			? { enabled: true, elevation_m: 1.2, plane_world: [0, 0, 1, -1.2] }
@@ -166,23 +209,59 @@ async function compareRenderEvidence(texturedBytes, diagnosticBytes) {
 	};
 }
 
-async function loadProceduralBaseline(runDir) {
+function normalizedTechnicalBounds(name, bounds, width, height, camera) {
+	let minX = bounds.min_x / width, minY = bounds.min_y / height;
+	let maxX = bounds.max_x / width, maxY = bounds.max_y / height;
+	// The technical orthographic renderer may reserve annotation lanes by
+	// translating its camera. The presentation renderer intentionally recenters
+	// the same authenticated frustum on the GLB bounds, so compare in that
+	// canonical centered frame while retaining both spans.
+	if ((camera?.type ?? camera?.projection) === "orthographic") {
+		const spanX = maxX - minX, spanY = maxY - minY;
+		minX = 0.5 - spanX / 2; maxX = 0.5 + spanX / 2;
+		minY = 0.5 - spanY / 2; maxY = 0.5 + spanY / 2;
+	}
+	return { minX, minY, maxX, maxY, camera, view: name };
+}
+
+export async function loadVerifiedProceduralBaseline({ runDir, manifestRecord, selectedGlbSha256 } = {}) {
 	if (!runDir) return null;
 	const root = resolve(runDir);
-	const manifest = JSON.parse(await readFile(join(root, "all-views-manifest.json"), "utf8"));
-	const result = {};
-	for (const name of VIEW_NAMES) {
-		const view = manifest.views?.[name];
-		const detailedPath = view?.manifest?.path ? join(root, view.manifest.path) : null;
-		const detailed = detailedPath ? JSON.parse(await readFile(detailedPath, "utf8")) : null;
-		const bounds = detailed?.building_content?.bounds_px ?? detailed?.content_bounds_px ?? view?.validation?.metrics?.content_bounds_px;
-		if (!bounds || !(view.width > 0) || !(view.height > 0)) throw new Error(`Procedural baseline extent is missing for ${name}`);
-		result[name] = {
-			minX: bounds.min_x / view.width, minY: bounds.min_y / view.height,
-			maxX: bounds.max_x / view.width, maxY: bounds.max_y / view.height,
-			camera: detailed?.camera ?? view.camera,
-		};
+	try { await assertNoReparsePoints(root); }
+	catch (error) { baselineFail("PROCEDURAL_BASELINE_PATH_INVALID", "technical delivery root contains a link or reparse point", error); }
+	const durable = await readBaselineRecord(root, manifestRecord, "technical all-views manifest");
+	const manifest = durable.value;
+	if (manifest?.schema_version !== "arr.elevation3d.all-views.v1"
+		|| manifest?.validation?.accepted !== true
+		|| selectedGlbHash(manifest) !== selectedGlbSha256
+		|| Object.keys(manifest.views ?? {}).sort().join("|") !== [...VIEW_NAMES].sort().join("|")) {
+		baselineFail("PROCEDURAL_BASELINE_BINDING_INVALID", "technical all-views manifest is not an accepted selected-GLB authority");
 	}
+	const views = {};
+	for (const name of VIEW_NAMES) {
+		const view = manifest.views[name];
+		if (view?.validation?.accepted !== true || selectedGlbHash(view) !== selectedGlbSha256 || !(view.width > 0) || !(view.height > 0)) {
+			baselineFail("PROCEDURAL_BASELINE_BINDING_INVALID", `technical ${name} view is not accepted and bound to the selected GLB`);
+		}
+		const { value: detailed } = await readBaselineRecord(root, view.manifest, `technical ${name} detailed manifest`);
+		const expectedSchema = ["front", "back", "left", "right"].includes(name) ? "arr.elevation3d.competition-elevation.v1"
+			: ["plan", "top"].includes(name) ? "arr.elevation3d.competition-plan-top.v1" : "arr.elevation3d.competition-axon.v1";
+		if (detailed?.schema_version !== expectedSchema || (detailed.view ?? detailed.mode) !== name
+			|| selectedGlbHash(detailed) !== selectedGlbSha256 || !detailed.camera
+			|| JSON.stringify(normalizeCameraValue(detailed.camera)) !== JSON.stringify(normalizeCameraValue(view.camera))) {
+			baselineFail("PROCEDURAL_BASELINE_BINDING_INVALID", `technical ${name} detailed manifest identity, GLB, or camera is invalid`);
+		}
+		const bounds = detailed.building_content?.bounds_px ?? detailed.content_bounds_px ?? view.validation?.metrics?.content_bounds_px;
+		if (!bounds || ![bounds.min_x, bounds.min_y, bounds.max_x, bounds.max_y].every(Number.isFinite)) {
+			baselineFail("PROCEDURAL_BASELINE_BINDING_INVALID", `technical ${name} projected bounds are missing`);
+		}
+		views[name] = normalizedTechnicalBounds(name, bounds, view.width, view.height, detailed.camera);
+	}
+	const result = {
+		schema_version: "arr.elevation3d.verified-procedural-baseline.v1", run_dir: root,
+		manifest: { path: durable.path, sha256: manifestRecord.sha256 }, selected_glb_sha256: selectedGlbSha256, views,
+	};
+	verifiedProceduralBaselines.add(result);
 	return result;
 }
 
@@ -191,10 +270,14 @@ function baselineExtentDelta(bounds, width, height, baseline) {
 	const normalized = {
 		width: (bounds.maxX - bounds.minX) / width,
 		height: (bounds.maxY - bounds.minY) / height,
+		centerX: (bounds.minX + bounds.maxX) / (2 * width),
+		centerY: (bounds.minY + bounds.maxY) / (2 * height),
 	};
 	const baselineExtent = {
 		width: baseline.maxX - baseline.minX,
 		height: baseline.maxY - baseline.minY,
+		centerX: (baseline.minX + baseline.maxX) / 2,
+		centerY: (baseline.minY + baseline.maxY) / 2,
 	};
 	return Math.max(...Object.keys(normalized).map((key) => Math.abs(normalized[key] - baselineExtent[key])));
 }
@@ -289,7 +372,8 @@ export async function loadPresentationBaseline(runDir, binding = {}) {
 }
 
 export async function renderEmbeddedPbrViews({
-	glbPath, runDir, candidateId, cameras, baselineRunDir, outputSize = 1600, signal, lifecycle = {},
+	glbPath, runDir, candidateId, cameras, baselineRunDir, baselineManifestRecord, proceduralBaseline: suppliedProceduralBaseline,
+	outputSize = 1600, signal, lifecycle = {},
 	renderStyleId = "competition-daylight-v1", renderStyleOverrides, presentationBaselineRunDir,
 	requirePresentationBaselineComparison = false, canonicalSelection,
 } = {}) {
@@ -297,7 +381,15 @@ export async function renderEmbeddedPbrViews({
 	await mkdir(root, { recursive: true });
 	const glbBytes = await readFile(resolve(glbPath));
 	const selectedGlbSha256 = sha256(glbBytes);
-	const proceduralBaseline = await loadProceduralBaseline(baselineRunDir);
+	if (suppliedProceduralBaseline && !verifiedProceduralBaselines.has(suppliedProceduralBaseline)) {
+		baselineFail("PROCEDURAL_BASELINE_BINDING_INVALID", "procedural baseline was not produced by the durable verifier");
+	}
+	const proceduralBaseline = suppliedProceduralBaseline ?? await loadVerifiedProceduralBaseline({
+		runDir: baselineRunDir, manifestRecord: baselineManifestRecord, selectedGlbSha256,
+	});
+	if (proceduralBaseline && proceduralBaseline.selected_glb_sha256 !== selectedGlbSha256) {
+		baselineFail("PROCEDURAL_BASELINE_BINDING_INVALID", "procedural baseline is bound to a different selected GLB");
+	}
 	const renderStyle = resolvePbrRenderStyle({ ...(renderStyleOverrides ?? {}), id: renderStyleId });
 	const renderStyleSha256 = renderStyleHash(renderStyle);
 	const presentationCameras = presentationCameraPresets(cameras, proceduralBaseline);
@@ -394,7 +486,7 @@ export async function renderEmbeddedPbrViews({
 					actual_hash: cameraContractHash(browserState.camera.contract),
 				},
 				...evidence,
-				baselineProjectedExtentDelta: baselineExtentDelta(evidence.projectedBoundsPx, outputSize, outputSize, proceduralBaseline?.[name]),
+				baselineProjectedExtentDelta: baselineExtentDelta(evidence.projectedBoundsPx, outputSize, outputSize, proceduralBaseline?.views?.[name]),
 			};
 		}
 		const pbrEvidence = await page.evaluate(() => globalThis.__ELEVATION3D_TEST_CONTROLS__.embeddedPbrEvidence());
@@ -444,7 +536,10 @@ export async function renderEmbeddedPbrViews({
 		const report = {
 			schema_version: "arr.elevation3d.embedded-pbr-render.v2",
 			selected_glb: { path: resolve(glbPath), sha256: selectedGlbSha256 }, material_mode: "embedded-pbr", views,
-			procedural_baseline: { run_dir: baselineRunDir ? resolve(baselineRunDir) : null, compared_views: proceduralBaseline ? VIEW_NAMES : [] },
+			procedural_baseline: {
+				run_dir: proceduralBaseline?.run_dir ?? null, manifest: proceduralBaseline?.manifest ?? null,
+				compared_views: proceduralBaseline ? VIEW_NAMES : [],
+			},
 			render_style: renderStyle, render_style_sha256: renderStyleSha256,
 			presentation_environment: presentationEvidence.front?.browser?.environment ?? null,
 			presentation_evidence: imageEvidence, baseline_comparison: baselineComparison,

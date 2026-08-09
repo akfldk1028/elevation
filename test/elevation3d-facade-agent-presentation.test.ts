@@ -25,8 +25,50 @@ function candidate() {
 	};
 }
 
-function acceptedTechnicalDelivery(glbSha256: string) {
-	return { run_dir: "technical-delivery", manifest: { selected_glb: { sha256: glbSha256 } } };
+async function writeAcceptedTechnicalDelivery(runDir: string, glbSha256: string) {
+	const root = join(runDir, "technical-delivery");
+	const views: Record<string, any> = {};
+	const detailPaths: Record<string, string> = {};
+	for (const name of VIEW_NAMES) {
+		const relativePath = join("views", name, "view.json");
+		const path = join(root, relativePath);
+		await mkdir(join(root, "views", name), { recursive: true });
+		const type = ["axon", "opposite-axon"].includes(name) ? "perspective" : "orthographic";
+		const camera = type === "perspective"
+			? { type, position: [10, -10, 10], target: [0, 0, 5], up: [0, 0, 1], fov_degrees: 32, near: 0.1, far: 100 }
+			: { type, projection_axes: { depth: [0, -1, 0], horizontal: [1, 0, 0], vertical: [0, 0, 1] }, frustum: { left: -10, right: 10, top: 10, bottom: -10, near: 0.1, far: 100 } };
+		const detail = {
+			schema_version: type === "perspective" ? "arr.elevation3d.competition-axon.v1"
+				: ["plan", "top"].includes(name) ? "arr.elevation3d.competition-plan-top.v1" : "arr.elevation3d.competition-elevation.v1",
+			...(["plan", "top"].includes(name) ? { mode: name } : { view: name }),
+			selected_glb_sha256: glbSha256, camera,
+			content_bounds_px: { min_x: 10, min_y: 10, max_x: 89, max_y: 89 },
+		};
+		const bytes = Buffer.from(JSON.stringify(detail));
+		await writeFile(path, bytes);
+		detailPaths[name] = path;
+		views[name] = {
+			width: 100, height: 100, selected_glb_sha256: glbSha256, camera,
+			validation: { accepted: true, codes: [] }, manifest: { path: relativePath, sha256: sha256(bytes) },
+		};
+	}
+	const manifest = {
+		schema_version: "arr.elevation3d.all-views.v1", selected_glb: { path: "enriched.glb", sha256: glbSha256 },
+		views, validation: { accepted: true, codes: [] },
+	};
+	const manifestPath = join(root, "all-views-manifest.json");
+	const manifestBytes = Buffer.from(JSON.stringify(manifest));
+	await writeFile(manifestPath, manifestBytes);
+	return {
+		delivery: { run_dir: root, manifest, memory_record: { manifest: { path: manifestPath, sha256: sha256(manifestBytes) } } },
+		manifestPath, detailPaths,
+	};
+}
+
+function claimDifferentTechnicalGlb(delivery: any, glbSha256: string) {
+	const changed = structuredClone(delivery);
+	changed.manifest.selected_glb.sha256 = glbSha256;
+	return changed;
 }
 
 function fakeAcceptedPbrRenderer(calls: any[], glbSha256: string, overrides: Record<string, unknown> = {}) {
@@ -55,9 +97,11 @@ async function fixture() {
 	};
 	const receiptBytes = Buffer.from(JSON.stringify(receiptValue, null, 2));
 	await writeFile(receiptPath, receiptBytes);
+	const technical = await writeAcceptedTechnicalDelivery(runDir, sha256(glbBytes));
 	return {
 		runDir, glbPath, glbSha256: sha256(glbBytes), receiptPath, receiptSha256: sha256(receiptBytes),
-		receiptContentSha256: sha256(stableJson(receiptValue)),
+		receiptContentSha256: sha256(stableJson(receiptValue)), technicalDelivery: technical.delivery,
+		technicalManifestPath: technical.manifestPath, technicalDetailPaths: technical.detailPaths,
 	};
 }
 
@@ -93,13 +137,15 @@ test("renders one validated facade GLB into a bound final presentation", async (
 			artifact: { path: f.glbPath, sha256: f.glbSha256 },
 			validation: { accepted: true, codes: [] },
 			validationReceipt: { path: f.receiptPath, sha256: f.receiptSha256, receipt_sha256: f.receiptContentSha256 },
-			technicalDelivery: acceptedTechnicalDelivery(f.glbSha256), input: candidate(),
+			technicalDelivery: f.technicalDelivery, input: candidate(),
 			deps: { renderEmbeddedPbrViews: fakeAcceptedPbrRenderer(calls, f.glbSha256) },
 		});
 		assert.equal(calls.length, 1);
 		assert.equal(calls[0].glbPath, f.glbPath);
 		assert.equal(calls[0].runDir, resolve(f.runDir, "final-presentation"));
 		assert.equal(calls[0].renderStyleId, "competition-daylight-v1");
+		assert.equal(calls[0].proceduralBaseline.manifest.sha256, f.technicalDelivery.memory_record.manifest.sha256);
+		assert.equal(calls[0].proceduralBaseline.views.front.camera.type, "orthographic");
 		assert.equal(result.schema_version, "arr.elevation3d.facade-final-presentation.v1");
 		assert.equal(result.selected_glb.sha256, f.glbSha256);
 		assert.equal(result.render.selected_glb.sha256, f.glbSha256);
@@ -108,6 +154,37 @@ test("renders one validated facade GLB into a bound final presentation", async (
 		assert.deepEqual(Object.keys(result.render.views).sort(), [...VIEW_NAMES].sort());
 		assert.equal(JSON.parse(await readFile(result.memory_record.presentation.path, "utf8")).selected_glb.sha256, f.glbSha256);
 	} finally { await rm(f.runDir, { recursive: true, force: true }); }
+});
+
+test("rejects unauthenticated technical baseline paths, hashes, and cameras before rendering", async (t) => {
+	for (const [name, code, tamper] of [
+		["escaped manifest path", "FACADE_PRESENTATION_PATH_INVALID", async (f: any, delivery: any) => {
+			delivery.memory_record.manifest.path = resolve(f.runDir, "..", "outside-all-views-manifest.json");
+		}],
+		["manifest hash", "FACADE_PRESENTATION_TECHNICAL_BINDING_MISMATCH", async (_f: any, delivery: any) => {
+			delivery.memory_record.manifest.sha256 = "0".repeat(64);
+		}],
+		["detailed camera", "FACADE_PRESENTATION_TECHNICAL_BINDING_MISMATCH", async (f: any) => {
+			const detail = JSON.parse(await readFile(f.technicalDetailPaths.front, "utf8"));
+			detail.camera.frustum.left -= 1;
+			await writeFile(f.technicalDetailPaths.front, JSON.stringify(detail));
+		}],
+	] as const) await t.test(name, async () => {
+		const f = await fixture();
+		try {
+			const technicalDelivery = structuredClone(f.technicalDelivery);
+			await tamper(f, technicalDelivery);
+			const calls: any[] = [];
+			await assert.rejects(() => deliverFacadeFinalPresentation({
+				runDir: f.runDir, presentationRoot: join(f.runDir, `tampered-${name.replaceAll(" ", "-")}`), candidateId: "creative-020",
+				artifact: { path: f.glbPath, sha256: f.glbSha256 }, validation: { accepted: true, codes: [] },
+				validationReceipt: { path: f.receiptPath, sha256: f.receiptSha256, receipt_sha256: f.receiptContentSha256 },
+				technicalDelivery, input: candidate(),
+				deps: { renderEmbeddedPbrViews: fakeAcceptedPbrRenderer(calls, f.glbSha256) },
+			}), (error: any) => error?.code === code);
+			assert.equal(calls.length, 0);
+		} finally { await rm(f.runDir, { recursive: true, force: true }); }
+	});
 });
 
 test("accepts a normalized receipt for its authoritative runtime validation and rejects semantic drift", async () => {
@@ -119,7 +196,7 @@ test("accepts a normalized receipt for its authoritative runtime validation and 
 		await deliverFacadeFinalPresentation({
 			runDir: acceptedFixture.runDir, presentationRoot: join(acceptedFixture.runDir, "authoritative-presentation"), candidateId: "creative-020",
 			artifact: { path: acceptedFixture.glbPath, sha256: acceptedFixture.glbSha256 }, validation: authoritative.validation,
-			validationReceipt: receipt, technicalDelivery: acceptedTechnicalDelivery(acceptedFixture.glbSha256), input: candidate(),
+			validationReceipt: receipt, technicalDelivery: acceptedFixture.technicalDelivery, input: candidate(),
 			deps: { renderEmbeddedPbrViews: fakeAcceptedPbrRenderer(calls, acceptedFixture.glbSha256) },
 		});
 		assert.equal(calls.length, 1);
@@ -137,7 +214,7 @@ test("accepts a normalized receipt for its authoritative runtime validation and 
 		await assert.rejects(() => deliverFacadeFinalPresentation({
 			runDir: mismatchedFixture.runDir, presentationRoot: join(mismatchedFixture.runDir, "mismatched-presentation"), candidateId: "creative-020",
 			artifact: { path: mismatchedFixture.glbPath, sha256: mismatchedFixture.glbSha256 }, validation: authoritative.validation,
-			validationReceipt: receipt, technicalDelivery: acceptedTechnicalDelivery(mismatchedFixture.glbSha256), input: candidate(),
+			validationReceipt: receipt, technicalDelivery: mismatchedFixture.technicalDelivery, input: candidate(),
 			deps: { renderEmbeddedPbrViews: fakeAcceptedPbrRenderer(calls, mismatchedFixture.glbSha256) },
 		}), (error: any) => error?.code === "FACADE_PRESENTATION_VALIDATION_RECEIPT_INVALID");
 		assert.equal(calls.length, 0);
@@ -148,7 +225,7 @@ test("rejects unsafe presentation inputs before invoking the renderer", async ()
 	const scenarios = [
 		["tampered GLB", "FACADE_PRESENTATION_GLB_HASH_MISMATCH", (f: any) => ({ artifact: { path: f.glbPath, sha256: "0".repeat(64) } })],
 		["rejected facade validation", "FACADE_PRESENTATION_VALIDATION_REQUIRED", (_f: any) => ({ validation: { accepted: false, codes: ["REJECTED"] } })],
-		["different technical GLB", "FACADE_PRESENTATION_TECHNICAL_BINDING_MISMATCH", (_f: any) => ({ technicalDelivery: acceptedTechnicalDelivery("1".repeat(64)) })],
+		["different technical GLB", "FACADE_PRESENTATION_TECHNICAL_BINDING_MISMATCH", (f: any) => ({ technicalDelivery: claimDifferentTechnicalGlb(f.technicalDelivery, "1".repeat(64)) })],
 		["rejected PBR report", "FACADE_PRESENTATION_RENDER_REJECTED", (_f: any) => ({ render: { validation: { accepted: false } } })],
 		["renderer reports provider calls", "FACADE_PRESENTATION_REMOTE_ACTIVITY", (_f: any) => ({ render: { provider_calls: 1 } })],
 	] as const;
@@ -161,7 +238,7 @@ test("rejects unsafe presentation inputs before invoking the renderer", async ()
 			const args: any = {
 				runDir: f.runDir, presentationRoot: join(f.runDir, "final-presentation"), candidateId: "creative-020",
 				artifact: { path: f.glbPath, sha256: f.glbSha256 }, validation: { accepted: true, codes: [] },
-				validationReceipt: { path: f.receiptPath, sha256: f.receiptSha256, receipt_sha256: f.receiptContentSha256 }, technicalDelivery: acceptedTechnicalDelivery(f.glbSha256), input: candidate(),
+				validationReceipt: { path: f.receiptPath, sha256: f.receiptSha256, receipt_sha256: f.receiptContentSha256 }, technicalDelivery: f.technicalDelivery, input: candidate(),
 				deps: { renderEmbeddedPbrViews: fakeAcceptedPbrRenderer(calls, f.glbSha256, resultOverride) },
 			};
 			Object.assign(args, change(f));
@@ -178,7 +255,7 @@ test("rejects presentation roots that escape the run directory", async () => {
 		await assert.rejects(() => deliverFacadeFinalPresentation({
 			runDir: f.runDir, presentationRoot: resolve(f.runDir, "..", "escape"), candidateId: "creative-020",
 			artifact: { path: f.glbPath, sha256: f.glbSha256 }, validation: { accepted: true, codes: [] },
-			validationReceipt: { path: f.receiptPath, sha256: f.receiptSha256, receipt_sha256: f.receiptContentSha256 }, technicalDelivery: acceptedTechnicalDelivery(f.glbSha256), input: candidate(),
+			validationReceipt: { path: f.receiptPath, sha256: f.receiptSha256, receipt_sha256: f.receiptContentSha256 }, technicalDelivery: f.technicalDelivery, input: candidate(),
 			deps: { renderEmbeddedPbrViews: fakeAcceptedPbrRenderer(calls, f.glbSha256) },
 		}), (error: any) => error?.code === "FACADE_PRESENTATION_PATH_INVALID");
 		assert.equal(calls.length, 0);
@@ -197,7 +274,7 @@ test("rejects a reparse-point presentation root", async (context) => {
 			await assert.rejects(() => deliverFacadeFinalPresentation({
 				runDir: f.runDir, presentationRoot: link, candidateId: "creative-020",
 				artifact: { path: f.glbPath, sha256: f.glbSha256 }, validation: { accepted: true, codes: [] },
-				validationReceipt: { path: f.receiptPath, sha256: f.receiptSha256, receipt_sha256: f.receiptContentSha256 }, technicalDelivery: acceptedTechnicalDelivery(f.glbSha256), input: candidate(),
+				validationReceipt: { path: f.receiptPath, sha256: f.receiptSha256, receipt_sha256: f.receiptContentSha256 }, technicalDelivery: f.technicalDelivery, input: candidate(),
 				deps: { renderEmbeddedPbrViews: fakeAcceptedPbrRenderer(calls, f.glbSha256) },
 			}), (error: any) => error?.code === "FACADE_PRESENTATION_PATH_INVALID");
 			assert.equal(calls.length, 0);
@@ -213,7 +290,7 @@ test("fails closed when the validation receipt is missing or tampered", async ()
 		await assert.rejects(() => deliverFacadeFinalPresentation({
 			runDir: f.runDir, presentationRoot: join(f.runDir, "missing-receipt"), candidateId: "creative-020",
 			artifact: { path: f.glbPath, sha256: f.glbSha256 }, validation: { accepted: true, codes: [] },
-			validationReceipt: { path: f.receiptPath, sha256: f.receiptSha256, receipt_sha256: f.receiptContentSha256 }, technicalDelivery: acceptedTechnicalDelivery(f.glbSha256), input: candidate(),
+			validationReceipt: { path: f.receiptPath, sha256: f.receiptSha256, receipt_sha256: f.receiptContentSha256 }, technicalDelivery: f.technicalDelivery, input: candidate(),
 			deps: { renderEmbeddedPbrViews: fakeAcceptedPbrRenderer(calls, f.glbSha256) },
 		}), (error: any) => error?.code === "FACADE_PRESENTATION_VALIDATION_RECEIPT_INVALID");
 		assert.equal(calls.length, 0);
@@ -222,7 +299,7 @@ test("fails closed when the validation receipt is missing or tampered", async ()
 		await assert.rejects(() => deliverFacadeFinalPresentation({
 			runDir: f.runDir, presentationRoot: join(f.runDir, "tampered-receipt"), candidateId: "creative-020",
 			artifact: { path: f.glbPath, sha256: f.glbSha256 }, validation: { accepted: true, codes: [] },
-			validationReceipt: { path: f.receiptPath, sha256: f.receiptSha256, receipt_sha256: f.receiptContentSha256 }, technicalDelivery: acceptedTechnicalDelivery(f.glbSha256), input: candidate(),
+			validationReceipt: { path: f.receiptPath, sha256: f.receiptSha256, receipt_sha256: f.receiptContentSha256 }, technicalDelivery: f.technicalDelivery, input: candidate(),
 			deps: { renderEmbeddedPbrViews: fakeAcceptedPbrRenderer(calls, f.glbSha256) },
 		}), (error: any) => error?.code === "FACADE_PRESENTATION_VALIDATION_RECEIPT_INVALID");
 		assert.equal(calls.length, 0);
@@ -236,7 +313,7 @@ test("fails closed when the local renderer mutates the selected GLB", async () =
 		await assert.rejects(() => deliverFacadeFinalPresentation({
 			runDir: f.runDir, presentationRoot: join(f.runDir, "mutated-glb"), candidateId: "creative-020",
 			artifact: { path: f.glbPath, sha256: f.glbSha256 }, validation: { accepted: true, codes: [] },
-			validationReceipt: { path: f.receiptPath, sha256: f.receiptSha256, receipt_sha256: f.receiptContentSha256 }, technicalDelivery: acceptedTechnicalDelivery(f.glbSha256), input: candidate(),
+			validationReceipt: { path: f.receiptPath, sha256: f.receiptSha256, receipt_sha256: f.receiptContentSha256 }, technicalDelivery: f.technicalDelivery, input: candidate(),
 			deps: { renderEmbeddedPbrViews: async (options: any) => {
 				calls.push(options);
 				await writeFile(options.glbPath, "mutated-by-renderer");
@@ -257,7 +334,7 @@ test("fails closed instead of overwriting an existing final presentation", async
 		await assert.rejects(() => deliverFacadeFinalPresentation({
 			runDir: f.runDir, presentationRoot, candidateId: "creative-020",
 			artifact: { path: f.glbPath, sha256: f.glbSha256 }, validation: { accepted: true, codes: [] },
-			validationReceipt: { path: f.receiptPath, sha256: f.receiptSha256, receipt_sha256: f.receiptContentSha256 }, technicalDelivery: acceptedTechnicalDelivery(f.glbSha256), input: candidate(),
+			validationReceipt: { path: f.receiptPath, sha256: f.receiptSha256, receipt_sha256: f.receiptContentSha256 }, technicalDelivery: f.technicalDelivery, input: candidate(),
 			deps: { renderEmbeddedPbrViews: fakeAcceptedPbrRenderer(calls, f.glbSha256) },
 		}), (error: any) => error?.code === "FACADE_PRESENTATION_OUTPUT_EXISTS");
 		assert.equal(calls.length, 0);
