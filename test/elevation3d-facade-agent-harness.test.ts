@@ -37,6 +37,7 @@ REPLACEMENT_GLB_DOCUMENT.createScene("Replacement");
 const REPLACEMENT_GLB_BYTES = Buffer.from(await new NodeIO().writeBinary(REPLACEMENT_GLB_DOCUMENT));
 const PROVIDER_PNG = await sharp({ create: { width: 1, height: 1, channels: 3, background: { r: 7, g: 8, b: 9 } } }).png().toBuffer();
 const VIEW_NAMES = ["front", "right", "back", "left", "top", "axon", "opposite-axon"];
+const PRESENTATION_VIEW_NAMES = ["front", "back", "left", "right", "plan", "top", "axon", "opposite-axon"];
 const PASS_NAMES = ["color", "depth", "normal", "edge", "surface-id"];
 
 async function verifiedEvidenceFixture(root: string) {
@@ -231,6 +232,13 @@ async function fixture(overrides: any = {}) {
 				memory_record: {
 					presentation: { path: presentationPath, sha256: sha256(presentationBytes) },
 					selected_glb: { sha256: artifact.sha256 },
+				},
+				render: {
+					selected_glb: { sha256: artifact.sha256 },
+					views: Object.fromEntries(PRESENTATION_VIEW_NAMES.map((name) => [name, {
+						sha256: sha256(name), selectedGlbSha256: artifact.sha256,
+					}])),
+					validation: { accepted: true, codes: [] }, provider_calls: 0, credits_consumed: 0,
 				},
 			};
 		},
@@ -1074,7 +1082,7 @@ test("breaks an authorized technical tie by provider ID after rendering both acc
 	assert.equal(value.calls.delivery.length, 2);
 });
 
-test("persists one durable beauty presentation for the technical winner only", async () => {
+test("persists one durable Task 1-shaped beauty presentation for the technical winner only", async () => {
 	const value = await fixture({ runId: "winner-only-presentation" });
 	const result = await runFacadeAgent(value.config, value.deps);
 
@@ -1085,6 +1093,70 @@ test("persists one durable beauty presentation for the technical winner only", a
 	const receipt = JSON.parse(await readFile(join(value.runDir, result.presentation_receipt.path), "utf8"));
 	assert.equal(receipt.technical_manifest.path.includes(":"), false);
 	assert.equal(receipt.presentation_manifest.path.includes(":"), false);
+	assert.deepEqual(receipt.technical_manifest, result.providers[result.final.selected_provider].delivery.memory_record.manifest);
+});
+
+test("rejects a receipt whose technical manifest is not the selected provider delivery manifest", async () => {
+	const value = await fixture({ runId: "presentation-technical-manifest-binding" });
+	const persisted = await runFacadeAgent(value.config, value.deps);
+	const receiptPath = join(value.runDir, persisted.presentation_receipt.path);
+	const receipt = JSON.parse(await readFile(receiptPath, "utf8"));
+	const alternatePath = join(value.runDir, "final-presentation", "alternate-technical-manifest.json");
+	const alternate = { selected_glb: { sha256: persisted.final.selected_glb_sha256 } };
+	const alternateBytes = Buffer.from(`${stableJson(alternate)}\n`);
+	await writeFile(alternatePath, alternateBytes);
+	receipt.technical_manifest = { path: "final-presentation/alternate-technical-manifest.json", sha256: sha256(alternateBytes) };
+	const receiptSha256 = await rewriteJson(receiptPath, receipt);
+	const runPath = join(value.runDir, "run.json");
+	const run = JSON.parse(await readFile(runPath, "utf8"));
+	run.presentation_receipt = {
+		...run.presentation_receipt,
+		sha256: receiptSha256,
+		receipt_sha256: sha256(stableJson(receipt)),
+	};
+	run.presentation_execution.receipt_sha256 = run.presentation_receipt.receipt_sha256;
+	run.final.presentation_sha256 = run.presentation_receipt.receipt_sha256;
+	run.final_manifest.sha256 = await rewriteJson(join(value.runDir, "final.json"), run.final);
+	await rewriteJson(runPath, run);
+
+	await assert.rejects(() => readFacadeAgentStatus(value.runDir), (error: any) => error.code === "FACADE_AGENT_STATE_UNCERTAIN");
+});
+
+test("does not trust a presentation report's activity claim or GLB bytes", async (context) => {
+	await context.test("reported remote activity", async () => {
+		const value = await fixture({ runId: "presentation-forged-activity" });
+		value.deps.renderPresentation = async ({ provider, artifact, presentationRoot }: any) => {
+			value.calls.presentation.push({ provider, artifact });
+			await mkdir(presentationRoot, { recursive: true });
+			const path = join(presentationRoot, "presentation.json");
+			await writeFile(path, "{}\n");
+			return {
+				memory_record: { presentation: { path, sha256: sha256("{}\n") }, selected_glb: { sha256: artifact.sha256 } },
+				render: { selected_glb: { sha256: artifact.sha256 }, provider_calls: 1, credits_consumed: 0 },
+			};
+		};
+		const result = await runFacadeAgent(value.config, value.deps);
+		assert.equal(result.final.status, "presentation-failed");
+		assert.equal(result.final.failure.code, "FACADE_PRESENTATION_REMOTE_ACTIVITY");
+	});
+
+	await context.test("selected GLB mutation", async () => {
+		const value = await fixture({ runId: "presentation-forged-glb-mutation" });
+		value.deps.renderPresentation = async ({ provider, artifact, presentationRoot }: any) => {
+			value.calls.presentation.push({ provider, artifact });
+			await mkdir(presentationRoot, { recursive: true });
+			const path = join(presentationRoot, "presentation.json");
+			await writeFile(path, "{}\n");
+			await writeFile(artifact.path, REPLACEMENT_GLB_BYTES);
+			return {
+				memory_record: { presentation: { path, sha256: sha256("{}\n") }, selected_glb: { sha256: artifact.sha256 } },
+				render: { selected_glb: { sha256: artifact.sha256 }, provider_calls: 0, credits_consumed: 0 },
+			};
+		};
+		const result = await runFacadeAgent(value.config, value.deps);
+		assert.equal(result.final.status, "presentation-failed");
+		assert.equal(result.final.failure.code, "FACADE_BUILD_ARTIFACT_HASH_MISMATCH");
+	});
 });
 
 test("a renderer rejection leaves technical delivery intact without a final winner", async () => {
