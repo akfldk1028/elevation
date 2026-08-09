@@ -1,4 +1,4 @@
-import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import puppeteer from "puppeteer-core";
 import sharp from "sharp";
@@ -8,6 +8,7 @@ import { findChrome } from "./results.mjs";
 import { buildViewerBundle } from "./viewer.mjs";
 import { buildElevationAnnotations } from "./elevation-annotations.mjs";
 import { validateCompetitionElevation } from "./elevation-presentation-validation.mjs";
+import { atomicCopy, atomicWrite, prepareSafeDirectory } from "./facade-agent/path-safety.mjs";
 
 const OUTPUT_SIZE = 2400;
 const ELEVATION_VIEWS = new Set(["front", "back", "left", "right"]);
@@ -214,10 +215,10 @@ function paletteContrasts(palette) {
 	};
 }
 
-async function writeBrowserPng(page, mode, path) {
+async function writeBrowserPng(page, mode, path, approvedRoot) {
 	const dataUrl = await page.evaluate(async (renderMode) => globalThis.__ELEVATION3D_RENDER_MODE__(renderMode), mode);
 	const bytes = decodeDataUrl(dataUrl);
-	await writeFile(path, bytes);
+	await atomicWrite(path, bytes, approvedRoot);
 	return bytes;
 }
 
@@ -226,7 +227,7 @@ export async function renderCompetitionElevationBase({
 }) {
 	assertInputs({ view, camera, palette, dimensions });
 	const outputDir = join(resolve(runDir), "competition-elevation", view);
-	await mkdir(outputDir, { recursive: true });
+	await prepareSafeDirectory(resolve(runDir), outputDir, "competition elevation directory");
 	const selectedGlbBytes = await readFile(glbPath);
 	const selectedGlbSha256 = sha256(selectedGlbBytes);
 	if (dimensions.selected_glb_sha256 !== selectedGlbSha256) throw new Error("selected GLB SHA-256 does not match dimensions");
@@ -251,7 +252,7 @@ export async function renderCompetitionElevationBase({
 	};
 	const viewerConfigSha256 = sha256(stableJson(config));
 	await buildViewerBundle({ runDir, config });
-	await copyFile(glbPath, join(resolve(runDir), "viewer", "selected.glb"));
+	await atomicCopy(glbPath, join(resolve(runDir), "viewer", "selected.glb"), resolve(runDir));
 
 	const start = lifecycle.startPreview ?? startPreview;
 	const stop = lifecycle.stopPreview ?? stopPreview;
@@ -284,10 +285,10 @@ export async function renderCompetitionElevationBase({
 			depth: join(outputDir, `${view}-depth.png`),
 			normal: join(outputDir, `${view}-normal.png`),
 		};
-		const bytes = await writeBrowserPng(page, "base", path);
-		const materialIdBytes = await writeBrowserPng(page, "material-id", diagnosticPaths.material_id);
-		const depthBytes = await writeBrowserPng(page, "depth", diagnosticPaths.depth);
-		const normalBytes = await writeBrowserPng(page, "normal", diagnosticPaths.normal);
+		const bytes = await writeBrowserPng(page, "base", path, outputDir);
+		const materialIdBytes = await writeBrowserPng(page, "material-id", diagnosticPaths.material_id, outputDir);
+		const depthBytes = await writeBrowserPng(page, "depth", diagnosticPaths.depth, outputDir);
+		const normalBytes = await writeBrowserPng(page, "normal", diagnosticPaths.normal, outputDir);
 		signal?.throwIfAborted();
 		const browserArtifact = await page.evaluate(() => globalThis.__ELEVATION3D_ARTIFACT__);
 		const decoded = await sharp(bytes).removeAlpha().raw().toBuffer({ resolveWithObject: true });
@@ -345,7 +346,7 @@ export async function renderCompetitionElevationBase({
 			},
 		};
 		const manifestPath = join(outputDir, `${view}-base-render-manifest.json`);
-		await writeFile(manifestPath, JSON.stringify(artifact, null, 2));
+		await atomicWrite(manifestPath, Buffer.from(JSON.stringify(artifact, null, 2)), outputDir);
 		artifact.manifest_path = manifestPath;
 		return artifact;
 	} finally {
@@ -444,21 +445,21 @@ export async function renderCompetitionElevation({
 	const annotation = buildElevationAnnotations({ dimensions, camera: base.camera, contentBounds: base.content_bounds_px, canvas: [base.width, base.height], candidateId });
 	const dimensionsPath = join(outputDir, `${view}-dimensions.json`);
 	const svgPath = join(outputDir, `${view}-annotations.svg`);
-	await writeFile(dimensionsPath, JSON.stringify(dimensions, null, 2));
-	await writeFile(svgPath, annotation.svg);
+	await atomicWrite(dimensionsPath, Buffer.from(JSON.stringify(dimensions, null, 2)), outputDir);
+	await atomicWrite(svgPath, Buffer.from(annotation.svg), outputDir);
 	const dimensionsRecord = { path: dimensionsPath, sha256: sha256(await readFile(dimensionsPath)) };
 	const svgRecord = { path: svgPath, sha256: sha256(await readFile(svgPath)) };
 	const presentationBase = await classifyAndCleanDarkArtifacts(base);
 	const presentationBasePath = join(outputDir, `${view}-presentation-base.png`);
 	const presentationBaseBytes = await sharp(presentationBase.pixels, { raw: presentationBase.info }).png().toBuffer();
-	await writeFile(presentationBasePath, presentationBaseBytes);
+	await atomicWrite(presentationBasePath, presentationBaseBytes, outputDir);
 	const presentationBaseRecord = { path: presentationBasePath, sha256: sha256(presentationBaseBytes) };
 	const finalPath = join(outputDir, `${view}.png`);
 	const finalBytes = await sharp(presentationBaseBytes)
 		.composite([{ input: Buffer.from(annotation.svg), blend: "over" }])
 		.png()
 		.toBuffer();
-	await writeFile(finalPath, finalBytes);
+	await atomicWrite(finalPath, finalBytes, outputDir);
 	const finalRecord = { path: finalPath, sha256: sha256(finalBytes) };
 	const displayedDimensions = {
 		overall_width: dimensions.overall_width.display_mm,
@@ -495,7 +496,7 @@ export async function renderCompetitionElevation({
 		},
 		presentation: { authored_dark_geometry: presentationBase.report },
 	};
-	await writeFile(renderManifestPath, JSON.stringify(renderManifest, null, 2));
+	await atomicWrite(renderManifestPath, Buffer.from(JSON.stringify(renderManifest, null, 2)), outputDir);
 	const manifestRecord = { path: renderManifestPath, sha256: sha256(await readFile(renderManifestPath)) };
 	const draft = {
 		base,
@@ -517,7 +518,7 @@ export async function renderCompetitionElevation({
 		floorGuides, view: camera, selectedGlbPath: glbPath,
 	});
 	const validationPath = join(outputDir, `${view}-validation.json`);
-	await writeFile(validationPath, JSON.stringify(validation, null, 2));
+	await atomicWrite(validationPath, Buffer.from(JSON.stringify(validation, null, 2)), outputDir);
 	return {
 		schema_version: "arr.elevation3d.elevation-artifacts.v1",
 		...draft,

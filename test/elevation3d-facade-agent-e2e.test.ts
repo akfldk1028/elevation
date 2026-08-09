@@ -332,11 +332,11 @@ test("routes the offline Seedream and BytePlus fixture through an opaque punched
 		const view = deliveryManifest.views[name];
 		const memoryView = accepted.delivery.views[name];
 		const viewPath = join(deliveryRoot, view.path);
-		assert.equal(resolve(viewPath), resolve(join(runDir, memoryView.path)));
+		assert.equal(resolve(viewPath), resolve(join(runDir, memoryView.image.path)));
 		assert.equal(viewPath.endsWith(`${name}.png`), true, `${name} must use its named PNG`);
 		const bytes = await readFile(viewPath);
 		assert.equal(sha256(bytes), view.sha256);
-		assert.equal(view.sha256, memoryView.sha256);
+		assert.equal(view.sha256, memoryView.image.sha256);
 		assert.equal(view.selected_glb_sha256, accepted.artifact.sha256);
 		const metadata = await sharp(bytes, { failOn: "error", limitInputPixels: 2400 * 2400 }).metadata();
 		assert.equal(metadata.format, "png");

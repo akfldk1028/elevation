@@ -3,6 +3,9 @@ import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { resolvePbrRenderStyle } from "../lib/texturing/render-style.mjs";
+import {
+	deriveCompetitionAxonCameraAuthority, deriveCompetitionElevationCameraAuthority, deriveCompetitionPlanCameraAuthority,
+} from "../lib/technical-camera-authority.mjs";
 import { createEmbeddedPbrPresentation, renderSemanticRoleMask, resolveGltfPrimitiveExtras, resolveSemanticRole, semanticRoleGeometryEvidence } from "./embedded-pbr-presentation.mjs";
 
 const params = new URLSearchParams(location.search);
@@ -67,7 +70,6 @@ function renderInteractiveAllViews(root, gltf = null) {
 	let camera, controls;
 	const materialRecords = [];
 	const embeddedMaps = new Map();
-	const punchedFacadeRoles = { "window-frame": "bronze" };
 	root.traverse((object) => {
 		if (!object.isMesh) return;
 		const materials = Array.isArray(object.material) ? object.material : [object.material];
@@ -78,9 +80,7 @@ function renderInteractiveAllViews(root, gltf = null) {
 			ancestor = ancestor.parent;
 		}
 		const primitiveExtras = resolveGltfPrimitiveExtras({ gltf, object });
-		const resolvedRoles = materials.map((material) => punchedFacadeRoles[primitiveExtras?.kind]
-			? { role: punchedFacadeRoles[primitiveExtras.kind], source: "primitive.extras.kind" }
-			: resolveSemanticRole({ object, material, primitiveExtras }));
+		const resolvedRoles = materials.map((material) => resolveSemanticRole({ object, material, primitiveExtras }));
 		materialRecords.push({
 			object,
 			roles: resolvedRoles.map((entry) => entry.role),
@@ -369,48 +369,15 @@ function createCompetitionCamera(root, view, size, marginRatio, pixelsPerMetre) 
 	if (view?.projection !== "orthographic") throw new Error("competition elevation camera projection must be orthographic");
 	const axes = view.projection_axes;
 	const bounds = loadedProjectedBounds(root, axes);
-	const width = bounds.maxH - bounds.minH;
-	const height = bounds.maxV - bounds.minV;
-	const usable = 1 - marginRatio * 2;
-	const reservedLaneTop = size - 550;
-	// Reserve the title/subtitle lane above and the dimension/scale-bar lane below.
-	const annotationVerticalUsable = (reservedLaneTop - 192) / size;
-	const span = pixelsPerMetre == null
-		? Math.max(width / usable, height / Math.min(usable, annotationVerticalUsable))
-		: size / pixelsPerMetre;
-	if (!(span >= width && span >= height)) throw new Error("competition elevation common scale clips projected geometry");
-	const centerH = (bounds.minH + bounds.maxH) / 2;
-	let centerV = (bounds.minV + bounds.maxV) / 2;
-	const centerD = (bounds.minD + bounds.maxD) / 2;
-	const pxPerM = size / span;
-	const projectedBottom = (size + height * pxPerM) / 2;
-	// Keep the fixed 5 m scale-bar label clear as well as the dimension lanes.
-	if (projectedBottom > reservedLaneTop) centerV += (reservedLaneTop - projectedBottom) / pxPerM;
-	const horizontal = new THREE.Vector3(...axes.horizontal);
-	const vertical = new THREE.Vector3(...axes.vertical);
-	const depth = new THREE.Vector3(...axes.depth);
-	const center = horizontal.multiplyScalar(centerH).add(vertical.clone().multiplyScalar(centerV)).add(depth.clone().multiplyScalar(centerD));
-	const depthSpan = Math.max(bounds.maxD - bounds.minD, 1);
-	const distance = depthSpan + 100;
-	const camera = new THREE.OrthographicCamera(-span / 2, span / 2, span / 2, -span / 2, 0.1, distance + depthSpan + 100);
-	camera.position.copy(center).sub(depth.multiplyScalar(distance));
-	camera.up.copy(vertical);
-	camera.lookAt(center);
+	const authority = deriveCompetitionElevationCameraAuthority({ view, projectedBounds: bounds, size, marginRatio, pixelsPerMetre });
+	const { frustum } = authority.manifest;
+	const camera = new THREE.OrthographicCamera(frustum.left, frustum.right, frustum.top, frustum.bottom, frustum.near, frustum.far);
+	camera.position.set(...authority.applied.position);
+	camera.up.set(...authority.applied.up);
+	camera.lookAt(new THREE.Vector3(...authority.applied.target));
 	camera.updateProjectionMatrix();
 	camera.updateMatrixWorld(true);
-	return {
-		camera,
-		manifest: {
-			type: "orthographic",
-			projection_axes: axes,
-			center_m: [centerH, centerV, centerD],
-			frustum: { left: -span / 2, right: span / 2, top: span / 2, bottom: -span / 2, near: camera.near, far: camera.far },
-			px_per_m_x: pxPerM,
-			px_per_m_y: pxPerM,
-			margin_ratio: marginRatio,
-		},
-		bounds,
-	};
+	return { camera, manifest: authority.manifest, bounds };
 }
 
 function competitionMaterials(root, palette, options = {}) {
@@ -541,36 +508,15 @@ function createPlanCamera(root, view, size, marginRatio) {
 		throw new Error("competition plan camera must be horizontal");
 	}
 	const bounds = loadedProjectedBounds(root, axes);
-	const width = bounds.maxH - bounds.minH;
-	const height = bounds.maxV - bounds.minV;
-	const span = Math.max(width, height) / (1 - marginRatio * 2);
-	const centerH = (bounds.minH + bounds.maxH) / 2;
-	const centerV = (bounds.minV + bounds.maxV) / 2;
-	const centerD = (bounds.minD + bounds.maxD) / 2;
-	const horizontal = new THREE.Vector3(...axes.horizontal);
-	const vertical = new THREE.Vector3(...axes.vertical);
-	const depth = new THREE.Vector3(...axes.depth);
-	const center = horizontal.multiplyScalar(centerH).add(vertical.clone().multiplyScalar(centerV)).add(depth.clone().multiplyScalar(centerD));
-	const distance = Math.max(bounds.maxD - bounds.minD, 1) + 100;
-	const camera = new THREE.OrthographicCamera(-span / 2, span / 2, span / 2, -span / 2, 0.1, distance * 2 + 100);
-	camera.position.copy(center).add(depth.multiplyScalar(distance));
-	camera.up.copy(vertical);
-	camera.lookAt(center);
+	const authority = deriveCompetitionPlanCameraAuthority({ view, projectedBounds: bounds, size, marginRatio });
+	const { frustum } = authority.manifest;
+	const camera = new THREE.OrthographicCamera(frustum.left, frustum.right, frustum.top, frustum.bottom, frustum.near, frustum.far);
+	camera.position.set(...authority.applied.position);
+	camera.up.set(...authority.applied.up);
+	camera.lookAt(new THREE.Vector3(...authority.applied.target));
 	camera.updateProjectionMatrix();
 	camera.updateMatrixWorld(true);
-	return {
-		camera,
-		bounds,
-		manifest: {
-			type: "orthographic",
-			projection_axes: axes,
-			center_m: [centerH, centerV, centerD],
-			frustum: { left: -span / 2, right: span / 2, top: span / 2, bottom: -span / 2, near: camera.near, far: camera.far },
-			px_per_m_x: size / span,
-			px_per_m_y: size / span,
-			margin_ratio: marginRatio,
-		},
-	};
+	return { camera, bounds, manifest: authority.manifest };
 }
 
 function trianglePlaneSegments(root, elevation) {
@@ -762,42 +708,26 @@ function boxCorners(box) {
 
 function createCompetitionAxonCamera(root, definition, marginRatio) {
 	if (definition?.projection !== "perspective") throw new Error("competition axon camera projection must be perspective");
-	const box = new THREE.Box3().setFromObject(root);
+	const box = new THREE.Box3().setFromObject(root, true);
 	if (box.isEmpty()) throw new Error("loaded GLB has no geometry");
-	const center = box.getCenter(new THREE.Vector3());
-	const forward = new THREE.Vector3(...definition.target).sub(new THREE.Vector3(...definition.position)).normalize();
-	const sourceUp = new THREE.Vector3(...definition.up).normalize();
-	const right = new THREE.Vector3().crossVectors(forward, sourceUp).normalize();
-	if (right.lengthSq() < 0.99) throw new Error("competition axon camera up is parallel to view direction");
-	const up = new THREE.Vector3().crossVectors(right, forward).normalize();
-	const tanHalf = Math.tan(THREE.MathUtils.degToRad(definition.fov_degrees / 2));
-	const usable = 1 - marginRatio * 2;
-	let distance = 0;
-	for (const corner of boxCorners(box)) {
-		const relative = corner.sub(center);
-		const depthOffset = relative.dot(forward);
-		distance = Math.max(distance, Math.abs(relative.dot(right)) / (tanHalf * usable) - depthOffset, Math.abs(relative.dot(up)) / (tanHalf * usable) - depthOffset);
-	}
-	const size = box.getSize(new THREE.Vector3());
-	const diagonal = size.length();
-	distance = Math.max(distance, diagonal);
-	const camera = new THREE.PerspectiveCamera(definition.fov_degrees, 1, Math.max(0.05, distance - diagonal * 0.75), distance + diagonal * 0.75);
-	camera.position.copy(center).sub(forward.clone().multiplyScalar(distance));
-	camera.up.copy(up); camera.lookAt(center); camera.updateProjectionMatrix(); camera.updateMatrixWorld(true);
+	const authority = deriveCompetitionAxonCameraAuthority({
+		definition, worldBounds: { min: box.min.toArray(), max: box.max.toArray() }, marginRatio,
+	});
+	const center = new THREE.Vector3(...authority.center);
+	const size = new THREE.Vector3(...authority.size);
+	const camera = new THREE.PerspectiveCamera(
+		authority.manifest.fov_degrees, authority.manifest.aspect, authority.manifest.near, authority.manifest.far,
+	);
+	camera.position.set(...authority.manifest.position);
+	camera.up.set(...authority.manifest.up); camera.lookAt(center); camera.updateProjectionMatrix(); camera.updateMatrixWorld(true);
 	const projected = boxCorners(box).map((corner) => corner.project(camera));
 	const clipExtents = {
 		min_x: Math.min(...projected.map((point) => point.x)), max_x: Math.max(...projected.map((point) => point.x)),
 		min_y: Math.min(...projected.map((point) => point.y)), max_y: Math.max(...projected.map((point) => point.y)),
 		min_z: Math.min(...projected.map((point) => point.z)), max_z: Math.max(...projected.map((point) => point.z)),
 	};
-	const horizontalDepth = camera.position.clone().sub(center); horizontalDepth.z = 0; horizontalDepth.normalize();
 	return {
-		camera, box, center, size, diagonal, clipExtents,
-		manifest: {
-			type: "perspective", position: camera.position.toArray(), target: center.toArray(), up: camera.up.toArray(),
-			fov_degrees: camera.fov, near: camera.near, far: camera.far, aspect: camera.aspect,
-			depth: horizontalDepth.toArray(), margin_ratio: marginRatio,
-		},
+		camera, box, center, size, diagonal: authority.diagonal, clipExtents, manifest: authority.manifest,
 	};
 }
 

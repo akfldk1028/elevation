@@ -564,6 +564,47 @@ test("persists and aggregates repeated operations as exact integer micro-dollars
 	});
 });
 
+test("fails closed when valid v2 micro-dollar entries overflow an aggregate safe integer", async () => {
+	await withLedger(async (_root, path) => {
+		const largeKey = "d".repeat(64), tinyKey = "e".repeat(64);
+		await writeFile(path, `${JSON.stringify({ version: 2, operations: {
+			[largeKey]: {
+				provider: "openai", kind: "grammar-extraction", status: "succeeded",
+				estimateMicros: Number.MAX_SAFE_INTEGER, ceilingMicros: Number.MAX_SAFE_INTEGER,
+				remoteId: "v2-large", artifactSha256, actualMicros: Number.MAX_SAFE_INTEGER,
+			},
+			[tinyKey]: {
+				provider: "openai", kind: "grammar-extraction", status: "succeeded",
+				estimateMicros: 1, ceilingMicros: 1,
+				remoteId: "v2-tiny", artifactSha256, actualMicros: 1,
+			},
+		} }, null, 2)}\n`);
+		await assert.rejects(() => createPaidOperationLedger(path).summary(),
+			(error: any) => error.code === "PAID_OPERATION_AGGREGATE_UNSAFE");
+	});
+});
+
+test("rejects an unbounded reservation aggregate overflow before invoking the paid callback", async () => {
+	await withLedger(async (_root, path) => {
+		const existingKey = "d".repeat(64), nextKey = "e".repeat(64);
+		await writeFile(path, `${JSON.stringify({ version: 2, operations: {
+			[existingKey]: {
+				provider: "openai", kind: "grammar-extraction", status: "succeeded",
+				estimateMicros: Number.MAX_SAFE_INTEGER, ceilingMicros: Number.MAX_SAFE_INTEGER,
+				remoteId: "v2-max-safe", artifactSha256, actualMicros: Number.MAX_SAFE_INTEGER,
+			},
+		} }, null, 2)}\n`);
+		let calls = 0;
+		await assert.rejects(() => createPaidOperationLedger(path).executeOnce({
+			requestKey: nextKey, provider: "openai", kind: "grammar-extraction", ceilingMicros: 1, estimateMicros: 1,
+			operation: async () => { calls += 1; return { remoteId: "must-not-submit", artifactSha256, actualMicros: 1 }; },
+		}), (error: any) => error.code === "PAID_OPERATION_AGGREGATE_UNSAFE");
+		assert.equal(calls, 0);
+		const persisted = JSON.parse(await readFile(path, "utf8"));
+		assert.equal(persisted.operations[nextKey], undefined);
+	});
+});
+
 test("safely reads a legacy USD ledger and rewrites it with exact micros on the next operation", async () => {
 	await withLedger(async (_root, path) => {
 		await writeFile(path, `${JSON.stringify({ version: 1, operations: {

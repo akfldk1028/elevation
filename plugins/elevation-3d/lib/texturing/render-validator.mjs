@@ -1,9 +1,12 @@
-import { copyFile, mkdir, readFile, realpath, rename, writeFile } from "node:fs/promises";
+import { readFile, realpath } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import puppeteer from "puppeteer-core";
 import sharp from "sharp";
 import { sha256 } from "../core.mjs";
-import { assertNoReparsePoints, containedPath } from "../facade-agent/harness.mjs";
+import {
+	cameraContractHash, cameraSourceMatches, cameraValuesEqual, deriveExpectedCameraContract, normalizeCameraValue, presentationCameraPresets,
+} from "../camera-authority.mjs";
+import { atomicCopy, atomicWrite, assertNoReparsePoints, containedPath, prepareSafeDirectory } from "../facade-agent/path-safety.mjs";
 import { findChrome } from "../results.mjs";
 import { startPreview, stopPreview } from "../preview.mjs";
 import { buildViewerBundle } from "../viewer.mjs";
@@ -13,6 +16,8 @@ import { renderStyleHash, resolvePbrRenderStyle } from "./render-style.mjs";
 const VIEW_NAMES = ["front", "back", "left", "right", "plan", "top", "axon", "opposite-axon"];
 const HEX_SHA256 = /^[a-f0-9]{64}$/i;
 const verifiedProceduralBaselines = new WeakSet();
+
+export { cameraContractHash, deriveExpectedCameraContract, normalizeCameraValue, presentationCameraPresets } from "../camera-authority.mjs";
 
 class ProceduralBaselineError extends Error {
 	constructor(code, message, cause) {
@@ -54,65 +59,11 @@ function selectedGlbHash(value) {
 	return value?.selected_glb_sha256 ?? value?.selectedGlbSha256 ?? value?.selected_glb?.sha256;
 }
 
-function normalizeCameraValue(value) {
-	if (typeof value === "number") return Number.isFinite(value) ? Math.round(value * 1e9) / 1e9 : null;
-	if (Array.isArray(value)) return value.map(normalizeCameraValue);
-	if (value && typeof value === "object") return Object.fromEntries(Object.keys(value).sort().map((key) => [key, normalizeCameraValue(value[key])]));
-	return value;
-}
-
-function cameraContractHash(contract) {
-	return sha256(Buffer.from(JSON.stringify(normalizeCameraValue(contract))));
-}
-
 function cameraNumbersFinite(value) {
 	if (typeof value === "number") return Number.isFinite(value);
 	if (Array.isArray(value)) return value.every(cameraNumbersFinite);
 	if (value && typeof value === "object") return Object.values(value).every(cameraNumbersFinite);
 	return true;
-}
-
-export function deriveExpectedCameraContract({ name, preset, buildingBounds }) {
-	const clipping = preset.cut ?? { enabled: false, elevation_m: null, plane_world: null };
-	const type = preset.type ?? preset.projection;
-	if (type === "perspective") return normalizeCameraValue({
-		type: "perspective", position: preset.position, target: preset.target, up: preset.up,
-		perspective: { fov: preset.fov_degrees, near: preset.near ?? 0.1, far: preset.far ?? 10000, aspect: preset.aspect ?? 1 }, orthographic: null,
-		configured: { projection_axes: null, depth: preset.depth ?? null }, clipping,
-	});
-	if (type !== "orthographic") throw new Error(`unsupported camera preset: ${name}`);
-	const center = buildingBounds.center;
-	const rawDepth = preset.projection_axes.depth;
-	const length = Math.hypot(...rawDepth);
-	const depth = rawDepth.map((value) => value / length);
-	const direction = name === "plan" || name === "top" ? 1 : -1;
-	const position = center.map((value, index) => value + direction * depth[index] * buildingBounds.radius * 4);
-	const projectedBounds = preset.projected_bounds_m;
-	const projectedSpan = Array.isArray(projectedBounds) && projectedBounds.length === 2
-		? Math.max(projectedBounds[1][0] - projectedBounds[0][0], projectedBounds[1][1] - projectedBounds[0][1]) * 1.08
-		: buildingBounds.radius * 2;
-	const frustum = preset.frustum ?? {
-		left: -projectedSpan / 2, right: projectedSpan / 2, top: projectedSpan / 2, bottom: -projectedSpan / 2,
-		near: 0.01, far: 10000,
-	};
-	return normalizeCameraValue({
-		type: "orthographic", position, target: preset.target ?? center, up: preset.projection_axes.vertical,
-		perspective: null, orthographic: { ...frustum, zoom: 1 },
-		configured: { projection_axes: preset.projection_axes, depth: null }, clipping,
-	});
-}
-
-function presentationCameraPresets(cameras, proceduralBaseline) {
-	const source = { ...(cameras ?? {}) };
-	if (!source.plan && source.top) source.plan = { ...structuredClone(source.top), name: "plan" };
-	return Object.fromEntries(VIEW_NAMES.map((name) => {
-		const preset = proceduralBaseline?.views?.[name]?.camera ?? source[name];
-		if (!preset) throw new Error(`presentation camera preset is missing: ${name}`);
-		const cut = name === "plan"
-			? { enabled: true, elevation_m: 1.2, plane_world: [0, 0, 1, -1.2] }
-			: { enabled: false, elevation_m: null, plane_world: null };
-		return [name, { ...structuredClone(preset), cut }];
-	}));
 }
 
 function validCameraIdentity(views) {
@@ -209,22 +160,40 @@ async function compareRenderEvidence(texturedBytes, diagnosticBytes) {
 	};
 }
 
-function normalizedTechnicalBounds(name, bounds, width, height, camera) {
+function normalizedTechnicalBounds(name, bounds, width, height, camera, authoritativeCamera) {
 	let minX = bounds.min_x / width, minY = bounds.min_y / height;
 	let maxX = bounds.max_x / width, maxY = bounds.max_y / height;
-	// The technical orthographic renderer may reserve annotation lanes by
-	// translating its camera. The presentation renderer intentionally recenters
-	// the same authenticated frustum on the GLB bounds, so compare in that
-	// canonical centered frame while retaining both spans.
-	if ((camera?.type ?? camera?.projection) === "orthographic") {
-		const spanX = maxX - minX, spanY = maxY - minY;
-		minX = 0.5 - spanX / 2; maxX = 0.5 + spanX / 2;
-		minY = 0.5 - spanY / 2; maxY = 0.5 + spanY / 2;
+	const type = camera?.type ?? camera?.projection;
+	let scaleX = 1, scaleY = 1;
+	if (type === "orthographic") {
+		const technical = camera?.frustum;
+		const projected = authoritativeCamera?.projected_bounds_m;
+		const projectedSpan = Array.isArray(projected) && projected.length === 2
+			? Math.max(projected[1][0] - projected[0][0], projected[1][1] - projected[0][1]) * 1.08 : null;
+		const authoritative = authoritativeCamera?.frustum ?? (projectedSpan > 0
+			? { left: -projectedSpan / 2, right: projectedSpan / 2, top: projectedSpan / 2, bottom: -projectedSpan / 2 }
+			: null);
+		if (technical && authoritative) {
+			scaleX = (technical.right - technical.left) / (authoritative.right - authoritative.left);
+			scaleY = (technical.top - technical.bottom) / (authoritative.top - authoritative.bottom);
+		}
+	} else if (type === "perspective") {
+		const distance = (value) => Array.isArray(value?.position) && Array.isArray(value?.target)
+			? Math.hypot(...value.position.map((coordinate, axis) => coordinate - value.target[axis])) : null;
+		const technicalDistance = distance(camera), authoritativeDistance = distance(authoritativeCamera);
+		if (technicalDistance > 0 && authoritativeDistance > 0) scaleX = scaleY = technicalDistance / authoritativeDistance;
 	}
+	// Technical sheets may translate the camera for annotations and deliberately
+	// use a fitted frustum/distance. Re-express their measured silhouette in the
+	// independently authenticated candidate camera frame before applying the
+	// unchanged presentation-baseline tolerance.
+	const spanX = (maxX - minX) * scaleX, spanY = (maxY - minY) * scaleY;
+	minX = 0.5 - spanX / 2; maxX = 0.5 + spanX / 2;
+	minY = 0.5 - spanY / 2; maxY = 0.5 + spanY / 2;
 	return { minX, minY, maxX, maxY, camera, view: name };
 }
 
-export async function loadVerifiedProceduralBaseline({ runDir, manifestRecord, selectedGlbSha256 } = {}) {
+export async function loadVerifiedProceduralBaseline({ runDir, manifestRecord, selectedGlbSha256, authoritativeCameras, expectedTechnicalCameras } = {}) {
 	if (!runDir) return null;
 	const root = resolve(runDir);
 	try { await assertNoReparsePoints(root); }
@@ -251,11 +220,23 @@ export async function loadVerifiedProceduralBaseline({ runDir, manifestRecord, s
 			|| JSON.stringify(normalizeCameraValue(detailed.camera)) !== JSON.stringify(normalizeCameraValue(view.camera))) {
 			baselineFail("PROCEDURAL_BASELINE_BINDING_INVALID", `technical ${name} detailed manifest identity, GLB, or camera is invalid`);
 		}
+		if (authoritativeCameras && !cameraSourceMatches(detailed.camera, authoritativeCameras[name])) {
+			baselineFail("PROCEDURAL_BASELINE_BINDING_INVALID", `technical ${name} camera differs from candidate authority`);
+		}
+		if (expectedTechnicalCameras && !cameraValuesEqual(detailed.camera, expectedTechnicalCameras[name])) {
+			baselineFail("PROCEDURAL_BASELINE_BINDING_INVALID", `technical ${name} camera differs from deterministic selected-GLB fit`);
+		}
+		const requiredCut = name === "plan"
+			? { enabled: true, elevation_m: 1.2, plane_world: [0, 0, 1, -1.2] }
+			: { enabled: false, elevation_m: null, plane_world: null };
+		if (!cameraValuesEqual(detailed.cut ?? requiredCut, requiredCut)) {
+			baselineFail("PROCEDURAL_BASELINE_BINDING_INVALID", `technical ${name} cut differs from candidate authority`);
+		}
 		const bounds = detailed.building_content?.bounds_px ?? detailed.content_bounds_px ?? view.validation?.metrics?.content_bounds_px;
 		if (!bounds || ![bounds.min_x, bounds.min_y, bounds.max_x, bounds.max_y].every(Number.isFinite)) {
 			baselineFail("PROCEDURAL_BASELINE_BINDING_INVALID", `technical ${name} projected bounds are missing`);
 		}
-		views[name] = normalizedTechnicalBounds(name, bounds, view.width, view.height, detailed.camera);
+		views[name] = normalizedTechnicalBounds(name, bounds, view.width, view.height, detailed.camera, authoritativeCameras?.[name]);
 	}
 	const result = {
 		schema_version: "arr.elevation3d.verified-procedural-baseline.v1", run_dir: root,
@@ -282,18 +263,14 @@ function baselineExtentDelta(bounds, width, height, baseline) {
 	return Math.max(...Object.keys(normalized).map((key) => Math.abs(normalized[key] - baselineExtent[key])));
 }
 
-async function writeJsonAtomic(path, value) {
+async function writeJsonAtomic(path, value, approvedRoot) {
 	const bytes = Buffer.from(`${JSON.stringify(value, null, 2)}\n`);
-	const temporaryPath = `${path}.${process.pid}.tmp`;
-	await writeFile(temporaryPath, bytes);
-	await rename(temporaryPath, path);
+	await atomicWrite(path, bytes, approvedRoot);
 	return { path, sha256: sha256(bytes) };
 }
 
-async function writeTextAtomic(path, value) {
-	const temporaryPath = `${path}.${process.pid}.tmp`;
-	await writeFile(temporaryPath, value);
-	await rename(temporaryPath, path);
+async function writeTextAtomic(path, value, approvedRoot) {
+	await atomicWrite(path, Buffer.from(value), approvedRoot);
 }
 
 export async function loadPresentationBaseline(runDir, binding = {}) {
@@ -378,7 +355,7 @@ export async function renderEmbeddedPbrViews({
 	requirePresentationBaselineComparison = false, canonicalSelection,
 } = {}) {
 	const root = resolve(runDir);
-	await mkdir(root, { recursive: true });
+	await prepareSafeDirectory(root, root, "embedded-PBR render root");
 	const glbBytes = await readFile(resolve(glbPath));
 	const selectedGlbSha256 = sha256(glbBytes);
 	if (suppliedProceduralBaseline && !verifiedProceduralBaselines.has(suppliedProceduralBaseline)) {
@@ -392,8 +369,8 @@ export async function renderEmbeddedPbrViews({
 	}
 	const renderStyle = resolvePbrRenderStyle({ ...(renderStyleOverrides ?? {}), id: renderStyleId });
 	const renderStyleSha256 = renderStyleHash(renderStyle);
-	const presentationCameras = presentationCameraPresets(cameras, proceduralBaseline);
-	const styleArtifact = await writeJsonAtomic(join(root, "render-style.json"), renderStyle);
+	const presentationCameras = presentationCameraPresets(cameras);
+	const styleArtifact = await writeJsonAtomic(join(root, "render-style.json"), renderStyle, root);
 	const config = {
 		schema_version: "arr.elevation3d.embedded-pbr-viewer.v1",
 		candidate_id: candidateId,
@@ -407,7 +384,15 @@ export async function renderEmbeddedPbrViews({
 		},
 	};
 	await buildViewerBundle({ runDir: root, config });
-	await copyFile(resolve(glbPath), join(root, "textured.glb"));
+	const viewer = Object.fromEntries(await Promise.all([
+		["html", "index.html"], ["app", "app.js"], ["config", "config.json"],
+	].map(async ([key, name]) => {
+		const path = join(root, "viewer", name);
+		return [key, { path, sha256: sha256(await readFile(path)) }];
+	})));
+	const texturedGlbPath = join(root, "textured.glb");
+	await atomicCopy(resolve(glbPath), texturedGlbPath, root);
+	if (sha256(await readFile(texturedGlbPath)) !== selectedGlbSha256) throw new Error("browser-loaded textured GLB copy hash mismatch");
 	const start = lifecycle.startPreview ?? startPreview;
 	const stop = lifecycle.stopPreview ?? stopPreview;
 	const launch = lifecycle.launchBrowser ?? (async () => puppeteer.launch({
@@ -464,11 +449,11 @@ export async function renderEmbeddedPbrViews({
 			}
 			const evidence = await compareRenderEvidence(geometryTextured, diagnostic);
 			const directory = join(root, "views", name);
-			await mkdir(directory, { recursive: true });
+			await prepareSafeDirectory(root, directory, `embedded-PBR ${name} view directory`);
 			const path = join(directory, `${name}.png`);
 			const semanticRoleMaskPath = join(directory, `${name}-semantic-roles.png`);
-			await writeFile(path, second);
-			await writeFile(semanticRoleMaskPath, semanticRoleMask);
+			await atomicWrite(path, second, root);
+			await atomicWrite(semanticRoleMaskPath, semanticRoleMask, root);
 			const imagePresentation = await analyzePresentationPng({
 				png: await readFile(path), buildingBounds: evidence.projectedBoundsPx, background: renderStyle.background,
 			});
@@ -480,6 +465,7 @@ export async function renderEmbeddedPbrViews({
 				semanticRoleMaskPath, semanticRoleMaskSha256: sha256(semanticRoleMask),
 				cameraType: browserState.camera.type,
 				cameraEvidence: {
+					building_bounds: structuredClone(browserState.building_bounds),
 					expected: expectedCameraContract,
 					actual: normalizeCameraValue(browserState.camera.contract),
 					expected_hash: cameraContractHash(expectedCameraContract),
@@ -494,10 +480,10 @@ export async function renderEmbeddedPbrViews({
 		const presentationArtifact = await writeJsonAtomic(join(root, "presentation-evidence.json"), {
 			schema_version: "arr.elevation3d.presentation-evidence.v1", render_style_id: renderStyle.id,
 			render_style_sha256: renderStyleSha256, views: presentationEvidence, semantic_roles: semanticRoleEvidence,
-		});
+		}, root);
 		const semanticRoleArtifact = await writeJsonAtomic(join(root, "semantic-role-evidence.json"), {
 			schema_version: "arr.elevation3d.semantic-role-evidence.v1", views: semanticRoleEvidence,
-		});
+		}, root);
 		const baseline = await loadPresentationBaseline(presentationBaselineRunDir, { selectedGlbSha256, cameras: presentationCameras, currentViews: views });
 		const baselineSemanticRoleEvidence = baseline.status === "legacy_reanalyzed" ? Object.fromEntries(await Promise.all(VIEW_NAMES.map(async (name) => [
 			name, await analyzeSemanticRolePng({ finalPng: baseline.pngs[name], roleMaskPng: semanticRoleMasks[name], geometry: semanticGeometryEvidence }),
@@ -519,7 +505,7 @@ export async function renderEmbeddedPbrViews({
 			schema_version: "arr.elevation3d.presentation-baseline-comparison.v1", status: baseline.status,
 			reason: baseline.reason, baseline_run_dir: baseline.run_dir, views: {},
 		};
-		const baselineArtifact = await writeJsonAtomic(join(root, "baseline-comparison.json"), baselineComparison);
+		const baselineArtifact = await writeJsonAtomic(join(root, "baseline-comparison.json"), baselineComparison, root);
 		const validation = validateEmbeddedPbrRender({
 			views, selectedGlbSha256, consoleErrors, materialMode: "embedded-pbr",
 			renderStyle, renderStyleSha256, presentationEvidence: imageEvidence,
@@ -530,12 +516,15 @@ export async function renderEmbeddedPbrViews({
 		});
 		const thumbnails = await Promise.all(VIEW_NAMES.map((name) => sharp(views[name].path).resize(500, 500).png().toBuffer()));
 		const contactSheetPath = join(root, "contact-sheet.png");
-		await sharp({ create: { width: 2000, height: 1000, channels: 3, background: "#fafaf7" } })
+		const contactSheetBytes = await sharp({ create: { width: 2000, height: 1000, channels: 3, background: "#fafaf7" } })
 			.composite(thumbnails.map((input, index) => ({ input, left: (index % 4) * 500, top: Math.floor(index / 4) * 500 })))
-			.png().toFile(contactSheetPath);
+			.png().toBuffer();
+		await atomicWrite(contactSheetPath, contactSheetBytes, root);
 		const report = {
 			schema_version: "arr.elevation3d.embedded-pbr-render.v2",
-			selected_glb: { path: resolve(glbPath), sha256: selectedGlbSha256 }, material_mode: "embedded-pbr", views,
+			selected_glb: { path: resolve(glbPath), sha256: selectedGlbSha256 },
+			browser_loaded_glb: { path: texturedGlbPath, sha256: sha256(await readFile(texturedGlbPath)) },
+			material_mode: "embedded-pbr", views,
 			procedural_baseline: {
 				run_dir: proceduralBaseline?.run_dir ?? null, manifest: proceduralBaseline?.manifest ?? null,
 				compared_views: proceduralBaseline ? VIEW_NAMES : [],
@@ -548,6 +537,8 @@ export async function renderEmbeddedPbrViews({
 			pbr_evidence: pbrEvidence,
 			provider_calls: 0, credits_consumed: 0,
 			...(canonicalSelection ? { canonical_selection: canonicalSelection } : {}),
+			camera_authority: { views: JSON.parse(JSON.stringify(presentationCameras)), sha256: cameraContractHash(presentationCameras) },
+			viewer,
 			contact_sheet: { path: contactSheetPath, sha256: sha256(await readFile(contactSheetPath)) }, validation,
 			artifacts: {
 				render_style: styleArtifact, presentation_evidence: presentationArtifact, semantic_role_evidence: semanticRoleArtifact, baseline_comparison: baselineArtifact,
@@ -556,8 +547,8 @@ export async function renderEmbeddedPbrViews({
 				...Object.fromEntries(VIEW_NAMES.map((name) => [`semantic_role_mask_${name}`, { path: views[name].semanticRoleMaskPath, sha256: views[name].semanticRoleMaskSha256 }])),
 			},
 		};
-		const reportArtifact = await writeJsonAtomic(join(root, "render-validation.json"), report);
-		await writeTextAtomic(join(root, "render-validation.sha256"), `${reportArtifact.sha256}\n`);
+		const reportArtifact = await writeJsonAtomic(join(root, "render-validation.json"), report, root);
+		await writeTextAtomic(join(root, "render-validation.sha256"), `${reportArtifact.sha256}\n`, root);
 		return report;
 	} finally {
 		await page?.close().catch(() => {});

@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, copyFile, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { afterEach, test } from "node:test";
-import { NodeIO } from "@gltf-transform/core";
+import { Document, NodeIO } from "@gltf-transform/core";
 import sharp from "sharp";
 
 import { loadCandidatePackage, sha256 } from "../plugins/elevation-3d/lib/core.mjs";
+import { deriveExpectedCameraContract, presentationCameraPresets, technicalCameraAuthorityFromGlb } from "../plugins/elevation-3d/lib/camera-authority.mjs";
 import { buildEnrichedScene, writeEnrichedGlb } from "../plugins/elevation-3d/lib/enrichment.mjs";
 import { deliverSelectedAllViews, FinalDeliveryError } from "../plugins/elevation-3d/lib/final-delivery.mjs";
 import { GeneratedStageError, runElevation3d } from "../plugins/elevation-3d/lib/unified-flow.mjs";
@@ -128,30 +129,85 @@ function acceptedDeps(sourceMesh: Awaited<ReturnType<typeof fixture>>["mesh"]) {
 
 const DELIVERY_VIEW_NAMES = ["front", "back", "left", "right", "plan", "top", "axon", "opposite-axon"];
 
+async function meshGlbBytes(mesh: { vertices: number[][]; triangles: number[][] }) {
+	const document = new Document(), buffer = document.createBuffer();
+	const positions = document.createAccessor("positions", buffer).setType("VEC3").setArray(new Float32Array(mesh.vertices.flat()));
+	const indices = document.createAccessor("indices", buffer).setType("SCALAR").setArray(new Uint16Array(mesh.triangles.flat()));
+	const primitive = document.createPrimitive().setAttribute("POSITION", positions).setIndices(indices);
+	document.createScene("Scene").addChild(document.createNode("exact-mass").setMesh(document.createMesh("exact-mass").addPrimitive(primitive)));
+	return Buffer.from(await new NodeIO().writeBinary(document));
+}
+
 function acceptedFinalDeliveryDeps() {
 	const calls = { render: [] as any[], browser: [] as any[] };
 	return {
 		calls,
 		renderAllViews: async (args: any) => {
 			calls.render.push(args);
+			await mkdir(args.runDir, { recursive: true });
+			await copyFile(args.glbPath, join(args.runDir, "enriched.glb"));
+			const viewer: Record<string, any> = {};
+			for (const [key, name] of [["html", "index.html"], ["app", "app.js"], ["config", "config.json"]] as const) {
+				const bytes = Buffer.from(`fixture-${key}`), path = join(args.runDir, "viewer", name);
+				await mkdir(dirname(path), { recursive: true }); await writeFile(path, bytes);
+				viewer[key] = { path: `viewer/${name}`, sha256: sha256(bytes) };
+			}
+			const technicalCameras = (await technicalCameraAuthorityFromGlb({
+				bytes: await readFile(args.glbPath), cameras: args.cameras,
+			})).cameras;
+			const views: Record<string, any> = {};
+			for (const [index, name] of DELIVERY_VIEW_NAMES.entries()) {
+				const directory = join(args.runDir, "views", name); await mkdir(directory, { recursive: true });
+				const image = Buffer.from(`view-${index}`), detail = Buffer.from(`manifest-${index}`), validation = Buffer.from(`validation-${index}`);
+				await writeFile(join(directory, `${name}.png`), image);
+				await writeFile(join(directory, `${name}-manifest.json`), detail);
+				await writeFile(join(directory, `${name}-validation.json`), validation);
+				views[name] = {
+					path: join(directory, `${name}.png`), sha256: sha256(image), selected_glb_sha256: sha256(await readFile(args.glbPath)),
+					camera: technicalCameras[name],
+					manifest: { path: `views/${name}/${name}-manifest.json`, sha256: sha256(detail) },
+					validation_report: { path: `views/${name}/${name}-validation.json`, sha256: sha256(validation) },
+				};
+			}
+			const manifest = {
+				schema_version: "arr.elevation3d.all-views.v1", selected_glb: { path: "enriched.glb", sha256: sha256(await readFile(args.glbPath)) },
+				viewer: { path: "viewer/index.html" }, verified_evidence: { viewer }, views,
+			};
+			const manifestBytes = Buffer.from(JSON.stringify(manifest)), validationBytes = Buffer.from(JSON.stringify({ accepted: true, codes: [] }));
+			await writeFile(join(args.runDir, "all-views-manifest.json"), manifestBytes); await writeFile(join(args.runDir, "validation.json"), validationBytes);
 			return {
-				manifest: { schema_version: "arr.elevation3d.all-views.v1", viewer: { path: "viewer/index.html" } },
-				manifest_record: { path: join(args.runDir, "all-views-manifest.json"), sha256: "d".repeat(64) },
-				validation: { accepted: true, codes: [], path: join(args.runDir, "validation.json"), sha256: "e".repeat(64) },
-				views: Object.fromEntries(DELIVERY_VIEW_NAMES.map((name, index) => [name, {
-					path: join(args.runDir, "views", name, `${name}.png`), sha256: String(index).padStart(64, "f"),
-				}])),
+				manifest, manifest_record: { path: join(args.runDir, "all-views-manifest.json"), sha256: sha256(manifestBytes) },
+				validation: { accepted: true, codes: [], path: join(args.runDir, "validation.json"), sha256: sha256(validationBytes) }, views,
 			};
 		},
 		verifyAllViewsViewer: async (args: any) => {
 			calls.browser.push(args);
-			return {
-				path: join(args.runDir, "browser-verification", "browser-verification.json"), sha256: "b".repeat(64),
+			const rendered = calls.render.at(-1);
+			const vertices = rendered.sourceMesh.vertices;
+			const min = [0, 1, 2].map((axis) => Math.min(...vertices.map((point: number[]) => point[axis])));
+			const max = [0, 1, 2].map((axis) => Math.max(...vertices.map((point: number[]) => point[axis])));
+			const center = min.map((value, axis) => (value + max[axis]) / 2);
+			const size = max.map((value, axis) => value - min[axis]);
+			const radius = Math.max(Math.hypot(...size) * 0.75, 1);
+			const bounds = { center, radius };
+			const technicalCameras = (await technicalCameraAuthorityFromGlb({
+				bytes: await readFile(rendered.glbPath), cameras: rendered.cameras,
+			})).cameras;
+			const browserCameras = presentationCameraPresets(technicalCameras);
+			const screenshots = { initial: join(args.runDir, "browser-verification", "initial.png"), interacted: join(args.runDir, "browser-verification", "interacted.png") };
+			await mkdir(join(args.runDir, "browser-verification"), { recursive: true });
+			await writeFile(screenshots.initial, "initial"); await writeFile(screenshots.interacted, "interacted");
+			const result = {
 				console_errors: [], glb_load_count: 1, activated_views: [...DELIVERY_VIEW_NAMES],
-				camera_presets: Object.fromEntries(DELIVERY_VIEW_NAMES.map((name) => [name, { type: name === "axon" || name === "opposite-axon" ? "perspective" : "orthographic" }])),
+				camera_presets: Object.fromEntries(DELIVERY_VIEW_NAMES.map((name) => [name, deriveExpectedCameraContract({ name, preset: browserCameras[name], buildingBounds: bounds })])),
+				camera_building_bounds: Object.fromEntries(DELIVERY_VIEW_NAMES.map((name) => [name, bounds])),
 				material_stability: { transparent_depth_writers: 0, facade_detail_meshes: 10, polygon_offset_facade_details: 10, deterministic_render_order: true },
 				settled_frames_identical: true, settled_frame_hashes: ["c".repeat(64), "c".repeat(64), "c".repeat(64)], blocked_external_requests: [],
+				screenshots,
 			};
+			const path = join(args.runDir, "browser-verification", "browser-verification.json"), bytes = Buffer.from(JSON.stringify(result));
+			await writeFile(path, bytes);
+			return { ...result, path, sha256: sha256(bytes) };
 		},
 	};
 }
@@ -161,9 +217,12 @@ test("delivers one normalized eight-view package and browser verification from a
 	const input = await loadCandidatePackage(item.datasetRoot, item.candidateId);
 	const deps = acceptedFinalDeliveryDeps();
 	const artifactPath = join(item.outputRoot, "accepted", "enriched.glb");
+	const artifactBytes = await meshGlbBytes(item.mesh);
+	await mkdir(dirname(artifactPath), { recursive: true });
+	await writeFile(artifactPath, artifactBytes);
 	const delivery = await deliverSelectedAllViews({
 		runDir: join(item.outputRoot, "accepted"), candidateId: item.candidateId,
-		artifact: { path: artifactPath, sha256: "a".repeat(64) }, input, deps,
+		artifact: { path: artifactPath, sha256: sha256(artifactBytes) }, input, deps,
 	});
 
 	assert.deepEqual(Object.keys(delivery.views).sort(), [...DELIVERY_VIEW_NAMES].sort());
@@ -178,13 +237,16 @@ test("delivers one normalized eight-view package and browser verification from a
 	assert.equal(deps.calls.render[0].cameras.axon.projection, "perspective");
 	assert.equal(deps.calls.render[0].cameras["opposite-axon"].projection, "perspective");
 	assert.ok(deps.calls.render[0].cameras.axon.position[0] > deps.calls.render[0].cameras["opposite-axon"].position[0]);
-	assert.equal(delivery.memory_record.manifest.sha256, "d".repeat(64));
+	assert.equal(delivery.memory_record.manifest.sha256.length, 64);
 });
 
 test("rejects invalid package and browser evidence and propagates cancellation", async () => {
 	const item = await fixture();
 	const input = await loadCandidatePackage(item.datasetRoot, item.candidateId);
-	const base = { runDir: join(item.outputRoot, "rejected"), candidateId: item.candidateId, artifact: { path: join(item.outputRoot, "rejected", "enriched.glb"), sha256: "a".repeat(64) }, input };
+	const rejectedBytes = await meshGlbBytes(item.mesh);
+	const base = { runDir: join(item.outputRoot, "rejected"), candidateId: item.candidateId, artifact: { path: join(item.outputRoot, "rejected", "enriched.glb"), sha256: sha256(rejectedBytes) }, input };
+	await mkdir(dirname(base.artifact.path), { recursive: true });
+	await writeFile(base.artifact.path, rejectedBytes);
 	for (const [mutation, code] of [
 		[(deps: any) => { deps.renderAllViews = async () => ({ validation: { accepted: false, codes: ["BAD"] }, views: {} }); }, "ALL_VIEWS_REJECTED"],
 		[(deps: any) => { deps.verifyAllViewsViewer = async () => ({ console_errors: ["boom"], glb_load_count: 1 }); }, "BROWSER_VERIFICATION_REJECTED"],
@@ -200,6 +262,87 @@ test("rejects invalid package and browser evidence and propagates cancellation",
 	await assert.rejects(() => deliverSelectedAllViews({ ...base, input: missingTop, deps: acceptedFinalDeliveryDeps() }), (error: any) => {
 		assert.equal(error instanceof FinalDeliveryError, true); assert.equal(error.code, "CAMERA_INPUT_INVALID"); return true;
 	});
+});
+
+test("rejects coherently altered technical browser cameras derived from reported rather than selected-GLB bounds", async () => {
+	const item = await fixture();
+	const input = await loadCandidatePackage(item.datasetRoot, item.candidateId);
+	const deps = acceptedFinalDeliveryDeps();
+	const verify = deps.verifyAllViewsViewer;
+	deps.verifyAllViewsViewer = async (args: any) => {
+		const report: any = await verify(args);
+		const rendered = deps.calls.render.at(-1);
+		const technicalCameras = (await technicalCameraAuthorityFromGlb({
+			bytes: await readFile(rendered.glbPath), cameras: rendered.cameras,
+		})).cameras;
+		const browserCameras = presentationCameraPresets(technicalCameras);
+		const alteredBounds = { center: [10, 0, 1.5], radius: 20 };
+		report.camera_building_bounds = Object.fromEntries(DELIVERY_VIEW_NAMES.map((name) => [name, alteredBounds]));
+		report.camera_presets = Object.fromEntries(DELIVERY_VIEW_NAMES.map((name) => [name,
+			deriveExpectedCameraContract({ name, preset: browserCameras[name], buildingBounds: alteredBounds })]));
+		return report;
+	};
+	const artifactPath = join(item.outputRoot, "coherent-camera", "enriched.glb"), artifactBytes = await meshGlbBytes(item.mesh);
+	await mkdir(dirname(artifactPath), { recursive: true }); await writeFile(artifactPath, artifactBytes);
+	await assert.rejects(() => deliverSelectedAllViews({
+		runDir: join(item.outputRoot, "coherent-camera"), candidateId: item.candidateId,
+		artifact: { path: artifactPath, sha256: sha256(artifactBytes) }, input, deps,
+	}), (error: any) => error?.code === "BROWSER_VERIFICATION_REJECTED");
+});
+
+test("rejects a coherently re-fitted technical axon camera that drifts from deterministic candidate authority", async () => {
+	const item = await fixture();
+	const input = await loadCandidatePackage(item.datasetRoot, item.candidateId);
+	const deps = acceptedFinalDeliveryDeps();
+	const render = deps.renderAllViews, verify = deps.verifyAllViewsViewer;
+	let tamperedCamera: any;
+	deps.renderAllViews = async (args: any) => {
+		const result: any = await render(args);
+		const camera = structuredClone(result.manifest.views.axon.camera);
+		camera.position = camera.target.map((value: number, axis: number) => value + 2 * (camera.position[axis] - value));
+		tamperedCamera = camera;
+		result.manifest.views.axon.camera = camera;
+		result.views.axon.camera = camera;
+		return result;
+	};
+	deps.verifyAllViewsViewer = async (args: any) => {
+		const report: any = await verify(args);
+		const preset = { ...tamperedCamera, cut: { enabled: false, elevation_m: null, plane_world: null } };
+		report.camera_presets.axon = deriveExpectedCameraContract({
+			name: "axon", preset, buildingBounds: report.camera_building_bounds.axon,
+		});
+		return report;
+	};
+	const artifactPath = join(item.outputRoot, "coherent-fit-drift", "enriched.glb"), artifactBytes = await meshGlbBytes(item.mesh);
+	await mkdir(dirname(artifactPath), { recursive: true }); await writeFile(artifactPath, artifactBytes);
+	await assert.rejects(() => deliverSelectedAllViews({
+		runDir: join(item.outputRoot, "coherent-fit-drift"), candidateId: item.candidateId,
+		artifact: { path: artifactPath, sha256: sha256(artifactBytes) }, input, deps,
+	}), (error: any) => error?.code === "ALL_VIEWS_REJECTED");
+});
+
+test("rejects a pre-existing technical-delivery junction before renderer or outside writes", async (context) => {
+	const item = await fixture();
+	const input = await loadCandidatePackage(item.datasetRoot, item.candidateId);
+	const runDir = join(item.outputRoot, "junction-run");
+	const deliveryParent = join(runDir, "providers", "fixture-provider");
+	const deliveryRoot = join(deliveryParent, "delivery");
+	const outside = join(item.root, "outside-delivery");
+	await mkdir(deliveryParent, { recursive: true });
+	await mkdir(outside, { recursive: true });
+	try { await symlink(outside, deliveryRoot, process.platform === "win32" ? "junction" : "dir"); }
+	catch (error: any) {
+		if (["EPERM", "EACCES", "ENOTSUP"].includes(error?.code)) return context.skip("directory links unavailable");
+		throw error;
+	}
+	const deps = acceptedFinalDeliveryDeps();
+	await assert.rejects(() => deliverSelectedAllViews({
+		runDir, deliveryRoot, candidateId: item.candidateId,
+		artifact: { path: join(runDir, "selected.glb"), sha256: "a".repeat(64) }, input, deps,
+	}), (error: any) => error instanceof FinalDeliveryError && error.code === "DELIVERY_PATH_INVALID");
+	assert.equal(deps.calls.render.length, 0);
+	assert.equal(deps.calls.browser.length, 0);
+	assert.deepEqual(await readdir(outside), []);
 });
 
 function automaticDelivery(runDir: string) {

@@ -29,7 +29,7 @@ function markPresentationOnly(node, name) {
 
 const SEMANTIC_ROLE_COLORS = Object.freeze({ concrete: 0xff0000, glass: 0x00ff00, bronze: 0x0000ff, opaque: 0xffff00 });
 const SEMANTIC_ROLES = Object.freeze(Object.keys(SEMANTIC_ROLE_COLORS));
-const KIND_ROLES = Object.freeze({ mullion: "bronze", glazing: "glass", "opaque-panel": "opaque", "floor-band": "concrete", parapet: "concrete", "exact-mass": "concrete" });
+const KIND_ROLES = Object.freeze({ mullion: "bronze", "window-frame": "bronze", glazing: "glass", "opaque-panel": "opaque", "floor-band": "concrete", parapet: "concrete", "exact-mass": "concrete" });
 
 function namedRole(value) {
 	const name = String(value ?? "").toLowerCase();

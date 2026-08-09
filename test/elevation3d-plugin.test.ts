@@ -4,10 +4,14 @@ import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promise
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { Document, NodeIO } from "@gltf-transform/core";
 import { register } from "../plugins/elevation-3d/index.mjs";
 import { createFacadeAgentDependencyFactory, executeFacadeAgentCommand, runFacadeAgentTool } from "../plugins/elevation-3d/lib/facade-agent/cli.mjs";
 import { createFacadeFixtureTransport } from "../plugins/elevation-3d/lib/facade-agent/fixture-transport.mjs";
+import { facadeCandidateHash } from "../plugins/elevation-3d/lib/facade-agent/candidate-authority.mjs";
 import { createProductionFacadeAgentDependencies } from "../plugins/elevation-3d/lib/facade-agent/production-dependencies.mjs";
+import { cameraContractHash, deriveExpectedCameraContract, presentationCameraPresets, technicalCameraAuthorityFromGlb } from "../plugins/elevation-3d/lib/camera-authority.mjs";
+import { deriveDeliveryCameras } from "../plugins/elevation-3d/lib/final-delivery.mjs";
 
 function sha256(value: string | Buffer) {
 	return createHash("sha256").update(value).digest("hex");
@@ -15,41 +19,164 @@ function sha256(value: string | Buffer) {
 
 const PRESENTATION_VIEW_NAMES = ["front", "back", "left", "right", "plan", "top", "axon", "opposite-axon"];
 
-async function writeAcceptedTechnicalDelivery(runDir: string, selectedGlbSha256: string) {
+function localPresentationCandidate() {
+	return {
+		candidate: { candidate_id: "creative-020" }, identity: { geometry_hash: "fixture-geometry" },
+		mesh: { vertices: [[0, 0, 0], [10, 0, 0], [0, 8, 12]] },
+		cameras: {
+			identity: { source: "fixture" },
+			views: {
+				front: { projection: "orthographic", projection_axes: { depth: [0, -1, 0], horizontal: [1, 0, 0], vertical: [0, 0, 1] } },
+				right: { projection: "orthographic", projection_axes: { depth: [1, 0, 0], horizontal: [0, 1, 0], vertical: [0, 0, 1] } },
+				back: { projection: "orthographic", projection_axes: { depth: [0, 1, 0], horizontal: [-1, 0, 0], vertical: [0, 0, 1] } },
+				left: { projection: "orthographic", projection_axes: { depth: [-1, 0, 0], horizontal: [0, -1, 0], vertical: [0, 0, 1] } },
+				top: { projection: "orthographic", projection_axes: { depth: [0, 0, 1], horizontal: [1, 0, 0], vertical: [0, 1, 0] } },
+			},
+		},
+	};
+}
+
+function localPresentationBounds() {
+	const vertices = localPresentationCandidate().mesh.vertices;
+	const min = [0, 1, 2].map((axis) => Math.min(...vertices.map((point) => point[axis])));
+	const max = [0, 1, 2].map((axis) => Math.max(...vertices.map((point) => point[axis])));
+	const size = max.map((value, axis) => value - min[axis]);
+	return { center: max.map((value, axis) => (value + min[axis]) / 2), radius: Math.max(Math.hypot(...size) * 0.75, 1) };
+}
+
+async function localPresentationGlbBytes() {
+	const document = new Document(), buffer = document.createBuffer();
+	const positions = document.createAccessor("positions", buffer).setType("VEC3")
+		.setArray(new Float32Array(localPresentationCandidate().mesh.vertices.flat()));
+	const indices = document.createAccessor("indices", buffer).setType("SCALAR").setArray(new Uint16Array([0, 1, 2]));
+	const primitive = document.createPrimitive().setAttribute("POSITION", positions).setIndices(indices);
+	document.createScene("Scene").addChild(document.createNode("exact-mass").setMesh(document.createMesh("exact-mass").addPrimitive(primitive)));
+	return Buffer.from(await new NodeIO().writeBinary(document));
+}
+
+async function writeAcceptedTechnicalDelivery(runDir: string, selectedGlbSha256: string, selectedGlbBytes: Buffer, candidate: any) {
 	const root = join(runDir, "technical-delivery");
 	const views: Record<string, any> = {};
-	for (const name of PRESENTATION_VIEW_NAMES) {
-		const relativePath = join("views", name, "view.json");
-		const path = join(root, relativePath);
+	const memoryViews: Record<string, any> = {};
+	const technicalCameras = (await technicalCameraAuthorityFromGlb({
+		bytes: selectedGlbBytes, cameras: deriveDeliveryCameras(candidate),
+	})).cameras as Record<string, any>;
+	await mkdir(root, { recursive: true });
+	await writeFile(join(root, "enriched.glb"), selectedGlbBytes);
+	for (const [index, name] of PRESENTATION_VIEW_NAMES.entries()) {
+		const relativePath = join("views", name, `${name}-manifest.json`);
+		const validationRelativePath = join("views", name, `${name}-validation.json`);
+		const imageRelativePath = join("views", name, `${name}.png`);
+		const path = join(root, relativePath), validationPath = join(root, validationRelativePath), imagePath = join(root, imageRelativePath);
 		await mkdir(join(root, "views", name), { recursive: true });
 		const type = ["axon", "opposite-axon"].includes(name) ? "perspective" : "orthographic";
-		const camera = type === "perspective"
-			? { type, position: [10, -10, 10], target: [0, 0, 5], up: [0, 0, 1], fov_degrees: 32, near: 0.1, far: 100 }
-			: { type, projection_axes: { depth: [0, -1, 0], horizontal: [1, 0, 0], vertical: [0, 0, 1] }, frustum: { left: -10, right: 10, top: 10, bottom: -10, near: 0.1, far: 100 } };
+		const camera = technicalCameras[name];
 		const detail = {
 			schema_version: type === "perspective" ? "arr.elevation3d.competition-axon.v1"
 				: ["plan", "top"].includes(name) ? "arr.elevation3d.competition-plan-top.v1" : "arr.elevation3d.competition-elevation.v1",
 			...(["plan", "top"].includes(name) ? { mode: name } : { view: name }),
 			selected_glb_sha256: selectedGlbSha256, camera,
+			cut: name === "plan" ? { enabled: true, elevation_m: 1.2, plane_world: [0, 0, 1, -1.2] }
+				: { enabled: false, elevation_m: null, plane_world: null },
 			content_bounds_px: { min_x: 10, min_y: 10, max_x: 89, max_y: 89 },
 		};
-		const bytes = Buffer.from(JSON.stringify(detail));
-		await writeFile(path, bytes);
+		const bytes = Buffer.from(JSON.stringify(detail)), imageBytes = Buffer.from(`technical-view-${index}`);
+		const validation = { accepted: true, codes: [], metrics: { content_bounds_px: detail.content_bounds_px } };
+		const validationBytes = Buffer.from(JSON.stringify(validation));
+		await writeFile(path, bytes); await writeFile(validationPath, validationBytes); await writeFile(imagePath, imageBytes);
 		views[name] = {
-			width: 100, height: 100, selected_glb_sha256: selectedGlbSha256, camera,
-			validation: { accepted: true, codes: [] }, manifest: { path: relativePath, sha256: sha256(bytes) },
+			path: imageRelativePath, sha256: sha256(imageBytes), width: 100, height: 100, selected_glb_sha256: selectedGlbSha256, camera,
+			validation, manifest: { path: relativePath, sha256: sha256(bytes) },
+			validation_report: { path: validationRelativePath, sha256: sha256(validationBytes) },
+		};
+		memoryViews[name] = {
+			image: { path: imagePath, sha256: sha256(imageBytes) }, manifest: { path, sha256: sha256(bytes) },
+			validation: { path: validationPath, sha256: sha256(validationBytes) }, selected_glb_sha256: selectedGlbSha256,
 		};
 	}
+	const viewer: Record<string, any> = {};
+	for (const [key, file, content] of [["html", "index.html", "<html>technical viewer</html>"], ["app", "app.js", "globalThis.technical=true;"], ["config", "config.json", JSON.stringify({ cameras: { views: technicalCameras } })]] as const) {
+		const path = join(root, "viewer", file), bytes = Buffer.from(content); await mkdir(join(root, "viewer"), { recursive: true }); await writeFile(path, bytes);
+		viewer[key] = { path: join("viewer", file), sha256: sha256(bytes) };
+	}
+	const screenshots: Record<string, any> = {};
+	for (const [key, file, content] of [["initial", "viewer-initial.png", "technical-initial"], ["interacted", "viewer-interacted.png", "technical-interacted"]] as const) {
+		const path = join(root, "browser-verification", file), bytes = Buffer.from(content); await mkdir(join(root, "browser-verification"), { recursive: true }); await writeFile(path, bytes);
+		screenshots[key] = { path, sha256: sha256(bytes) };
+	}
+	const browser = { schema_version: "arr.elevation3d.browser-verification.v1", console_errors: [], blocked_external_requests: [], glb_load_count: 1, screenshots };
+	const browserPath = join(root, "browser-verification", "browser-verification.json"), browserBytes = Buffer.from(JSON.stringify(browser));
+	await writeFile(browserPath, browserBytes);
+	const validation = { schema_version: "arr.elevation3d.all-views-validation.v1", accepted: true, codes: [] };
+	const validationPath = join(root, "validation.json"), validationBytes = Buffer.from(JSON.stringify(validation));
+	await writeFile(validationPath, validationBytes);
 	const manifest = {
 		schema_version: "arr.elevation3d.all-views.v1", selected_glb: { path: "enriched.glb", sha256: selectedGlbSha256 },
-		views, validation: { accepted: true, codes: [] },
+		views, validation, verified_evidence: { viewer }, viewer: { path: "viewer/index.html", config_sha256: viewer.config.sha256 },
 	};
 	const manifestPath = join(root, "all-views-manifest.json");
 	const manifestBytes = Buffer.from(JSON.stringify(manifest));
 	await writeFile(manifestPath, manifestBytes);
 	return {
-		run_dir: root, manifest,
-		memory_record: { manifest: { path: manifestPath, sha256: sha256(manifestBytes) } },
+		run_dir: root, manifest, validation, views,
+		memory_record: {
+			schema_version: "arr.elevation3d.final-delivery-memory.v1",
+			selected_glb: { path: join(root, "enriched.glb"), sha256: selectedGlbSha256 },
+			manifest: { path: manifestPath, sha256: sha256(manifestBytes) }, validation: { path: validationPath, sha256: sha256(validationBytes) },
+			viewer: Object.fromEntries(Object.entries(viewer).map(([key, ref]: [string, any]) => [key, { path: join(root, ref.path), sha256: ref.sha256 }])),
+			browser_verification: { path: browserPath, sha256: sha256(browserBytes), screenshots }, views: memoryViews,
+		},
+	};
+}
+
+function durablePresentationRenderer(calls: any[]) {
+	return async (options: any) => {
+		calls.push(options);
+		const selectedBytes = await readFile(options.glbPath), selectedGlbSha256 = sha256(selectedBytes);
+		const cameras = presentationCameraPresets(options.cameras);
+		const buildingBounds = localPresentationBounds();
+		await mkdir(options.runDir, { recursive: true });
+		const browserGlbPath = join(options.runDir, "textured.glb"); await writeFile(browserGlbPath, selectedBytes);
+		const viewer: Record<string, any> = {};
+		for (const [key, file, content] of [["html", "index.html", "<html>presentation viewer</html>"], ["app", "app.js", "globalThis.presentation=true;"], ["config", "config.json", JSON.stringify({ cameras: { views: cameras } })]] as const) {
+			const path = join(options.runDir, "viewer", file), bytes = Buffer.from(content); await mkdir(join(options.runDir, "viewer"), { recursive: true }); await writeFile(path, bytes);
+			viewer[key] = { path, sha256: sha256(bytes) };
+		}
+		const views: Record<string, any> = {}, artifacts: Record<string, any> = {};
+		for (const [index, name] of PRESENTATION_VIEW_NAMES.entries()) {
+			const directory = join(options.runDir, "views", name); await mkdir(directory, { recursive: true });
+			const image = Buffer.from(`presentation-view-${index}`), mask = Buffer.from(`presentation-mask-${index}`);
+			const path = join(directory, `${name}.png`), maskPath = join(directory, `${name}-semantic-roles.png`);
+			await writeFile(path, image); await writeFile(maskPath, mask);
+			const expected = deriveExpectedCameraContract({ name, preset: cameras[name], buildingBounds });
+			views[name] = {
+				path, sha256: sha256(image), semanticRoleMaskPath: maskPath, semanticRoleMaskSha256: sha256(mask), selectedGlbSha256,
+				cameraEvidence: { building_bounds: buildingBounds, expected, actual: structuredClone(expected), expected_hash: cameraContractHash(expected), actual_hash: cameraContractHash(expected) },
+			};
+			artifacts[`view_${name}`] = { path, sha256: sha256(image) };
+			artifacts[`semantic_role_mask_${name}`] = { path: maskPath, sha256: sha256(mask) };
+		}
+		for (const [key, file, value] of [
+			["render_style", "render-style.json", { id: "competition-daylight-v1" }],
+			["presentation_evidence", "presentation-evidence.json", { views: {} }],
+			["semantic_role_evidence", "semantic-role-evidence.json", { views: {} }],
+			["baseline_comparison", "baseline-comparison.json", { status: "not_compared", views: {} }],
+		] as const) {
+			const path = join(options.runDir, file), bytes = Buffer.from(JSON.stringify(value)); await writeFile(path, bytes); artifacts[key] = { path, sha256: sha256(bytes) };
+		}
+		const contactPath = join(options.runDir, "contact-sheet.png"), contactBytes = Buffer.from("presentation-contact-sheet");
+		await writeFile(contactPath, contactBytes); artifacts.contact_sheet = { path: contactPath, sha256: sha256(contactBytes) };
+		const report = {
+			schema_version: "arr.elevation3d.embedded-pbr-render.v2",
+			selected_glb: { path: options.glbPath, sha256: selectedGlbSha256 }, browser_loaded_glb: { path: browserGlbPath, sha256: selectedGlbSha256 },
+			views, viewer, artifacts, validation: { accepted: true, codes: [] }, provider_calls: 0, credits_consumed: 0,
+			material_mode: "embedded-pbr", render_style: { id: "competition-daylight-v1" },
+			pbr_evidence: { material_count: 4, base_color_maps: 2, normal_maps: 2, metallic_roughness_maps: 2 },
+			canonical_selection: options.canonicalSelection,
+			camera_authority: { schema_version: "arr.elevation3d.presentation-camera-authority.v1", views: cameras, sha256: cameraContractHash(cameras) },
+		};
+		await writeFile(join(options.runDir, "render-validation.json"), JSON.stringify(report, null, 2));
+		return report;
 	};
 }
 
@@ -275,7 +402,7 @@ test("production presentation dependency renders through only the local renderer
 			imageBudgetUsd: { "seedream-5-pro": 0.06 }, imageEstimateUsd: { "seedream-5-pro": 0.06 },
 		};
 		const runDir = join(root, config.candidateId, config.runId);
-		const glbBytes = Buffer.from("production-local-presentation-glb");
+		const glbBytes = await localPresentationGlbBytes();
 		const selectedGlbSha256 = sha256(glbBytes);
 		const glbPath = join(runDir, "selected.glb");
 		const validation = { accepted: true, codes: [] };
@@ -285,20 +412,8 @@ test("production presentation dependency renders through only the local renderer
 		};
 		const receiptBytes = Buffer.from(JSON.stringify(validationReceipt));
 		const receiptPath = join(runDir, "facade-validation.json");
-		let localRendererCalls = 0;
-		let localRendererInput: any;
-		const localRenderer = async (input: any) => {
-			localRendererCalls += 1;
-			localRendererInput = input;
-			return {
-			schema_version: "arr.elevation3d.embedded-pbr-render.v2",
-			selected_glb: { sha256: selectedGlbSha256 },
-			views: Object.fromEntries(["front", "back", "left", "right", "plan", "top", "axon", "opposite-axon"].map((name) => [name, {
-				selectedGlbSha256, sha256: sha256(name),
-			}])),
-			validation: { accepted: true, codes: [] }, provider_calls: 0, credits_consumed: 0,
-			};
-		};
+		const localRendererInputs: any[] = [];
+		const localRenderer = durablePresentationRenderer(localRendererInputs);
 		const deps: any = await createProductionFacadeAgentDependencies(config, {
 			env,
 			fetchImpl: async () => { fetchCalls += 1; throw new Error("presentation must not fetch"); },
@@ -308,26 +423,24 @@ test("production presentation dependency renders through only the local renderer
 		});
 		await writeFile(glbPath, glbBytes);
 		await writeFile(receiptPath, receiptBytes);
-		const technicalDelivery = await writeAcceptedTechnicalDelivery(runDir, selectedGlbSha256);
+		const candidate = localPresentationCandidate();
+		const technicalDelivery = await writeAcceptedTechnicalDelivery(runDir, selectedGlbSha256, glbBytes, candidate);
 		credentialReads = 0;
 		fetchCalls = 0;
 
 		assert.equal(typeof deps.renderPresentation, "function");
 		const localPresentationInput = {
 			runDir, presentationRoot: join(runDir, "final-presentation"), candidateId: config.candidateId,
+			provider: "local-fixture", candidateSha256: facadeCandidateHash(candidate), selectedVersion: "v001",
 			artifact: { path: glbPath, sha256: selectedGlbSha256 }, validation,
 			validationReceipt: { path: receiptPath, sha256: sha256(receiptBytes) },
 			technicalDelivery,
-			input: {
-				mesh: { vertices: [[0, 0, 0], [10, 0, 0], [0, 8, 12]] },
-				cameras: { identity: { source: "fixture" }, views: Object.fromEntries(["front", "right", "back", "left", "top"].map((name) => [name, {
-					projection: "orthographic", projection_axes: { depth: [0, 1, 0], vertical: [0, 0, 1] },
-				}])) },
-			},
+			input: candidate,
 		};
 		const result = await deps.renderPresentation(localPresentationInput);
 		assert.equal(result.selected_glb.sha256, selectedGlbSha256);
-		assert.equal(localRendererCalls, 1);
+		assert.equal(localRendererInputs.length, 1);
+		const localRendererInput = localRendererInputs[0];
 		assert.equal(localRendererInput.glbPath, localPresentationInput.artifact.path);
 		assert.equal(localRendererInput.runDir, localPresentationInput.presentationRoot);
 		assert.equal(localRendererInput.candidateId, localPresentationInput.candidateId);

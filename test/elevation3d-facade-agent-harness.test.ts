@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { after, test } from "node:test";
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Document, NodeIO } from "@gltf-transform/core";
@@ -9,6 +9,8 @@ import sharp from "sharp";
 import { sha256, stableJson } from "../plugins/elevation-3d/lib/core.mjs";
 import { FacadeProviderError } from "../plugins/elevation-3d/lib/facade-agent/provider.mjs";
 import { verifyFacadeEvidencePack } from "../plugins/elevation-3d/lib/facade-agent/evidence.mjs";
+import { buildFacadeArtifactClosure } from "../plugins/elevation-3d/lib/facade-agent/artifact-closure.mjs";
+import { cameraContractHash, deriveExpectedCameraContract, presentationCameraPresets, technicalCameraAuthorityFromGlb } from "../plugins/elevation-3d/lib/camera-authority.mjs";
 import { createFacadeFixtureTransport } from "../plugins/elevation-3d/lib/facade-agent/fixture-transport.mjs";
 import { normalizeFacadeGrammarResult } from "../plugins/elevation-3d/lib/facade-agent/providers/grammar/contract.mjs";
 import { createProvider as createOpenAIGrammarProvider } from "../plugins/elevation-3d/lib/facade-agent/providers/grammar/openai/adapter.mjs";
@@ -23,14 +25,31 @@ import {
 	runFacadeAgent,
 	runFacadeStage,
 } from "../plugins/elevation-3d/lib/facade-agent/harness.mjs";
+import { deriveDeliveryCameras } from "../plugins/elevation-3d/lib/final-delivery.mjs";
 
 const roots: string[] = [];
 after(async () => Promise.all(roots.map((root) => rm(root, { recursive: true, force: true }))));
 
 const PROVIDERS = ["gpt-image-2", "nano-banana-pro"] as const;
 const EVIDENCE_SHA = "e".repeat(64);
+const HARNESS_CANDIDATE = {
+	candidate: { candidate_id: "creative-020" }, identity: { geometry_hash: "geometry-fixture" },
+	mesh: { vertices: [[0, 0, 0], [10, 0, 0], [0, 8, 12]], triangles: [[0, 1, 2]] },
+	cameras: { identity: { source: "fixture" }, views: {
+		front: { projection: "orthographic", projected_bounds_m: [[0, 0], [10, 12]], projection_axes: { depth: [0, -1, 0], horizontal: [1, 0, 0], vertical: [0, 0, 1] } },
+		right: { projection: "orthographic", projected_bounds_m: [[0, 0], [8, 12]], projection_axes: { depth: [1, 0, 0], horizontal: [0, 1, 0], vertical: [0, 0, 1] } },
+		back: { projection: "orthographic", projected_bounds_m: [[-10, 0], [0, 12]], projection_axes: { depth: [0, 1, 0], horizontal: [-1, 0, 0], vertical: [0, 0, 1] } },
+		left: { projection: "orthographic", projected_bounds_m: [[-8, 0], [0, 12]], projection_axes: { depth: [-1, 0, 0], horizontal: [0, -1, 0], vertical: [0, 0, 1] } },
+		top: { projection: "orthographic", projected_bounds_m: [[0, 0], [10, 8]], projection_axes: { depth: [0, 0, 1], horizontal: [1, 0, 0], vertical: [0, 1, 0] } },
+	} },
+};
+const HARNESS_BUILDING_BOUNDS = { center: [5, 4, 6], radius: Math.max(Math.hypot(10, 8, 12) * 0.75, 1) };
 const GLB_DOCUMENT = new Document();
-GLB_DOCUMENT.createScene("Scene");
+const GLB_BUFFER = GLB_DOCUMENT.createBuffer();
+const GLB_POSITIONS = GLB_DOCUMENT.createAccessor("positions", GLB_BUFFER).setType("VEC3").setArray(new Float32Array(HARNESS_CANDIDATE.mesh.vertices.flat()));
+const GLB_INDICES = GLB_DOCUMENT.createAccessor("indices", GLB_BUFFER).setType("SCALAR").setArray(new Uint16Array(HARNESS_CANDIDATE.mesh.triangles.flat()));
+const GLB_PRIMITIVE = GLB_DOCUMENT.createPrimitive().setAttribute("POSITION", GLB_POSITIONS).setIndices(GLB_INDICES);
+GLB_DOCUMENT.createScene("Scene").addChild(GLB_DOCUMENT.createNode("exact-mass").setMesh(GLB_DOCUMENT.createMesh("exact-mass").addPrimitive(GLB_PRIMITIVE)));
 const GLB_BYTES = Buffer.from(await new NodeIO().writeBinary(GLB_DOCUMENT));
 const REPLACEMENT_GLB_DOCUMENT = new Document();
 REPLACEMENT_GLB_DOCUMENT.createScene("Replacement");
@@ -39,6 +58,149 @@ const PROVIDER_PNG = await sharp({ create: { width: 1, height: 1, channels: 3, b
 const VIEW_NAMES = ["front", "right", "back", "left", "top", "axon", "opposite-axon"];
 const PRESENTATION_VIEW_NAMES = ["front", "back", "left", "right", "plan", "top", "axon", "opposite-axon"];
 const PASS_NAMES = ["color", "depth", "normal", "edge", "surface-id"];
+
+async function fixturePng(seed: number) {
+	return sharp({ create: { width: 2, height: 2, channels: 3, background: { r: seed, g: seed + 1, b: seed + 2 } } }).png().toBuffer();
+}
+
+async function writeArtifact(path: string, bytes: Buffer | string) {
+	const value = Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes);
+	await mkdir(join(path, ".."), { recursive: true });
+	await writeFile(path, value);
+	return { path, sha256: sha256(value) };
+}
+
+async function writeDurableTechnicalDelivery(deliveryRoot: string, artifact: any) {
+	await mkdir(deliveryRoot, { recursive: true });
+	const selected = join(deliveryRoot, "enriched.glb");
+	await copyFile(artifact.path, selected);
+	const technicalCameras = (await technicalCameraAuthorityFromGlb({
+		bytes: await readFile(selected), cameras: deriveDeliveryCameras(HARNESS_CANDIDATE),
+	})).cameras;
+	const views: Record<string, any> = {}, memoryViews: Record<string, any> = {};
+	for (const [index, name] of PRESENTATION_VIEW_NAMES.entries()) {
+		const camera = technicalCameras[name];
+		const image = await writeArtifact(join(deliveryRoot, "views", name, `${name}.png`), await fixturePng(10 + index));
+		const manifest = await writeArtifact(join(deliveryRoot, "views", name, `${name}-manifest.json`), JSON.stringify({
+			schema_version: ["axon", "opposite-axon"].includes(name) ? "arr.elevation3d.competition-axon.v1"
+				: ["plan", "top"].includes(name) ? "arr.elevation3d.competition-plan-top.v1" : "arr.elevation3d.competition-elevation.v1",
+			...(["plan", "top"].includes(name) ? { mode: name } : { view: name }), selected_glb_sha256: artifact.sha256, camera,
+			width: 2, height: 2, content_bounds_px: { min_x: 0, min_y: 0, max_x: 2, max_y: 2 },
+			...(["plan", "top"].includes(name) ? { selected_glb: { path: selected, sha256: artifact.sha256 }, cut: name === "plan"
+				? { enabled: true, elevation_m: 1.2, plane_world: [0, 0, 1, -1.2] } : { enabled: false, elevation_m: null, plane_world: null } } : {}),
+		}));
+		const validation = await writeArtifact(join(deliveryRoot, "views", name, `${name}-validation.json`), JSON.stringify({ accepted: true, codes: [] }));
+		views[name] = {
+			path: `views/${name}/${name}.png`, sha256: image.sha256, width: 2, height: 2,
+			selected_glb_sha256: artifact.sha256, camera, validation: { accepted: true, codes: [] },
+			manifest: { path: `views/${name}/${name}-manifest.json`, sha256: manifest.sha256 },
+			validation_report: { path: `views/${name}/${name}-validation.json`, sha256: validation.sha256 },
+		};
+		memoryViews[name] = { image, manifest, validation, selected_glb_sha256: artifact.sha256 };
+	}
+	const viewer = Object.fromEntries(await Promise.all([
+		["html", "index.html", "<html>technical viewer</html>"],
+		["app", "app.js", "globalThis.technical=true;"],
+		["config", "config.json", JSON.stringify({ views: PRESENTATION_VIEW_NAMES })],
+	].map(async ([key, name, bytes]) => [key, await writeArtifact(join(deliveryRoot, "viewer", name), bytes)])));
+	const screenshots = {
+		initial: await writeArtifact(join(deliveryRoot, "browser-verification", "viewer-initial.png"), await fixturePng(30)),
+		interacted: await writeArtifact(join(deliveryRoot, "browser-verification", "viewer-interacted.png"), await fixturePng(31)),
+	};
+	const browserCameras = presentationCameraPresets(technicalCameras);
+	const browserValue = {
+		schema_version: "arr.elevation3d.browser-verification.v1", screenshots, screenshot_artifacts: screenshots,
+		console_errors: [], blocked_external_requests: [], glb_load_count: 1, activated_views: [...PRESENTATION_VIEW_NAMES],
+		camera_presets: Object.fromEntries(PRESENTATION_VIEW_NAMES.map((name) => [name, deriveExpectedCameraContract({ name, preset: browserCameras[name], buildingBounds: HARNESS_BUILDING_BOUNDS })])),
+		camera_building_bounds: Object.fromEntries(PRESENTATION_VIEW_NAMES.map((name) => [name, HARNESS_BUILDING_BOUNDS])),
+		material_stability: { transparent_depth_writers: 0, facade_detail_meshes: 8, polygon_offset_facade_details: 8, deterministic_render_order: true },
+		settled_frames_identical: true, settled_frame_hashes: ["c".repeat(64), "c".repeat(64), "c".repeat(64)],
+	};
+	const browser = await writeArtifact(join(deliveryRoot, "browser-verification", "browser-verification.json"), JSON.stringify(browserValue));
+	const validation = await writeArtifact(join(deliveryRoot, "validation.json"), JSON.stringify({ schema_version: "arr.elevation3d.all-views-validation.v1", accepted: true, codes: [] }));
+	const manifestValue = {
+		schema_version: "arr.elevation3d.all-views.v1", selected_glb: { path: "enriched.glb", sha256: artifact.sha256 },
+		views, verified_evidence: { viewer: Object.fromEntries(Object.entries(viewer).map(([key, ref]: [string, any]) => [key, { path: `viewer/${ref.path.split(/[\\/]/).at(-1)}`, sha256: ref.sha256 }])) },
+		validation: { accepted: true, codes: [] },
+	};
+	const manifest = await writeArtifact(join(deliveryRoot, "all-views-manifest.json"), JSON.stringify(manifestValue));
+	return {
+		schema_version: "arr.elevation3d.final-delivery.v1", run_dir: deliveryRoot, manifest: manifestValue,
+		validation: { accepted: true, codes: [] }, views,
+		memory_record: {
+			schema_version: "arr.elevation3d.final-delivery-memory.v1",
+			selected_glb: { path: selected, sha256: artifact.sha256 }, manifest, validation, viewer,
+			browser_verification: { ...browser, screenshots }, views: memoryViews,
+		},
+	};
+}
+
+async function writeDurablePresentation({ runDir, presentationRoot, provider, candidateId, candidateSha256, selectedVersion, artifact, validationReceipt, technicalDelivery, input }: any) {
+	await mkdir(presentationRoot, { recursive: true });
+	const textured = join(presentationRoot, "textured.glb");
+	await copyFile(artifact.path, textured);
+	const presentationCameras = presentationCameraPresets(deriveDeliveryCameras(input));
+	const cameraAuthority = {
+		schema_version: "arr.elevation3d.presentation-camera-authority.v1",
+		views: presentationCameras,
+		sha256: cameraContractHash(presentationCameras),
+	};
+	const viewer = Object.fromEntries(await Promise.all([
+		["html", "index.html", "<html>presentation viewer</html>"],
+		["app", "app.js", "globalThis.presentation=true;"],
+		["config", "config.json", JSON.stringify({ views: PRESENTATION_VIEW_NAMES })],
+	].map(async ([key, name, bytes]) => [key, await writeArtifact(join(presentationRoot, "viewer", name), bytes)])));
+	const views: Record<string, any> = {}, artifacts: Record<string, any> = {};
+	for (const [index, name] of PRESENTATION_VIEW_NAMES.entries()) {
+		const image = await writeArtifact(join(presentationRoot, "views", name, `${name}.png`), await fixturePng(50 + index));
+		const mask = await writeArtifact(join(presentationRoot, "views", name, `${name}-semantic-roles.png`), await fixturePng(70 + index));
+		const expected = deriveExpectedCameraContract({ name, preset: presentationCameras[name], buildingBounds: HARNESS_BUILDING_BOUNDS });
+		views[name] = {
+			path: image.path, sha256: image.sha256, semanticRoleMaskPath: mask.path, semanticRoleMaskSha256: mask.sha256,
+			selectedGlbSha256: artifact.sha256,
+			cameraEvidence: {
+				building_bounds: HARNESS_BUILDING_BOUNDS, expected, actual: structuredClone(expected),
+				expected_hash: cameraContractHash(expected), actual_hash: cameraContractHash(expected),
+			},
+		};
+		artifacts[`view_${name}`] = image; artifacts[`semantic_role_mask_${name}`] = mask;
+	}
+	for (const [key, name] of [
+		["render_style", "render-style.json"], ["presentation_evidence", "presentation-evidence.json"],
+		["semantic_role_evidence", "semantic-role-evidence.json"], ["baseline_comparison", "baseline-comparison.json"],
+	] as const) artifacts[key] = await writeArtifact(join(presentationRoot, name), JSON.stringify({ schema_version: `fixture.${key}.v1` }));
+	artifacts.contact_sheet = await writeArtifact(join(presentationRoot, "contact-sheet.png"), await fixturePng(90));
+	const render = {
+		schema_version: "arr.elevation3d.embedded-pbr-render.v2", selected_glb: { path: artifact.path, sha256: artifact.sha256 },
+		browser_loaded_glb: { path: textured, sha256: artifact.sha256 }, views, viewer, artifacts,
+		material_mode: "embedded-pbr", render_style: { id: "competition-daylight-v1" },
+		pbr_evidence: { material_count: 4, base_color_maps: 2, normal_maps: 2, metallic_roughness_maps: 2 },
+		validation: { accepted: true, codes: [] }, provider_calls: 0, credits_consumed: 0,
+		canonical_selection: {
+			provider, candidate_id: candidateId, candidate_sha256: candidateSha256, selected_glb_sha256: artifact.sha256,
+			facade_validation_receipt_sha256: validationReceipt.sha256, camera_authority_sha256: cameraAuthority.sha256,
+		},
+		camera_authority: cameraAuthority,
+	};
+	const wrapperValue = {
+		schema_version: "arr.elevation3d.facade-final-presentation.v1", selected_glb: { path: artifact.path, sha256: artifact.sha256 },
+		render, memory_record: { presentation: null },
+	};
+	const presentation = await writeArtifact(join(presentationRoot, "final-presentation.json"), `${JSON.stringify(wrapperValue, null, 2)}\n`);
+	await writeArtifact(join(presentationRoot, "render-validation.json"), JSON.stringify(render));
+	const closure = await buildFacadeArtifactClosure({
+		runDir, closurePath: join(presentationRoot, "artifact-closure.json"), provider, candidateId, candidateSha256, selectedVersion,
+		selectedGlb: artifact, validationReceipt, cameraAuthority, technicalDelivery, presentationRoot, render, presentationManifest: presentation,
+	});
+	return {
+		...wrapperValue,
+		memory_record: {
+			presentation, artifact_closure: closure.ref, selected_glb: { path: artifact.path, sha256: artifact.sha256 },
+			contact_sheet: artifacts.contact_sheet,
+			views: Object.fromEntries(PRESENTATION_VIEW_NAMES.map((name) => [name, { ...artifacts[`view_${name}`], selected_glb_sha256: artifact.sha256 }])),
+		},
+	};
+}
 
 async function verifiedEvidenceFixture(root: string) {
 	const evidenceRoot = join(root, "verified-evidence");
@@ -185,7 +347,7 @@ async function fixture(overrides: any = {}) {
 	});
 
 	const deps: any = {
-		loadCandidate: async () => ({ candidate: { candidate_id: "creative-020" }, identity: { geometry_hash: "geometry-fixture" } }),
+		loadCandidate: async () => structuredClone(HARNESS_CANDIDATE),
 		buildEvidence: async ({ runDir: target }: any) => ({
 			manifest: { candidate_id: "creative-020" }, manifestPath: join(target, "evidence", "manifest.json"),
 			manifestSha256: EVIDENCE_SHA, contactSheetBytes: Buffer.from("fixture-evidence"),
@@ -210,37 +372,13 @@ async function fixture(overrides: any = {}) {
 		},
 		renderDelivery: async ({ provider, artifact, deliveryRoot }: any) => {
 			calls.delivery.push({ provider, artifact });
-			await mkdir(deliveryRoot, { recursive: true });
-			const manifestPath = join(deliveryRoot, "technical-delivery.json");
-			const manifest = { selected_glb: { sha256: artifact.sha256 } };
-			const manifestBytes = Buffer.from(`${stableJson(manifest)}\n`);
-			await writeFile(manifestPath, manifestBytes);
-			return {
-				schema_version: "fixture-delivery.v1", run_dir: deliveryRoot, manifest,
-				memory_record: { manifest: { path: manifestPath, sha256: sha256(manifestBytes) } },
-			};
+			return writeDurableTechnicalDelivery(deliveryRoot, artifact);
 		},
-		renderPresentation: async ({ provider, artifact, presentationRoot, technicalDelivery }: any) => {
+		renderPresentation: async (input: any) => {
+			const { provider, artifact, presentationRoot, technicalDelivery } = input;
 			calls.presentation.push({ provider, artifact, presentationRoot, technicalDelivery });
 			if (overrides.presentationFailure) throw overrides.presentationFailure;
-			await mkdir(presentationRoot, { recursive: true });
-			const presentationPath = join(presentationRoot, "presentation.json");
-			const presentation = { selected_glb: { sha256: artifact.sha256 } };
-			const presentationBytes = Buffer.from(`${stableJson(presentation)}\n`);
-			await writeFile(presentationPath, presentationBytes);
-			return {
-				memory_record: {
-					presentation: { path: presentationPath, sha256: sha256(presentationBytes) },
-					selected_glb: { sha256: artifact.sha256 },
-				},
-				render: {
-					selected_glb: { sha256: artifact.sha256 },
-					views: Object.fromEntries(PRESENTATION_VIEW_NAMES.map((name) => [name, {
-						sha256: sha256(name), selectedGlbSha256: artifact.sha256,
-					}])),
-					validation: { accepted: true, codes: [] }, provider_calls: 0, credits_consumed: 0,
-				},
-			};
+			return writeDurablePresentation(input);
 		},
 		score,
 		ledger,
@@ -1238,7 +1376,9 @@ test("a pre-return local presentation failure is explicitly retryable from the s
 
 	const failed = await runFacadeAgent(value.config, first.deps);
 	assert.deepEqual(failed.presentation_execution, {
-		status: "failed", provider: legacy.final.selected_provider, selected_glb_sha256: legacy.final.selected_glb_sha256,
+		status: "failed", provider: legacy.final.selected_provider, selected_version: legacy.final.selected_version,
+		candidate_sha256: legacy.preflight_receipt ? JSON.parse(await readFile(join(value.runDir, legacy.preflight_receipt.path), "utf8")).candidate_sha256 : undefined,
+		selected_glb_sha256: legacy.final.selected_glb_sha256,
 		retryable: true, failure: { code: "FACADE_PRESENTATION_RENDER_REJECTED", name: "Error", message: "local renderer unavailable" },
 	});
 	const second = recoveryDependencies(value);
@@ -1284,7 +1424,7 @@ test("a recovery checkpoint integrity failure is nonretryable even before render
 	const version = legacy.providers[provider].versions.find((item: any) => item.id === legacy.final.selected_version);
 	const glbPath = join(value.runDir, version.artifact.path);
 	const first = recoveryDependencies(value, { lifecycle: { async onTransition(event: any) {
-		if (event.stage === "presentation" && event.status === "submitting") await writeFile(glbPath, REPLACEMENT_GLB_BYTES);
+		if (event.stage === "presentation" && event.status === "prepared") await writeFile(glbPath, REPLACEMENT_GLB_BYTES);
 	} } });
 
 	const failed = await runFacadeAgent(value.config, first.deps);
@@ -1320,6 +1460,116 @@ test("a crash after local render return is uncertain and cannot auto-replay", as
 	assert.equal(second.calls.presentation, 0);
 	assert.deepEqual(second.calls.paid, { image: 0, grammar: 0 });
 	assert.deepEqual(second.calls.pipeline, { evidence: 0, build: 0, validate: 0, score: 0, delivery: 0 });
+});
+
+test("an initial-run crash after local render return is uncertain and cannot replay", async () => {
+	const crash = new Error("initial crash after render return");
+	const value = await fixture({ runId: "initial-presentation-returned-crash", lifecycle: { onTransition(event: any) {
+		if (event.stage === "presentation" && event.status === "returned") throw crash;
+	} } });
+	await assert.rejects(() => runFacadeAgent(value.config, value.deps), crash);
+	const persisted = JSON.parse(await readFile(join(value.runDir, "run.json"), "utf8"));
+	assert.equal(persisted.presentation_execution.status, "uncertain");
+	assert.equal(persisted.presentation_receipt, undefined);
+
+	const recovery = recoveryDependencies(value, { lifecycle: {} });
+	await assert.rejects(() => runFacadeAgent(value.config, recovery.deps), (error: any) => error.code === "FACADE_PRESENTATION_RECOVERY_UNSAFE");
+	assert.equal(recovery.calls.presentation, 0);
+	assert.deepEqual(recovery.calls.paid, { image: 0, grammar: 0 });
+	assert.deepEqual(recovery.calls.pipeline, { evidence: 0, build: 0, validate: 0, score: 0, delivery: 0 });
+});
+
+test("an initial provider-and-GLB-bound local presentation failure retries without legacy state manufacture", async () => {
+	const rejected = Object.assign(new Error("local renderer unavailable"), { code: "FACADE_PRESENTATION_RENDER_REJECTED" });
+	const value = await fixture({ runId: "initial-presentation-local-retry", presentationFailure: rejected });
+	const failed = await runFacadeAgent(value.config, value.deps);
+	assert.equal(failed.final.status, "presentation-failed");
+	assert.equal(failed.final.selected_version, "v001");
+	assert.equal(failed.final.delivery_sha256.length, 64);
+	assert.equal(failed.presentation_execution.status, "failed");
+	assert.equal(failed.presentation_execution.retryable, true);
+
+	const recovery = recoveryDependencies(value, { renderPresentation: writeDurablePresentation });
+	const recovered = await runFacadeAgent(value.config, recovery.deps);
+	assert.equal(recovered.final.status, "winner");
+	assert.equal(recovery.calls.presentation, 1);
+	assert.deepEqual(recovery.calls.paid, { image: 0, grammar: 0 });
+	assert.deepEqual(recovery.calls.pipeline, { evidence: 0, build: 0, validate: 0, score: 0, delivery: 0 });
+});
+
+test("an initial provider-and-GLB-bound artifact-closure failure retries locally", async () => {
+	const rejected = Object.assign(new Error("local artifact closure incomplete"), { code: "FACADE_PRESENTATION_ARTIFACT_CLOSURE_INVALID" });
+	const value = await fixture({ runId: "initial-presentation-closure-retry", presentationFailure: rejected });
+	const failed = await runFacadeAgent(value.config, value.deps);
+	assert.equal(failed.final.status, "presentation-failed");
+	assert.equal(failed.presentation_execution.status, "failed");
+	assert.equal(failed.presentation_execution.retryable, true);
+	assert.equal(failed.presentation_execution.failure.code, "FACADE_PRESENTATION_ARTIFACT_CLOSURE_INVALID");
+
+	const recovery = recoveryDependencies(value, { renderPresentation: writeDurablePresentation });
+	const recovered = await runFacadeAgent(value.config, recovery.deps);
+	assert.equal(recovered.final.status, "winner");
+	assert.equal(recovery.calls.presentation, 1);
+	assert.deepEqual(recovery.calls.paid, { image: 0, grammar: 0 });
+	assert.deepEqual(recovery.calls.pipeline, { evidence: 0, build: 0, validate: 0, score: 0, delivery: 0 });
+});
+
+test("a verified succeeded presentation receipt resumes with zero local, paid, or pipeline replay", async () => {
+	const crash = new Error("crash after committed presentation receipt");
+	const value = await fixture({ runId: "presentation-succeeded-receipt-resume", lifecycle: { onTransition(event: any) {
+		if (event.stage === "presentation" && event.status === "succeeded") throw crash;
+	} } });
+	await assert.rejects(() => runFacadeAgent(value.config, value.deps), crash);
+	const committed = JSON.parse(await readFile(join(value.runDir, "run.json"), "utf8"));
+	assert.equal(committed.presentation_execution.status, "succeeded");
+	assert.equal(committed.presentation_execution.retryable, undefined);
+	assert.equal(committed.presentation_receipt.receipt_sha256.length, 64);
+	assert.notEqual(committed.status, "presentation-failed");
+
+	const recovery = recoveryDependencies(value, { lifecycle: {} });
+	const recovered = await runFacadeAgent(value.config, recovery.deps);
+	assert.equal(recovered.final.status, "winner");
+	assert.equal(recovery.calls.presentation, 0);
+	assert.deepEqual(recovery.calls.paid, { image: 0, grammar: 0 });
+	assert.deepEqual(recovery.calls.pipeline, { evidence: 0, build: 0, validate: 0, score: 0, delivery: 0 });
+});
+
+test("a succeeded receipt committed during terminal recovery zero-call finalizes after notification failure", async () => {
+	const value = await fixture({ runId: "terminal-recovery-succeeded-receipt-resume" });
+	await runFacadeAgent(value.config, value.deps);
+	await rewriteWinnerAsLegacy(value);
+	const crash = new Error("terminal recovery notification failed");
+	const first = recoveryDependencies(value, { lifecycle: { onTransition(event: any) {
+		if (event.stage === "presentation" && event.status === "succeeded") throw crash;
+	} } });
+	await assert.rejects(() => runFacadeAgent(value.config, first.deps), crash);
+	const committed = JSON.parse(await readFile(join(value.runDir, "run.json"), "utf8"));
+	assert.equal(committed.presentation_execution.status, "succeeded");
+	assert.equal(committed.presentation_receipt.receipt_sha256.length, 64);
+
+	const second = recoveryDependencies(value, { lifecycle: {} });
+	const recovered = await runFacadeAgent(value.config, second.deps);
+	assert.equal(recovered.final.status, "winner");
+	assert.equal(recovered.final.presentation_sha256, committed.presentation_receipt.receipt_sha256);
+	assert.equal(second.calls.presentation, 0);
+	assert.deepEqual(second.calls.paid, { image: 0, grammar: 0 });
+	assert.deepEqual(second.calls.pipeline, { evidence: 0, build: 0, validate: 0, score: 0, delivery: 0 });
+});
+
+test("status reads hash every closed technical and presentation leaf", async (context) => {
+	for (const [mode, select] of [
+		["delete technical detailed manifest", (closure: any) => closure.technical.views.front.manifest.path],
+		["tamper presentation semantic mask", (closure: any) => closure.presentation.views.axon.semantic_role_mask.path],
+	] as const) await context.test(mode, async () => {
+		const value = await fixture({ runId: `closed-leaf-${mode.replaceAll(" ", "-")}` });
+		const result = await runFacadeAgent(value.config, value.deps);
+		const receipt = JSON.parse(await readFile(join(value.runDir, result.presentation_receipt.path), "utf8"));
+		const closure = JSON.parse(await readFile(join(value.runDir, receipt.artifact_closure.path), "utf8"));
+		const target = join(value.runDir, select(closure));
+		if (mode.startsWith("delete")) await rm(target);
+		else await writeFile(target, "tampered closed leaf");
+		await assert.rejects(() => readFacadeAgentStatus(value.runDir), (error: any) => error.code === "FACADE_AGENT_STATE_UNCERTAIN");
+	});
 });
 
 test("a tampered terminal presentation receipt fails closed without rerendering", async () => {
@@ -1416,7 +1666,7 @@ test("an abort before or during presentation never writes a final winner", async
 	for (const timing of ["before", "during"] as const) await context.test(timing, async () => {
 		const controller = new AbortController();
 		const value = await fixture({ runId: `presentation-abort-${timing}`, lifecycle: { onTransition(event: any) {
-			if (timing === "before" && event.stage === "presentation" && event.status === "submitting") controller.abort();
+			if (timing === "before" && event.stage === "presentation" && event.status === "prepared") controller.abort();
 		} } });
 		value.deps.signal = controller.signal;
 		if (timing === "during") value.deps.renderPresentation = async ({ provider, artifact }: any) => {
@@ -1436,7 +1686,7 @@ test("an abort before or during presentation never writes a final winner", async
 test("a GLB changed at the presentation checkpoint fails before the local renderer", async () => {
 	let value: any;
 	value = await fixture({ runId: "presentation-tampered-glb", lifecycle: { async onTransition(event: any) {
-		if (event.stage === "presentation" && event.status === "submitting") {
+		if (event.stage === "presentation" && event.status === "prepared") {
 			await writeFile(join(value.runDir, "fixture-artifacts", event.provider, "v001.glb"), REPLACEMENT_GLB_BYTES);
 		}
 	} } });
