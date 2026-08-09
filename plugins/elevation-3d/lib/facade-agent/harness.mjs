@@ -206,6 +206,8 @@ function relativePath(root, path, label) {
 	return relative(resolve(root), containedPath(root, path, label)).replaceAll("\\", "/");
 }
 
+export { assertNoReparsePoints, atomicWrite, containedPath };
+
 function manifestOutputHash(output) {
 	return sha256(stableJson(persistent(output)));
 }
