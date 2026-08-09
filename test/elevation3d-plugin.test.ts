@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -11,6 +11,46 @@ import { createProductionFacadeAgentDependencies } from "../plugins/elevation-3d
 
 function sha256(value: string | Buffer) {
 	return createHash("sha256").update(value).digest("hex");
+}
+
+const PRESENTATION_VIEW_NAMES = ["front", "back", "left", "right", "plan", "top", "axon", "opposite-axon"];
+
+async function writeAcceptedTechnicalDelivery(runDir: string, selectedGlbSha256: string) {
+	const root = join(runDir, "technical-delivery");
+	const views: Record<string, any> = {};
+	for (const name of PRESENTATION_VIEW_NAMES) {
+		const relativePath = join("views", name, "view.json");
+		const path = join(root, relativePath);
+		await mkdir(join(root, "views", name), { recursive: true });
+		const type = ["axon", "opposite-axon"].includes(name) ? "perspective" : "orthographic";
+		const camera = type === "perspective"
+			? { type, position: [10, -10, 10], target: [0, 0, 5], up: [0, 0, 1], fov_degrees: 32, near: 0.1, far: 100 }
+			: { type, projection_axes: { depth: [0, -1, 0], horizontal: [1, 0, 0], vertical: [0, 0, 1] }, frustum: { left: -10, right: 10, top: 10, bottom: -10, near: 0.1, far: 100 } };
+		const detail = {
+			schema_version: type === "perspective" ? "arr.elevation3d.competition-axon.v1"
+				: ["plan", "top"].includes(name) ? "arr.elevation3d.competition-plan-top.v1" : "arr.elevation3d.competition-elevation.v1",
+			...(["plan", "top"].includes(name) ? { mode: name } : { view: name }),
+			selected_glb_sha256: selectedGlbSha256, camera,
+			content_bounds_px: { min_x: 10, min_y: 10, max_x: 89, max_y: 89 },
+		};
+		const bytes = Buffer.from(JSON.stringify(detail));
+		await writeFile(path, bytes);
+		views[name] = {
+			width: 100, height: 100, selected_glb_sha256: selectedGlbSha256, camera,
+			validation: { accepted: true, codes: [] }, manifest: { path: relativePath, sha256: sha256(bytes) },
+		};
+	}
+	const manifest = {
+		schema_version: "arr.elevation3d.all-views.v1", selected_glb: { path: "enriched.glb", sha256: selectedGlbSha256 },
+		views, validation: { accepted: true, codes: [] },
+	};
+	const manifestPath = join(root, "all-views-manifest.json");
+	const manifestBytes = Buffer.from(JSON.stringify(manifest));
+	await writeFile(manifestPath, manifestBytes);
+	return {
+		run_dir: root, manifest,
+		memory_record: { manifest: { path: manifestPath, sha256: sha256(manifestBytes) } },
+	};
 }
 
 test("plugin exposes the autonomous production flow before legacy experimental tools", async () => {
@@ -268,6 +308,7 @@ test("production presentation dependency renders through only the local renderer
 		});
 		await writeFile(glbPath, glbBytes);
 		await writeFile(receiptPath, receiptBytes);
+		const technicalDelivery = await writeAcceptedTechnicalDelivery(runDir, selectedGlbSha256);
 		credentialReads = 0;
 		fetchCalls = 0;
 
@@ -276,7 +317,7 @@ test("production presentation dependency renders through only the local renderer
 			runDir, presentationRoot: join(runDir, "final-presentation"), candidateId: config.candidateId,
 			artifact: { path: glbPath, sha256: selectedGlbSha256 }, validation,
 			validationReceipt: { path: receiptPath, sha256: sha256(receiptBytes) },
-			technicalDelivery: { run_dir: "technical-delivery", manifest: { selected_glb: { sha256: selectedGlbSha256 } } },
+			technicalDelivery,
 			input: {
 				mesh: { vertices: [[0, 0, 0], [10, 0, 0], [0, 8, 12]] },
 				cameras: { identity: { source: "fixture" }, views: Object.fromEntries(["front", "right", "back", "left", "top"].map((name) => [name, {
@@ -291,6 +332,7 @@ test("production presentation dependency renders through only the local renderer
 		assert.equal(localRendererInput.runDir, localPresentationInput.presentationRoot);
 		assert.equal(localRendererInput.candidateId, localPresentationInput.candidateId);
 		assert.equal(localRendererInput.canonicalSelection.selected_glb_sha256, localPresentationInput.artifact.sha256);
+		assert.equal(localRendererInput.proceduralBaseline.manifest.sha256, technicalDelivery.memory_record.manifest.sha256);
 		assert.equal(fetchCalls, 0);
 		assert.equal(credentialReads, 0);
 	} finally { await rm(root, { recursive: true, force: true }); }
