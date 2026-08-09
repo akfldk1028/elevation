@@ -910,9 +910,9 @@ function persistedPresentationMemory(runDir, result, selectedGlbSha256) {
 		presentation: persistedPresentationRef(runDir, memory.presentation, "presentation manifest"),
 		selected_glb: { sha256: selectedGlbSha256 },
 	};
-	const contactSheet = memory.contact_sheet ?? render?.contact_sheet;
+	const contactSheet = memory.contact_sheet;
 	if (contactSheet !== undefined) output.contact_sheet = persistedPresentationRef(runDir, contactSheet, "presentation contact sheet");
-	const views = memory.views ?? render?.views;
+	const views = memory.views;
 	if (views !== undefined) {
 		const viewRecords = plainData(views, "presentation views");
 		output.views = Object.fromEntries(Object.entries(viewRecords).map(([name, view]) => {
@@ -926,6 +926,17 @@ function persistedPresentationMemory(runDir, result, selectedGlbSha256) {
 		}));
 	}
 	return output;
+}
+
+function validatePresentationReport(result, selectedGlbSha256) {
+	const returned = plainData(result, "presentation result");
+	const render = plainData(returned.render, "presentation render record");
+	if (render.provider_calls !== 0 || render.credits_consumed !== 0) {
+		throw codedError("FACADE_PRESENTATION_REMOTE_ACTIVITY", "Presentation renderer reported remote activity");
+	}
+	if (render.selected_glb?.sha256 !== selectedGlbSha256) {
+		throw codedError("FACADE_PRESENTATION_RESULT_INVALID", "Presentation render is not bound to the selected GLB");
+	}
 }
 
 function technicalManifestForPresentation(delivery, technicalDelivery, selectedGlbSha256) {
@@ -1298,6 +1309,11 @@ async function verifyPresentationReceipt(runDir, run) {
 		|| receipt.provider_calls !== 0 || receipt.credits_consumed !== 0
 		|| execution.receipt_sha256 !== run.presentation_receipt.receipt_sha256) {
 		throw codedError("FACADE_AGENT_STATE_UNCERTAIN", "Presentation receipt bindings are invalid");
+	}
+	const providerManifest = run.providers?.[receipt.provider]?.delivery?.memory_record?.manifest;
+	if (!providerManifest || receipt.technical_manifest?.path !== providerManifest.path
+		|| receipt.technical_manifest?.sha256 !== providerManifest.sha256) {
+		throw codedError("FACADE_AGENT_STATE_UNCERTAIN", "Presentation receipt technical manifest does not match selected provider delivery");
 	}
 	await verifyPresentationArtifactRef(runDir, receipt.presentation_manifest, "presentation manifest");
 	const technicalBytes = await verifyPresentationArtifactRef(runDir, receipt.technical_manifest, "technical delivery manifest");
@@ -1774,7 +1790,7 @@ async function executeFacade(config, deps, stopAfterStage = null) {
 				};
 				states[provider].delivery = deliveryRecord;
 				const acceptedVersion = states[provider].versions.find((version) => version.status === "accepted");
-				if (acceptedVersion) acceptedVersion.delivery = deliveryRecord.memory_record;
+				if (acceptedVersion) acceptedVersion.delivery = structuredClone(deliveryRecord.memory_record);
 				await writeProvider(runDir, run, normalized, provider, states[provider], deps);
 				run.delivery = deliveryRecord;
 				await persistPublicRun(runDir, run);
@@ -1816,6 +1832,8 @@ async function executeFacade(config, deps, stopAfterStage = null) {
 					artifact, validation: selectedValidations[provider], validationReceipt: selectedValidationReceipts[provider],
 					technicalDelivery, input: candidate, signal, lifecycle: deps.lifecycle,
 				});
+				artifact = await authorizeGlb(runDir, artifact);
+				validatePresentationReport(result, artifact.sha256);
 				await callLifecycle(deps, { stage: "presentation", status: "returned", provider, selected_glb_sha256: artifact.sha256 });
 				const memory = persistedPresentationMemory(runDir, result, artifact.sha256);
 				const receipt = await writeReceipt(runDir, "final-presentation/presentation-receipt.json", {
