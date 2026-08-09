@@ -32,7 +32,7 @@ import { fixtureFactory } from ${JSON.stringify(preloadUrl)};
 export async function runFacadeAgentCli(argv, io = {}) { return runFacadeAgentCliOriginal(argv, { ...io, dependencyFactory: fixtureFactory }); }
 `);
 	await writeFile(preload, `
-import { appendFile, mkdir, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, rm, writeFile } from "node:fs/promises";
 import { registerHooks } from "node:module";
 import { join } from "node:path";
 import { sha256, stableJson } from ${JSON.stringify(moduleUrl("plugins/elevation-3d/lib/core.mjs"))};
@@ -40,10 +40,43 @@ import { createFacadeAgentDependencyFactory } from ${JSON.stringify(cliUrl)};
 import { createFacadeFixtureTransport } from ${JSON.stringify(moduleUrl("plugins/elevation-3d/lib/facade-agent/fixture-transport.mjs"))};
 import { FacadeProviderError } from ${JSON.stringify(moduleUrl("plugins/elevation-3d/lib/facade-agent/provider.mjs"))};
 import { createPaidOperationLedger, consumePaidOperationSubmissionCapability } from ${JSON.stringify(moduleUrl("plugins/elevation-3d/lib/facade-agent/paid-operation-ledger.mjs"))};
+import { deliverFacadeFinalPresentation } from ${JSON.stringify(moduleUrl("plugins/elevation-3d/lib/facade-agent/final-presentation.mjs"))};
 const GLB = Buffer.from(${JSON.stringify(glb)}, "base64");
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64");
 const grammar = { system: "brick-punched-window-v1", surfaces: ["front", "right", "back", "left"], materials: ["brick", "precast", "window-frame", "glass"], corner_datum_m: 0, bay_width_m: 2.4, window_width_m: 1.4, window_height_m: 1.8, sill_height_m: 0.8, reveal_depth_m: 0.2, frame_width_m: 0.06, lintel_height_m: 0.15, sill_depth_m: 0.1, cladding_depth_m: 0.1, brick_module_m: [0.22, 0.07], confidence: 0.92, unresolved_surfaces: [], floor_elevations_m: [0, 3, 6], facade_lengths_m: { front: 8, right: 6, back: 8, left: 6 } };
+const VIEW_NAMES = ["front", "back", "left", "right", "plan", "top", "axon", "opposite-axon"];
+const candidate = {
+  candidate_id: "creative-020", mesh: { vertices: [[0, 0, 0], [10, 0, 0], [0, 8, 12]] },
+  cameras: { identity: { source: "fixture" }, views: Object.fromEntries(["front", "right", "back", "left", "top"].map((name) => [name, { projection: "orthographic", projection_axes: { depth: [0, 1, 0], vertical: [0, 0, 1] } }])) },
+};
 const note = async (value) => { if (process.env.FACADE_TEST_CALL_LOG) await appendFile(process.env.FACADE_TEST_CALL_LOG, value + "\\n"); };
+async function writeAcceptedTechnicalDelivery(deliveryRoot, selectedGlbSha256) {
+  const views = {};
+  for (const name of VIEW_NAMES) {
+    const relativePath = join("views", name, "view.json");
+    const path = join(deliveryRoot, relativePath);
+    await mkdir(join(deliveryRoot, "views", name), { recursive: true });
+    const type = ["axon", "opposite-axon"].includes(name) ? "perspective" : "orthographic";
+    const camera = type === "perspective"
+      ? { type, position: [10, -10, 10], target: [0, 0, 5], up: [0, 0, 1], fov_degrees: 32, near: 0.1, far: 100 }
+      : { type, projection_axes: { depth: [0, -1, 0], horizontal: [1, 0, 0], vertical: [0, 0, 1] }, frustum: { left: -10, right: 10, top: 10, bottom: -10, near: 0.1, far: 100 } };
+    const detail = {
+      schema_version: type === "perspective" ? "arr.elevation3d.competition-axon.v1"
+        : ["plan", "top"].includes(name) ? "arr.elevation3d.competition-plan-top.v1" : "arr.elevation3d.competition-elevation.v1",
+      ...(["plan", "top"].includes(name) ? { mode: name } : { view: name }),
+      selected_glb_sha256: selectedGlbSha256, camera,
+      content_bounds_px: { min_x: 10, min_y: 10, max_x: 89, max_y: 89 },
+    };
+    const bytes = Buffer.from(JSON.stringify(detail));
+    await writeFile(path, bytes);
+    views[name] = { width: 100, height: 100, selected_glb_sha256: selectedGlbSha256, camera, validation: { accepted: true, codes: [] }, manifest: { path: relativePath, sha256: sha256(bytes) } };
+  }
+  const manifest = { schema_version: "arr.elevation3d.all-views.v1", selected_glb: { path: "enriched.glb", sha256: selectedGlbSha256 }, views, validation: { accepted: true, codes: [] } };
+  const manifestPath = join(deliveryRoot, "all-views-manifest.json");
+  const manifestBytes = Buffer.from(JSON.stringify(manifest));
+  await writeFile(manifestPath, manifestBytes);
+  return { run_dir: deliveryRoot, manifest, memory_record: { manifest: { path: manifestPath, sha256: sha256(manifestBytes) } } };
+}
 export const fixtureFactory = createFacadeAgentDependencyFactory(async (config) => {
   const failure = process.env.FACADE_TEST_FAILURE;
   if (failure) { const error = new Error("injected boundary failure"); error.code = failure; throw error; }
@@ -70,29 +103,22 @@ export const fixtureFactory = createFacadeAgentDependencyFactory(async (config) 
     : ({ status: "scored", accepted: true, provider, score: provider === "gpt-image-2" ? 91 : 80, sha256: sha256(provider) });
   return {
     signal: config.signal,
-    loadCandidate: async () => ({ candidate: { candidate_id: "creative-020" }, identity: { geometry_hash: "fixture" } }),
+    loadCandidate: async () => ({ ...candidate, candidate, identity: { geometry_hash: "fixture" } }),
     buildEvidence: async ({ runDir }) => { if (process.env.FACADE_TEST_EVIDENCE_FAILURE) throw new Error("fixture crash during evidence"); return { manifest: { candidate_id: "creative-020" }, manifestPath: join(runDir, "evidence", "manifest.json"), manifestSha256: "e".repeat(64) }; },
     providers, grammarProvider, ledger, score,
     build: async ({ provider, versionId, runDir }) => { await note("build:" + provider); const dir = join(runDir, "artifacts", provider); await mkdir(dir, { recursive: true }); const path = join(dir, versionId + ".glb"); await writeFile(path, GLB); return { artifact: { path, sha256: sha256(GLB) } }; },
     validate: async ({ provider, artifact }) => { await note("validate:" + provider); return { accepted: true, codes: [], metrics: {}, artifacts: { glb: artifact.path, glb_sha256: artifact.sha256 } }; },
-    renderDelivery: async ({ provider, artifact, deliveryRoot }) => {
-      await mkdir(deliveryRoot, { recursive: true });
-      const manifest = { selected_glb: { sha256: artifact.sha256 } };
-      const manifestPath = join(deliveryRoot, "technical-delivery.json");
-      const manifestBytes = Buffer.from(JSON.stringify(manifest));
-      await writeFile(manifestPath, manifestBytes);
-      return { provider, run_dir: deliveryRoot, manifest, memory_record: { manifest: { path: manifestPath, sha256: sha256(manifestBytes) } } };
-    },
-    renderPresentation: async ({ artifact, presentationRoot }) => {
-      await mkdir(presentationRoot, { recursive: true });
-      const presentation = { selected_glb: { sha256: artifact.sha256 } };
-      const presentationPath = join(presentationRoot, "presentation.json");
-      const presentationBytes = Buffer.from(JSON.stringify(presentation));
-      await writeFile(presentationPath, presentationBytes);
-      return {
-        memory_record: { presentation: { path: presentationPath, sha256: sha256(presentationBytes) }, selected_glb: { sha256: artifact.sha256 } },
-        render: { selected_glb: { sha256: artifact.sha256 }, provider_calls: 0, credits_consumed: 0 },
-      };
+    renderDelivery: async ({ deliveryRoot, artifact }) => writeAcceptedTechnicalDelivery(deliveryRoot, artifact.sha256),
+    renderPresentation: async ({ runDir, presentationRoot, candidateId, artifact, validation, validationReceipt, technicalDelivery, input, signal, lifecycle }) => {
+      if (process.env.FACADE_TEST_TAMPER_TECHNICAL === "delete-front-detail") await rm(join(technicalDelivery.run_dir, "views", "front", "view.json"));
+      return deliverFacadeFinalPresentation({
+        runDir, presentationRoot, candidateId, artifact, validation, validationReceipt, technicalDelivery, input, signal, lifecycle,
+        deps: { renderEmbeddedPbrViews: async () => ({
+          schema_version: "arr.elevation3d.embedded-pbr-render.v2", selected_glb: { sha256: artifact.sha256 },
+          views: Object.fromEntries(VIEW_NAMES.map((name) => [name, { selectedGlbSha256: artifact.sha256, sha256: sha256(name) }])),
+          validation: { accepted: true, codes: [] }, provider_calls: 0, credits_consumed: 0,
+        }) },
+      });
     }
   };
 });
@@ -199,6 +225,17 @@ test("CLI no-selection live defaults are Seedream plus BytePlus with exact 0.07 
 	assert.equal(envelope.config.grammarBudgetMicros, 10_000);
 	assert.equal(envelope.config.runBudgetMicros, 70_000);
 	assert.equal(envelope.config.confirmedTotalMicros, 70_000);
+});
+
+test("CLI fixture fails closed when a durable technical detail record is deleted", async () => {
+	const root = await mkdtemp(join(tmpdir(), "elevation3d-cli-technical-baseline-tamper-")); roots.push(root);
+	const runId = "technical-baseline-tamper";
+	const result = invoke(["run", ...base(root, runId)], { FACADE_TEST_TAMPER_TECHNICAL: "delete-front-detail" });
+	assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
+	assert.equal(JSON.parse(result.stdout).status, "presentation-failed");
+	const run = JSON.parse(await readFile(join(root, "output", "creative-020", runId, "run.json"), "utf8"));
+	assert.equal(run.presentation_execution.status, "failed");
+	assert.equal(run.presentation_execution.failure.code, "FACADE_PRESENTATION_TECHNICAL_BINDING_MISMATCH");
 });
 
 test("repeatable canonical image-provider flags preserve caller order", async () => {
