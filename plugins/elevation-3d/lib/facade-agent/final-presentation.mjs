@@ -4,7 +4,7 @@ import { isAbsolute, join, resolve } from "node:path";
 import { sha256, stableJson } from "../core.mjs";
 import { deriveDeliveryCameras } from "../final-delivery.mjs";
 import { readVerifiedFacadeValidationAuthority } from "../enrichment-validation.mjs";
-import { renderEmbeddedPbrViews } from "../texturing/render-validator.mjs";
+import { loadVerifiedProceduralBaseline, renderEmbeddedPbrViews } from "../texturing/render-validator.mjs";
 import { atomicWrite, assertNoReparsePoints, containedPath } from "./harness.mjs";
 
 const VIEW_NAMES = Object.freeze(["front", "back", "left", "right", "plan", "top", "axon", "opposite-axon"]);
@@ -140,6 +140,28 @@ export async function deliverFacadeFinalPresentation({
 	if (technicalDelivery?.manifest?.selected_glb?.sha256 !== selectedGlbSha256) {
 		fail("FACADE_PRESENTATION_TECHNICAL_BINDING_MISMATCH", "technical delivery is bound to a different selected GLB");
 	}
+	let proceduralBaseline;
+	try {
+		if (typeof technicalDelivery?.run_dir !== "string") {
+			fail("FACADE_PRESENTATION_TECHNICAL_BINDING_MISMATCH", "technical delivery root is unavailable");
+		}
+		const requestedTechnicalRoot = isAbsolute(technicalDelivery.run_dir)
+			? technicalDelivery.run_dir : resolve(absoluteRunDir, technicalDelivery.run_dir);
+		const technicalRoot = safeContainedPath(absoluteRunDir, requestedTechnicalRoot, "technical delivery root");
+		await safeNoReparsePoints(technicalRoot);
+		proceduralBaseline = await loadVerifiedProceduralBaseline({
+			runDir: technicalRoot,
+			manifestRecord: technicalDelivery.memory_record?.manifest,
+			selectedGlbSha256,
+		});
+	} catch (error) {
+		if (error?.code === "FACADE_PRESENTATION_PATH_INVALID") throw error;
+		if (error?.code === "PROCEDURAL_BASELINE_PATH_INVALID") {
+			fail("FACADE_PRESENTATION_PATH_INVALID", "technical delivery baseline path is unsafe", error);
+		}
+		if (error?.code === "FACADE_PRESENTATION_TECHNICAL_BINDING_MISMATCH") throw error;
+		fail("FACADE_PRESENTATION_TECHNICAL_BINDING_MISMATCH", "durable technical delivery baseline is invalid", error);
+	}
 	const manifestPath = join(root, "final-presentation.json");
 	await safeNoReparsePoints(manifestPath);
 	await rejectExistingOutput(manifestPath);
@@ -153,7 +175,7 @@ export async function deliverFacadeFinalPresentation({
 			runDir: root,
 			candidateId,
 			cameras,
-			baselineRunDir: technicalDelivery.run_dir,
+			proceduralBaseline,
 			renderStyleId: "competition-daylight-v1",
 			canonicalSelection: {
 				candidate_id: candidateId,
