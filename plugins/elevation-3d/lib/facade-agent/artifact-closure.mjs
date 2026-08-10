@@ -55,12 +55,29 @@ async function closeRef(runDir, value, label, expectedSha256) {
 	return { path, sha256: digest };
 }
 
-async function closeJson(runDir, value, label) {
-	const ref = await closeRef(runDir, value, label);
+export async function readContentAddressedJson({
+	runDir, value, label, expectedSha256, readBytes = safeRead,
+}) {
+	const claimed = claimedRef(value, label);
+	const path = portable(runDir, claimed.path, label);
+	let bytes;
+	try { bytes = await readBytes(runDir, join(runDir, path), label); }
+	catch (error) { fail(`${label} is unavailable or unsafe`, error); }
+	const digest = sha256(bytes);
+	if (claimed.sha256 && claimed.sha256.toLowerCase() !== digest) {
+		fail(`${label} SHA-256 does not match its bytes`);
+	}
+	if (expectedSha256 && expectedSha256.toLowerCase() !== digest) {
+		fail(`${label} is not bound to the selected GLB`);
+	}
 	let parsed;
-	try { parsed = JSON.parse((await safeRead(runDir, join(runDir, ref.path), label)).toString("utf8")); }
+	try { parsed = JSON.parse(bytes.toString("utf8")); }
 	catch (error) { fail(`${label} is not valid JSON`, error); }
-	return { ref, value: parsed };
+	return { ref: { path, sha256: digest }, value: parsed };
+}
+
+async function closeJson(runDir, value, label) {
+	return readContentAddressedJson({ runDir, value, label });
 }
 
 function technicalRelativeRef(technicalRoot, ref, label) {

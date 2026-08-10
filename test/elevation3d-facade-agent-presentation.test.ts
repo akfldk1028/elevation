@@ -8,6 +8,7 @@ import { Document, NodeIO } from "@gltf-transform/core";
 import sharp from "sharp";
 
 import { deliverFacadeFinalPresentation as deliverPresentationBoundary } from "../plugins/elevation-3d/lib/facade-agent/final-presentation.mjs";
+import { readContentAddressedJson } from "../plugins/elevation-3d/lib/facade-agent/artifact-closure.mjs";
 import { facadeCandidateHash } from "../plugins/elevation-3d/lib/facade-agent/candidate-authority.mjs";
 import { technicalCameraAuthorityFromGlb } from "../plugins/elevation-3d/lib/camera-authority.mjs";
 import { stableJson } from "../plugins/elevation-3d/lib/core.mjs";
@@ -322,6 +323,48 @@ test("artifact closure permits distinct semantic-role mask files with identical 
 		assert.equal(new Set(Object.values(closure.presentation.views).map((view: any) => view.semantic_role_mask.path)).size, 8);
 		assert.equal(new Set(Object.values(closure.presentation.views).map((view: any) => view.semantic_role_mask.sha256)).size, 1);
 	} finally { await rm(f.runDir, { recursive: true, force: true }); }
+});
+
+test("content-addressed JSON parses the one immutable buffer that it hashes", async () => {
+	const runDir = resolve(tmpdir(), "elevation3d-content-addressed-json");
+	let reads = 0;
+	const original = Buffer.from(JSON.stringify({ accepted: true, selected_glb: "a".repeat(64) }));
+	const mutated = Buffer.from(JSON.stringify({ accepted: false, selected_glb: "b".repeat(64) }));
+	const result = await readContentAddressedJson({
+		runDir,
+		value: { path: "authority.json", sha256: sha256(original) },
+		label: "authority",
+		readBytes: async () => (++reads === 1 ? original : mutated),
+	});
+	assert.equal(reads, 1);
+	assert.equal(result.value.accepted, true);
+	assert.equal(result.ref.sha256, sha256(original));
+});
+
+test("content-addressed JSON rejects a wrong claimed hash after one read", async () => {
+	const runDir = resolve(tmpdir(), "elevation3d-content-addressed-json");
+	let reads = 0;
+	const bytes = Buffer.from(JSON.stringify({ accepted: true }));
+	await assert.rejects(() => readContentAddressedJson({
+		runDir,
+		value: { path: "authority.json", sha256: "0".repeat(64) },
+		label: "authority",
+		readBytes: async () => { reads += 1; return bytes; },
+	}), (error: any) => error?.code === "FACADE_PRESENTATION_ARTIFACT_CLOSURE_INVALID");
+	assert.equal(reads, 1);
+});
+
+test("content-addressed JSON rejects invalid JSON after one read", async () => {
+	const runDir = resolve(tmpdir(), "elevation3d-content-addressed-json");
+	let reads = 0;
+	const bytes = Buffer.from("not-json");
+	await assert.rejects(() => readContentAddressedJson({
+		runDir,
+		value: { path: "authority.json", sha256: sha256(bytes) },
+		label: "authority",
+		readBytes: async () => { reads += 1; return bytes; },
+	}), (error: any) => error?.code === "FACADE_PRESENTATION_ARTIFACT_CLOSURE_INVALID");
+	assert.equal(reads, 1);
 });
 
 test("artifact closure rejects a rehashed technical detail manifest that points outside the contained delivery", async () => {
