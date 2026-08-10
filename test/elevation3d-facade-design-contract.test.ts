@@ -4,6 +4,7 @@ import test from "node:test";
 import {
 	FacadeDesignContractError,
 	parseFacadeProgram,
+	readVerifiedFacadeProgramAuthority,
 } from "../plugins/elevation-3d/lib/facade-agent/design/contract.mjs";
 
 const sourceAuthority = Object.freeze({
@@ -121,4 +122,10 @@ test("rejects duplicate identities and non-finite or unsafe dimensions", () => {
 test("rejects unsupported selectors and unbounded arrays", () => {
 	rejects(proposal({ entrance: { ...proposal().entrance, segment_selector: "model_decides_path" } }));
 	rejects(proposal({ design_rationale: Array.from({ length: 33 }, (_, index) => `reason-${index}`) }));
+});
+
+test("exposes source authority only for the exact parsed program capability", () => {
+	const parsed = parseFacadeProgram(proposal(), { sourceAuthority });
+	assert.deepEqual(readVerifiedFacadeProgramAuthority(parsed), sourceAuthority);
+	assert.equal(readVerifiedFacadeProgramAuthority(structuredClone(parsed)), null);
 });
