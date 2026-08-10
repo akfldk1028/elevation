@@ -1,6 +1,9 @@
 import { createHash } from "node:crypto";
 import { stableJson } from "../core.mjs";
-import { validatePunchedFacadeGrammar } from "../facade-grammar.mjs";
+import {
+	PUNCHED_FACADE_MATERIALS, PUNCHED_FACADE_SURFACES, PUNCHED_FACADE_SYSTEM,
+	validatePunchedFacadeGrammar,
+} from "../facade-grammar.mjs";
 
 const EPSILON = 1e-9;
 const GEOMETRY_GAP_M = 1e-4;
@@ -745,10 +748,19 @@ export function buildPunchedFacadeDetails({ mesh, floorGuides, facadePlanes, gra
 	return details;
 }
 
-const TYPED_DETAIL_GRAMMAR = Object.freeze({ brick_module_m: Object.freeze([0.215, 0.065]) });
+export const TYPED_FACADE_GRAMMAR = Object.freeze({
+	system: PUNCHED_FACADE_SYSTEM,
+	surfaces: PUNCHED_FACADE_SURFACES,
+	materials: PUNCHED_FACADE_MATERIALS,
+	corner_datum_m: 0, bay_width_m: 1.8, window_width_m: 1.2, window_height_m: 1.6,
+	sill_height_m: 0.8, reveal_depth_m: 0.15, frame_width_m: 0.06,
+	lintel_height_m: 0.15, sill_depth_m: 0.1, cladding_depth_m: 0.12,
+	brick_module_m: Object.freeze([0.215, 0.065]), confidence: 1,
+	unresolved_surfaces: Object.freeze([]),
+});
 const TYPED_MATERIAL = Object.freeze({
-	door: "glass", window: "glass", reveal: "bronze", lintel: "opaque",
-	sill: "opaque", pilaster: "bronze", band: "opaque", cornice: "opaque",
+	door: "glass", window: "glass", reveal: "window-frame", lintel: "precast",
+	sill: "precast", pilaster: "brick", band: "precast", cornice: "precast",
 });
 
 export function buildTypedFacadeDetails({ mesh, floorGuides, facadePlanes, primitives }) {
@@ -760,6 +772,7 @@ export function buildTypedFacadeDetails({ mesh, floorGuides, facadePlanes, primi
 	const componentOrientations = massComponentOrientations(mesh);
 	const backing = new Map();
 	const details = [];
+	const framedWindowSegments = new Set();
 	for (let index = 0; index < primitives.length; index += 1) {
 		const primitive = primitives[index];
 		const plane = planes.get(primitive?.segment_id);
@@ -782,7 +795,7 @@ export function buildTypedFacadeDetails({ mesh, floorGuides, facadePlanes, primi
 			|| bounds.v0 < -EPSILON || bounds.v1 > plane.extent_m[1] + EPSILON) {
 			throw new TypeError("invalid typed facade primitive bounds");
 		}
-		pushDetail(details, plane, tangent, TYPED_DETAIL_GRAMMAR, bounds, {
+		pushDetail(details, plane, tangent, TYPED_FACADE_GRAMMAR, bounds, {
 			kind: primitive.kind, material, slot: `typed-${index}`,
 			design_primitive_index: index,
 			...(primitive.role ? { role: primitive.role } : {}),
@@ -790,6 +803,27 @@ export function buildTypedFacadeDetails({ mesh, floorGuides, facadePlanes, primi
 			...(primitive.zone_id ? { zone_id: primitive.zone_id } : {}),
 			...(primitive.material_id ? { material_id: primitive.material_id } : {}),
 		}, backing.get(plane.segment_id));
+		const frameOpening = primitive.kind === "door"
+			|| (primitive.kind === "window" && !framedWindowSegments.has(primitive.segment_id));
+		if (primitive.kind === "window" && frameOpening) framedWindowSegments.add(primitive.segment_id);
+		if (frameOpening) {
+			const frameWidth = Math.min(0.06, (bounds.u1 - bounds.u0) / 4, (bounds.v1 - bounds.v0) / 4);
+			const frameDepth = Math.max(bounds.n1 + 0.02, 0.035);
+			const frameBounds = [
+				{ u0: bounds.u0, u1: bounds.u0 + frameWidth, v0: bounds.v0 + frameWidth, v1: bounds.v1 - frameWidth },
+				{ u0: bounds.u1 - frameWidth, u1: bounds.u1, v0: bounds.v0 + frameWidth, v1: bounds.v1 - frameWidth },
+			].map((frame) => ({ ...frame, n0: 0, n1: frameDepth }));
+			frameBounds.forEach((frame, frameIndex) => pushDetail(
+				details, plane, tangent, TYPED_FACADE_GRAMMAR, frame,
+				{
+					kind: "window-frame", material: "window-frame", slot: `typed-${index}-frame-${frameIndex}`,
+					design_primitive_index: index, source_kind: primitive.kind,
+					...(primitive.role ? { role: primitive.role } : {}),
+					...(primitive.family_id ? { family_id: primitive.family_id } : {}),
+				},
+				backing.get(plane.segment_id),
+			));
+		}
 	}
 	return details;
 }

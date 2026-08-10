@@ -39,10 +39,20 @@ test("compiler publishes an immutable facade GLB without changing source authori
 		Array.from(exactMass!.listPrimitives()[0].getAttribute("POSITION")!.getArray()!),
 		Array.from(new Float32Array(fixture.mesh.vertices.flat())),
 	);
-	const semanticKinds = document.getRoot().listMeshes()
-		.flatMap((mesh) => mesh.listPrimitives()).map((primitive) => primitive.getExtras().kind).filter(Boolean);
+	const semanticExtras = document.getRoot().listMeshes()
+		.flatMap((mesh) => mesh.listPrimitives()).map((primitive) => primitive.getExtras()).filter((extras) => extras.kind);
+	const semanticKinds = semanticExtras.map((extras) => extras.kind);
 	assert.ok(semanticKinds.includes("door"));
 	assert.ok(semanticKinds.includes("window"));
+	assert.ok(semanticKinds.includes("window-frame"));
+	const framedSources = new Set(semanticExtras.filter((extras) => extras.kind === "window-frame")
+		.map((extras) => `${extras.source_kind}:${extras.segment_id}`));
+	const expectedFramedSources = new Set(semanticExtras.filter((extras) => extras.kind === "door" || extras.kind === "window")
+		.map((extras) => `${extras.kind}:${extras.segment_id}`));
+	assert.deepEqual(framedSources, expectedFramedSources);
+	assert.equal(semanticKinds.filter((kind) => kind === "window-frame").length, expectedFramedSources.size * 2);
+	assert.ok(compiled.output.detail_primitive_count > resolved.primitives.length);
+	assert.equal(document.getRoot().listTextures().length, 6);
 
 	await assert.rejects(() => compileFacadeDesign({
 		outputRoot: join(fixture.root, "compiled"), candidate: fixture.candidate,
@@ -76,6 +86,6 @@ test("compiler supports every articulation kind admitted by FacadeProgramV2", as
 			outputRoot: join(fixture.root, `compiled-${kind}`), candidate: fixture.candidate,
 			context: fixture.context, program, resolved, validation,
 		});
-		assert.equal(compiled.output.detail_primitive_count, resolved.primitives.length);
+		assert.ok(compiled.output.detail_primitive_count >= resolved.primitives.length);
 	}
 });

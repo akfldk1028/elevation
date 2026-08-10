@@ -193,7 +193,7 @@ function normalizedTechnicalBounds(name, bounds, width, height, camera, authorit
 	return { minX, minY, maxX, maxY, camera, view: name };
 }
 
-export async function loadVerifiedProceduralBaseline({ runDir, manifestRecord, selectedGlbSha256, authoritativeCameras, expectedTechnicalCameras } = {}) {
+export async function loadVerifiedProceduralBaseline({ runDir, manifestRecord, selectedGlbSha256, authoritativeCameras, expectedTechnicalCameras, framingCameras } = {}) {
 	if (!runDir) return null;
 	const root = resolve(runDir);
 	try { await assertNoReparsePoints(root); }
@@ -236,7 +236,7 @@ export async function loadVerifiedProceduralBaseline({ runDir, manifestRecord, s
 		if (!bounds || ![bounds.min_x, bounds.min_y, bounds.max_x, bounds.max_y].every(Number.isFinite)) {
 			baselineFail("PROCEDURAL_BASELINE_BINDING_INVALID", `technical ${name} projected bounds are missing`);
 		}
-		views[name] = normalizedTechnicalBounds(name, bounds, view.width, view.height, detailed.camera, authoritativeCameras?.[name]);
+		views[name] = normalizedTechnicalBounds(name, bounds, view.width, view.height, detailed.camera, (framingCameras ?? authoritativeCameras)?.[name]);
 	}
 	const result = {
 		schema_version: "arr.elevation3d.verified-procedural-baseline.v1", run_dir: root,
@@ -350,6 +350,7 @@ export async function loadPresentationBaseline(runDir, binding = {}) {
 
 export async function renderEmbeddedPbrViews({
 	glbPath, runDir, candidateId, cameras, baselineRunDir, baselineManifestRecord, proceduralBaseline: suppliedProceduralBaseline,
+	authoritativeCameras, expectedTechnicalCameras,
 	outputSize = 1600, signal, lifecycle = {},
 	renderStyleId = "competition-daylight-v1", renderStyleOverrides, presentationBaselineRunDir,
 	requirePresentationBaselineComparison = false, canonicalSelection,
@@ -363,6 +364,8 @@ export async function renderEmbeddedPbrViews({
 	}
 	const proceduralBaseline = suppliedProceduralBaseline ?? await loadVerifiedProceduralBaseline({
 		runDir: baselineRunDir, manifestRecord: baselineManifestRecord, selectedGlbSha256,
+		authoritativeCameras, expectedTechnicalCameras,
+		framingCameras: expectedTechnicalCameras ? presentationCameraPresets(cameras) : undefined,
 	});
 	if (proceduralBaseline && proceduralBaseline.selected_glb_sha256 !== selectedGlbSha256) {
 		baselineFail("PROCEDURAL_BASELINE_BINDING_INVALID", "procedural baseline is bound to a different selected GLB");
