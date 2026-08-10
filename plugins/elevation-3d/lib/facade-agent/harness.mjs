@@ -29,6 +29,7 @@ import { assertNoReparsePoints, atomicWrite, containedPath, safeRead } from "./p
 const HEX_SHA256 = /^[a-f0-9]{64}$/;
 const LEGACY_PROVIDER_SCHEMA = "arr.elevation3d.facade-agent-provider.v1";
 const PROVIDER_SCHEMA = "arr.elevation3d.facade-agent-provider.v2";
+const ORPHAN_PRESENTATION_RECEIPT_PATH = "final-presentation/presentation-receipt.json";
 const TERMINAL_RUN_STATES = new Set(["winner", "no-winner", "human-review", "cancelled", "delivery-failed", "presentation-failed"]);
 const RETRYABLE_PRESENTATION_FAILURE_CODES = new Set(["FACADE_PRESENTATION_RENDER_REJECTED", "FACADE_PRESENTATION_ARTIFACT_CLOSURE_INVALID"]);
 const LOCAL_REPAIR_CODES = new Set([
@@ -904,6 +905,7 @@ async function executePresentationStage({
 	let artifact = claimedArtifact;
 	let renderInvoked = false;
 	let renderReturned = false;
+	let receiptPersisted = false;
 	try {
 		if (run.presentation_execution?.status === "succeeded" && run.presentation_receipt) {
 			return {
@@ -940,7 +942,7 @@ async function executePresentationStage({
 		validatePresentationReport(result, artifact.sha256);
 		await callLifecycle(deps, { stage: "presentation", status: "returned", provider, selected_glb_sha256: artifact.sha256 });
 		const memory = persistedPresentationMemory(runDir, result, artifact.sha256);
-		const receipt = await writeReceipt(runDir, "final-presentation/presentation-receipt.json", {
+		const receipt = await writeReceipt(runDir, ORPHAN_PRESENTATION_RECEIPT_PATH, {
 			schema_version: "arr.elevation3d.facade-presentation-receipt.v1",
 			provider, candidate_id: config.candidateId, candidate_sha256: candidateSha256, selected_version: selectedVersion,
 			selected_glb_sha256: artifact.sha256,
@@ -949,6 +951,11 @@ async function executePresentationStage({
 			technical_manifest: technicalManifest,
 			provider_calls: 0,
 			credits_consumed: 0,
+		});
+		receiptPersisted = true;
+		await callLifecycle(deps, {
+			stage: "presentation", status: "receipt-persisted", provider,
+			selected_glb_sha256: artifact.sha256, receipt_sha256: receipt.receipt_sha256,
 		});
 		run.presentation_receipt = receipt;
 		run.presentation_execution = {
@@ -959,6 +966,7 @@ async function executePresentationStage({
 		await callLifecycle(deps, { stage: "presentation", status: "succeeded", provider, selected_glb_sha256: artifact.sha256, receipt_sha256: receipt.receipt_sha256 });
 		return { presentation: { receipt, memory }, failure: null, aborted: false };
 	} catch (error) {
+		if (receiptPersisted && !run.presentation_receipt) throw error;
 		if (error instanceof LifecycleHookError && run.presentation_execution?.status === "succeeded" && run.presentation_receipt) throw error;
 		const aborted = isAbort(error, signal);
 		const retryableLocalFailure = recovery && renderInvoked && !renderReturned && !aborted
@@ -1349,8 +1357,84 @@ function presentationRecoveryAttemptAllowed(run) {
 		&& execution.selected_glb_sha256 === run.final?.selected_glb_sha256;
 }
 
-async function verifyPresentationReceipt(runDir, run, allowTerminalRecovery = false) {
+function exactReturnedAuthority(run, execution) {
+	if (!execution || typeof execution.provider !== "string" || execution.provider.length === 0
+		|| typeof execution.selected_version !== "string" || execution.selected_version.length === 0
+		|| !HEX_SHA256.test(execution.selected_glb_sha256 ?? "") || !HEX_SHA256.test(execution.candidate_sha256 ?? "")) return false;
+	const expectedExecution = {
+		status: "returned", provider: execution.provider, selected_version: execution.selected_version,
+		selected_glb_sha256: execution.selected_glb_sha256, candidate_sha256: execution.candidate_sha256,
+	};
+	if (stableJson(execution) !== stableJson(expectedExecution)) return false;
+	const state = run.providers?.[execution.provider];
+	const version = state?.versions?.find((item) => item.id === execution.selected_version);
+	const delivery = state?.delivery;
+	if (state?.status !== "accepted" || version?.status !== "accepted"
+		|| version.artifact?.sha256 !== execution.selected_glb_sha256
+		|| delivery?.status !== "succeeded" || delivery.provider !== execution.provider
+		|| delivery.selected_glb_sha256 !== execution.selected_glb_sha256
+		|| stableJson(version.delivery) !== stableJson(delivery.memory_record)
+		|| (run.delivery != null && stableJson(run.delivery) !== stableJson(delivery))) return false;
+	const initialAuthority = run.status === "running" && run.final === null;
+	const terminalAuthority = terminalPresentationRecoveryCandidate(run)
+		&& run.final.selected_provider === execution.provider
+		&& run.final.selected_version === execution.selected_version
+		&& run.final.selected_glb_sha256 === execution.selected_glb_sha256
+		&& run.final.delivery_sha256 === delivery.delivery_sha256;
+	if (!initialAuthority && !terminalAuthority) return false;
+	try {
+		const candidates = Object.entries(run.providers).map(([provider, providerState]) => ({
+			provider, accepted: providerState?.status === "accepted", score: providerState?.score?.score,
+			cost: providerState?.cost,
+			diagnostics: { local_correction_count: providerState?.versions?.some((item) => item.id === "v002") ? 1 : 0 },
+		}));
+		return selectFacadeRecommendation(candidates).technical_winner === execution.provider;
+	} catch { return false; }
+}
+
+async function discoverOrphanPresentationReceipt(runDir, run) {
+	const execution = run.presentation_execution;
+	if (run.presentation_receipt) return null;
+	try {
+		const absolute = containedPath(runDir, join(runDir, ORPHAN_PRESENTATION_RECEIPT_PATH), "orphan presentation receipt");
+		if (!await exists(absolute)) return null;
+		if (execution?.status !== "returned" || !exactReturnedAuthority(run, execution)) {
+			throw codedError("FACADE_PRESENTATION_RECOVERY_UNSAFE", "Orphan presentation receipt checkpoint or authority is invalid");
+		}
+		const bytes = await safeRead(runDir, absolute, "orphan presentation receipt");
+		const receipt = JSON.parse(bytes.toString("utf8"));
+		const preflight = await verifyDurableReceipt(runDir, run.preflight_receipt);
+		if (preflight?.schema_version !== "arr.elevation3d.facade-preflight-receipt.v1"
+			|| preflight.candidate_sha256 !== execution.candidate_sha256) {
+			throw codedError("FACADE_PRESENTATION_RECOVERY_UNSAFE", "Orphan presentation receipt candidate authority is invalid");
+		}
+		const ref = {
+			path: ORPHAN_PRESENTATION_RECEIPT_PATH,
+			sha256: sha256(bytes),
+			receipt_sha256: sha256(stableJson(receipt)),
+		};
+		const adopted = structuredClone(run);
+		adopted.presentation_receipt = ref;
+		adopted.presentation_execution = {
+			...execution,
+			status: "succeeded",
+			artifact_closure: receipt.artifact_closure,
+			receipt_sha256: ref.receipt_sha256,
+		};
+		await verifyPresentationReceipt(runDir, adopted, true);
+		return adopted;
+	} catch (error) {
+		if (error?.code === "FACADE_PRESENTATION_RECOVERY_UNSAFE") throw error;
+		throw codedError("FACADE_PRESENTATION_RECOVERY_UNSAFE", "Orphan presentation receipt is invalid", error);
+	}
+}
+
+async function verifyPresentationReceipt(runDir, run, allowTerminalRecovery = false, allowOrphanReturned = false) {
 	if (!run.presentation_receipt) {
+		if (allowOrphanReturned) {
+			if (run.presentation_execution?.status === "returned" && exactReturnedAuthority(run, run.presentation_execution)) return;
+			throw codedError("FACADE_PRESENTATION_RECOVERY_UNSAFE", "Orphan presentation receipt checkpoint or authority is invalid");
+		}
 		if (allowTerminalRecovery && terminalPresentationRecoveryCandidate(run) && presentationRecoveryAttemptAllowed(run)) return;
 		if (run.presentation_execution?.status === "succeeded" || run.final?.status === "winner") {
 			throw codedError("FACADE_AGENT_STATE_UNCERTAIN", "Completed presentation is missing its durable receipt");
@@ -1723,11 +1807,31 @@ async function initialize(config, deps, signal) {
 		let persisted;
 		try { persisted = await readJson(runPath, runDir); }
 		catch (error) { throw codedError("FACADE_AGENT_STATE_UNCERTAIN", "Facade agent run manifest is unavailable or invalid", error); }
+		if (persisted.input_sha256 !== inputSha256 || persisted.run_id !== normalized.runId
+			|| persisted.candidate_id !== normalized.candidateId || persisted.brief_id !== normalized.briefId) {
+			throw codedError("FACADE_AGENT_RESUME_MISMATCH", "Persisted run does not match the requested configuration");
+		}
+		let orphanAdopted = false;
+		try {
+			const adopted = await discoverOrphanPresentationReceipt(runDir, persisted);
+			if (adopted) {
+				const verifiedReturned = await readFacadeAgentStatusInternal(runDir, false, true);
+				if (stableJson(verifiedReturned) !== stableJson(persisted)) {
+					throw codedError("FACADE_PRESENTATION_RECOVERY_UNSAFE", "Orphan presentation returned checkpoint changed during verification");
+				}
+				persisted = adopted;
+				await persistPublicRun(runDir, persisted);
+				orphanAdopted = true;
+			}
+		} catch (error) {
+			if (error?.code === "FACADE_PRESENTATION_RECOVERY_UNSAFE") throw error;
+			throw codedError("FACADE_PRESENTATION_RECOVERY_UNSAFE", "Orphan presentation receipt could not be adopted", error);
+		}
 		const recoveryCandidate = terminalPresentationRecoveryCandidate(persisted);
 		const finalizeCandidate = committedPresentationFinalizeCandidate(persisted);
 		try { run = await readFacadeAgentStatusInternal(runDir, recoveryCandidate || finalizeCandidate); }
 		catch (error) {
-			if (!recoveryCandidate) throw error;
+			if (!recoveryCandidate && !orphanAdopted) throw error;
 			throw codedError("FACADE_PRESENTATION_RECOVERY_UNSAFE", "Terminal presentation recovery state could not be reauthorized", error);
 		}
 		if (run.input_sha256 !== inputSha256 || run.run_id !== normalized.runId || run.candidate_id !== normalized.candidateId || run.brief_id !== normalized.briefId) {
@@ -2199,7 +2303,7 @@ async function readStageRef(runDir, ref) {
 	return manifest;
 }
 
-async function readFacadeAgentStatusInternal(runDirInput, allowTerminalRecovery = false) {
+async function readFacadeAgentStatusInternal(runDirInput, allowTerminalRecovery = false, allowOrphanReturned = false) {
 	const runDir = resolve(runDirInput);
 	let run;
 	try { run = await readJson(join(runDir, "run.json"), runDir); }
@@ -2248,7 +2352,7 @@ async function readFacadeAgentStatusInternal(runDirInput, allowTerminalRecovery 
 		for (const stageRef of Object.values(state.stage_manifests ?? {})) await readStageRef(runDir, stageRef);
 		await verifyProviderReceipts(runDir, state);
 	}
-	await verifyPresentationReceipt(runDir, run, allowTerminalRecovery);
+	await verifyPresentationReceipt(runDir, run, allowTerminalRecovery, allowOrphanReturned);
 	if (run.evaluation_manifest) {
 		const path = containedPath(runDir, join(runDir, run.evaluation_manifest.path), "evaluation report");
 		const bytes = await safeRead(runDir, path, "evaluation report");
