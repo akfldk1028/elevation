@@ -3,7 +3,8 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { Document, Material, NodeIO } from "@gltf-transform/core";
 import { PUNCHED_FACADE_SYSTEM } from "./facade-grammar.mjs";
-import { buildPunchedFacadeDetails, PUNCHED_FACADE_BUDGETS } from "./facade-agent/punched-facade.mjs";
+import { atomicWrite } from "./facade-agent/path-safety.mjs";
+import { buildPunchedFacadeDetails, buildTypedFacadeDetails, PUNCHED_FACADE_BUDGETS } from "./facade-agent/punched-facade.mjs";
 import { createFacadePbrMaps } from "./facade-agent/procedural-materials.mjs";
 
 const DETAIL_LIMITS = {
@@ -272,10 +273,12 @@ function facadeDetails(mesh, floorGuides, facadePlanes, grammar) {
 	return details;
 }
 
-export function buildEnrichedScene({ mesh, floorGuides, facadePlanes, grammar, safeFallback }) {
+export function buildEnrichedScene({ mesh, floorGuides, facadePlanes, grammar, typedPrimitives, safeFallback }) {
 	return {
 		base: { positions: mesh.vertices, indices: mesh.triangles },
-		details: safeFallback ? [] : grammar?.system === PUNCHED_FACADE_SYSTEM
+		details: safeFallback ? [] : typedPrimitives
+			? buildTypedFacadeDetails({ mesh, floorGuides, facadePlanes, primitives: typedPrimitives })
+			: grammar?.system === PUNCHED_FACADE_SYSTEM
 			? buildPunchedFacadeDetails({ mesh, floorGuides, facadePlanes, grammar })
 			: facadeDetails(mesh, floorGuides, facadePlanes, grammar),
 		grammar,
@@ -415,7 +418,7 @@ function assertEnrichedSceneBudget(scene) {
 	return { vertices, indices, projectedBytes };
 }
 
-export async function writeEnrichedGlb(scene, outputPath) {
+export async function writeEnrichedGlb(scene, outputPath, { approvedRoot } = {}) {
 	assertEnrichedSceneBudget(scene);
 	const document = new Document();
 	const buffer = document.createBuffer("geometry");
@@ -457,8 +460,11 @@ export async function writeEnrichedGlb(scene, outputPath) {
 	const path = resolve(outputPath);
 	const bytes = await new NodeIO().writeBinary(document);
 	if (bytes.byteLength > PUNCHED_FACADE_BUDGETS.maxFinalGlbBytes) throw new RangeError("final GLB byte budget exceeded");
-	await mkdir(dirname(path), { recursive: true });
-	await writeFile(path, bytes);
+	if (approvedRoot) await atomicWrite(path, bytes, approvedRoot);
+	else {
+		await mkdir(dirname(path), { recursive: true });
+		await writeFile(path, bytes);
+	}
 	return {
 		path,
 		sha256: createHash("sha256").update(bytes).digest("hex"),
