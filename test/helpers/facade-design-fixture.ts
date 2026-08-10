@@ -29,6 +29,42 @@ function boxMesh(width = 8, depth = 4, height = 6.6) {
 	};
 }
 
+export function createFacadeProgramForContext(context: any, overrides: Record<string, any> = {}) {
+	const entrance = {
+		segment_selector: "primary_visible_ground_segment",
+		preferred_bay: "central_or_corner_focus",
+		door_family: "recessed_glazed_portal",
+		width_m: 1.8,
+		height_m: 2.4,
+		recess_m: 0.15,
+		...(overrides.entrance ?? {}),
+	};
+	const proposal = {
+		schema_version: "arr.elevation3d.facade-program.v2",
+		concept_id: "creative-020-corner-entry-v1",
+		entrance,
+		zones: [
+			{ id: "base", storeys: [1], treatment: "lobby_and_entrance" },
+			{ id: "middle", storeys: [2], treatment: "a_b_a_window_rhythm" },
+			{ id: "top", storeys: [2], treatment: "paired_openings_and_cornice" },
+		],
+		window_families: [
+			{ id: "narrow", width_m: 0.8, height_m: 1.6, sill_m: 0.8 },
+			{ id: "wide", width_m: 1.2, height_m: 1.6, sill_m: 0.8 },
+		],
+		bay_rules: [{ id: "middle-aba", zone_id: "middle", pattern: ["narrow", "wide", "narrow"], repeat: 1 }],
+		articulation: [{
+			id: "fold-pilaster", kind: "pilaster", segment_selector: "all_visible_folds",
+			width_m: 0.25, depth_m: 0.12, storeys: [1, 2], material_id: "brick-primary",
+		}],
+		materials: [{ id: "brick-primary", role: "opaque", color: "#8b3f2f", finish: "matte" }],
+		design_rationale: ["Legible entry and controlled A-B-A rhythm."],
+		...overrides,
+		entrance,
+	};
+	return parseFacadeProgram(proposal, { sourceAuthority: context.source });
+}
+
 export async function createFacadeDesignFixture(t: { after(fn: () => Promise<void>): void }, options: { width?: number; depth?: number } = {}) {
 	const root = await mkdtemp(join(tmpdir(), "facade-design-resolver-"));
 	t.after(async () => rm(root, { recursive: true, force: true }));
@@ -100,33 +136,6 @@ export async function createFacadeDesignFixture(t: { after(fn: () => Promise<voi
 			{ view: "axon", path: "axon.png", sha256: sha256(png), width: 2, height: 2 },
 		],
 	});
-	const program = parseFacadeProgram({
-		schema_version: "arr.elevation3d.facade-program.v2",
-		concept_id: "creative-020-corner-entry-v1",
-		entrance: {
-			segment_selector: "primary_visible_ground_segment",
-			preferred_bay: "central_or_corner_focus",
-			door_family: "recessed_glazed_portal",
-			width_m: 1.8,
-			height_m: 2.4,
-			recess_m: 0.15,
-		},
-		zones: [
-			{ id: "base", storeys: [1], treatment: "lobby_and_entrance" },
-			{ id: "middle", storeys: [2], treatment: "a_b_a_window_rhythm" },
-			{ id: "top", storeys: [2], treatment: "paired_openings_and_cornice" },
-		],
-		window_families: [
-			{ id: "narrow", width_m: 0.8, height_m: 1.6, sill_m: 0.8 },
-			{ id: "wide", width_m: 1.2, height_m: 1.6, sill_m: 0.8 },
-		],
-		bay_rules: [{ id: "middle-aba", zone_id: "middle", pattern: ["narrow", "wide", "narrow"], repeat: 1 }],
-		articulation: [{
-			id: "fold-pilaster", kind: "pilaster", segment_selector: "all_visible_folds",
-			width_m: 0.25, depth_m: 0.12, storeys: [1, 2], material_id: "brick-primary",
-		}],
-		materials: [{ id: "brick-primary", role: "opaque", color: "#8b3f2f", finish: "matte" }],
-		design_rationale: ["Legible entry and controlled A-B-A rhythm."],
-	}, { sourceAuthority: context.source });
+	const program = createFacadeProgramForContext(context);
 	return { context, program, facadeSegmentAuthority };
 }
