@@ -184,19 +184,30 @@ test("plugin exposes the autonomous production flow before legacy experimental t
 	const tools: any[] = [];
 	const prompts: string[] = [];
 	await register({ config: {}, registerTool: (tool: any) => tools.push(tool), addPrompt: (text: string) => prompts.push(text), registerMemoryLayer() {}, logger: console });
-	assert.deepEqual(tools.slice(0, 2).map((tool) => tool.name), [
+	assert.deepEqual(tools.slice(0, 3).map((tool) => tool.name), [
 		"elevation_3d_run",
 		"elevation_3d_facade_agent_run",
+		"elevation_3d_facade_design_agent",
 	]);
 	assert.match(tools[0].description, /complete candidate package/);
-	assert.deepEqual(tools.slice(2).map((tool) => tool.name), [
+	assert.deepEqual(tools.slice(3).map((tool) => tool.name), [
 		"elevation_3d_prepare",
 		"elevation_3d_generate",
 		"elevation_3d_resume",
 		"elevation_3d_preview",
 	]);
-	assert.equal(tools.slice(2).every((tool) => /experimental/i.test(tool.description)), true);
+	assert.equal(tools.slice(3).every((tool) => /experimental/i.test(tool.description)), true);
 	assert.match(prompts.join("\n"), /prefer elevation_3d_run/);
+});
+
+test("facade design agent exposes bounded staged operations and defaults to offline prepare", async () => {
+	const tools: any[] = [];
+	await register({ config: {}, registerTool: (tool: any) => tools.push(tool), addPrompt() {}, registerMemoryLayer() {}, logger: console });
+	const tool = tools.find((item) => item.name === "elevation_3d_facade_design_agent");
+	assert.deepEqual(tool.inputSchema.properties.action.enum, ["prepare", "design", "compile", "review", "status", "resume"]);
+	const response = JSON.parse((await tool.handler({ action: "prepare", run_dir: "safe-design-run" })).text);
+	assert.equal(response.stage, "preflight");
+	assert.equal(response.live_calls, 0);
 });
 
 test("facade agent tool exposes only bounded safe inputs", async () => {

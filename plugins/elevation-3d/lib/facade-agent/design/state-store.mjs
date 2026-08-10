@@ -9,6 +9,11 @@ import { readVerifiedFacadeDesignValidationAuthority, validateResolvedFacadeProg
 import { readVerifiedFacadeCriticAuthority, verifyFacadeDesignArtifacts, verifyPersistedFacadeCriticReview } from "./critic.mjs";
 
 const STAGES = Object.freeze(["initial", "proposal", "compiled", "rendered", "reviewed", "succeeded", "failed"]);
+const RETRYABLE_COMPILED_FAILURES = new Set([
+	"FACADE_DESIGN_RESUME_REQUIRED", "FACADE_DESIGN_WORKFLOW_FAILED", "PROCEDURAL_BASELINE_BINDING_INVALID",
+]);
+
+export function isRetryableCompiledFailure(code) { return RETRYABLE_COMPILED_FAILURES.has(code); }
 
 export class FacadeDesignStateError extends Error {
 	constructor(message, cause) {
@@ -108,6 +113,18 @@ export async function createFacadeDesignStateStore({ runDir, source } = {}) {
 				return persist("rendered", { ...state.checkpoints, rendered: verified });
 			});
 		},
+		retryCompiled() {
+			return serial(async () => {
+				const state = await load(); requireStage(state, "failed");
+				if (!isRetryableCompiledFailure(state.checkpoints.failed?.code)
+					|| !state.checkpoints.compiled) {
+					fail("failed facade design is not a retryable compiled checkpoint");
+				}
+				await verifyCompiled(root, state.checkpoints.compiled, source);
+				const { failed: _failed, ...checkpoints } = state.checkpoints;
+				return persist("compiled", checkpoints);
+			});
+		},
 		recordReviewed(review) {
 			return serial(async () => {
 				const state = await load(); requireStage(state, "rendered");
@@ -123,6 +140,14 @@ export async function createFacadeDesignStateStore({ runDir, source } = {}) {
 				const state = await load(); requireStage(state, "reviewed");
 				if (selectedVersion !== state.checkpoints.compiled.compilation_sha256) fail("selected facade version is not the reviewed compilation");
 				return persist("succeeded", { ...state.checkpoints, succeeded: { selected_version: selectedVersion } });
+			});
+		},
+		fail({ code } = {}) {
+			return serial(async () => {
+				const state = await load();
+				if (state.stage === "succeeded") fail("a succeeded facade design cannot be downgraded");
+				if (typeof code !== "string" || !/^[A-Z0-9_]{1,128}$/.test(code)) fail("facade design failure code is invalid");
+				return persist("failed", { ...state.checkpoints, failed: { code } });
 			});
 		},
 		status() {

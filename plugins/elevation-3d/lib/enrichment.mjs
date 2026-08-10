@@ -4,7 +4,7 @@ import { dirname, resolve } from "node:path";
 import { Document, Material, NodeIO } from "@gltf-transform/core";
 import { PUNCHED_FACADE_SYSTEM } from "./facade-grammar.mjs";
 import { atomicWrite } from "./facade-agent/path-safety.mjs";
-import { buildPunchedFacadeDetails, buildTypedFacadeDetails, PUNCHED_FACADE_BUDGETS } from "./facade-agent/punched-facade.mjs";
+import { buildPunchedFacadeDetails, buildTypedFacadeDetails, PUNCHED_FACADE_BUDGETS, TYPED_FACADE_GRAMMAR } from "./facade-agent/punched-facade.mjs";
 import { createFacadePbrMaps } from "./facade-agent/procedural-materials.mjs";
 
 const DETAIL_LIMITS = {
@@ -274,6 +274,7 @@ function facadeDetails(mesh, floorGuides, facadePlanes, grammar) {
 }
 
 export function buildEnrichedScene({ mesh, floorGuides, facadePlanes, grammar, typedPrimitives, safeFallback }) {
+	const sceneGrammar = typedPrimitives ? TYPED_FACADE_GRAMMAR : grammar;
 	return {
 		base: { positions: mesh.vertices, indices: mesh.triangles },
 		details: safeFallback ? [] : typedPrimitives
@@ -281,7 +282,7 @@ export function buildEnrichedScene({ mesh, floorGuides, facadePlanes, grammar, t
 			: grammar?.system === PUNCHED_FACADE_SYSTEM
 			? buildPunchedFacadeDetails({ mesh, floorGuides, facadePlanes, grammar })
 			: facadeDetails(mesh, floorGuides, facadePlanes, grammar),
-		grammar,
+		grammar: sceneGrammar,
 	};
 }
 
