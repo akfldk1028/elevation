@@ -1463,8 +1463,9 @@ async function verifyPresentationReceipt(runDir, run, allowTerminalRecovery = fa
 	if (receipt.artifact_closure?.path !== execution.artifact_closure?.path && execution.artifact_closure !== undefined) {
 		throw codedError("FACADE_AGENT_STATE_UNCERTAIN", "Presentation execution artifact closure binding is invalid");
 	}
+	let verifiedClosure;
 	try {
-		await verifyFacadeArtifactClosure({
+		verifiedClosure = await verifyFacadeArtifactClosure({
 			runDir, reference: receipt.artifact_closure,
 			expected: {
 				provider: receipt.provider, candidate_id: receipt.candidate_id, candidate_sha256: receipt.candidate_sha256,
@@ -1473,6 +1474,10 @@ async function verifyPresentationReceipt(runDir, run, allowTerminalRecovery = fa
 		});
 	} catch (error) {
 		throw codedError("FACADE_AGENT_STATE_UNCERTAIN", "Presentation artifact closure is invalid", error);
+	}
+	if (receipt.presentation_manifest?.path !== verifiedClosure.closure.presentation?.manifest?.path
+		|| receipt.presentation_manifest?.sha256 !== verifiedClosure.closure.presentation?.manifest?.sha256) {
+		throw codedError("FACADE_AGENT_STATE_UNCERTAIN", "Presentation receipt manifest does not match the verified artifact closure");
 	}
 	const technicalBytes = await verifyPresentationArtifactRef(runDir, receipt.technical_manifest, "technical delivery manifest");
 	let technicalManifest;
