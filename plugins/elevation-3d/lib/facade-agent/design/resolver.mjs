@@ -32,9 +32,9 @@ function round(value) {
 }
 
 function rankedSegments(context, minimumWidth, groundOnly = false) {
-	const edge = context.exclusions.edge_clearance_m;
+	const fold = context.exclusions.fold_clearance_m;
 	return context.facade_segments
-		.filter((segment) => (!groundOnly || segment.ground_access) && segment.length_m >= minimumWidth + edge * 2)
+		.filter((segment) => (!groundOnly || segment.ground_access) && segment.length_m >= minimumWidth + fold * 2)
 		.sort((left, right) => right.visibility_score - left.visibility_score
 			|| right.length_m - left.length_m || left.segment_id.localeCompare(right.segment_id));
 }
@@ -43,11 +43,11 @@ function entrancePrimitive(program, context) {
 	const candidates = rankedSegments(context, program.entrance.width_m, true);
 	if (!candidates.length) fail("no ground-access facade segment can contain the primary entrance");
 	const segment = candidates[0];
-	const edge = context.exclusions.edge_clearance_m;
+	const fold = context.exclusions.fold_clearance_m;
 	let uMin;
-	if (program.entrance.preferred_bay === "corner_focus") uMin = edge;
+	if (program.entrance.preferred_bay === "corner_focus") uMin = fold;
 	else if (program.entrance.preferred_bay === "central_or_corner_focus"
-		&& segment.length_m < program.entrance.width_m * 2 + edge * 2) uMin = edge;
+		&& segment.length_m < program.entrance.width_m * 2 + fold * 2) uMin = fold;
 	else uMin = (segment.length_m - program.entrance.width_m) / 2;
 	const ground = context.storeys[0];
 	if (!ground || ground.z_min + program.entrance.height_m > ground.z_max) fail("primary entrance does not fit within storey 1");
@@ -65,39 +65,55 @@ function entrancePrimitive(program, context) {
 	};
 }
 
-function windowPrimitives(program, context) {
+function displacedByEntrance(entrance, segmentId, bounds, gap) {
+	if (entrance.segment_id !== segmentId) return false;
+	const door = entrance.local_bounds;
+	const horizontal = Math.min(bounds.u_max, door.u_max + gap) - Math.max(bounds.u_min, door.u_min - gap);
+	const vertical = Math.min(bounds.z_max, door.z_max) - Math.max(bounds.z_min, door.z_min);
+	return horizontal > 1e-8 && vertical > 1e-8;
+}
+
+function windowPrimitives(program, context, entrance) {
 	const zones = new Map(program.zones.map((zone) => [zone.id, zone]));
 	const families = new Map(program.window_families.map((family) => [family.id, family]));
 	const storeys = new Map(context.storeys.map((storey) => [storey.storey, storey]));
-	const gap = Math.max(0.3, context.exclusions.edge_clearance_m);
+	const gap = context.exclusions.edge_clearance_m;
+	const fold = context.exclusions.fold_clearance_m;
 	const primitives = [];
 	for (const rule of program.bay_rules) {
 		const zone = zones.get(rule.zone_id);
 		if (!zone) fail(`bay rule ${rule.id} references a missing zone`);
-		const pattern = Array.from({ length: rule.repeat }, () => rule.pattern).flat();
-		const patternFamilies = pattern.map((id) => families.get(id));
-		if (patternFamilies.some((family) => !family)) fail(`bay rule ${rule.id} references a missing window family`);
-		const totalWidth = patternFamilies.reduce((sum, family) => sum + family.width_m, 0) + gap * (patternFamilies.length - 1);
-		const segments = rankedSegments(context, totalWidth);
+		const unit = rule.pattern.map((id) => families.get(id));
+		if (unit.some((family) => !family)) fail(`bay rule ${rule.id} references a missing window family`);
+		const unitWidth = unit.reduce((sum, family) => sum + family.width_m, 0) + gap * (unit.length - 1);
+		const segments = rankedSegments(context, unitWidth * rule.repeat + gap * (rule.repeat - 1));
 		if (!segments.length) fail(`bay rule ${rule.id} does not fit any facade segment`);
 		for (const segment of segments) {
-			let cursor = (segment.length_m - totalWidth) / 2;
-			for (let patternIndex = 0; patternIndex < patternFamilies.length; patternIndex += 1) {
-				const family = patternFamilies[patternIndex];
-				for (const storeyNumber of zone.storeys) {
-					const storey = storeys.get(storeyNumber);
-					if (!storey) fail(`zone ${zone.id} references a missing storey`);
-					const zMin = storey.z_min + family.sill_m;
-					const zMax = zMin + family.height_m;
-					if (zMax > storey.z_max) fail(`window family ${family.id} does not fit storey ${storeyNumber}`);
-					primitives.push({
-						kind: "window", segment_id: segment.segment_id,
-						local_bounds: { u_min: round(cursor), u_max: round(cursor + family.width_m), z_min: round(zMin), z_max: round(zMax) },
-						depth_m: 0, family_id: family.id, zone_id: zone.id, rule_id: rule.id,
-						storey: storeyNumber, pattern_index: patternIndex,
-					});
+			const usable = segment.length_m - fold * 2;
+			const count = Math.floor((usable + gap) / (unitWidth + gap) + 1e-9);
+			const slack = usable - unitWidth * count;
+			const spacing = count > 1 ? slack / (count - 1) : 0;
+			const start = count > 1 ? fold : fold + slack / 2;
+			for (let unitIndex = 0; unitIndex < count; unitIndex += 1) {
+				let cursor = start + unitIndex * (unitWidth + spacing);
+				for (let patternIndex = 0; patternIndex < unit.length; patternIndex += 1) {
+					const family = unit[patternIndex];
+					for (const storeyNumber of zone.storeys) {
+						const storey = storeys.get(storeyNumber);
+						if (!storey) fail(`zone ${zone.id} references a missing storey`);
+						const zMin = storey.z_min + family.sill_m;
+						const zMax = zMin + family.height_m;
+						if (zMax > storey.z_max) fail(`window family ${family.id} does not fit storey ${storeyNumber}`);
+						const bounds = { u_min: round(cursor), u_max: round(cursor + family.width_m), z_min: round(zMin), z_max: round(zMax) };
+						if (displacedByEntrance(entrance, segment.segment_id, bounds, gap)) continue;
+						primitives.push({
+							kind: "window", segment_id: segment.segment_id, local_bounds: bounds,
+							depth_m: 0, family_id: family.id, zone_id: zone.id, rule_id: rule.id,
+							storey: storeyNumber, pattern_index: patternIndex,
+						});
+					}
+					cursor += family.width_m + gap;
 				}
-				cursor += family.width_m + gap;
 			}
 		}
 	}
@@ -145,7 +161,7 @@ export function resolveFacadeProgram(program, context) {
 		const entrance = entrancePrimitive(program, context);
 		const primitives = [
 			entrance,
-			...windowPrimitives(program, context),
+			...windowPrimitives(program, context, entrance),
 			...articulationPrimitives(program, context, entrance.segment_id),
 		];
 		if (primitives.length > 2_048) fail("resolved facade primitive budget exceeded");

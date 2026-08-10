@@ -753,7 +753,7 @@ export const TYPED_FACADE_GRAMMAR = Object.freeze({
 	surfaces: PUNCHED_FACADE_SURFACES,
 	materials: PUNCHED_FACADE_MATERIALS,
 	corner_datum_m: 0, bay_width_m: 1.8, window_width_m: 1.2, window_height_m: 1.6,
-	sill_height_m: 0.8, reveal_depth_m: 0.15, frame_width_m: 0.06,
+	sill_height_m: 0.8, reveal_depth_m: 0.15, frame_width_m: 0.03,
 	lintel_height_m: 0.15, sill_depth_m: 0.1, cladding_depth_m: 0.12,
 	brick_module_m: Object.freeze([0.215, 0.065]), confidence: 1,
 	unresolved_surfaces: Object.freeze([]),
@@ -772,7 +772,6 @@ export function buildTypedFacadeDetails({ mesh, floorGuides, facadePlanes, primi
 	const componentOrientations = massComponentOrientations(mesh);
 	const backing = new Map();
 	const details = [];
-	const framedWindowSegments = new Set();
 	for (let index = 0; index < primitives.length; index += 1) {
 		const primitive = primitives[index];
 		const plane = planes.get(primitive?.segment_id);
@@ -803,11 +802,10 @@ export function buildTypedFacadeDetails({ mesh, floorGuides, facadePlanes, primi
 			...(primitive.zone_id ? { zone_id: primitive.zone_id } : {}),
 			...(primitive.material_id ? { material_id: primitive.material_id } : {}),
 		}, backing.get(plane.segment_id));
-		const frameOpening = primitive.kind === "door"
-			|| (primitive.kind === "window" && !framedWindowSegments.has(primitive.segment_id));
-		if (primitive.kind === "window" && frameOpening) framedWindowSegments.add(primitive.segment_id);
-		if (frameOpening) {
-			const frameWidth = Math.min(0.06, (bounds.u1 - bounds.u0) / 4, (bounds.v1 - bounds.v0) / 4);
+		if (primitive.kind === "door" || primitive.kind === "window") {
+			const frameWidth = Math.min(
+				TYPED_FACADE_GRAMMAR.frame_width_m, (bounds.u1 - bounds.u0) / 4, (bounds.v1 - bounds.v0) / 4,
+			);
 			const frameDepth = Math.max(bounds.n1 + 0.02, 0.035);
 			const frameBounds = [
 				{ u0: bounds.u0, u1: bounds.u0 + frameWidth, v0: bounds.v0 + frameWidth, v1: bounds.v1 - frameWidth },

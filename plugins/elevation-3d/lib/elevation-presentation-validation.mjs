@@ -8,6 +8,33 @@ import { readVerifiedFacadeValidationAuthority } from "./enrichment-validation.m
 import { assertCanonicalFacadeSegmentAuthority } from "./facade-agent/punched-facade.mjs";
 
 const TYPED_FACADE_KINDS = new Set(["corner-return", "brick-cladding", "window-reveal", "window-frame", "glazing", "precast-lintel", "precast-sill"]);
+const DESIGN_FACADE_KINDS = new Set(["door", "window", "window-frame", "reveal", "lintel", "sill", "pilaster", "band", "cornice"]);
+
+async function verifiedDesignFacadeArtifact(path, designFacadeManifest, sourceMesh, facadeSegmentAuthority) {
+	try {
+		if (!designFacadeManifest?.path || !/^[a-f0-9]{64}$/.test(designFacadeManifest.sha256 ?? "")) return { typed: false, receiptBound: false };
+		const manifestBytes = await readFile(designFacadeManifest.path);
+		if (sha256(manifestBytes) !== designFacadeManifest.sha256) return { typed: false, receiptBound: false };
+		const manifest = JSON.parse(manifestBytes.toString("utf8"));
+		const { compilation_sha256: compilation, ...manifestBase } = manifest;
+		if (manifest.schema_version !== "arr.elevation3d.compiled-facade.v1"
+			|| compilation !== sha256(stableJson(manifestBase))) return { typed: false, receiptBound: false };
+		const canonicalSegments = assertCanonicalFacadeSegmentAuthority({ mesh: sourceMesh, facadeSegmentAuthority });
+		const bytes = await readFile(path);
+		if (sha256(bytes) !== manifest.output?.sha256
+			|| manifest.authority?.mass_sha256 !== sha256(stableJson({ vertices: sourceMesh.vertices, triangles: sourceMesh.triangles }))
+			|| manifest.authority?.facade_segments_sha256 !== sha256(stableJson(facadeSegmentAuthority))) return { typed: false, receiptBound: false };
+		const root = (await new NodeIO().read(path)).getRoot();
+		const primitives = root.listMeshes().flatMap((mesh) => mesh.listPrimitives());
+		const typed = primitives.filter((primitive) => DESIGN_FACADE_KINDS.has(primitive.getExtras()?.kind));
+		const segmentIds = new Set(canonicalSegments.facade_planes.map((segment) => segment.segment_id));
+		const kinds = new Set(typed.map((primitive) => primitive.getExtras().kind));
+		const typedArtifact = typed.length === manifest.output?.detail_primitive_count
+			&& typed.every((primitive) => segmentIds.has(primitive.getExtras()?.segment_id))
+			&& kinds.has("door") && kinds.has("window");
+		return { typed: typedArtifact, receiptBound: typedArtifact };
+	} catch { return { typed: false, receiptBound: false }; }
+}
 
 async function verifiedTypedFacadeArtifact(path, facadeValidation, facadeValidationReceipt, sourceMesh, facadeSegmentAuthority) {
 	try {
@@ -281,9 +308,13 @@ function inspectSvg(svg, authoritative, contentBounds) {
 	return { mismatch, overlap, pageViolation, source_count: bySource.size };
 }
 
-export async function validateCompetitionElevation({ artifacts, sourceMesh, facadePlanes, facadeSegmentAuthority, facadeValidation, facadeValidationReceipt, floorGuides, view, selectedGlbPath }) {
+export async function validateCompetitionElevation({ artifacts, sourceMesh, facadePlanes, facadeSegmentAuthority, facadeValidation, facadeValidationReceipt, designFacadeManifest, floorGuides, view, selectedGlbPath }) {
 	const codes = [];
-	const typedFacadeEvidence = await verifiedTypedFacadeArtifact(selectedGlbPath, facadeValidation, facadeValidationReceipt, sourceMesh, facadeSegmentAuthority);
+	const grammarEvidence = await verifiedTypedFacadeArtifact(selectedGlbPath, facadeValidation, facadeValidationReceipt, sourceMesh, facadeSegmentAuthority);
+	const designEvidence = grammarEvidence.typed
+		? null
+		: await verifiedDesignFacadeArtifact(selectedGlbPath, designFacadeManifest, sourceMesh, facadeSegmentAuthority);
+	const typedFacadeEvidence = designEvidence?.typed ? designEvidence : grammarEvidence;
 	const typedFacadeArtifact = typedFacadeEvidence.typed;
 	let authoritative;
 	try {
