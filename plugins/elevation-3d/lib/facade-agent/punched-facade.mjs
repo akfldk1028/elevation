@@ -744,3 +744,52 @@ export function buildPunchedFacadeDetails({ mesh, floorGuides, facadePlanes, gra
 	}
 	return details;
 }
+
+const TYPED_DETAIL_GRAMMAR = Object.freeze({ brick_module_m: Object.freeze([0.215, 0.065]) });
+const TYPED_MATERIAL = Object.freeze({
+	door: "glass", window: "glass", reveal: "bronze", lintel: "opaque",
+	sill: "opaque", pilaster: "bronze", band: "opaque", cornice: "opaque",
+});
+
+export function buildTypedFacadeDetails({ mesh, floorGuides, facadePlanes, primitives }) {
+	validateFloorGuideBudget(floorGuides);
+	validateSourceMesh(mesh);
+	const authority = verifiedFacadeSegmentAuthority(mesh, facadePlanes);
+	if (!denseArray(primitives) || primitives.length > 2_048) throw new TypeError("invalid typed facade primitive collection");
+	const planes = new Map(authority.facade_planes.map((plane) => [plane.segment_id, plane]));
+	const componentOrientations = massComponentOrientations(mesh);
+	const backing = new Map();
+	const details = [];
+	for (let index = 0; index < primitives.length; index += 1) {
+		const primitive = primitives[index];
+		const plane = planes.get(primitive?.segment_id);
+		const material = TYPED_MATERIAL[primitive?.kind];
+		const local = primitive?.local_bounds;
+		if (!plane || !material || !local) throw new TypeError("invalid typed facade primitive authority");
+		const tangent = [-plane.normal[1], plane.normal[0], 0];
+		if (!backing.has(plane.segment_id)) backing.set(
+			plane.segment_id, validateMassBacking(mesh, plane, tangent, componentOrientations),
+		);
+		const depth = primitive.kind === "door" || primitive.kind === "window"
+			? Math.max(0.015, primitive.depth_m || 0.015)
+			: primitive.depth_m;
+		const bounds = {
+			u0: local.u_min, u1: local.u_max,
+			v0: local.z_min - plane.origin[2], v1: local.z_max - plane.origin[2],
+			n0: 0, n1: depth,
+		};
+		if (bounds.u0 < -EPSILON || bounds.u1 > plane.extent_m[0] + EPSILON
+			|| bounds.v0 < -EPSILON || bounds.v1 > plane.extent_m[1] + EPSILON) {
+			throw new TypeError("invalid typed facade primitive bounds");
+		}
+		pushDetail(details, plane, tangent, TYPED_DETAIL_GRAMMAR, bounds, {
+			kind: primitive.kind, material, slot: `typed-${index}`,
+			design_primitive_index: index,
+			...(primitive.role ? { role: primitive.role } : {}),
+			...(primitive.family_id ? { family_id: primitive.family_id } : {}),
+			...(primitive.zone_id ? { zone_id: primitive.zone_id } : {}),
+			...(primitive.material_id ? { material_id: primitive.material_id } : {}),
+		}, backing.get(plane.segment_id));
+	}
+	return details;
+}

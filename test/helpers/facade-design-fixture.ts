@@ -137,5 +137,5 @@ export async function createFacadeDesignFixture(t: { after(fn: () => Promise<voi
 		],
 	});
 	const program = createFacadeProgramForContext(context);
-	return { context, program, facadeSegmentAuthority };
+	return { root, runDir, candidate, mesh, floorGuides, cameras, context, program, facadeSegmentAuthority };
 }
