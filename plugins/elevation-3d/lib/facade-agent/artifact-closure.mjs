@@ -259,13 +259,19 @@ export async function verifyFacadeArtifactClosure({ runDir, reference, expected 
 		|| closure.authority?.validation_receipt_sha256 !== closure.validation_receipt?.sha256) {
 		fail("facade artifact closure selected-GLB or validation binding is invalid");
 	}
-	for (const ref of allClosureRefs(closure)) await closeRef(runDir, ref, "closed facade artifact");
+	let technicalResult, wrapperResult, reportResult;
+	for (const ref of allClosureRefs(closure)) {
+		if (ref === closure.technical.manifest) technicalResult = await closeJson(runDir, ref, "closed technical manifest");
+		else if (ref === closure.presentation.manifest) wrapperResult = await closeJson(runDir, ref, "closed presentation wrapper");
+		else if (ref === closure.presentation.report) reportResult = await closeJson(runDir, ref, "closed presentation report");
+		else await closeRef(runDir, ref, "closed facade artifact");
+	}
 	assertDistinct(Object.values(closure.technical.views).map((value) => value.image), "technical view PNG");
 	assertDistinct(Object.values(closure.presentation.views).map((value) => value.image), "presentation view PNG");
 	assertDistinct(Object.values(closure.presentation.views).map((value) => value.semantic_role_mask), "presentation semantic-role mask", { requireDistinctHashes: false });
-	const technical = (await closeJson(runDir, closure.technical.manifest, "closed technical manifest")).value;
-	const wrapper = (await closeJson(runDir, closure.presentation.manifest, "closed presentation wrapper")).value;
-	const report = (await closeJson(runDir, closure.presentation.report, "closed presentation report")).value;
+	const technical = technicalResult?.value;
+	const wrapper = wrapperResult?.value;
+	const report = reportResult?.value;
 	const authority = closure.authority;
 	if (technical?.schema_version !== "arr.elevation3d.all-views.v1" || technical.validation?.accepted !== true
 		|| technical.selected_glb?.sha256 !== authority.selected_glb_sha256 || !exactViews(technical.views)) {
