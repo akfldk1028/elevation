@@ -19,6 +19,12 @@ const WINDOW_KEYS = new Set(["id", "width_m", "height_m", "sill_m"]);
 const BAY_KEYS = new Set(["id", "zone_id", "pattern", "repeat"]);
 const ARTICULATION_KEYS = new Set(["id", "kind", "segment_selector", "width_m", "depth_m", "storeys", "material_id"]);
 const MATERIAL_KEYS = new Set(["id", "role", "color", "finish"]);
+const verifiedProgramAuthorities = new WeakMap();
+
+export function readVerifiedFacadeProgramAuthority(value) {
+	const authority = value && typeof value === "object" ? verifiedProgramAuthorities.get(value) : null;
+	return authority ? { ...authority } : null;
+}
 
 function fail(message) {
 	throw new FacadeDesignContractError("FACADE_DESIGN_PROGRAM_INVALID", message);
@@ -208,7 +214,7 @@ export function parseFacadeProgram(input, options = {}) {
 	const designRationale = arrayValues(fields.design_rationale, "design_rationale", 0, 32)
 		.map((value, index) => boundedString(value, `design_rationale[${index}]`, 512));
 
-	return deepFreeze({
+	const program = deepFreeze({
 		schema_version: "arr.elevation3d.facade-program.v2",
 		concept_id: conceptId,
 		source,
@@ -220,4 +226,6 @@ export function parseFacadeProgram(input, options = {}) {
 		materials,
 		design_rationale: designRationale,
 	});
+	verifiedProgramAuthorities.set(program, Object.freeze({ ...source }));
+	return program;
 }
