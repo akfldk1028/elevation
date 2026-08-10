@@ -6,7 +6,7 @@ import { safeRead } from "../path-safety.mjs";
 import { readVerifiedFacadeDesignContextAuthority } from "./context.mjs";
 
 const VIEWS = Object.freeze(["front", "back", "left", "right", "plan", "top", "axon", "opposite-axon"]);
-const SCORE_LIMITS = Object.freeze({
+export const SCORE_LIMITS = Object.freeze({
 	entrance_legibility: 70,
 	base_middle_top_hierarchy: 70,
 	repetition_variation_balance: 60,

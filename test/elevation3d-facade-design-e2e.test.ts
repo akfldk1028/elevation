@@ -178,6 +178,29 @@ test("workflow resumes verified rendered artifacts without rerendering", async (
 	assert.equal(criticCalls, 1);
 });
 
+test("workflow reviews with the deterministic critic when no critic is supplied", async (t) => {
+	const fixture = await createFacadeDesignFixture(t);
+	const resolved = resolveFacadeProgram(fixture.program, fixture.context);
+	const validation = validateResolvedFacadeProgram({ program: fixture.program, context: fixture.context, resolved });
+	const compiled = await compileFacadeDesign({ outputRoot: join(fixture.runDir, "compiled"), candidate: fixture.candidate, context: fixture.context, program: fixture.program, resolved, validation });
+	const store = await createFacadeDesignStateStore({ runDir: fixture.runDir, source: fixture.context.source });
+	await store.recordProposal({ context: fixture.context, program: fixture.program, resolved, validation });
+	await store.recordCompiled(compiled);
+	await store.recordRendered(await createOfflineArtifacts(fixture.runDir));
+	const state: any = await runFacadeDesignWorkflow({
+		runDir: fixture.runDir, candidate: fixture.candidate, context: fixture.context,
+		render: async () => { throw new Error("render must not replay"); },
+	});
+
+	assert.equal(state.stage, "succeeded");
+	const review = state.checkpoints.reviewed;
+	assert.equal(review.accepted, true);
+	assert.equal(review.scores.entrance_legibility, 100);
+	assert.equal(review.scores.base_middle_top_hierarchy, 100);
+	assert.equal(review.scores.material_hierarchy, 100);
+	assert.match(review.notes[0], /^Openings \d+ on \d+\/\d+ segments, \d+ framed\.$/);
+});
+
 test("workflow retries the legacy local resume failure from its verified compiled checkpoint", async (t) => {
 	const fixture = await createFacadeDesignFixture(t);
 	const resolved = resolveFacadeProgram(fixture.program, fixture.context);

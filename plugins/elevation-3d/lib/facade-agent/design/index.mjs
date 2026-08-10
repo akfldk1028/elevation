@@ -4,9 +4,11 @@ import { sha256, stableJson } from "../../core.mjs";
 import { compileFacadeDesign } from "./compiler.mjs";
 import { reviewFacadeDesign, verifyFacadeDesignArtifacts } from "./critic.mjs";
 import { runFacadeDesignAgent } from "./design-agent.mjs";
+import { createFacadeDesignCritic } from "./scoring.mjs";
 import { createFacadeDesignStateStore, isRetryableCompiledFailure } from "./state-store.mjs";
 
 const ACTIONS = Object.freeze(["prepare", "design", "compile", "review", "status", "resume"]);
+const deterministicCritic = createFacadeDesignCritic();
 
 export function facadeDesignAgentToolSchema() {
 	return {
@@ -29,7 +31,7 @@ function toolError(code, message) {
 	return error;
 }
 
-export async function runFacadeDesignWorkflow({ runDir, candidate, context, provider, ledger, ceilingUsd, estimateUsd, render, critic, signal } = {}) {
+export async function runFacadeDesignWorkflow({ runDir, candidate, context, provider, ledger, ceilingUsd, estimateUsd, render, critic = deterministicCritic, signal } = {}) {
 	const root = resolve(runDir);
 	const store = await createFacadeDesignStateStore({ runDir: root, source: context.source });
 	const current = await store.status();
@@ -120,4 +122,5 @@ export { validateResolvedFacadeProgram } from "./validator.mjs";
 export { compileFacadeDesign } from "./compiler.mjs";
 export { runFacadeDesignAgent } from "./design-agent.mjs";
 export { reviewFacadeDesign } from "./critic.mjs";
+export { createFacadeDesignCritic, scoreFacadeDesign } from "./scoring.mjs";
 export { createFacadeDesignStateStore } from "./state-store.mjs";
