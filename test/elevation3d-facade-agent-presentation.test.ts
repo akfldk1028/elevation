@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import fs from "node:fs";
 import { copyFile, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
@@ -8,7 +10,7 @@ import { Document, NodeIO } from "@gltf-transform/core";
 import sharp from "sharp";
 
 import { deliverFacadeFinalPresentation as deliverPresentationBoundary } from "../plugins/elevation-3d/lib/facade-agent/final-presentation.mjs";
-import { readContentAddressedJson } from "../plugins/elevation-3d/lib/facade-agent/artifact-closure.mjs";
+import { readContentAddressedJson, verifyFacadeArtifactClosure } from "../plugins/elevation-3d/lib/facade-agent/artifact-closure.mjs";
 import { facadeCandidateHash } from "../plugins/elevation-3d/lib/facade-agent/candidate-authority.mjs";
 import { technicalCameraAuthorityFromGlb } from "../plugins/elevation-3d/lib/camera-authority.mjs";
 import { stableJson } from "../plugins/elevation-3d/lib/core.mjs";
@@ -365,6 +367,45 @@ test("content-addressed JSON rejects invalid JSON after one read", async () => {
 		readBytes: async () => { reads += 1; return bytes; },
 	}), (error: any) => error?.code === "FACADE_PRESENTATION_ARTIFACT_CLOSURE_INVALID");
 	assert.equal(reads, 1);
+});
+
+test("production artifact-closure verification reads each semantic JSON leaf exactly once", async () => {
+	const f = await fixture();
+	try {
+		const result = await deliverFacadeFinalPresentation({
+			runDir: f.runDir, presentationRoot: join(f.runDir, "single-read-verification"), candidateId: "creative-020",
+			provider: "local-fixture", candidateSha256: facadeCandidateHash(candidate()), selectedVersion: "v001",
+			artifact: { path: f.glbPath, sha256: f.glbSha256 }, validation: { accepted: true, codes: [] },
+			validationReceipt: { path: f.receiptPath, sha256: f.receiptSha256, receipt_sha256: f.receiptContentSha256 },
+			technicalDelivery: f.technicalDelivery, input: candidate(),
+			deps: { renderEmbeddedPbrViews: fakeAcceptedPbrRenderer([], f.glbSha256) },
+		});
+		const closurePath = join(f.runDir, result.memory_record.artifact_closure.path);
+		const closure = JSON.parse(await readFile(closurePath, "utf8"));
+		const targets = new Map([
+			[resolve(f.runDir, closure.technical.manifest.path), "technical manifest"],
+			[resolve(f.runDir, closure.presentation.manifest.path), "presentation wrapper"],
+			[resolve(f.runDir, closure.presentation.report.path), "presentation report"],
+		]);
+		const reads = new Map([...targets.keys()].map((path) => [path, 0]));
+		const originalReadFile = readFile;
+		(fs.promises as any).readFile = async (...args: any[]) => {
+			const path = resolve(String(args[0]));
+			if (reads.has(path)) reads.set(path, reads.get(path)! + 1);
+			return (originalReadFile as any)(...args);
+		};
+		syncBuiltinESMExports();
+		try {
+			await verifyFacadeArtifactClosure({ runDir: f.runDir, reference: result.memory_record.artifact_closure });
+		} finally {
+			(fs.promises as any).readFile = originalReadFile;
+			syncBuiltinESMExports();
+		}
+		assert.deepEqual(
+			Object.fromEntries([...targets].map(([path, label]) => [label, reads.get(path)])),
+			{ "technical manifest": 1, "presentation wrapper": 1, "presentation report": 1 },
+		);
+	} finally { await rm(f.runDir, { recursive: true, force: true }); }
 });
 
 test("artifact closure rejects a rehashed technical detail manifest that points outside the contained delivery", async () => {
