@@ -17,6 +17,10 @@ const RESULT_KEYS = new Set([
 	"request", "provider", "resolvedModel", "transport", "grammarCandidate", "remoteId", "actualUsd", "usage",
 ]);
 const requestAuthorities = new WeakMap();
+const ALLOWED_PROMPT_REVISIONS = new Set([
+	FACADE_GRAMMAR_PROMPT_REVISION,
+	"arr.elevation3d.facade-design-prompt.v1",
+]);
 
 function fail(code, message, provider = "grammar") {
 	throw new FacadeProviderError(code, message, {
@@ -186,7 +190,7 @@ export function createFacadeGrammarRequest(input) {
 	const promptRevision = boundedString(fields.promptRevision, "promptRevision");
 	const prompt = boundedString(fields.prompt, "prompt", MAX_PROMPT_BYTES);
 	const promptSha256 = hash(fields.promptSha256, "promptSha256");
-	if (promptRevision !== FACADE_GRAMMAR_PROMPT_REVISION) fail("GRAMMAR_BOUNDARY_INVALID", `prompt revision must be ${FACADE_GRAMMAR_PROMPT_REVISION}`);
+	if (!ALLOWED_PROMPT_REVISIONS.has(promptRevision)) fail("GRAMMAR_BOUNDARY_INVALID", "prompt revision is not approved");
 	if (createHash("sha256").update(prompt).digest("hex") !== promptSha256) fail("GRAMMAR_BOUNDARY_INVALID", "prompt hash does not match its text");
 	if (!prompt.includes(proposalSha256) || !prompt.includes(evidenceManifestSha256)) fail("GRAMMAR_BOUNDARY_INVALID", "prompt must bind the proposal and evidence hashes");
 	if (!Buffer.isBuffer(fields.imageBytes) && !(fields.imageBytes instanceof Uint8Array)) fail("GRAMMAR_PROPOSAL_INVALID", "Proposal image bytes are required");
