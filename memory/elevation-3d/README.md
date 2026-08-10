@@ -135,3 +135,11 @@ Durable run and candidate events use the v2 memory schema. Each attempted versio
 - Fixture transport is exact and contained: image `fixture` with 1 call, grammar `fixture` with 1 call, and unexpected/live network calls `0` (`{ image: 1, grammar: 1, unexpected: 0 }`). No live provider call occurred.
 - Crash safety: a paid task is persisted as `submitting` before the network call. If the process dies before the provider task ID is durably recorded, restart fails closed with `PAID_TASK_SUBMISSION_UNCERTAIN` instead of risking duplicate spend; manual provider reconciliation is required.
 - Artifacts: `D:/Data/50_ELE/elevation-3d-e2e-results/autonomous/creative-013/tripo-pbr-v1-20260804/final/textured.glb` and sibling `rendered-pbr-v6/contact-sheet.png`.
+
+## Final facade durability follow-up — 2026-08-10
+
+- Hardened baseline commit `dfa9492` passed the amended facade suite `170/170`, the full serial suite `716/716` across 26 suites, TypeScript build, `npm audit` with 0 vulnerabilities, and a retained offline E2E `1/1`. No live provider calls occurred; fixture transport was `{ image: 1, grammar: 1, unexpected: 0 }`.
+- The retained 2026-08-09 winner uses one selected/enriched/textured GLB SHA-256: `f224ef54615bd7470096690c5091b905f6e2c7eb15f7e4feb3fa3e2a070cac22`.
+- A scoped final re-review found three remaining merge blockers: Node/browser geometry-bound algorithms can disagree for transformed/indexed GLBs; content-addressed JSON closure hashes one read but parses a second read; and a crash after the deterministic presentation receipt is written but before its run-state reference is committed cannot zero-call finalize.
+- Approved design commit: `e1fb2c0`. Approved implementation plan commit: `4ae3ed4`. The branch is not merge-ready until all three blockers pass RED/GREEN implementation, independent task reviews, the amended facade suite, full serial verification, build, audit, and a fresh retained offline E2E.
+- The follow-up retained evidence target is `D:/Data/50_ELE/facade-agent-verification/unified-facade-render-elevation-20260810`. Untouched legacy junction-sensitive paths in `plugins/elevation-3d/lib/results.mjs` remain explicitly out of scope for this pass.
