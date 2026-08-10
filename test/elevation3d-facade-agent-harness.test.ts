@@ -1375,6 +1375,7 @@ test("an orphan presentation receipt rejects every mismatched authority without 
 		["candidate sha", (receipt: any) => { receipt.candidate_sha256 = "0".repeat(64); }],
 		["version", (receipt: any) => { receipt.selected_version = "v999"; }],
 		["GLB", (receipt: any) => { receipt.selected_glb_sha256 = "1".repeat(64); }],
+		["presentation manifest", (receipt: any) => { receipt.presentation_manifest = structuredClone(receipt.technical_manifest); }],
 		["technical manifest", (receipt: any) => { receipt.technical_manifest.sha256 = "2".repeat(64); }],
 		["closure", (receipt: any) => { receipt.artifact_closure.sha256 = "3".repeat(64); }],
 		["provider calls", (receipt: any) => { receipt.provider_calls = 1; }],
@@ -1388,10 +1389,13 @@ test("an orphan presentation receipt rejects every mismatched authority without 
 		const receipt = JSON.parse(await readFile(receiptPath, "utf8"));
 		mutate(receipt);
 		await rewriteJson(receiptPath, receipt);
+		const runPath = join(value.runDir, "run.json");
+		const returnedBytes = await readFile(runPath);
 		const orphanBytes = await readFile(receiptPath);
 		const recovery = recoveryDependencies(value, { lifecycle: {} });
 
 		await assert.rejects(() => runFacadeAgent(value.config, recovery.deps), (error: any) => error.code === "FACADE_PRESENTATION_RECOVERY_UNSAFE");
+		assert.deepEqual(await readFile(runPath), returnedBytes);
 		assert.deepEqual(await readFile(receiptPath), orphanBytes);
 		assertZeroRecoveryCalls(recovery.calls);
 	});
@@ -1404,12 +1408,15 @@ test("an orphan presentation receipt rejects every wrong checkpoint without repl
 		await runFacadeAgent(value.config, value.deps);
 		const run = await rewriteAsOrphanPresentationReceipt(value);
 		run.presentation_execution.status = status;
-		await rewriteJson(join(value.runDir, "run.json"), run);
+		const runPath = join(value.runDir, "run.json");
+		await rewriteJson(runPath, run);
 		const receiptPath = join(value.runDir, "final-presentation/presentation-receipt.json");
+		const returnedBytes = await readFile(runPath);
 		const orphanBytes = await readFile(receiptPath);
 		const recovery = recoveryDependencies(value, { lifecycle: {} });
 
 		await assert.rejects(() => runFacadeAgent(value.config, recovery.deps), (error: any) => error.code === "FACADE_PRESENTATION_RECOVERY_UNSAFE");
+		assert.deepEqual(await readFile(runPath), returnedBytes);
 		assert.deepEqual(await readFile(receiptPath), orphanBytes);
 		assertZeroRecoveryCalls(recovery.calls);
 	});
@@ -1429,10 +1436,13 @@ test("an invalid orphan presentation receipt fails closed without replay or muta
 		await rewriteAsOrphanPresentationReceipt(value);
 		const receiptPath = join(value.runDir, "final-presentation/presentation-receipt.json");
 		await mutate(receiptPath);
+		const runPath = join(value.runDir, "run.json");
+		const returnedBytes = await readFile(runPath);
 		const orphanBytes = await readFile(receiptPath);
 		const recovery = recoveryDependencies(value, { lifecycle: {} });
 
 		await assert.rejects(() => runFacadeAgent(value.config, recovery.deps), (error: any) => error.code === "FACADE_PRESENTATION_RECOVERY_UNSAFE");
+		assert.deepEqual(await readFile(runPath), returnedBytes);
 		assert.deepEqual(await readFile(receiptPath), orphanBytes);
 		assertZeroRecoveryCalls(recovery.calls);
 	});
