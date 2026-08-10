@@ -57,7 +57,7 @@ The handoff must include:
 
 - project goal: beautiful photoreal facade render first, technical elevations remain downstream authority;
 - the three absolute input paths and hashes above, with roles `edit target`, `identity grid`, and `orthographic identity`;
-- the exact generation prompt from Task 2;
+- the exact generation prompt copied verbatim from `docs/superpowers/specs/2026-08-10-generative-facade-hero-design.md` section `Exact image-generation prompt`;
 - every Global Constraint verbatim;
 - output root, filename, manifest path, and validation checklist;
 - continuation rule: inspect existing manifest/output first; never regenerate or overwrite an accepted image automatically;

@@ -27,6 +27,24 @@ Create a high-end warm-daylight architectural hero image from the verified persp
 - Do not crop the building; retain comfortable presentation margins and show its grounding.
 - No text, logo, watermark, border, or annotation.
 
+## Exact image-generation prompt
+
+```text
+Use case: sketch-to-render
+Asset type: high-end architectural competition hero perspective
+Input images: Image 1 is the authoritative edit target and fixes the camera, silhouette, mass, storey count, roof outline, facade bays, and every window/opening; Image 2 is the eight-view identity grid; Image 3 is the orthographic front identity reference.
+Primary request: transform Image 1 into a polished photoreal architectural visualization of exactly the same building. Preserve its existing three-quarter perspective and corrected architectural verticals.
+Scene/backdrop: restrained premium urban forecourt with light stone paving, sparse low planting, a clean bright sky, and only a few small people for scale; do not obscure the facade.
+Subject: the exact five-storey faceted building from Image 1, unchanged in geometry and opening layout.
+Style/medium: competition-winning professional architectural photography, realistic rather than illustrative.
+Lighting/mood: warm natural daytime sunlight, soft directional shadows, realistic global illumination, inviting and calm.
+Color palette: retain the existing deep warm red facade identity with refined brick and masonry tonal variation; pale stone accents; neutral glazing.
+Materials/textures: tactile premium brick or masonry, crisp restrained frames and lintels, physically plausible glass reflections and interior depth, subtle weathering only.
+Composition/framing: keep the same camera side and perspective direction as Image 1, show the complete building and its grounding with comfortable margins, no crop.
+Constraints: preserve exactly the silhouette, mass, five storeys, roof outline, facade divisions, window count, window positions, opening sizes and proportions. Change only material realism, glazing, light, shadows, landscaping, atmosphere, and photographic finish.
+Avoid: added or removed windows, doors, balconies, canopies, signs, rooftop equipment, adjacent buildings, changed roof or mass, warped verticals, fantasy styling, dramatic dusk, excessive vegetation, cars blocking the building, text, logo, watermark, border, annotations.
+```
+
 ## Output
 
 - Generate one first-pass perspective hero image using the built-in image generation/editing path.
