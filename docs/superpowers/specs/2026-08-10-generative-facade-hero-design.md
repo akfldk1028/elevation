@@ -30,7 +30,7 @@ Create a high-end warm-daylight architectural hero image from the verified persp
 ## Output
 
 - Generate one first-pass perspective hero image using the built-in image generation/editing path.
-- Save the selected project asset non-destructively as `generated-presentation/hero-perspective-v1.png` under the retained run.
+- Save the selected asset non-destructively as `D:/Data/50_ELE/facade-agent-verification/generative-facade-presentation-20260810/hero-perspective-v1.png`. This sibling root keeps the immutable 212-file retained evidence tree unchanged.
 - Keep every verified source PNG unchanged.
 - Treat the bitmap as presentation intent only. Any architectural change suggested by it must be rebuilt on the selected GLB and pass the elevation validation pipeline before becoming authoritative.
 
