@@ -10,6 +10,7 @@ import { sha256, stableJson } from "../plugins/elevation-3d/lib/core.mjs";
 import {
 	FacadeDesignContextError,
 	buildFacadeDesignContext,
+	readVerifiedFacadeDesignContextAuthority,
 	withVerifiedFacadeDesignContext,
 } from "../plugins/elevation-3d/lib/facade-agent/design/context.mjs";
 import {
@@ -200,4 +201,11 @@ test("binds the context hash to the exact selected GLB bytes", async () => {
 	}));
 	assert.notEqual(alternate.source.selected_glb_sha256, original.source.selected_glb_sha256);
 	assert.notEqual(alternate.source.context_sha256, original.source.context_sha256);
+});
+
+test("exposes source authority only for the exact verified context capability", async () => {
+	const context = await buildFacadeDesignContext(input());
+	assert.deepEqual(readVerifiedFacadeDesignContextAuthority(context), context.source);
+	assert.equal(readVerifiedFacadeDesignContextAuthority(structuredClone(context)), null);
+	assert.equal(readVerifiedFacadeDesignContextAuthority({ ...context }), null);
 });

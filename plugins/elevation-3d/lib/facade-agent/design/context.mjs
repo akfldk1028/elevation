@@ -22,6 +22,12 @@ const REF_KEYS = new Set(["path", "sha256"]);
 const THUMBNAIL_KEYS = new Set(["view", "path", "sha256", "width", "height"]);
 const OPENING_KINDS = new Set(["door", "window", "glass"]);
 const LOCAL_BOUND_KEYS = ["u0", "u1", "v0", "v1", "n0", "n1"];
+const verifiedContextAuthorities = new WeakMap();
+
+export function readVerifiedFacadeDesignContextAuthority(value) {
+	const authority = value && typeof value === "object" ? verifiedContextAuthorities.get(value) : null;
+	return authority ? { ...authority } : null;
+}
 
 function fail(message, cause) {
 	throw new FacadeDesignContextError(message, cause);
@@ -218,7 +224,9 @@ export async function buildFacadeDesignContext(input) {
 			selected_glb_sha256: selected.ref.sha256,
 		};
 		const source = { ...sourceAuthority, context_sha256: sha256(stableJson({ ...base, source: sourceAuthority })) };
-		return deepFreeze({ ...base, source });
+		const context = deepFreeze({ ...base, source });
+		verifiedContextAuthorities.set(context, Object.freeze({ ...source }));
+		return context;
 	} catch (error) {
 		if (error instanceof FacadeDesignContextError) throw error;
 		fail("facade design context could not be verified", error);
