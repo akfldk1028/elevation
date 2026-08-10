@@ -1,4 +1,4 @@
-import { getBounds, NodeIO } from "@gltf-transform/core";
+import { NodeIO } from "@gltf-transform/core";
 
 import { sha256, stableJson } from "./core.mjs";
 import {
@@ -42,15 +42,24 @@ function sceneNodes(scene) {
 	return nodes;
 }
 
+function boundsFromPoints(points) {
+	const min = [Infinity, Infinity, Infinity];
+	const max = [-Infinity, -Infinity, -Infinity];
+	for (const point of points) for (let axis = 0; axis < 3; axis += 1) {
+		min[axis] = Math.min(min[axis], point[axis]);
+		max[axis] = Math.max(max[axis], point[axis]);
+	}
+	if (![...min, ...max].every(Number.isFinite)) {
+		throw new Error("selected GLB has no finite geometry bounds for camera authority");
+	}
+	return { min, max };
+}
+
 async function cameraGeometryFromGlb(bytes) {
 	const document = await new NodeIO().readBinary(new Uint8Array(bytes));
 	const root = document.getRoot();
 	const scene = root.getDefaultScene() ?? root.listScenes()[0];
 	if (!scene) throw new Error("selected GLB has no scene for camera authority");
-	const bounds = getBounds(scene);
-	if (!bounds.min.every(Number.isFinite) || !bounds.max.every(Number.isFinite)) {
-		throw new Error("selected GLB has no finite geometry bounds for camera authority");
-	}
 	const points = [];
 	for (const node of sceneNodes(scene)) {
 		const mesh = node.getMesh();
@@ -65,7 +74,7 @@ async function cameraGeometryFromGlb(bytes) {
 		}
 	}
 	if (!points.length) throw new Error("selected GLB has no geometry points for camera authority");
-	return { bounds: { min: [...bounds.min], max: [...bounds.max] }, points };
+	return { bounds: boundsFromPoints(points), points };
 }
 
 function buildingBounds(bounds) {
