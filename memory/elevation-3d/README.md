@@ -148,3 +148,10 @@ Durable run and candidate events use the v2 memory schema. Each attempted versio
 - Browser report `providers/seedream-5-pro/delivery/browser-verification/browser-verification.json` has SHA-256 `3acd39854a25040a53cdd6c927b33f79cb234a1130e37c2467e076de2d0f13dc`; initial/interacted screenshots have SHA-256 `3d4fbec7f563fac4bd298513746f099ea02b12dded0dac817d72eaf7fc9aec66` and `f038c6ec70af096dc8b7fe38a3505291bbcae57d403f43f6a7b56071ad8c3fb4`.
 - No live provider call occurred. Offline fixture transport was exact: `{ image: 1, grammar: 1, unexpected: 0 }`; presentation provider calls/credits were `0/0`.
 - Final review preserved immutable source MASS and facade authority, selected-GLB bytes, camera-source contract, PBR style, validation thresholds, paid-call safety, elevation/path-containment gates, and full artifact closure. Images remain evidence only and do not authorize architecture; no fake geometry was introduced. Untouched legacy junction-sensitive paths in `plugins/elevation-3d/lib/results.mjs` remain explicitly out of scope.
+
+## Generative facade presentation next step — 2026-08-10
+
+- The verified reference set for the generative visualization pass is the retained `final-presentation/contact-sheet.png`, its front/back/left/right orthographic PNGs, and the two axon PNGs.
+- The selected GLB and technical elevations remain the only geometry and dimension authority. Generated images may improve material richness, glazing, daylight, landscaping, atmosphere, and photographic presentation, but may not authorize changes to the mass, floor count, opening pattern, window positions, roof outline, or facade dimensions.
+- The first target is a high-end competition-quality axon hero render, followed by a front orthographic presentation using the same material language. Any bitmap-only design idea remains proposal intent until rebuilt on the selected GLB and revalidated through the elevation pipeline.
+- Generated outputs must be saved as new versioned project assets and must never overwrite the retained verified PNG evidence. No generative-image call had been made when this checkpoint was recorded.
