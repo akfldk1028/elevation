@@ -8,11 +8,13 @@ import { Document, NodeIO } from "@gltf-transform/core";
 import sharp from "sharp";
 
 import { loadCandidatePackage, sha256 } from "../plugins/elevation-3d/lib/core.mjs";
-import { deriveExpectedCameraContract, presentationCameraPresets, technicalCameraAuthorityFromGlb } from "../plugins/elevation-3d/lib/camera-authority.mjs";
+import { cameraBuildingBoundsFromGlb, deriveExpectedCameraContract, normalizeCameraValue, presentationCameraPresets, technicalCameraAuthorityFromGlb } from "../plugins/elevation-3d/lib/camera-authority.mjs";
 import { buildEnrichedScene, writeEnrichedGlb } from "../plugins/elevation-3d/lib/enrichment.mjs";
-import { deliverSelectedAllViews, FinalDeliveryError } from "../plugins/elevation-3d/lib/final-delivery.mjs";
+import { deliverSelectedAllViews, deriveDeliveryCameras, FinalDeliveryError } from "../plugins/elevation-3d/lib/final-delivery.mjs";
+import { resolveMaterialPalette } from "../plugins/elevation-3d/lib/material-palettes.mjs";
 import { GeneratedStageError, runElevation3d } from "../plugins/elevation-3d/lib/unified-flow.mjs";
 import * as unifiedFlow from "../plugins/elevation-3d/lib/unified-flow.mjs";
+import { buildViewerBundle } from "../plugins/elevation-3d/lib/viewer.mjs";
 
 const temporaryRoots: string[] = [];
 const originalCwd = process.cwd();
@@ -138,6 +140,32 @@ async function meshGlbBytes(mesh: { vertices: number[][]; triangles: number[][] 
 	return Buffer.from(await new NodeIO().writeBinary(document));
 }
 
+async function transformedIndexedGlbBytes() {
+	const positions = new Float32Array([
+		0, 0, 0,
+		2, 0, 0,
+		0, 1, 0,
+		4, 3, 2, // finite unreferenced POSITION vertex; still present in the rendered buffer
+	]);
+	const indices = new Uint16Array([0, 1, 2]);
+	const parentTransform = {
+		translation: [7, -3, 5],
+		rotationZRadians: Math.PI / 3,
+	};
+	const document = new Document(), buffer = document.createBuffer();
+	const positionAccessor = document.createAccessor("positions", buffer).setType("VEC3").setArray(positions);
+	const indexAccessor = document.createAccessor("indices", buffer).setType("SCALAR").setArray(indices);
+	const material = document.createMaterial("concrete").setBaseColorFactor([0.7, 0.7, 0.7, 1]);
+	const primitive = document.createPrimitive().setAttribute("POSITION", positionAccessor).setIndices(indexAccessor).setMaterial(material);
+	const meshNode = document.createNode("transformed-indexed-mesh").setMesh(document.createMesh("transformed-indexed-mesh").addPrimitive(primitive));
+	const parent = document.createNode("facade-details")
+		.setTranslation(parentTransform.translation)
+		.setRotation([0, 0, Math.sin(parentTransform.rotationZRadians / 2), Math.cos(parentTransform.rotationZRadians / 2)])
+		.addChild(meshNode);
+	document.createScene("Scene").addChild(parent);
+	return Buffer.from(await new NodeIO().writeBinary(document));
+}
+
 function acceptedFinalDeliveryDeps() {
 	const calls = { render: [] as any[], browser: [] as any[] };
 	return {
@@ -211,6 +239,91 @@ function acceptedFinalDeliveryDeps() {
 		},
 	};
 }
+
+async function renderBrowserVerifiableAllViews(args: any) {
+	const artifactFixture = acceptedFinalDeliveryDeps();
+	const run = await artifactFixture.renderAllViews(args);
+	const authority = await technicalCameraAuthorityFromGlb({ bytes: await readFile(args.glbPath), cameras: args.cameras });
+	const palettes = Object.fromEntries(["warm", "neutral", "stone"].map((name) => [name, resolveMaterialPalette(`competition-${name}`)]));
+	await buildViewerBundle({
+		runDir: args.runDir,
+		config: {
+			schema_version: "arr.elevation3d.all-views-viewer.v1",
+			candidate_id: args.candidateId,
+			strategies: { hunyuan: { glb: "../enriched.glb" } },
+			cameras: { views: presentationCameraPresets(authority.cameras) },
+			all_views: {
+				selected_glb: { path: "../enriched.glb", sha256: sha256(await readFile(args.glbPath)) },
+				palettes,
+				validation: { accepted: true, codes: [] },
+				artifacts: [],
+			},
+		},
+	});
+	return run;
+}
+
+test("accepts transformed indexed GLB bounds with an unreferenced rendered POSITION vertex", async () => {
+	const item = await fixture();
+	const input = await loadCandidatePackage(item.datasetRoot, item.candidateId);
+	const expectedWorldPoints = [
+		[7, -3, 5],
+		[8, -1.2679491924311228, 5],
+		[6.133974596215562, -2.5, 5],
+		[6.401923788646684, 1.9641016151377544, 7],
+	];
+	input.mesh.vertices = expectedWorldPoints;
+	input.mesh.triangles = [[0, 1, 2]];
+	input.cameras.views.front.projection_axes = { depth: [1, 0, 0], horizontal: [0, 1, 0], vertical: [0, 0, 1] };
+	input.cameras.views.front.projected_bounds_m = [[-3, 5], [1.9641016151377544, 7]];
+	input.cameras.views.back.projection_axes = { depth: [-1, 0, 0], horizontal: [0, -1, 0], vertical: [0, 0, 1] };
+	input.cameras.views.back.projected_bounds_m = [[-1.9641016151377544, 5], [3, 7]];
+	input.cameras.views.right.projection_axes = { depth: [0, 1, 0], horizontal: [-1, 0, 0], vertical: [0, 0, 1] };
+	input.cameras.views.right.projected_bounds_m = [[-8, 5], [-6.133974596215562, 7]];
+	input.cameras.views.left.projection_axes = { depth: [0, -1, 0], horizontal: [1, 0, 0], vertical: [0, 0, 1] };
+	input.cameras.views.left.projected_bounds_m = [[6.133974596215562, 5], [8, 7]];
+	input.cameras.views.top.projected_bounds_m = [[6.133974596215562, -3], [8, 1.9641016151377544]];
+	const glbBytes = await transformedIndexedGlbBytes();
+	const artifactPath = join(item.outputRoot, "transformed-indexed", "enriched.glb");
+	await mkdir(dirname(artifactPath), { recursive: true });
+	await writeFile(artifactPath, glbBytes);
+	const artifact = { path: artifactPath, sha256: sha256(glbBytes) };
+	const authority = await technicalCameraAuthorityFromGlb({
+		bytes: glbBytes,
+		cameras: deriveDeliveryCameras(input),
+	});
+	assert.deepEqual(normalizeCameraValue(authority.geometry_bounds), normalizeCameraValue({
+		min: [6.133974596215562, -3, 5],
+		max: [8, 1.9641016151377544, 7],
+	}));
+
+	const delivery = await deliverSelectedAllViews({
+		runDir: join(item.outputRoot, "transformed-indexed"), candidateId: item.candidateId,
+		artifact, input, deps: { renderAllViews: renderBrowserVerifiableAllViews },
+	});
+	const browser = delivery.browser_verification;
+	assert.deepEqual(
+		normalizeCameraValue(browser.camera_building_bounds.axon),
+		normalizeCameraValue(await cameraBuildingBoundsFromGlb(glbBytes)),
+	);
+	for (const name of DELIVERY_VIEW_NAMES) {
+		assert.deepEqual(
+			normalizeCameraValue(browser.camera_building_bounds[name]),
+			normalizeCameraValue(authority.building_bounds),
+		);
+	}
+	const browserReportedCenter = browser.camera_building_bounds.axon.center;
+
+	await assert.rejects(() => deliverSelectedAllViews({
+		runDir: join(item.outputRoot, "transformed-indexed-mutated"), candidateId: item.candidateId,
+		artifact, input, deps: { renderAllViews: async (args: any) => {
+			const run = await renderBrowserVerifiableAllViews(args);
+			run.manifest.views.axon.camera.target = [...browserReportedCenter];
+			run.manifest.views.axon.camera.target[0] += 0.001;
+			return run;
+		} },
+	}), (error: any) => error?.code === "ALL_VIEWS_REJECTED");
+});
 
 test("delivers one normalized eight-view package and browser verification from an accepted GLB", async () => {
 	const item = await fixture();

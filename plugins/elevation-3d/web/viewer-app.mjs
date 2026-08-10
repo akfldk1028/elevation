@@ -28,13 +28,17 @@ if (!competition && allViews?.material_mode !== "embedded-pbr") {
 	const sun = new THREE.DirectionalLight(0xffffff, 2.5); sun.position.set(10, -10, 20); scene.add(sun);
 }
 
+function preciseObjectBounds(root) {
+	return new THREE.Box3().setFromObject(root, true);
+}
+
 function contentCenter() {
 	if (config.mesh?.vertices?.length) {
 		const box = new THREE.Box3();
 		for (const point of config.mesh.vertices) box.expandByPoint(new THREE.Vector3(...point));
 		return box.getCenter(new THREE.Vector3());
 	}
-	return new THREE.Box3().setFromObject(scene).getCenter(new THREE.Vector3());
+	return preciseObjectBounds(scene).getCenter(new THREE.Vector3());
 }
 
 function createLegacyCamera(name) {
@@ -63,7 +67,7 @@ function renderInteractiveAllViews(root, gltf = null) {
 	document.querySelector("[data-status]").hidden = true;
 	renderer.setSize(innerWidth, innerHeight, false);
 	renderer.setClearColor(0xfafaf7, 1);
-	const bounds = new THREE.Box3().setFromObject(root);
+	const bounds = preciseObjectBounds(root);
 	const center = bounds.getCenter(new THREE.Vector3());
 	const radius = Math.max(bounds.getSize(new THREE.Vector3()).length() * 0.75, 1);
 	const resolvedStyle = materialMode === "embedded-pbr" ? resolvePbrRenderStyle(allViews.render_style) : null;
@@ -708,7 +712,7 @@ function boxCorners(box) {
 
 function createCompetitionAxonCamera(root, definition, marginRatio) {
 	if (definition?.projection !== "perspective") throw new Error("competition axon camera projection must be perspective");
-	const box = new THREE.Box3().setFromObject(root, true);
+	const box = preciseObjectBounds(root);
 	if (box.isEmpty()) throw new Error("loaded GLB has no geometry");
 	const authority = deriveCompetitionAxonCameraAuthority({
 		definition, worldBounds: { min: box.min.toArray(), max: box.max.toArray() }, marginRatio,
