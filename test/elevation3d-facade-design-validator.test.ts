@@ -64,6 +64,22 @@ test("reports overlapping solid articulation and a corner-focused entrance", asy
 	assert.deepEqual(receipt.codes, ["PRIMITIVE_OVERLAP"]);
 });
 
+test("accepts a base-zone rhythm that shares the primary entrance segment", async (t) => {
+	const { context } = await createFacadeDesignFixture(t);
+	const program = createFacadeProgramForContext(context, {
+		bay_rules: [
+			{ id: "middle-aba", zone_id: "middle", pattern: ["narrow", "wide", "narrow"], repeat: 1 },
+			{ id: "base-ab", zone_id: "base", pattern: ["narrow", "wide"], repeat: 1 },
+		],
+	});
+	const resolved = resolveFacadeProgram(program, context);
+	const receipt = validateResolvedFacadeProgram({ program, context, resolved });
+
+	assert.equal(receipt.accepted, true);
+	assert.deepEqual(receipt.codes, []);
+	assert.equal(resolved.primitives.some((primitive: any) => primitive.kind === "window" && primitive.storey === 1), true);
+});
+
 test("rejects a program without the required base-middle-top hierarchy", async (t) => {
 	const { context } = await createFacadeDesignFixture(t);
 	const program = createFacadeProgramForContext(context, {

@@ -6,7 +6,10 @@ import {
 	readVerifiedResolvedFacadeAuthority,
 	resolveFacadeProgram,
 } from "../plugins/elevation-3d/lib/facade-agent/design/resolver.mjs";
-import { createFacadeDesignFixture } from "./helpers/facade-design-fixture.ts";
+import {
+	createFacadeDesignFixture,
+	createFacadeProgramForContext,
+} from "./helpers/facade-design-fixture.ts";
 
 function typedRejection(error: unknown) {
 	return error instanceof FacadeDesignResolverError && error.code === "FACADE_DESIGN_RESOLUTION_INVALID";
@@ -47,6 +50,47 @@ test("emits deterministic window families and articulation without crossing segm
 			assert.equal(primitive.local_bounds.u_min >= context.exclusions.edge_clearance_m, true);
 			assert.equal(primitive.local_bounds.u_max <= segment.length_m - context.exclusions.edge_clearance_m, true);
 		}
+	}
+});
+
+test("repeats the bay unit across the full usable width of each segment", async (t) => {
+	const { context, program } = await createFacadeDesignFixture(t);
+	const resolved = resolveFacadeProgram(program, context);
+	const fold = context.exclusions.fold_clearance_m;
+	const longest = context.facade_segments.reduce((left: any, right: any) => (right.length_m > left.length_m ? right : left));
+	const windows = resolved.primitives
+		.filter((primitive: any) => primitive.kind === "window" && primitive.segment_id === longest.segment_id)
+		.sort((left: any, right: any) => left.local_bounds.u_min - right.local_bounds.u_min);
+
+	assert.equal(windows.length, (program as any).bay_rules[0].pattern.length * 2);
+	assert.equal(windows[0].local_bounds.u_min, fold);
+	assert.equal(windows[windows.length - 1].local_bounds.u_max, longest.length_m - fold);
+});
+
+test("clears the primary entrance of overlapping ground-storey windows", async (t) => {
+	const { context } = await createFacadeDesignFixture(t);
+	const program = createFacadeProgramForContext(context, {
+		bay_rules: [
+			{ id: "middle-aba", zone_id: "middle", pattern: ["narrow", "wide", "narrow"], repeat: 1 },
+			{ id: "base-dense", zone_id: "base", pattern: ["narrow"], repeat: 1 },
+		],
+	});
+	const resolved = resolveFacadeProgram(program, context);
+	const gap = context.exclusions.edge_clearance_m;
+	const door = resolved.primitives.find((primitive: any) => primitive.kind === "door");
+	const entranceSegment = context.facade_segments.find((segment: any) => segment.segment_id === door.segment_id);
+	const twin = context.facade_segments.find((segment: any) => segment.segment_id !== door.segment_id
+		&& segment.length_m === entranceSegment.length_m);
+	const groundWindows = (segmentId: string) => resolved.primitives
+		.filter((primitive: any) => primitive.kind === "window" && primitive.storey === 1 && primitive.segment_id === segmentId);
+
+	assert.equal(groundWindows(door.segment_id).length < groundWindows(twin.segment_id).length, true);
+	for (const window of groundWindows(door.segment_id) as any[]) {
+		assert.equal(
+			window.local_bounds.u_max <= door.local_bounds.u_min - gap + 1e-8
+				|| window.local_bounds.u_min >= door.local_bounds.u_max + gap - 1e-8,
+			true,
+		);
 	}
 });
 

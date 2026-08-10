@@ -45,12 +45,14 @@ test("compiler publishes an immutable facade GLB without changing source authori
 	assert.ok(semanticKinds.includes("door"));
 	assert.ok(semanticKinds.includes("window"));
 	assert.ok(semanticKinds.includes("window-frame"));
-	const framedSources = new Set(semanticExtras.filter((extras) => extras.kind === "window-frame")
-		.map((extras) => `${extras.source_kind}:${extras.segment_id}`));
-	const expectedFramedSources = new Set(semanticExtras.filter((extras) => extras.kind === "door" || extras.kind === "window")
-		.map((extras) => `${extras.kind}:${extras.segment_id}`));
-	assert.deepEqual(framedSources, expectedFramedSources);
-	assert.equal(semanticKinds.filter((kind) => kind === "window-frame").length, expectedFramedSources.size * 2);
+	const openings = semanticExtras.filter((extras) => extras.kind === "door" || extras.kind === "window");
+	const frames = semanticExtras.filter((extras) => extras.kind === "window-frame");
+	assert.deepEqual(
+		new Set(frames.map((extras) => extras.design_primitive_index)),
+		new Set(openings.map((extras) => extras.design_primitive_index)),
+	);
+	assert.equal(frames.length, openings.length * 2);
+	assert.deepEqual(new Set(frames.map((extras) => extras.source_kind)), new Set(["door", "window"]));
 	assert.ok(compiled.output.detail_primitive_count > resolved.primitives.length);
 	assert.equal(document.getRoot().listTextures().length, 6);
 
