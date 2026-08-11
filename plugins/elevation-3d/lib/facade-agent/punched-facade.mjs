@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
 import { stableJson } from "../core.mjs";
+import { boundaryPolygons } from "./design/geometry/face-polygon.mjs";
+import { largestInscribedRectangle } from "./design/geometry/inscribed-rect.mjs";
 import {
 	PUNCHED_FACADE_MATERIALS, PUNCHED_FACADE_SURFACES, PUNCHED_FACADE_SYSTEM,
 	validatePunchedFacadeGrammar,
@@ -232,19 +234,22 @@ function massBackingCoverage(support, bounds) {
 		clipped = clipPolygon2d(clipped, 1, bounds.v0, true);
 		clipped = clipPolygon2d(clipped, 1, bounds.v1, false);
 		if (clipped.length < 3 || polygonArea2d(clipped) <= EPSILON) continue;
-		if (triangle.some(([u, v]) => u < bounds.u0 - EPSILON || u > bounds.u1 + EPSILON
-			|| v < bounds.v0 - EPSILON || v > bounds.v1 + EPSILON)) return { coveredArea: 0, targetArea };
-		const triangleKey = triangle.map(pointKey).sort().join("|");
+		// The facade plane may be a sub-rectangle of a larger face - a mass with a
+		// chamfer, notch or batter has no rectangular face to match exactly - so the
+		// tiling is checked on the clipped patches. Overlaps still fail through the
+		// duplicate and edge-closure checks, and every unmatched edge must still land
+		// on the rectangle boundary, so the plane remains fully backed by mass.
+		const triangleKey = clipped.map(pointKey).sort().join("|");
 		if (triangles.has(triangleKey)) return { coveredArea: 0, targetArea };
 		triangles.add(triangleKey);
-		const signedArea = polygonSignedArea2d(triangle);
+		const signedArea = polygonSignedArea2d(clipped);
 		const triangleWinding = Math.sign(signedArea);
 		if (winding && triangleWinding !== winding) return { coveredArea: 0, targetArea };
 		winding = triangleWinding;
 		coveredArea += Math.abs(signedArea);
-		for (let index = 0; index < 3; index++) {
-			const start = triangle[index];
-			const end = triangle[(index + 1) % 3];
+		for (let index = 0; index < clipped.length; index++) {
+			const start = clipped[index];
+			const end = clipped[(index + 1) % clipped.length];
 			const startKey = pointKey(start);
 			const endKey = pointKey(end);
 			const forward = startKey < endKey;
@@ -587,6 +592,49 @@ function roundedPoint(point) {
 	return point.map((value) => Number(value.toFixed(8)));
 }
 
+/** The point on a facade plane at drawing coordinates (u, z), derived from any face point. */
+function planePoint(reference, tangent, u, z) {
+	const offset = u - dot(reference, tangent);
+	return [reference[0] + tangent[0] * offset, reference[1] + tangent[1] * offset, z];
+}
+
+/**
+ * The placeable rectangle of one coplanar face patch.
+ *
+ * A mass face is not always a rectangle: chamfers, notches, batters and gable ends all
+ * produce something else. Rather than reject those, the patch is traced to its real
+ * outline and reduced to the largest rectangle that fits inside it, so every opening
+ * placed later still sits on mass. A face that is already rectangular returns its full
+ * extent, which keeps prismatic candidates byte-identical to the earlier pipeline.
+ */
+function usableFaceRectangle(mesh, indexes, tangent) {
+	const localIndex = new Map();
+	const points = [];
+	const triangles = indexes.map((index) => mesh.triangles[index].map((vertex) => {
+		if (!localIndex.has(vertex)) {
+			localIndex.set(vertex, points.length);
+			const point = mesh.vertices[vertex];
+			points.push([dot(point, tangent), point[2]]);
+		}
+		return localIndex.get(vertex);
+	}));
+	let rings;
+	try { rings = boundaryPolygons({ triangles, points }); }
+	catch (error) { throw new TypeError(`invalid facade topology: ${error.message}`); }
+	const rectangle = largestInscribedRectangle(rings[0].polygon);
+	if (!rectangle) return null;
+	const vertices = [...localIndex.keys()].map((vertex) => mesh.vertices[vertex]);
+	// Sliding along a tangent built from a rounded normal drifts by a few nanometres,
+	// which is enough to lose exact-MASS backing, so a rectangle corner that is a real
+	// face vertex uses that vertex verbatim.
+	const corner = (u, z) => vertices.find((point) => Math.abs(dot(point, tangent) - u) <= 1e-7
+		&& Math.abs(point[2] - z) <= 1e-7) ?? planePoint(vertices[0], tangent, u, z);
+	return {
+		u0: rectangle.u_min, u1: rectangle.u_max, z0: rectangle.z_min, z1: rectangle.z_max,
+		start: [...corner(rectangle.u_min, rectangle.z_min)], end: [...corner(rectangle.u_max, rectangle.z_min)],
+	};
+}
+
 function cornerId(point) {
 	return `facade-corner-${sha256(JSON.stringify(roundedPoint(point))).slice(0, 20)}`;
 }
@@ -647,13 +695,10 @@ export function deriveFacadeSegmentsFromMass({ mesh } = {}) {
 	for (const group of planeGroups.values()) for (const indexes of connectedTriangleGroups(mesh, group.indexes)) {
 		const normal = group.normal;
 		const tangent = [-normal[1], normal[0], 0];
-		const points = [...new Set(indexes.flatMap((index) => mesh.triangles[index]))].map((index) => mesh.vertices[index]);
-		const us = points.map((point) => dot(point, tangent));
-		const zs = points.map((point) => point[2]);
-		const u0 = Math.min(...us), u1 = Math.max(...us), z0 = Math.min(...zs), z1 = Math.max(...zs);
-		const start = points.find((point) => Math.abs(dot(point, tangent) - u0) <= 1e-7 && Math.abs(point[2] - z0) <= 1e-7);
-		const end = points.find((point) => Math.abs(dot(point, tangent) - u1) <= 1e-7 && Math.abs(point[2] - z0) <= 1e-7);
-		if (!start || !end || u1 - u0 <= EPSILON || z1 - z0 <= EPSILON) throw new TypeError("invalid facade topology: vertical segment is not rectangular");
+		const usable = usableFaceRectangle(mesh, indexes, tangent);
+		if (!usable) continue;
+		const { u0, u1, z0, z1, start, end } = usable;
+		if (u1 - u0 <= EPSILON || z1 - z0 <= EPSILON) throw new TypeError("invalid facade topology: vertical segment is degenerate");
 		const plane = { origin: [...start], normal: [...normal], extent_m: [u1 - u0, z1 - z0] };
 		const backing = validateMassBacking(mesh, plane, tangent, Array(mesh.triangles.length).fill(orientation));
 		const canonical = { normal: roundedPoint(normal), origin: roundedPoint(start), extent_m: roundedPoint(plane.extent_m) };
