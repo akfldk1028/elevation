@@ -124,6 +124,22 @@ test("rejects unsupported selectors and unbounded arrays", () => {
 	rejects(proposal({ design_rationale: Array.from({ length: 33 }, (_, index) => `reason-${index}`) }));
 });
 
+test("defaults a bay rule to every elevation and normalises an explicit selection", () => {
+	const everywhere = parseFacadeProgram(proposal(), { sourceAuthority });
+	assert.deepEqual(everywhere.bay_rules[0].views, ["front", "back", "left", "right"]);
+
+	const selected = parseFacadeProgram(proposal({
+		bay_rules: [{ ...proposal().bay_rules[0], views: ["left", "front"] }],
+	}), { sourceAuthority });
+	assert.deepEqual(selected.bay_rules[0].views, ["front", "left"], "views are stored in canonical order");
+});
+
+test("rejects an unsupported or duplicated elevation selection", () => {
+	rejects(proposal({ bay_rules: [{ ...proposal().bay_rules[0], views: ["street"] }] }));
+	rejects(proposal({ bay_rules: [{ ...proposal().bay_rules[0], views: ["front", "front"] }] }));
+	rejects(proposal({ bay_rules: [{ ...proposal().bay_rules[0], views: [] }] }));
+});
+
 test("exposes source authority only for the exact parsed program capability", () => {
 	const parsed = parseFacadeProgram(proposal(), { sourceAuthority });
 	assert.deepEqual(readVerifiedFacadeProgramAuthority(parsed), sourceAuthority);

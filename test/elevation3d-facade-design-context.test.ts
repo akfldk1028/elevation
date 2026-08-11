@@ -39,6 +39,10 @@ const floorGuides = { floor_guides_m: [0, 3.3, 6.6] };
 const cameras = {
 	views: {
 		axon: { projection_axes: { depth: [0.5965499863, -0.5965499863, 0.5368949876] } },
+		front: { projection_axes: { depth: [0, -1, 0] } },
+		back: { projection_axes: { depth: [0, 1, 0] } },
+		left: { projection_axes: { depth: [-1, 0, 0] } },
+		right: { projection_axes: { depth: [1, 0, 0] } },
 	},
 };
 const sourceBytes = Buffer.from("facade-design-source-fixture");

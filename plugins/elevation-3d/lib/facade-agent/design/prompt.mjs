@@ -31,7 +31,14 @@ export const FACADE_PROGRAM_V2_SCHEMA = Object.freeze({
 		} },
 		bay_rules: { type: "array", minItems: 0, maxItems: 32, items: {
 			type: "object", additionalProperties: false, required: ["id", "zone_id", "pattern", "repeat"],
-			properties: { id, zone_id: id, pattern: { type: "array", minItems: 1, maxItems: 16, items: id }, repeat: { type: "integer", minimum: 1, maximum: 32 } },
+			properties: {
+				id, zone_id: id, pattern: { type: "array", minItems: 1, maxItems: 16, items: id },
+				repeat: { type: "integer", minimum: 1, maximum: 32 },
+				views: {
+					type: "array", minItems: 1, maxItems: 4, items: selector(["front", "back", "left", "right"]),
+					description: "Elevations this rhythm applies to. Omit to apply it to every elevation.",
+				},
+			},
 		} },
 		articulation: { type: "array", maxItems: 32, items: {
 			type: "object", additionalProperties: false, required: ["id", "kind", "segment_selector", "width_m", "depth_m", "storeys", "material_id"],
@@ -54,6 +61,7 @@ export function buildFacadeDesignPrompt({ context, correctionCodes = [], attempt
 	const boundedContext = {
 		source: context.source,
 		facade_segments: context.facade_segments,
+		facade_faces: context.facade_faces,
 		storeys: context.storeys,
 		existing_openings: context.existing_openings,
 		exclusions: context.exclusions,
@@ -62,6 +70,7 @@ export function buildFacadeDesignPrompt({ context, correctionCodes = [], attempt
 	const prompt = [
 		"You are the architectural facade design director. Return exactly one FacadeProgramV2 JSON object.",
 		"Design a legible building facade, not a repetitive window grid: include one clear ground entrance, base-middle-top hierarchy, reusable window families, and controlled articulation.",
+		"facade_faces groups the segments into the elevations a drawing shows; give the elevations different rhythms with bay_rules.views instead of repeating one rhythm everywhere.",
 		"Express semantic intent only. Never invent segment IDs, coordinates, vertices, cameras, floors, roof geometry, or output paths; deterministic code owns all placement.",
 		`Attempt: ${attempt}.`,
 		`Technical context: ${stableJson(boundedContext)}`,
