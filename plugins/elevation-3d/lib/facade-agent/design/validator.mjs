@@ -55,8 +55,19 @@ export function validateResolvedFacadeProgram({ program, context, resolved } = {
 			codes.add(code);
 			if (measurements.length < 64) measurements.push({ code, primitive_index: primitiveIndex, actual: Number(actual.toFixed(8)), limit: Number(limit.toFixed(8)) });
 		};
-		const zoneIds = new Set(program.zones.map((zone) => zone.id));
-		if (!["base", "middle", "top"].every((id) => zoneIds.has(id))) codes.add("HIERARCHY_MISSING");
+		// v2 declares base/middle/top as zones; v3 has no zone list, so the same
+		// requirement is read off the resolution instead - the lowest and the highest
+		// storey must both carry an opening.
+		if (program.zones) {
+			const zoneIds = new Set(program.zones.map((zone) => zone.id));
+			if (!["base", "middle", "top"].every((id) => zoneIds.has(id))) codes.add("HIERARCHY_MISSING");
+		} else {
+			const open = new Set(resolved.primitives
+				.filter((primitive) => primitive.kind === "door" || primitive.kind === "window")
+				.map((primitive) => primitive.storey));
+			const numbers = context.storeys.map((storey) => storey.storey);
+			if (!open.has(numbers[0]) || !open.has(numbers[numbers.length - 1])) codes.add("HIERARCHY_MISSING");
+		}
 
 		const segments = new Map(context.facade_segments.map((segment) => [segment.segment_id, segment]));
 		const storeys = new Map(context.storeys.map((storey) => [storey.storey, storey]));

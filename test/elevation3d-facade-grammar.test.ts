@@ -1,239 +1,140 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
-import { after, test } from "node:test";
+import test from "node:test";
+
 import {
-	correctGrammar,
-	normalizeFacadeGrammar,
-	resolveApprovedDesign,
-} from "../plugins/elevation-3d/lib/facade-grammar.mjs";
+	FacadeGrammarError,
+	parseFacadeGrammar,
+	predicateHolds,
+} from "../plugins/elevation-3d/lib/facade-agent/design/grammar/contract.mjs";
+import { deriveFacadePrimitives } from "../plugins/elevation-3d/lib/facade-agent/design/grammar/derive.mjs";
 
-const temporaryRoots: string[] = [];
+const STOREYS = [1, 2, 3, 4, 5].map((storey) => ({ storey, z_min: (storey - 1) * 3.3, z_max: storey * 3.3 }));
+const SEGMENT = {
+	segment_id: "facade-segment-test", face_view: "front", view: "front",
+	length_m: 2.2060695766, local_z: [0, 16.5],
+	placeable: { u_min: 0.3, u_max: 1.9060695766 },
+};
 
-after(async () => {
-	await Promise.all(temporaryRoots.map((root) => rm(root, { recursive: true, force: true })));
-});
-
-function sha256(data: Uint8Array) {
-	return createHash("sha256").update(data).digest("hex");
+function grammar(rules: Record<string, unknown>, start = "Facade") {
+	return parseFacadeGrammar({
+		schema_version: "arr.elevation3d.facade-grammar.v3",
+		concept_id: "test-grammar", start, rules,
+	});
 }
 
-test("resolves the candidate-approved image and verifies its recorded SHA-256", async () => {
-	const design = await resolveApprovedDesign({
-		candidateId: "creative-013",
-		memoryRoot: resolve("memory/elevation-3d"),
+const WALL = [{ terminal: "wall" }];
+const GLASS = [{ terminal: "glass", inset_m: 0.04 }];
+
+test("repeats a floating part to fit the scope and adapts its size", () => {
+	const parsed = grammar({
+		Facade: [{ split: { axis: "z", parts: [{ size: "~3.3", symbol: "Floor", repeat: true }] } }],
+		Floor: [{ split: { axis: "u", parts: [{ size: "~1", symbol: "Wall" }, { size: "0.6", symbol: "Glass" }, { size: "~1", symbol: "Wall" }] } }],
+		Wall: WALL, Glass: GLASS,
 	});
-	assert.match(design.image_path, /approved-detailed-isometric-v1\.png$/);
-	assert.equal(design.image_sha256, sha256(await readFile(design.image_path)));
-});
+	const out = deriveFacadePrimitives({ grammar: parsed, segment: SEGMENT, storeys: STOREYS });
 
-test("rejects an explicit image whose hash differs from approved metadata", async () => {
-	const memoryRoot = await mkdtemp(join(tmpdir(), "elevation-3d-approved-design-"));
-	temporaryRoots.push(memoryRoot);
-	const assetRoot = join(memoryRoot, "assets", "creative-013");
-	await mkdir(assetRoot, { recursive: true });
-	const approvedImage = join(assetRoot, "approved.png");
-	const changedImage = join(memoryRoot, "changed.png");
-	const approvedBytes = Buffer.from("approved image");
-	await writeFile(approvedImage, approvedBytes);
-	await writeFile(changedImage, "changed image");
-	await writeFile(join(assetRoot, "approved-design-v1.json"), JSON.stringify({
-		candidate_id: "creative-013",
-		image_path: "approved.png",
-		image_sha256: sha256(approvedBytes),
-		facade_grammar: {},
-	}));
-
-	await assert.rejects(
-		() => resolveApprovedDesign({ candidateId: "creative-013", approvedImage: changedImage, memoryRoot }),
-		/approved image hash mismatch/,
-	);
-});
-
-test("normalizes approved grammar against MASS floor guides and facade extents", () => {
-	const approvedDesign = {
-		facade_grammar: {
-			material_palette: { solid: "concrete", transparent: "glass", accent: "bronze" },
-			bay_width_m: 0.5,
-			frame_depth_m: 0.4,
-			mullion_depth_m: 0.01,
-			glazing_recess_m: 0.25,
-			parapet_height_m: 0.1,
-		},
-	};
-	const grammar = normalizeFacadeGrammar({
-		approvedDesign,
-		floorGuides: { floor_guides_m: [0, 3.3, 6.6, 9.9] },
-		facadePlanes: {
-			facade_planes: [
-				{ view: "front", extent_m: [24.361488, 9.9] },
-				{ view: "right", extent_m: [12.234058, 9.9] },
-			],
-		},
-	});
-
-	assert.deepEqual(grammar.floor_elevations_m, [0, 3.3, 6.6, 9.9]);
-	assert.deepEqual(grammar.facade_lengths_m, { front: 24.361488, right: 12.234058 });
-	assert.deepEqual(grammar.material_palette, { solid: "concrete", transparent: "glass", accent: "bronze" });
-	assert.equal(grammar.bay_width_m, 0.9);
-	assert.equal(grammar.frame_depth_m, 0.25);
-	assert.equal(grammar.mullion_depth_m, 0.03);
-	assert.equal(grammar.glazing_recess_m, 0.2);
-	assert.equal(grammar.parapet_height_m, 0.15);
-	assert.equal(Object.hasOwn(grammar, "window_width_m"), false);
-});
-
-const grammar = {
-	bay_width_m: 1.5,
-	frame_depth_m: 0.18,
-	mullion_depth_m: 0.08,
-	glazing_recess_m: 0.12,
-	parapet_height_m: 0.35,
-};
-
-test("halves detail depths after an outward-bounds failure", () => {
-	const corrected = correctGrammar(grammar, ["DETAIL_BOUNDS_EXCEEDED"]);
-	assert.equal(corrected.frame_depth_m, grammar.frame_depth_m / 2);
-	assert.equal(corrected.mullion_depth_m, grammar.mullion_depth_m / 2);
-});
-
-test("sets deterministic bay width after a primitive-budget failure", () => {
-	for (const bayWidth of [1, 1.5, 2.5]) {
-		assert.equal(
-			correctGrammar({ ...grammar, bay_width_m: bayWidth }, ["PRIMITIVE_BUDGET_EXCEEDED"]).bay_width_m,
-			2.25,
-		);
+	assert.equal(out.length, 5, "16.5 m of scope divided by a 3.3 m nominal floor");
+	assert.deepEqual(out.map((primitive: any) => primitive.storey), [1, 2, 3, 4, 5]);
+	for (const primitive of out as any[]) {
+		assert.equal(Math.abs((primitive.local_bounds.u_max - primitive.local_bounds.u_min) - (0.6 - 0.08)) < 1e-6, true);
 	}
 });
 
-test("keeps repeated corrections within approved grammar limits", () => {
-	const corrected = correctGrammar(
-		{ ...grammar, bay_width_m: 2.5, frame_depth_m: 0.06, mullion_depth_m: 0.04 },
-		["DETAIL_BOUNDS_EXCEEDED", "PRIMITIVE_BUDGET_EXCEEDED"],
+test("branches on the index a repeat gives its children", () => {
+	const parsed = grammar({
+		Facade: [{ split: { axis: "z", parts: [{ size: "~3.3", symbol: "Floor", repeat: true }] } }],
+		Floor: [
+			{ when: "index % 2 == 0", split: { axis: "u", parts: [{ size: "~1", symbol: "Wall" }, { size: "0.5", symbol: "Glass" }, { size: "~1", symbol: "Wall" }] } },
+			{ split: { axis: "u", parts: [{ size: "~1", symbol: "Wall" }, { size: "1.2", symbol: "Glass" }, { size: "~1", symbol: "Wall" }] } },
+		],
+		Wall: WALL, Glass: GLASS,
+	});
+	const widths = deriveFacadePrimitives({ grammar: parsed, segment: SEGMENT, storeys: STOREYS })
+		.map((primitive: any) => Number((primitive.local_bounds.u_max - primitive.local_bounds.u_min).toFixed(3)));
+
+	assert.deepEqual(widths, [0.42, 1.12, 0.42, 1.12, 0.42], "even floors narrow, odd floors wide");
+});
+
+test("selects an alternative by elevation", () => {
+	const parsed = grammar({
+		Facade: [
+			{ when: "face_view == back", split: { axis: "u", parts: [{ size: "~1", symbol: "Wall" }] } },
+			{ split: { axis: "u", parts: [{ size: "~1", symbol: "Wall" }, { size: "0.5", symbol: "Glass" }, { size: "~1", symbol: "Wall" }] } },
+		],
+		Wall: WALL, Glass: GLASS,
+	});
+
+	assert.equal(deriveFacadePrimitives({ grammar: parsed, segment: SEGMENT, storeys: STOREYS }).length, 1);
+	assert.equal(
+		deriveFacadePrimitives({ grammar: parsed, segment: { ...SEGMENT, face_view: "back" }, storeys: STOREYS }).length,
+		0,
 	);
-	assert.equal(corrected.bay_width_m, 2.25);
-	assert.equal(corrected.frame_depth_m, 0.05);
-	assert.equal(corrected.mullion_depth_m, 0.03);
 });
 
-const punchedGrammar = {
-	system: "brick-punched-window-v1",
-	surfaces: ["front", "right", "back", "left"],
-	bay_width_m: 2.4,
-	window_width_m: 1.2,
-	window_height_m: 1.65,
-	sill_height_m: 0.85,
-	reveal_depth_m: 0.22,
-	frame_width_m: 0.06,
-	lintel_height_m: 0.18,
-	sill_depth_m: 0.08,
-	cladding_depth_m: 0.12,
-	brick_module_m: [0.215, 0.065],
-	corner_datum_m: 0,
-	confidence: 0.92,
-	unresolved_surfaces: [],
-};
-
-const punchedFloorGuides = { floor_guides_m: [0, 3.3, 6.6, 9.9] };
-const punchedFacadePlanes = {
-	facade_planes: [
-		{ view: "front", extent_m: [24.361488, 9.9] },
-		{ view: "right", extent_m: [12.234058, 9.9] },
-		{ view: "back", extent_m: [24.361488, 9.9] },
-		{ view: "left", extent_m: [12.234058, 9.9] },
-	],
-};
-
-test("normalizes the typed opaque brick punched-window grammar", () => {
-	const normalized = normalizeFacadeGrammar({
-		approvedDesign: { facade_grammar: punchedGrammar },
-		floorGuides: punchedFloorGuides,
-		facadePlanes: punchedFacadePlanes,
+test("keeps every derived opening inside the placeable rectangle", () => {
+	const parsed = grammar({
+		Facade: [{ split: { axis: "z", parts: [{ size: "~2", symbol: "Floor", repeat: true }] } }],
+		Floor: [{ split: { axis: "u", parts: [{ size: "0.1", symbol: "Wall" }, { size: "~1", symbol: "Glass" }, { size: "0.1", symbol: "Wall" }] } }],
+		Wall: WALL, Glass: GLASS,
 	});
-	assert.equal(normalized.system, "brick-punched-window-v1");
-	assert.equal(normalized.wall_opacity, "opaque");
-	assert.equal(normalized.curtain_wall_allowed, false);
-	assert.deepEqual(normalized.materials, ["brick", "precast", "window-frame", "glass"]);
-	assert.deepEqual(normalized.facade_lengths_m, { front: 24.361488, right: 12.234058, back: 24.361488, left: 12.234058 });
-});
-
-test("fails closed when a typed grammar leaves any canonical facade unresolved", () => {
-	assert.throws(() => normalizeFacadeGrammar({
-		approvedDesign: { facade_grammar: { ...punchedGrammar, unresolved_surfaces: ["back"] } },
-		floorGuides: punchedFloorGuides,
-		facadePlanes: punchedFacadePlanes,
-	}), /unresolved facade/i);
-});
-
-test("applies only allowlisted typed-grammar corrections", () => {
-	const typed = normalizeFacadeGrammar({
-		approvedDesign: { facade_grammar: punchedGrammar },
-		floorGuides: punchedFloorGuides,
-		facadePlanes: punchedFacadePlanes,
-	});
-	assert.equal(correctGrammar(typed, ["WINDOW_CROSSES_FLOOR_BAND"]).window_height_m < typed.window_height_m, true);
-	assert.equal(correctGrammar(typed, ["DETAIL_BOUNDS_EXCEEDED"]).cladding_depth_m, 0.09);
-	assert.equal(correctGrammar(typed, ["DETAIL_BOUNDS_EXCEEDED"]).reveal_depth_m, 0.165);
-	assert.equal(correctGrammar({ ...typed, corner_datum_m: 0.1 }, ["CORNER_DATUM_MISMATCH"]).corner_datum_m, 0);
-	assert.equal(correctGrammar(typed, ["PRIMITIVE_BUDGET_EXCEEDED"]).bay_width_m, 3);
-	assert.throws(() => correctGrammar(typed, ["CHANGE_MASSING"]), /unrecognized grammar failure code/i);
-});
-
-test("validates typed grammar before and after every correction", () => {
-	const typed = normalizeFacadeGrammar({
-		approvedDesign: { facade_grammar: punchedGrammar },
-		floorGuides: punchedFloorGuides,
-		facadePlanes: punchedFacadePlanes,
-	});
-	for (const malformed of [
-		{ ...typed, raw_vertices: [[0, 0, 0]] },
-		{ ...typed, materials: ["brick", "precast", "window-frame", "curtain-wall"] },
-		{ ...typed, unresolved_surfaces: ["back"] },
-		{ ...typed, reveal_depth_m: Number.NaN },
-		{ ...typed, bay_width_m: 1.2, window_width_m: 1.2, frame_width_m: 0.08 },
-		{ ...typed, floor_elevations_m: [0, 2.4], sill_height_m: 0.85, window_height_m: 1.65, lintel_height_m: 0.18 },
-	]) {
-		assert.throws(() => correctGrammar(malformed, ["DETAIL_BOUNDS_EXCEEDED"]), /grammar|facade|window|floor|unknown|range|material/i);
+	for (const primitive of deriveFacadePrimitives({ grammar: parsed, segment: SEGMENT, storeys: STOREYS }) as any[]) {
+		assert.equal(primitive.local_bounds.u_min >= SEGMENT.placeable.u_min - 1e-9, true);
+		assert.equal(primitive.local_bounds.u_max <= SEGMENT.placeable.u_max + 1e-9, true);
+		assert.equal(primitive.local_bounds.z_min >= SEGMENT.local_z[0] - 1e-9, true);
+		assert.equal(primitive.local_bounds.z_max <= SEGMENT.local_z[1] + 1e-9, true);
 	}
-	const corrected = correctGrammar(typed, ["WINDOW_CROSSES_FLOOR_BAND", "DETAIL_BOUNDS_EXCEEDED"]);
-	assert.equal(corrected.system, "brick-punched-window-v1");
-	assert.equal(corrected.window_height_m < typed.window_height_m, true);
-	assert.equal(corrected.reveal_depth_m < typed.reveal_depth_m, true);
-	assert.deepEqual(corrected.floor_elevations_m, typed.floor_elevations_m);
-	assert.equal(corrected.curtain_wall_allowed, false);
-	const narrowFacade = {
-		...typed,
-		bay_width_m: 0.9,
-		window_width_m: 0.6,
-		frame_width_m: 0.03,
-		facade_lengths_m: { front: 1, right: 1, back: 1, left: 1 },
-	};
-	assert.throws(() => correctGrammar(narrowFacade, ["PRIMITIVE_BUDGET_EXCEEDED"]), /bay.*facade|facade.*bay/i);
 });
 
-test("requires authoritative floor and facade feasibility for direct typed corrections", () => {
-	const typed = normalizeFacadeGrammar({
-		approvedDesign: { facade_grammar: punchedGrammar },
-		floorGuides: punchedFloorGuides,
-		facadePlanes: punchedFacadePlanes,
+test("resolves the three size forms against the scope", () => {
+	const parsed = grammar({
+		Facade: [{ split: { axis: "u", parts: [
+			{ size: "0.4", symbol: "Glass" }, { size: "'0.25", symbol: "Glass" }, { size: "~1", symbol: "Glass" },
+		] } }],
+		Glass: [{ terminal: "glass" }],
 	});
-	const { floor_elevations_m: _floors, facade_lengths_m: _lengths, ...withoutAuthority } = typed;
-	assert.throws(() => correctGrammar(withoutAuthority, ["DETAIL_BOUNDS_EXCEEDED"]), /authoritative.*floor|floor.*authority/i);
-	assert.throws(() => correctGrammar({ ...typed, facade_lengths_m: undefined }, ["DETAIL_BOUNDS_EXCEEDED"]), /facade.*authority|authoritative.*facade/i);
-	assert.throws(() => correctGrammar({
-		...typed,
-		sill_height_m: 0.85,
-		window_height_m: 2.3,
-		lintel_height_m: 0.25,
-	}, ["DETAIL_BOUNDS_EXCEEDED"]), /floor band/i);
-	assert.throws(() => correctGrammar({
-		...typed,
-		bay_width_m: 2.4,
-		facade_lengths_m: { front: 2, right: 2, back: 2, left: 2 },
-	}, ["DETAIL_BOUNDS_EXCEEDED"]), /bay.*facade|facade.*bay/i);
-	const corrected = correctGrammar(typed, ["DETAIL_BOUNDS_EXCEEDED"]);
-	assert.deepEqual(corrected.floor_elevations_m, typed.floor_elevations_m);
-	assert.deepEqual(corrected.facade_lengths_m, typed.facade_lengths_m);
+	const [absolute, relative, floating] = deriveFacadePrimitives({ grammar: parsed, segment: SEGMENT, storeys: STOREYS })
+		.map((primitive: any) => primitive.local_bounds.u_max - primitive.local_bounds.u_min);
+	const span = SEGMENT.placeable.u_max - SEGMENT.placeable.u_min;
+
+	assert.equal(Math.abs(absolute - 0.4) < 1e-6, true);
+	assert.equal(Math.abs(relative - span * 0.25) < 1e-6, true);
+	assert.equal(Math.abs(floating - (span - 0.4 - span * 0.25)) < 1e-6, true);
+});
+
+test("rejects grammars that reach outside the closed language", () => {
+	const rejects = (rules: Record<string, unknown>, start = "Facade") =>
+		assert.throws(() => grammar(rules, start), (error: unknown) => error instanceof FacadeGrammarError);
+
+	rejects({ Facade: [{ split: { axis: "y", parts: [{ size: "1", symbol: "Wall" }] } }], Wall: WALL });
+	rejects({ Facade: [{ split: { axis: "u", parts: [{ size: "1", symbol: "Missing" }] } }] });
+	rejects({ Facade: [{ terminal: "balcony" }] });
+	rejects({ Facade: [{ when: "process.exit(1)", terminal: "wall" }] });
+	rejects({ Facade: [{ when: "index > 2", terminal: "wall" }] });
+	rejects({ Facade: [{ split: { axis: "u", parts: [
+		{ size: "~1", symbol: "Wall", repeat: true }, { size: "~1", symbol: "Wall", repeat: true },
+	] } }], Wall: WALL });
+	rejects({ Facade: [{ split: { axis: "u", parts: [
+		{ size: "~1", symbol: "Wall", repeat: true }, { size: "~1", symbol: "Wall" },
+	] } }], Wall: WALL });
+	rejects({ Facade: [{ split: { axis: "u", parts: [{ size: "1", symbol: "Wall" }] } }] }, "Missing");
+});
+
+test("reads a predicate against the scope it is given", () => {
+	const parsed = grammar({ Facade: [{ when: "index % 2 == 1 && face_view == front", terminal: "wall" }] });
+	const predicate = (parsed.rules as any).Facade[0].when;
+
+	assert.equal(predicateHolds(predicate, { index: 1, face_view: "front", storey: 1, total: 4 }), true);
+	assert.equal(predicateHolds(predicate, { index: 2, face_view: "front", storey: 1, total: 4 }), false);
+	assert.equal(predicateHolds(predicate, { index: 1, face_view: "back", storey: 1, total: 4 }), false);
+	assert.equal(predicateHolds(null, { index: 9, face_view: "left", storey: 3, total: 4 }), true);
+});
+
+test("stops a grammar that recurses without shrinking", () => {
+	const parsed = grammar({
+		Facade: [{ split: { axis: "u", parts: [{ size: "'1", symbol: "Facade" }] } }],
+	});
+	assert.throws(
+		() => deriveFacadePrimitives({ grammar: parsed, segment: SEGMENT, storeys: STOREYS }),
+		(error: unknown) => error instanceof FacadeGrammarError,
+	);
 });

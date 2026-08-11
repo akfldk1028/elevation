@@ -1,3 +1,5 @@
+import { parseFacadeGrammar } from "./grammar/contract.mjs";
+
 export class FacadeDesignContractError extends Error {
 	constructor(code, message) {
 		super(message);
@@ -136,6 +138,38 @@ function deepFreeze(value) {
 	return Object.freeze(value);
 }
 
+function parseEntrance(value) {
+	const fields = record(value, "entrance", ENTRANCE_KEYS);
+	return {
+		segment_selector: enumeration(fields.segment_selector, "entrance.segment_selector", new Set(["primary_visible_ground_segment"])),
+		preferred_bay: enumeration(fields.preferred_bay, "entrance.preferred_bay", new Set(["central_or_corner_focus", "central_focus", "corner_focus"])),
+		door_family: id(fields.door_family, "entrance.door_family"),
+		width_m: finite(fields.width_m, "entrance.width_m", 0.8, 6),
+		height_m: finite(fields.height_m, "entrance.height_m", 1.8, 6),
+		recess_m: finite(fields.recess_m, "entrance.recess_m", 0, 1.5),
+	};
+}
+
+/**
+ * Parse whichever facade design language the model answered in.
+ *
+ * v2 is the flat bay-rule record; v3 is the split grammar. Both come back carrying
+ * the same verified source authority, so everything downstream - resolution,
+ * validation, compilation, scoring - stays version-agnostic.
+ */
+export function parseFacadeDesign(input, options = {}) {
+	if (input?.schema_version !== "arr.elevation3d.facade-grammar.v3") return parseFacadeProgram(input, options);
+	const optionFields = record(options, "Facade design options", new Set(["sourceAuthority"]));
+	const source = parseSourceAuthority(optionFields.sourceAuthority);
+	const { entrance: rawEntrance, ...rest } = input && typeof input === "object" ? input : {};
+	let grammar;
+	try { grammar = parseFacadeGrammar(rest); }
+	catch (error) { fail(`facade grammar is invalid: ${error.message}`); }
+	const program = deepFreeze({ ...grammar, entrance: parseEntrance(rawEntrance), source });
+	verifiedProgramAuthorities.set(program, Object.freeze({ ...source }));
+	return program;
+}
+
 export function parseFacadeProgram(input, options = {}) {
 	const optionFields = record(options, "Facade program options", new Set(["sourceAuthority"]));
 	const source = parseSourceAuthority(optionFields.sourceAuthority);
@@ -143,15 +177,7 @@ export function parseFacadeProgram(input, options = {}) {
 	if (fields.schema_version !== "arr.elevation3d.facade-program.v2") fail("schema_version is unsupported");
 	const conceptId = id(fields.concept_id, "concept_id");
 
-	const entranceFields = record(fields.entrance, "entrance", ENTRANCE_KEYS);
-	const entrance = {
-		segment_selector: enumeration(entranceFields.segment_selector, "entrance.segment_selector", new Set(["primary_visible_ground_segment"])),
-		preferred_bay: enumeration(entranceFields.preferred_bay, "entrance.preferred_bay", new Set(["central_or_corner_focus", "central_focus", "corner_focus"])),
-		door_family: id(entranceFields.door_family, "entrance.door_family"),
-		width_m: finite(entranceFields.width_m, "entrance.width_m", 0.8, 6),
-		height_m: finite(entranceFields.height_m, "entrance.height_m", 1.8, 6),
-		recess_m: finite(entranceFields.recess_m, "entrance.recess_m", 0, 1.5),
-	};
+	const entrance = parseEntrance(fields.entrance);
 
 	const zones = arrayValues(fields.zones, "zones", 3, 16).map((value, index) => {
 		const zone = record(value, `zones[${index}]`, ZONE_KEYS);
