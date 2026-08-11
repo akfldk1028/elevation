@@ -3,7 +3,7 @@ import { join, resolve } from "node:path";
 import { sha256, stableJson } from "../../core.mjs";
 import { atomicWrite, prepareSafeDirectory, safeRead } from "../path-safety.mjs";
 import { createFacadeGrammarRequest } from "../providers/grammar/contract.mjs";
-import { parseFacadeProgram } from "./contract.mjs";
+import { parseFacadeDesign } from "./contract.mjs";
 import { readVerifiedFacadeDesignContextAuthority } from "./context.mjs";
 import { buildFacadeDesignPrompt, FACADE_PROGRAM_V2_SCHEMA } from "./prompt.mjs";
 import { resolveFacadeProgram } from "./resolver.mjs";
@@ -151,7 +151,7 @@ export async function runFacadeDesignAgent({ runDir, context, provider, ledger, 
 		let resolved;
 		let validation;
 		try {
-			program = parseFacadeProgram(JSON.parse(bytes.toString("utf8")), { sourceAuthority: authority });
+			program = parseFacadeDesign(JSON.parse(bytes.toString("utf8")), { sourceAuthority: authority });
 			resolved = resolveFacadeProgram(program, context);
 			validation = validateResolvedFacadeProgram({ program, context, resolved });
 			correctionCodes = validation.codes;

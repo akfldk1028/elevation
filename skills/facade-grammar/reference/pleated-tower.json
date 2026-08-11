@@ -1,0 +1,377 @@
+{
+  "entrance": {
+    "segment_selector": "primary_visible_ground_segment",
+    "preferred_bay": "central_focus",
+    "door_family": "recessed-glazed-portal",
+    "width_m": 1.5,
+    "height_m": 3,
+    "recess_m": 0.3
+  },
+  "schema_version": "arr.elevation3d.facade-grammar.v3",
+  "concept_id": "creative-020-pleated-tower-v1",
+  "start": "Facade",
+  "rules": {
+    "Facade": [
+      {
+        "split": {
+          "axis": "u",
+          "parts": [
+            {
+              "size": "0.11",
+              "symbol": "Fold"
+            },
+            {
+              "size": "~1",
+              "symbol": "Body"
+            }
+          ]
+        }
+      }
+    ],
+    "Fold": [
+      {
+        "terminal": "pilaster",
+        "depth_m": 0.09
+      }
+    ],
+    "Body": [
+      {
+        "when": "face_view == front",
+        "split": {
+          "axis": "z",
+          "parts": [
+            {
+              "size": "3.3",
+              "symbol": "Lobby"
+            },
+            {
+              "size": "~3.3",
+              "symbol": "Upper",
+              "repeat": true
+            },
+            {
+              "size": "3.3",
+              "symbol": "Crown"
+            }
+          ]
+        }
+      },
+      {
+        "when": "face_view == back",
+        "split": {
+          "axis": "z",
+          "parts": [
+            {
+              "size": "3.3",
+              "symbol": "Base"
+            },
+            {
+              "size": "~3.3",
+              "symbol": "Service",
+              "repeat": true
+            },
+            {
+              "size": "3.3",
+              "symbol": "Base"
+            }
+          ]
+        }
+      },
+      {
+        "split": {
+          "axis": "z",
+          "parts": [
+            {
+              "size": "3.3",
+              "symbol": "Base"
+            },
+            {
+              "size": "~3.3",
+              "symbol": "Flank",
+              "repeat": true
+            },
+            {
+              "size": "3.3",
+              "symbol": "Crown"
+            }
+          ]
+        }
+      }
+    ],
+    "Lobby": [
+      {
+        "split": {
+          "axis": "z",
+          "parts": [
+            {
+              "size": "0.2",
+              "symbol": "Wall"
+            },
+            {
+              "size": "~1",
+              "symbol": "WideOpening"
+            },
+            {
+              "size": "0.35",
+              "symbol": "Wall"
+            }
+          ]
+        }
+      }
+    ],
+    "Upper": [
+      {
+        "when": "index % 2 == 0",
+        "split": {
+          "axis": "u",
+          "parts": [
+            {
+              "size": "~1",
+              "symbol": "Wall"
+            },
+            {
+              "size": "0.6",
+              "symbol": "TallSlot"
+            },
+            {
+              "size": "0.28",
+              "symbol": "Wall"
+            },
+            {
+              "size": "0.6",
+              "symbol": "TallSlot"
+            },
+            {
+              "size": "~1",
+              "symbol": "Wall"
+            }
+          ]
+        }
+      },
+      {
+        "split": {
+          "axis": "u",
+          "parts": [
+            {
+              "size": "0.3",
+              "symbol": "Wall"
+            },
+            {
+              "size": "~1",
+              "symbol": "RibbonBand"
+            },
+            {
+              "size": "0.3",
+              "symbol": "Wall"
+            }
+          ]
+        }
+      }
+    ],
+    "Flank": [
+      {
+        "when": "index % 3 == 0",
+        "split": {
+          "axis": "u",
+          "parts": [
+            {
+              "size": "~1",
+              "symbol": "Wall"
+            },
+            {
+              "size": "0.45",
+              "symbol": "TallSlot"
+            },
+            {
+              "size": "~1",
+              "symbol": "Wall"
+            }
+          ]
+        }
+      },
+      {
+        "split": {
+          "axis": "u",
+          "parts": [
+            {
+              "size": "~1",
+              "symbol": "Wall"
+            },
+            {
+              "size": "1.0",
+              "symbol": "SquareOpening"
+            },
+            {
+              "size": "~1",
+              "symbol": "Wall"
+            }
+          ]
+        }
+      }
+    ],
+    "Service": [
+      {
+        "split": {
+          "axis": "u",
+          "parts": [
+            {
+              "size": "~1",
+              "symbol": "Wall"
+            },
+            {
+              "size": "0.38",
+              "symbol": "TallSlot"
+            },
+            {
+              "size": "~1",
+              "symbol": "Wall"
+            }
+          ]
+        }
+      }
+    ],
+    "Crown": [
+      {
+        "split": {
+          "axis": "u",
+          "parts": [
+            {
+              "size": "~1",
+              "symbol": "Wall"
+            },
+            {
+              "size": "1.25",
+              "symbol": "AtticBand"
+            },
+            {
+              "size": "~1",
+              "symbol": "Wall"
+            }
+          ]
+        }
+      }
+    ],
+    "Base": [
+      {
+        "split": {
+          "axis": "u",
+          "parts": [
+            {
+              "size": "~1",
+              "symbol": "Wall"
+            },
+            {
+              "size": "0.5",
+              "symbol": "TallSlot"
+            },
+            {
+              "size": "~1",
+              "symbol": "Wall"
+            }
+          ]
+        }
+      }
+    ],
+    "WideOpening": [
+      {
+        "terminal": "glass",
+        "inset_m": 0.05
+      }
+    ],
+    "SquareOpening": [
+      {
+        "split": {
+          "axis": "z",
+          "parts": [
+            {
+              "size": "~1",
+              "symbol": "Wall"
+            },
+            {
+              "size": "1.15",
+              "symbol": "Glass"
+            },
+            {
+              "size": "~1",
+              "symbol": "Wall"
+            }
+          ]
+        }
+      }
+    ],
+    "TallSlot": [
+      {
+        "split": {
+          "axis": "z",
+          "parts": [
+            {
+              "size": "0.55",
+              "symbol": "Wall"
+            },
+            {
+              "size": "~1",
+              "symbol": "Glass"
+            },
+            {
+              "size": "0.45",
+              "symbol": "Wall"
+            }
+          ]
+        }
+      }
+    ],
+    "RibbonBand": [
+      {
+        "split": {
+          "axis": "z",
+          "parts": [
+            {
+              "size": "~2",
+              "symbol": "Wall"
+            },
+            {
+              "size": "1.0",
+              "symbol": "Glass"
+            },
+            {
+              "size": "~1",
+              "symbol": "Wall"
+            }
+          ]
+        }
+      }
+    ],
+    "AtticBand": [
+      {
+        "split": {
+          "axis": "z",
+          "parts": [
+            {
+              "size": "~2",
+              "symbol": "Wall"
+            },
+            {
+              "size": "0.95",
+              "symbol": "Glass"
+            },
+            {
+              "size": "~1",
+              "symbol": "Wall"
+            }
+          ]
+        }
+      }
+    ],
+    "Glass": [
+      {
+        "terminal": "glass",
+        "inset_m": 0.04
+      }
+    ],
+    "Wall": [
+      {
+        "terminal": "wall"
+      }
+    ]
+  }
+}

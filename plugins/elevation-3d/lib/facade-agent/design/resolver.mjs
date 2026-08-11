@@ -1,6 +1,7 @@
 import { sha256, stableJson } from "../../core.mjs";
 import { readVerifiedFacadeDesignContextAuthority } from "./context.mjs";
 import { readVerifiedFacadeProgramAuthority } from "./contract.mjs";
+import { deriveFacadePrimitives } from "./grammar/derive.mjs";
 
 const verifiedResolutionAuthorities = new WeakMap();
 
@@ -149,6 +150,32 @@ function articulationPrimitives(program, context, primarySegmentId) {
 	return output;
 }
 
+function grammarPrimitives(program, context, entrance) {
+	const gap = context.exclusions.edge_clearance_m;
+	const fold = context.exclusions.fold_clearance_m;
+	const primitives = [];
+	for (const segment of context.facade_segments) {
+		const derived = deriveFacadePrimitives({
+			grammar: program,
+			segment: { ...segment, placeable: { u_min: fold, u_max: segment.length_m - fold } },
+			storeys: context.storeys,
+		});
+		for (const primitive of derived) {
+			if (primitive.kind === "door") continue;
+			if (displacedByEntrance(entrance, segment.segment_id, primitive.local_bounds, gap)) continue;
+			primitives.push(primitive);
+		}
+	}
+	return primitives;
+}
+
+/**
+ * Resolve whichever design language the program is written in.
+ *
+ * v2 lays out bay rules; v3 derives a split grammar. Both produce the same frozen
+ * resolution behind the same capability, so the validator, compiler and scorer never
+ * learn which one was used.
+ */
 export function resolveFacadeProgram(program, context) {
 	try {
 		const programAuthority = readVerifiedFacadeProgramAuthority(program);
@@ -160,11 +187,13 @@ export function resolveFacadeProgram(program, context) {
 			fail("facade program source authority does not match its verified context");
 		}
 		const entrance = entrancePrimitive(program, context);
-		const primitives = [
-			entrance,
-			...windowPrimitives(program, context, entrance),
-			...articulationPrimitives(program, context, entrance.segment_id),
-		];
+		const primitives = program.schema_version === "arr.elevation3d.facade-grammar.v3"
+			? [entrance, ...grammarPrimitives(program, context, entrance)]
+			: [
+				entrance,
+				...windowPrimitives(program, context, entrance),
+				...articulationPrimitives(program, context, entrance.segment_id),
+			];
 		if (primitives.length > 2_048) fail("resolved facade primitive budget exceeded");
 		const resolution = {
 			schema_version: "arr.elevation3d.resolved-facade-program.v1",
