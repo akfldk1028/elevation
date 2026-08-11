@@ -7,6 +7,7 @@ import { facadeCandidateHash } from "../candidate-authority.mjs";
 import { readVerifiedFacadeEvidenceAuthority } from "../evidence.mjs";
 import { containedPath, safeRead } from "../path-safety.mjs";
 import { assertCanonicalFacadeSegmentAuthority } from "../punched-facade.mjs";
+import { deriveFacadeFaces } from "./geometry/faces.mjs";
 
 export class FacadeDesignContextError extends Error {
 	constructor(message, cause) {
@@ -196,6 +197,14 @@ export async function buildFacadeDesignContext(input) {
 		try { document = await new NodeIO().readBinary(new Uint8Array(selected.bytes)); }
 		catch (error) { fail("selected GLB is invalid", error); }
 		const segmentIds = new Set(canonicalSegments.facade_planes.map((segment) => segment.segment_id));
+		const elevationDepths = Object.fromEntries(["front", "back", "left", "right"].map((view) => [
+			view,
+			plainArray(candidate?.cameras?.views?.[view]?.projection_axes?.depth, `${view} camera depth`, 3, 3)
+				.map((value, index) => finite(value, `${view} camera depth[${index}]`)),
+		]));
+		let faceAuthority;
+		try { faceAuthority = deriveFacadeFaces(canonicalSegments.facade_planes, elevationDepths); }
+		catch (error) { fail("candidate facade faces could not be derived", error); }
 		const facadeSegments = canonicalSegments.facade_planes.map((segment) => ({
 			segment_id: segment.segment_id,
 			view: segment.view,
@@ -205,12 +214,14 @@ export async function buildFacadeDesignContext(input) {
 			length_m: segment.extent_m[0],
 			visibility_score: visibilityScore(segment.normal, depth),
 			ground_access: Math.abs(segment.origin[2] - floors[0]) <= 1e-7,
+			...faceAuthority.bySegment[segment.segment_id],
 		}));
 		const storeys = floors.slice(0, -1).map((zMin, index) => ({ storey: index + 1, z_min: zMin, z_max: floors[index + 1] }));
 		const technicalThumbnails = await verifiedThumbnails(runDir, input.technicalThumbnails);
 		const base = {
 			schema_version: "arr.elevation3d.facade-design-context.v1",
 			facade_segments: facadeSegments,
+			facade_faces: faceAuthority.faces.map((face) => ({ ...face, axis: [...face.axis], segment_ids: [...face.segment_ids] })),
 			storeys,
 			existing_openings: existingOpenings(document, segmentIds),
 			exclusions: { edge_clearance_m: 0.3, fold_clearance_m: 0.3, floor_band_clearance_m: 0.15, max_projection_m: 0.5, max_recess_m: 0.5 },

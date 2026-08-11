@@ -94,6 +94,39 @@ test("clears the primary entrance of overlapping ground-storey windows", async (
 	}
 });
 
+test("gives each elevation its own rhythm when bay rules select views", async (t) => {
+	const { context } = await createFacadeDesignFixture(t);
+	const program = createFacadeProgramForContext(context, {
+		bay_rules: [
+			{ id: "front-aba", zone_id: "middle", pattern: ["narrow", "wide", "narrow"], repeat: 1, views: ["front"] },
+			{ id: "side-n", zone_id: "middle", pattern: ["narrow"], repeat: 1, views: ["left", "right"] },
+		],
+	});
+	const resolved = resolveFacadeProgram(program, context);
+	const viewOf = (segmentId: string) => context.facade_segments
+		.find((segment: any) => segment.segment_id === segmentId).face_view;
+	const byRule = (ruleId: string) => new Set(resolved.primitives
+		.filter((primitive: any) => primitive.rule_id === ruleId)
+		.map((primitive: any) => viewOf(primitive.segment_id)));
+
+	assert.deepEqual([...byRule("front-aba")], ["front"]);
+	assert.deepEqual([...byRule("side-n")].sort(), ["left", "right"]);
+	assert.equal(resolved.primitives.some((primitive: any) => primitive.kind === "window" && viewOf(primitive.segment_id) === "back"), false);
+});
+
+test("rejects a bay rule whose selected elevations cannot hold it", async (t) => {
+	const { context } = await createFacadeDesignFixture(t);
+	const program = createFacadeProgramForContext(context, {
+		window_families: [
+			{ id: "narrow", width_m: 0.8, height_m: 1.6, sill_m: 0.8 },
+			{ id: "vast", width_m: 5.5, height_m: 1.6, sill_m: 0.8 },
+		],
+		bay_rules: [{ id: "side-vast", zone_id: "middle", pattern: ["vast"], repeat: 1, views: ["left"] }],
+	});
+
+	assert.throws(() => resolveFacadeProgram(program, context), typedRejection);
+});
+
 test("uses stable segment ID as the final tie-breaker", async (t) => {
 	const { context, program } = await createFacadeDesignFixture(t, { width: 4, depth: 4 });
 	const resolved = resolveFacadeProgram(program, context);

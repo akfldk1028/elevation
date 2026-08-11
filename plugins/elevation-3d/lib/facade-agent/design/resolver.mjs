@@ -86,8 +86,9 @@ function windowPrimitives(program, context, entrance) {
 		const unit = rule.pattern.map((id) => families.get(id));
 		if (unit.some((family) => !family)) fail(`bay rule ${rule.id} references a missing window family`);
 		const unitWidth = unit.reduce((sum, family) => sum + family.width_m, 0) + gap * (unit.length - 1);
-		const segments = rankedSegments(context, unitWidth * rule.repeat + gap * (rule.repeat - 1));
-		if (!segments.length) fail(`bay rule ${rule.id} does not fit any facade segment`);
+		const eligible = rankedSegments(context, unitWidth * rule.repeat + gap * (rule.repeat - 1));
+		const segments = eligible.filter((segment) => rule.views.includes(segment.face_view));
+		if (!segments.length) fail(`bay rule ${rule.id} does not fit any facade segment on its selected views`);
 		for (const segment of segments) {
 			const usable = segment.length_m - fold * 2;
 			const count = Math.floor((usable + gap) / (unitWidth + gap) + 1e-9);

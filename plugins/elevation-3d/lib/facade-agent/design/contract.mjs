@@ -16,7 +16,8 @@ const SOURCE_KEYS = new Set(["candidate_id", "candidate_sha256", "selected_glb_s
 const ENTRANCE_KEYS = new Set(["segment_selector", "preferred_bay", "door_family", "width_m", "height_m", "recess_m"]);
 const ZONE_KEYS = new Set(["id", "storeys", "treatment"]);
 const WINDOW_KEYS = new Set(["id", "width_m", "height_m", "sill_m"]);
-const BAY_KEYS = new Set(["id", "zone_id", "pattern", "repeat"]);
+const BAY_KEYS = new Set(["id", "zone_id", "pattern", "repeat", "views"]);
+const FACADE_VIEWS = ["front", "back", "left", "right"];
 const ARTICULATION_KEYS = new Set(["id", "kind", "segment_selector", "width_m", "depth_m", "storeys", "material_id"]);
 const MATERIAL_KEYS = new Set(["id", "role", "color", "finish"]);
 const verifiedProgramAuthorities = new WeakMap();
@@ -177,7 +178,18 @@ export function parseFacadeProgram(input, options = {}) {
 		if (!zoneIds.has(zoneId)) fail(`bay_rules[${index}].zone_id must reference a zone`);
 		const pattern = arrayValues(rule.pattern, `bay_rules[${index}].pattern`, 1, 16).map((item, itemIndex) => id(item, `bay_rules[${index}].pattern[${itemIndex}]`));
 		if (pattern.some((familyId) => !familyIds.has(familyId))) fail(`bay_rules[${index}].pattern must reference window families`);
-		return { id: id(rule.id, `bay_rules[${index}].id`), zone_id: zoneId, pattern, repeat: positiveInteger(rule.repeat, `bay_rules[${index}].repeat`, 32) };
+		const views = rule.views === undefined
+			? [...FACADE_VIEWS]
+			: unique(
+				arrayValues(rule.views, `bay_rules[${index}].views`, 1, 4)
+					.map((item, itemIndex) => enumeration(item, `bay_rules[${index}].views[${itemIndex}]`, new Set(FACADE_VIEWS))),
+				`bay_rules[${index}].views`,
+			);
+		return {
+			id: id(rule.id, `bay_rules[${index}].id`), zone_id: zoneId, pattern,
+			repeat: positiveInteger(rule.repeat, `bay_rules[${index}].repeat`, 32),
+			views: [...FACADE_VIEWS].filter((view) => views.includes(view)),
+		};
 	});
 	unique(bayRules.map((rule) => rule.id), "bay_rules");
 
