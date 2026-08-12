@@ -20,6 +20,7 @@ const requestAuthorities = new WeakMap();
 const ALLOWED_PROMPT_REVISIONS = new Set([
 	FACADE_GRAMMAR_PROMPT_REVISION,
 	"arr.elevation3d.facade-design-prompt.v1",
+	"arr.elevation3d.facade-grammar-prompt.v1",
 ]);
 
 function fail(code, message, provider = "grammar") {
