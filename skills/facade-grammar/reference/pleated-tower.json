@@ -1,4 +1,7 @@
 {
+  "schema_version": "arr.elevation3d.facade-grammar.v3",
+  "concept_id": "creative-020-pleated-tower-v2",
+  "start": "Facet",
   "entrance": {
     "segment_selector": "primary_visible_ground_segment",
     "preferred_bay": "central_focus",
@@ -7,11 +10,13 @@
     "height_m": 3,
     "recess_m": 0.3
   },
-  "schema_version": "arr.elevation3d.facade-grammar.v3",
-  "concept_id": "creative-020-pleated-tower-v1",
-  "start": "Facade",
+  "design_rationale": [
+    "Alternate the bay across each elevation so the tower reads as a rhythm rather than a wrapper.",
+    "Give every opening a reveal and a sill so it reads as built rather than painted.",
+    "Keep the service elevation quiet and let the street elevation carry the depth."
+  ],
   "rules": {
-    "Facade": [
+    "Facet": [
       {
         "split": {
           "axis": "u",
@@ -63,7 +68,7 @@
           "parts": [
             {
               "size": "3.3",
-              "symbol": "Base"
+              "symbol": "Plinth"
             },
             {
               "size": "~3.3",
@@ -72,7 +77,7 @@
             },
             {
               "size": "3.3",
-              "symbol": "Base"
+              "symbol": "Plinth"
             }
           ]
         }
@@ -83,7 +88,7 @@
           "parts": [
             {
               "size": "3.3",
-              "symbol": "Base"
+              "symbol": "Plinth"
             },
             {
               "size": "~3.3",
@@ -104,12 +109,12 @@
           "axis": "z",
           "parts": [
             {
-              "size": "0.2",
+              "size": "0.25",
               "symbol": "Wall"
             },
             {
               "size": "~1",
-              "symbol": "WideOpening"
+              "symbol": "TallOpening"
             },
             {
               "size": "0.35",
@@ -130,16 +135,8 @@
               "symbol": "Wall"
             },
             {
-              "size": "0.6",
-              "symbol": "TallSlot"
-            },
-            {
-              "size": "0.28",
-              "symbol": "Wall"
-            },
-            {
-              "size": "0.6",
-              "symbol": "TallSlot"
+              "size": "0.72",
+              "symbol": "Casement"
             },
             {
               "size": "~1",
@@ -153,15 +150,15 @@
           "axis": "u",
           "parts": [
             {
-              "size": "0.3",
+              "size": "0.26",
               "symbol": "Wall"
             },
             {
               "size": "~1",
-              "symbol": "RibbonBand"
+              "symbol": "Ribbon"
             },
             {
-              "size": "0.3",
+              "size": "0.26",
               "symbol": "Wall"
             }
           ]
@@ -170,7 +167,7 @@
     ],
     "Flank": [
       {
-        "when": "index % 3 == 0",
+        "when": "index % 2 == 0",
         "split": {
           "axis": "u",
           "parts": [
@@ -179,8 +176,8 @@
               "symbol": "Wall"
             },
             {
-              "size": "0.45",
-              "symbol": "TallSlot"
+              "size": "0.58",
+              "symbol": "Casement"
             },
             {
               "size": "~1",
@@ -198,8 +195,8 @@
               "symbol": "Wall"
             },
             {
-              "size": "1.0",
-              "symbol": "SquareOpening"
+              "size": "0.42",
+              "symbol": "Casement"
             },
             {
               "size": "~1",
@@ -219,11 +216,32 @@
               "symbol": "Wall"
             },
             {
-              "size": "0.38",
-              "symbol": "TallSlot"
+              "size": "0.4",
+              "symbol": "ServiceSlit"
             },
             {
               "size": "~1",
+              "symbol": "Wall"
+            }
+          ]
+        }
+      }
+    ],
+    "Plinth": [
+      {
+        "split": {
+          "axis": "z",
+          "parts": [
+            {
+              "size": "0.7",
+              "symbol": "Wall"
+            },
+            {
+              "size": "~1",
+              "symbol": "SlitOpening"
+            },
+            {
+              "size": "0.5",
               "symbol": "Wall"
             }
           ]
@@ -231,117 +249,6 @@
       }
     ],
     "Crown": [
-      {
-        "split": {
-          "axis": "u",
-          "parts": [
-            {
-              "size": "~1",
-              "symbol": "Wall"
-            },
-            {
-              "size": "1.25",
-              "symbol": "AtticBand"
-            },
-            {
-              "size": "~1",
-              "symbol": "Wall"
-            }
-          ]
-        }
-      }
-    ],
-    "Base": [
-      {
-        "split": {
-          "axis": "u",
-          "parts": [
-            {
-              "size": "~1",
-              "symbol": "Wall"
-            },
-            {
-              "size": "0.5",
-              "symbol": "TallSlot"
-            },
-            {
-              "size": "~1",
-              "symbol": "Wall"
-            }
-          ]
-        }
-      }
-    ],
-    "WideOpening": [
-      {
-        "terminal": "glass",
-        "inset_m": 0.05
-      }
-    ],
-    "SquareOpening": [
-      {
-        "split": {
-          "axis": "z",
-          "parts": [
-            {
-              "size": "~1",
-              "symbol": "Wall"
-            },
-            {
-              "size": "1.15",
-              "symbol": "Glass"
-            },
-            {
-              "size": "~1",
-              "symbol": "Wall"
-            }
-          ]
-        }
-      }
-    ],
-    "TallSlot": [
-      {
-        "split": {
-          "axis": "z",
-          "parts": [
-            {
-              "size": "0.55",
-              "symbol": "Wall"
-            },
-            {
-              "size": "~1",
-              "symbol": "Glass"
-            },
-            {
-              "size": "0.45",
-              "symbol": "Wall"
-            }
-          ]
-        }
-      }
-    ],
-    "RibbonBand": [
-      {
-        "split": {
-          "axis": "z",
-          "parts": [
-            {
-              "size": "~2",
-              "symbol": "Wall"
-            },
-            {
-              "size": "1.0",
-              "symbol": "Glass"
-            },
-            {
-              "size": "~1",
-              "symbol": "Wall"
-            }
-          ]
-        }
-      }
-    ],
-    "AtticBand": [
       {
         "split": {
           "axis": "z",
@@ -352,7 +259,7 @@
             },
             {
               "size": "0.95",
-              "symbol": "Glass"
+              "symbol": "AtticOpening"
             },
             {
               "size": "~1",
@@ -362,15 +269,207 @@
         }
       }
     ],
-    "Glass": [
+    "Casement": [
+      {
+        "split": {
+          "axis": "z",
+          "parts": [
+            {
+              "size": "0.6",
+              "symbol": "Wall"
+            },
+            {
+              "size": "~1",
+              "symbol": "Sashes"
+            },
+            {
+              "size": "0.12",
+              "symbol": "Sill"
+            },
+            {
+              "size": "0.35",
+              "symbol": "Wall"
+            }
+          ]
+        }
+      }
+    ],
+    "Sashes": [
+      {
+        "split": {
+          "axis": "u",
+          "parts": [
+            {
+              "size": "0.05",
+              "symbol": "Jamb"
+            },
+            {
+              "size": "~1",
+              "symbol": "Pane"
+            },
+            {
+              "size": "0.05",
+              "symbol": "Jamb"
+            }
+          ]
+        }
+      }
+    ],
+    "Ribbon": [
+      {
+        "split": {
+          "axis": "z",
+          "parts": [
+            {
+              "size": "~2",
+              "symbol": "Wall"
+            },
+            {
+              "size": "0.9",
+              "symbol": "RibbonLights"
+            },
+            {
+              "size": "0.1",
+              "symbol": "Sill"
+            },
+            {
+              "size": "~1",
+              "symbol": "Wall"
+            }
+          ]
+        }
+      }
+    ],
+    "RibbonLights": [
+      {
+        "split": {
+          "axis": "u",
+          "parts": [
+            {
+              "size": "0.05",
+              "symbol": "Jamb"
+            },
+            {
+              "size": "~1",
+              "symbol": "Pane"
+            },
+            {
+              "size": "0.05",
+              "symbol": "Jamb"
+            }
+          ]
+        }
+      }
+    ],
+    "TallOpening": [
+      {
+        "split": {
+          "axis": "u",
+          "parts": [
+            {
+              "size": "0.07",
+              "symbol": "Jamb"
+            },
+            {
+              "size": "~1",
+              "symbol": "Pane"
+            },
+            {
+              "size": "0.07",
+              "symbol": "Jamb"
+            }
+          ]
+        }
+      }
+    ],
+    "SlitOpening": [
+      {
+        "split": {
+          "axis": "u",
+          "parts": [
+            {
+              "size": "0.04",
+              "symbol": "Jamb"
+            },
+            {
+              "size": "~1",
+              "symbol": "Pane"
+            },
+            {
+              "size": "0.04",
+              "symbol": "Jamb"
+            }
+          ]
+        }
+      }
+    ],
+    "AtticOpening": [
+      {
+        "split": {
+          "axis": "u",
+          "parts": [
+            {
+              "size": "0.05",
+              "symbol": "Jamb"
+            },
+            {
+              "size": "~1",
+              "symbol": "Pane"
+            },
+            {
+              "size": "0.05",
+              "symbol": "Jamb"
+            }
+          ]
+        }
+      }
+    ],
+    "Pane": [
       {
         "terminal": "glass",
-        "inset_m": 0.04
+        "inset_m": 0.02
+      }
+    ],
+    "Jamb": [
+      {
+        "terminal": "reveal",
+        "depth_m": 0.07
+      }
+    ],
+    "Sill": [
+      {
+        "terminal": "band",
+        "depth_m": 0.08
       }
     ],
     "Wall": [
       {
         "terminal": "wall"
+      }
+    ],
+    "ServiceSlit": [
+      {
+        "split": {
+          "axis": "z",
+          "parts": [
+            {
+              "size": "0.85",
+              "symbol": "Wall"
+            },
+            {
+              "size": "~1",
+              "symbol": "SlitOpening"
+            },
+            {
+              "size": "0.1",
+              "symbol": "Sill"
+            },
+            {
+              "size": "0.55",
+              "symbol": "Wall"
+            }
+          ]
+        }
       }
     ]
   }

@@ -54,7 +54,7 @@ test("director persists prepared authority, corrects validator rejection, and re
 	});
 	const result = await runFacadeDesignAgent({
 		runDir: fixture.runDir, context: fixture.context, provider: adapter, ledger: fixture.ledger,
-		ceilingUsd: 0.1, estimateUsd: 0.05,
+		ceilingUsd: 0.1, estimateUsd: 0.05, language: "v2",
 	});
 	assert.equal(adapter.calls, 2);
 	assert.equal(result.validation.accepted, true);
@@ -70,7 +70,7 @@ test("director caps correction at two attempts without relaxing validation", asy
 	const adapter = provider(Array(3).fill(proposal(fixture.program, 0.8)));
 	await assert.rejects(() => runFacadeDesignAgent({
 		runDir: fixture.runDir, context: fixture.context, provider: adapter, ledger: fixture.ledger,
-		ceilingUsd: 0.1, estimateUsd: 0.05,
+		ceilingUsd: 0.1, estimateUsd: 0.05, language: "v2",
 	}), (error: any) => error?.code === "FACADE_DESIGN_CORRECTION_EXHAUSTED");
 	assert.equal(adapter.calls, 3);
 });
@@ -92,7 +92,7 @@ test("director rejects a cloned context before provider or ledger work", async (
 	const adapter = provider([proposal(fixture.program)]);
 	await assert.rejects(() => runFacadeDesignAgent({
 		runDir: fixture.runDir, context: structuredClone(fixture.context), provider: adapter, ledger: fixture.ledger,
-		ceilingUsd: 0.1, estimateUsd: 0.05,
+		ceilingUsd: 0.1, estimateUsd: 0.05, language: "v2",
 	}), (error: any) => error?.code === "FACADE_DESIGN_AGENT_INVALID");
 	assert.equal(adapter.calls, 0);
 	assert.equal((await fixture.ledger.summary()).operations.length, 0);
@@ -107,8 +107,25 @@ test("director never invokes accessors hidden inside a returned design", async (
 	const adapter = provider([hostile]);
 	await assert.rejects(() => runFacadeDesignAgent({
 		runDir: fixture.runDir, context: fixture.context, provider: adapter, ledger: fixture.ledger,
-		ceilingUsd: 0.1, estimateUsd: 0.05,
+		ceilingUsd: 0.1, estimateUsd: 0.05, language: "v2",
 	}), (error: any) => error?.code === "PAID_OPERATION_SUBMISSION_UNCERTAIN");
 	assert.equal(getterCalls, 0);
 	assert.equal(adapter.calls, 1);
+});
+
+test("asks the model for a grammar unless a caller pins the flat language", async (t) => {
+	const fixture = await setup(t);
+	const seen: any[] = [];
+	const adapter = provider([proposal(fixture.program)]);
+	const spy = { ...adapter, async extract(input: any) { seen.push(input.request); return adapter.extract(input); } };
+	await runFacadeDesignAgent({
+		runDir: fixture.runDir, context: fixture.context, provider: spy, ledger: fixture.ledger,
+		ceilingUsd: 0.1, estimateUsd: 0.05,
+	}).catch(() => undefined);
+
+	assert.equal(seen.length > 0, true);
+	assert.equal(seen[0].promptRevision, "arr.elevation3d.facade-grammar-prompt.v1");
+	assert.equal(seen[0].schema.properties.rules.type, "object", "the model is asked for a rule graph");
+	assert.equal(seen[0].schema.properties.window_families, undefined, "not the flat v2 record");
+	assert.match(seen[0].prompt, /split grammar, not a list of windows/);
 });

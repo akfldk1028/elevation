@@ -153,11 +153,16 @@ function articulationPrimitives(program, context, primarySegmentId) {
 function grammarPrimitives(program, context, entrance) {
 	const gap = context.exclusions.edge_clearance_m;
 	const fold = context.exclusions.fold_clearance_m;
+	const faceTotals = new Map((context.facade_faces ?? []).map((face) => [face.face_id, face.segment_ids.length]));
 	const primitives = [];
 	for (const segment of context.facade_segments) {
 		const derived = deriveFacadePrimitives({
 			grammar: program,
-			segment: { ...segment, placeable: { u_min: fold, u_max: segment.length_m - fold } },
+			segment: {
+				...segment,
+				face_total: faceTotals.get(segment.face_id) ?? 1,
+				placeable: { u_min: fold, u_max: segment.length_m - fold },
+			},
 			storeys: context.storeys,
 		});
 		for (const primitive of derived) {

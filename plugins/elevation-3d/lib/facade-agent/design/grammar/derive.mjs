@@ -120,8 +120,11 @@ export function deriveFacadePrimitives({ grammar, segment, storeys, entrance = n
 		z_max: segment.local_z[1],
 		segment_id: segment.segment_id,
 		face_view: segment.face_view ?? segment.view,
-		index: 0,
-		total: 1,
+		// The root scope is a facet, and it starts life knowing which facet of its
+		// elevation it is. Without that a rule can only vary down the building and
+		// between elevations, so every bay across one face comes out identical.
+		index: segment.face_index ?? 0,
+		total: segment.face_total ?? 1,
 		storey: storeys[0]?.storey ?? 1,
 		depth: 0,
 	});

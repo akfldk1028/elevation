@@ -6,6 +6,7 @@ import { createFacadeGrammarRequest } from "../providers/grammar/contract.mjs";
 import { parseFacadeDesign } from "./contract.mjs";
 import { readVerifiedFacadeDesignContextAuthority } from "./context.mjs";
 import { buildFacadeDesignPrompt, FACADE_PROGRAM_V2_SCHEMA } from "./prompt.mjs";
+import { buildFacadeGrammarPrompt, FACADE_GRAMMAR_V3_SCHEMA } from "./grammar/prompt.mjs";
 import { resolveFacadeProgram } from "./resolver.mjs";
 import { validateResolvedFacadeProgram } from "./validator.mjs";
 
@@ -93,7 +94,7 @@ function deepFreeze(value) {
 	return Object.freeze(value);
 }
 
-export async function runFacadeDesignAgent({ runDir, context, provider, ledger, ceilingUsd, estimateUsd, signal } = {}) {
+export async function runFacadeDesignAgent({ runDir, context, provider, ledger, ceilingUsd, estimateUsd, language = "grammar", signal } = {}) {
 	const authority = readVerifiedFacadeDesignContextAuthority(context);
 	if (!authority) fail("FACADE_DESIGN_AGENT_INVALID", "a verified facade design context is required");
 	if (!provider || PROVIDERS[provider.id] !== provider.model || typeof provider.preflight !== "function" || typeof provider.extract !== "function") {
@@ -113,12 +114,14 @@ export async function runFacadeDesignAgent({ runDir, context, provider, ledger, 
 	const attempts = [];
 	for (let index = 0; index <= MAX_CORRECTIONS; index += 1) {
 		const attempt = index + 1;
-		const prompt = buildFacadeDesignPrompt({ context, correctionCodes, attempt });
+		const prompt = language === "grammar"
+			? buildFacadeGrammarPrompt({ context, correctionCodes, attempt })
+			: buildFacadeDesignPrompt({ context, correctionCodes, attempt });
 		const request = createFacadeGrammarRequest({
 			provider: provider.id, model: provider.model,
 			proposalSha256: thumbnail.sha256, evidenceManifestSha256: authority.context_sha256,
 			promptRevision: prompt.revision, prompt: prompt.prompt, promptSha256: prompt.sha256,
-			imageBytes, imageMimeType: "image/png", schema: JSON.parse(stableJson(FACADE_PROGRAM_V2_SCHEMA)),
+			imageBytes, imageMimeType: "image/png", schema: JSON.parse(stableJson(language === "grammar" ? FACADE_GRAMMAR_V3_SCHEMA : FACADE_PROGRAM_V2_SCHEMA)),
 			ceilingUsd, estimateUsd,
 		});
 		provider.preflight({ request });
