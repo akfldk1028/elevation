@@ -6,6 +6,7 @@ import {
 	readVerifiedFacadeDesignValidationAuthority,
 	validateResolvedFacadeProgram,
 } from "../plugins/elevation-3d/lib/facade-agent/design/validator.mjs";
+import { parseFacadeDesign } from "../plugins/elevation-3d/lib/facade-agent/design/contract.mjs";
 import { resolveFacadeProgram } from "../plugins/elevation-3d/lib/facade-agent/design/resolver.mjs";
 import {
 	createFacadeDesignFixture,
@@ -102,4 +103,85 @@ test("rejects cloned program, context, or resolved capabilities", async (t) => {
 	assert.throws(() => validateResolvedFacadeProgram({ program: structuredClone(program), context, resolved }), typedRejection);
 	assert.throws(() => validateResolvedFacadeProgram({ program, context: structuredClone(context), resolved }), typedRejection);
 	assert.throws(() => validateResolvedFacadeProgram({ program, context, resolved: structuredClone(resolved) }), typedRejection);
+});
+
+function spanningGrammar(context: any, overrides: Record<string, unknown> = {}) {
+	return parseFacadeDesign({
+		schema_version: "arr.elevation3d.facade-grammar.v3",
+		concept_id: "spanning-test",
+		start: "Facet",
+		entrance: {
+			segment_selector: "primary_visible_ground_segment", preferred_bay: "central_focus",
+			door_family: "portal", width_m: 1.2, height_m: 2.4, recess_m: 0.1,
+		},
+		rules: {
+			Facet: [{ split: { axis: "u", parts: [
+				{ size: "~1", symbol: "Wall" }, { size: "0.8", symbol: "Shaft" }, { size: "~1", symbol: "Wall" },
+			] } }],
+			Shaft: [{ split: { axis: "z", parts: [
+				{ size: "0.5", symbol: "Wall" }, { size: "~1", symbol: "Pane" }, { size: "0.6", symbol: "Wall" },
+			] } }],
+			Pane: [{ terminal: "glass" }],
+			Wall: [{ terminal: "wall" }],
+		},
+		...overrides,
+	}, { sourceAuthority: context.source });
+}
+
+test("accepts an opening that passes a slab on its way between two clear ends", async (t) => {
+	const { context } = await createFacadeDesignFixture(t);
+	const program = spanningGrammar(context);
+	const resolved = resolveFacadeProgram(program, context);
+	const receipt = validateResolvedFacadeProgram({ program, context, resolved });
+	const spanning = resolved.primitives.filter((primitive: any) => primitive.kind === "window"
+		&& primitive.local_bounds.z_min < context.storeys[0].z_max
+		&& primitive.local_bounds.z_max > context.storeys[0].z_max);
+
+	assert.equal(spanning.length > 0, true, "the grammar must actually produce a spanning opening");
+	assert.deepEqual(receipt.codes, []);
+	assert.equal(receipt.accepted, true);
+});
+
+test("still rejects an opening that stops inside a floor band", async (t) => {
+	const { context } = await createFacadeDesignFixture(t);
+	const slab = context.storeys[0].z_max;
+	const program = spanningGrammar(context, {
+		rules: {
+			Facet: [{ split: { axis: "u", parts: [
+				{ size: "~1", symbol: "Wall" }, { size: "0.8", symbol: "Shaft" }, { size: "~1", symbol: "Wall" },
+			] } }],
+			Shaft: [{ split: { axis: "z", parts: [
+				{ size: "0.5", symbol: "Wall" },
+				{ size: String(slab - 0.5), symbol: "Pane" },
+				{ size: "~1", symbol: "Wall" },
+			] } }],
+			Pane: [{ terminal: "glass" }],
+			Wall: [{ terminal: "wall" }],
+		},
+	});
+	const resolved = resolveFacadeProgram(program, context);
+	const receipt = validateResolvedFacadeProgram({ program, context, resolved });
+
+	assert.equal(receipt.accepted, false);
+	assert.equal(receipt.codes.includes("FLOOR_BAND_INTRUSION"), true);
+});
+
+test("still rejects an opening that leaves the building", async (t) => {
+	const { context } = await createFacadeDesignFixture(t);
+	const top = context.storeys[context.storeys.length - 1].z_max;
+	const program = spanningGrammar(context, {
+		rules: {
+			Facet: [{ split: { axis: "u", parts: [
+				{ size: "~1", symbol: "Wall" }, { size: "0.8", symbol: "Shaft" }, { size: "~1", symbol: "Wall" },
+			] } }],
+			Shaft: [{ split: { axis: "z", parts: [{ size: "'1", symbol: "Pane" }] } }],
+			Pane: [{ terminal: "glass" }],
+			Wall: [{ terminal: "wall" }],
+		},
+	});
+	const resolved = resolveFacadeProgram(program, context);
+	const receipt = validateResolvedFacadeProgram({ program, context, resolved });
+
+	assert.equal(resolved.primitives.some((p: any) => p.kind === "window" && p.local_bounds.z_max >= top - 1e-9), true);
+	assert.equal(receipt.codes.includes("FLOOR_BAND_INTRUSION"), true);
 });

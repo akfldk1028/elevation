@@ -62,9 +62,17 @@ export function validateResolvedFacadeProgram({ program, context, resolved } = {
 			const zoneIds = new Set(program.zones.map((zone) => zone.id));
 			if (!["base", "middle", "top"].every((id) => zoneIds.has(id))) codes.add("HIERARCHY_MISSING");
 		} else {
-			const open = new Set(resolved.primitives
-				.filter((primitive) => primitive.kind === "door" || primitive.kind === "window")
-				.map((primitive) => primitive.storey));
+			// An opening is credited to every storey its height overlaps, not only the
+			// one it starts in: a spanning slot lights all of them.
+			const open = new Set();
+			for (const primitive of resolved.primitives) {
+				if (primitive.kind !== "door" && primitive.kind !== "window") continue;
+				for (const storey of context.storeys) {
+					const overlap = Math.min(primitive.local_bounds.z_max, storey.z_max)
+						- Math.max(primitive.local_bounds.z_min, storey.z_min);
+					if (overlap > 1e-6) open.add(storey.storey);
+				}
+			}
 			const numbers = context.storeys.map((storey) => storey.storey);
 			if (!open.has(numbers[0]) || !open.has(numbers[numbers.length - 1])) codes.add("HIERARCHY_MISSING");
 		}
@@ -87,14 +95,23 @@ export function validateResolvedFacadeProgram({ program, context, resolved } = {
 			if (primitive.kind === "door" || primitive.kind === "window") {
 				const edge = Math.min(bounds.u_min, segment.length_m - bounds.u_max);
 				if (edge + 1e-8 < context.exclusions.fold_clearance_m) measure("FOLD_CLEARANCE_INVALID", index, edge, context.exclusions.fold_clearance_m);
-				const storey = storeys.get(primitive.storey);
-				if (!storey) measure("FLOOR_BAND_INTRUSION", index, primitive.storey ?? 0, context.storeys.length);
-				else {
-					const lowerLimit = primitive.kind === "door" && primitive.storey === 1 ? storey.z_min : storey.z_min + context.exclusions.floor_band_clearance_m;
-					const upperLimit = storey.z_max - context.exclusions.floor_band_clearance_m;
-					if (bounds.z_min < lowerLimit - 1e-8) measure("FLOOR_BAND_INTRUSION", index, bounds.z_min, lowerLimit);
-					if (bounds.z_max > upperLimit + 1e-8) measure("FLOOR_BAND_INTRUSION", index, bounds.z_max, upperLimit);
-				}
+				// An opening must not start or finish inside a floor band, because that is
+				// where the slab lands. It may pass a slab on its way - a double-height
+				// lobby and a vertical slot both do - so the test is on the two ends
+				// rather than on fitting inside one storey. Requiring containment is what
+				// makes every facade read as stacked identical cells.
+				const clearance = context.exclusions.floor_band_clearance_m;
+				const inBand = (z) => context.storeys.some((storey) => {
+					const atGrade = primitive.kind === "door" && Math.abs(z - context.storeys[0].z_min) <= 1e-8;
+					if (atGrade) return false;
+					return (z > storey.z_min - clearance - 1e-8 && z < storey.z_min + clearance - 1e-8)
+						|| (z > storey.z_max - clearance + 1e-8 && z < storey.z_max + clearance + 1e-8);
+				});
+				const top = context.storeys[context.storeys.length - 1].z_max;
+				if (bounds.z_min < context.storeys[0].z_min - 1e-8 || bounds.z_max > top + 1e-8) {
+					measure("FLOOR_BAND_INTRUSION", index, bounds.z_max, top);
+				} else if (inBand(bounds.z_min)) measure("FLOOR_BAND_INTRUSION", index, bounds.z_min, clearance);
+				else if (inBand(bounds.z_max)) measure("FLOOR_BAND_INTRUSION", index, bounds.z_max, clearance);
 			}
 			const depthLimit = primitive.kind === "door" ? context.exclusions.max_recess_m : context.exclusions.max_projection_m;
 			if (!Number.isFinite(primitive.depth_m) || primitive.depth_m < 0 || primitive.depth_m > depthLimit) {

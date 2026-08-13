@@ -33,7 +33,8 @@ const candidate = await loadCandidatePackage(datasetRoot, candidateId);
 const authority = deriveFacadeSegmentsFromMass({ mesh: candidate.mesh });
 const depths = Object.fromEntries(["front", "back", "left", "right"]
 	.map((view) => [view, candidate.cameras.views[view].projection_axes.depth]));
-const { bySegment } = deriveFacadeFaces(authority.facade_planes, depths);
+const { faces, bySegment } = deriveFacadeFaces(authority.facade_planes, depths);
+const faceTotals = new Map(faces.map((face) => [face.face_id, face.segment_ids.length]));
 const floors = candidate.floor_guides.floor_guides_m;
 const storeys = floors.slice(0, -1).map((zMin, index) => ({ storey: index + 1, z_min: zMin, z_max: floors[index + 1] }));
 const FOLD_CLEARANCE_M = 0.3;
@@ -58,6 +59,8 @@ try {
 			segment: {
 				segment_id: plane.segment_id,
 				face_view: view,
+				face_index: bySegment[plane.segment_id].face_index,
+				face_total: faceTotals.get(bySegment[plane.segment_id].face_id) ?? 1,
 				length_m: plane.extent_m[0],
 				local_z: [plane.origin[2], plane.origin[2] + plane.extent_m[1]],
 				placeable: { u_min: FOLD_CLEARANCE_M, u_max: plane.extent_m[0] - FOLD_CLEARANCE_M },
@@ -76,7 +79,14 @@ const kinds = {};
 const open = new Set();
 for (const primitive of primitives) {
 	kinds[primitive.kind] = (kinds[primitive.kind] ?? 0) + 1;
-	if (primitive.storey) open.add(primitive.storey);
+	if (primitive.kind !== "window" && primitive.kind !== "door") continue;
+	// Credit every storey the opening's height overlaps, matching the validator: a
+	// slot that spans the building lights all of them, not only the one it starts in.
+	for (const storey of storeys) {
+		const overlap = Math.min(primitive.local_bounds.z_max, storey.z_max)
+			- Math.max(primitive.local_bounds.z_min, storey.z_min);
+		if (overlap > 1e-6) open.add(storey.storey);
+	}
 }
 const numbers = storeys.map((storey) => storey.storey);
 const warnings = [];

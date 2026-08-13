@@ -1,6 +1,6 @@
 {
   "schema_version": "arr.elevation3d.facade-grammar.v3",
-  "concept_id": "creative-020-pleated-tower-v2",
+  "concept_id": "creative-020-pleated-tower-v3",
   "start": "Facet",
   "entrance": {
     "segment_selector": "primary_visible_ground_segment",
@@ -11,12 +11,28 @@
     "recess_m": 0.3
   },
   "design_rationale": [
-    "Alternate the bay across each elevation so the tower reads as a rhythm rather than a wrapper.",
-    "Give every opening a reveal and a sill so it reads as built rather than painted.",
-    "Keep the service elevation quiet and let the street elevation carry the depth."
+    "Every fourth facet is a full-height slot rather than a floor of windows, so the tower has parts that differ in kind and not only in degree.",
+    "The base is one two-storey room, not two stacked floors.",
+    "Openings may pass a slab; only their ends stay clear of it."
   ],
   "rules": {
     "Facet": [
+      {
+        "when": "index % 4 == 0",
+        "split": {
+          "axis": "u",
+          "parts": [
+            {
+              "size": "0.11",
+              "symbol": "Fold"
+            },
+            {
+              "size": "~1",
+              "symbol": "Shaft"
+            }
+          ]
+        }
+      },
       {
         "split": {
           "axis": "u",
@@ -41,34 +57,13 @@
     ],
     "Body": [
       {
-        "when": "face_view == front",
-        "split": {
-          "axis": "z",
-          "parts": [
-            {
-              "size": "3.3",
-              "symbol": "Lobby"
-            },
-            {
-              "size": "~3.3",
-              "symbol": "Upper",
-              "repeat": true
-            },
-            {
-              "size": "3.3",
-              "symbol": "Crown"
-            }
-          ]
-        }
-      },
-      {
         "when": "face_view == back",
         "split": {
           "axis": "z",
           "parts": [
             {
-              "size": "3.3",
-              "symbol": "Plinth"
+              "size": "6.6",
+              "symbol": "Hall"
             },
             {
               "size": "~3.3",
@@ -87,38 +82,17 @@
           "axis": "z",
           "parts": [
             {
-              "size": "3.3",
-              "symbol": "Plinth"
+              "size": "6.6",
+              "symbol": "Hall"
             },
             {
               "size": "~3.3",
-              "symbol": "Flank",
+              "symbol": "Upper",
               "repeat": true
             },
             {
               "size": "3.3",
               "symbol": "Crown"
-            }
-          ]
-        }
-      }
-    ],
-    "Lobby": [
-      {
-        "split": {
-          "axis": "z",
-          "parts": [
-            {
-              "size": "0.25",
-              "symbol": "Wall"
-            },
-            {
-              "size": "~1",
-              "symbol": "TallOpening"
-            },
-            {
-              "size": "0.35",
-              "symbol": "Wall"
             }
           ]
         }
@@ -361,27 +335,6 @@
         }
       }
     ],
-    "TallOpening": [
-      {
-        "split": {
-          "axis": "u",
-          "parts": [
-            {
-              "size": "0.07",
-              "symbol": "Jamb"
-            },
-            {
-              "size": "~1",
-              "symbol": "Pane"
-            },
-            {
-              "size": "0.07",
-              "symbol": "Jamb"
-            }
-          ]
-        }
-      }
-    ],
     "SlitOpening": [
       {
         "split": {
@@ -433,13 +386,13 @@
     "Jamb": [
       {
         "terminal": "reveal",
-        "depth_m": 0.07
+        "depth_m": 0.03
       }
     ],
     "Sill": [
       {
         "terminal": "band",
-        "depth_m": 0.08
+        "depth_m": 0.05
       }
     ],
     "Wall": [
@@ -467,6 +420,90 @@
             {
               "size": "0.55",
               "symbol": "Wall"
+            }
+          ]
+        }
+      }
+    ],
+    "Shaft": [
+      {
+        "split": {
+          "axis": "z",
+          "parts": [
+            {
+              "size": "0.55",
+              "symbol": "Wall"
+            },
+            {
+              "size": "~1",
+              "symbol": "ShaftGlazing"
+            },
+            {
+              "size": "0.75",
+              "symbol": "Wall"
+            }
+          ]
+        }
+      }
+    ],
+    "ShaftGlazing": [
+      {
+        "split": {
+          "axis": "u",
+          "parts": [
+            {
+              "size": "0.07",
+              "symbol": "Jamb"
+            },
+            {
+              "size": "~1",
+              "symbol": "Pane"
+            },
+            {
+              "size": "0.07",
+              "symbol": "Jamb"
+            }
+          ]
+        }
+      }
+    ],
+    "Hall": [
+      {
+        "split": {
+          "axis": "z",
+          "parts": [
+            {
+              "size": "0.5",
+              "symbol": "Wall"
+            },
+            {
+              "size": "~1",
+              "symbol": "HallGlazing"
+            },
+            {
+              "size": "0.9",
+              "symbol": "Wall"
+            }
+          ]
+        }
+      }
+    ],
+    "HallGlazing": [
+      {
+        "split": {
+          "axis": "u",
+          "parts": [
+            {
+              "size": "0.08",
+              "symbol": "Jamb"
+            },
+            {
+              "size": "~1",
+              "symbol": "Pane"
+            },
+            {
+              "size": "0.08",
+              "symbol": "Jamb"
             }
           ]
         }

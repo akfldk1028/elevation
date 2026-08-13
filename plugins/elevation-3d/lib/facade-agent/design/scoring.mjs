@@ -5,6 +5,8 @@ import { sha256 } from "../../core.mjs";
 import { SCORE_LIMITS } from "./critic.mjs";
 
 const OPENING_KINDS = new Set(["door", "window"]);
+const TRIM_KINDS = new Set(["window-frame", "reveal", "lintel", "sill", "band"]);
+const TRIM_GAP_M = 0.08;
 const TARGET_OPENING_RATIO = 0.2;
 const MINIMUM_ENTRANCE_AREA_RATIO = 2;
 
@@ -46,8 +48,30 @@ export function scoreFacadeDesign({ context, artifacts, primitives } = {}) {
 	if (!Array.isArray(primitives)) fail("typed facade primitives are required");
 	const segments = new Map(context.facade_segments.map((segment) => [segment.segment_id, segment]));
 	const openings = primitives.filter((primitive) => OPENING_KINDS.has(primitive.kind));
-	const framed = new Set(primitives.filter((primitive) => primitive.kind === "window-frame")
-		.map((primitive) => primitive.design_primitive_index));
+	// An opening counts as trimmed when a jamb, sill or lintel sits against it. Older
+	// designs get their trim from the compiler, which tags it with the opening's own
+	// index; a grammar draws its own, so the test is geometric adjacency rather than a
+	// shared index, and both read the same way.
+	const trims = primitives.filter((primitive) => TRIM_KINDS.has(primitive.kind));
+	const touches = (opening, trim) => {
+		if (trim.segment_id !== opening.segment_id) return false;
+		const a = opening.local_bounds, b = trim.local_bounds;
+		const uOverlap = Math.min(a.u1, b.u1) - Math.max(a.u0, b.u0);
+		const zOverlap = Math.min(a.v1, b.v1) - Math.max(a.v0, b.v0);
+		const uGap = Math.max(b.u0 - a.u1, a.u0 - b.u1);
+		const zGap = Math.max(b.v0 - a.v1, a.v0 - b.v1);
+		if (zOverlap > 1e-6 && uGap <= TRIM_GAP_M && uGap > -TRIM_GAP_M) return true;
+		return uOverlap > 1e-6 && zGap <= TRIM_GAP_M && zGap > -TRIM_GAP_M;
+	};
+	const framed = new Set();
+	for (const primitive of primitives) {
+		if (!OPENING_KINDS.has(primitive.kind)) continue;
+		if (trims.some((trim) => touches(primitive, trim))
+			|| primitives.some((other) => other.kind === "window-frame"
+				&& other.design_primitive_index === primitive.design_primitive_index)) {
+			framed.add(primitive.design_primitive_index);
+		}
+	}
 	const storeyNumbers = context.storeys.map((storey) => storey.storey);
 	const storeyOf = (primitive) => {
 		const segment = segments.get(primitive.segment_id);
