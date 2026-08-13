@@ -29,7 +29,19 @@ function markPresentationOnly(node, name) {
 
 const SEMANTIC_ROLE_COLORS = Object.freeze({ concrete: 0xff0000, glass: 0x00ff00, bronze: 0x0000ff, opaque: 0xffff00 });
 const SEMANTIC_ROLES = Object.freeze(Object.keys(SEMANTIC_ROLE_COLORS));
-const KIND_ROLES = Object.freeze({ mullion: "bronze", "window-frame": "bronze", glazing: "glass", "opaque-panel": "opaque", "floor-band": "concrete", parapet: "concrete", "exact-mass": "concrete" });
+const KIND_ROLES = Object.freeze({
+	// procedural grammar vocabulary
+	mullion: "bronze", "window-frame": "bronze", glazing: "glass", "opaque-panel": "opaque",
+	"floor-band": "concrete", parapet: "concrete", "exact-mass": "concrete",
+	// design grammar vocabulary - without these a facade that draws its own trim has
+	// no bronze at all, and a pilaster is never anything but wall
+	// A pilaster is a wall pier and reads as wall; the opaque tint is dark enough that
+	// mapping a full-height element to it drags the whole facade under the luminance
+	// floor. The thin bands carry the opaque role instead.
+	door: "glass", window: "glass", reveal: "bronze",
+	lintel: "concrete", sill: "opaque", band: "opaque", cornice: "concrete",
+	pilaster: "concrete",
+});
 
 function namedRole(value) {
 	const name = String(value ?? "").toLowerCase();

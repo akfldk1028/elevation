@@ -817,6 +817,7 @@ export function buildTypedFacadeDetails({ mesh, floorGuides, facadePlanes, primi
 	const componentOrientations = massComponentOrientations(mesh);
 	const backing = new Map();
 	const details = [];
+	const authorsOwnTrim = primitives.some((primitive) => primitive?.kind === "reveal" || primitive?.kind === "lintel" || primitive?.kind === "sill");
 	for (let index = 0; index < primitives.length; index += 1) {
 		const primitive = primitives[index];
 		const plane = planes.get(primitive?.segment_id);
@@ -847,7 +848,11 @@ export function buildTypedFacadeDetails({ mesh, floorGuides, facadePlanes, primi
 			...(primitive.zone_id ? { zone_id: primitive.zone_id } : {}),
 			...(primitive.material_id ? { material_id: primitive.material_id } : {}),
 		}, backing.get(plane.segment_id));
-		if (primitive.kind === "door" || primitive.kind === "window") {
+		// A grammar that draws its own jambs and sills does not want a second frame
+		// pushed inside the first: the opening ends up as a frame within a frame and
+		// reads as a heavy black border rather than a window. The entrance is placed by
+		// the resolver rather than the grammar, so it keeps its frame either way.
+		if (primitive.kind === "door" || (!authorsOwnTrim && primitive.kind === "window")) {
 			const frameWidth = Math.min(
 				TYPED_FACADE_GRAMMAR.frame_width_m, (bounds.u1 - bounds.u0) / 4, (bounds.v1 - bounds.v0) / 4,
 			);
