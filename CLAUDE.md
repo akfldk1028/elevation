@@ -36,3 +36,27 @@
 - 플랜: `docs/superpowers/plans/2026-08-10-llm-facade-design-agent.md`
 - 결과 메모: `memory/elevation-3d/README.md`의 `LLM facade design agent v1 retained result` 섹션
 - 오프라인 실제 실행 스크립트(참고): `.superpowers/sdd/2026-08-10-llm-facade-design-agent/run-real-e2e.mjs` (ignored)
+
+## 2026-08-14 live grammar status
+
+The model now authors an accepted facade grammar. Run
+`llm-facade-live-v6` (creative-020), attempt-01: parse, derive and
+validate all clean, no warnings - 368 primitives, 46 windows, 32
+pilasters, 290 bands, openings on 5 of 5 storeys, and all four
+elevations different (front 162, back 102, left/right 52 each).
+
+The run then dies in `renderAllViews`: the **plan** view at the 1.2 m cut
+fails `TRIANGULATION_VISIBLE`
+(`technical-render/views/plan/plan-validation.json`). The gate is
+same-material seam detection in `elevation-presentation-validation.mjs:385`
+- 290 bands abutting the wall in the same material read as coplanar
+seams. Elevations and PBR never render, so there is still no elevation
+PNG from a live grammar.
+
+The grammar is already in the ledger, so re-running v6 after fixing the
+plan costs nothing and makes no model call. That is the next step.
+
+Six live runs, eighteen grammars. Five faults were mine (model pin,
+strict schema shape, reasoning multi-output, null-vs-absent twice, a
+32-symbol cap below what the grammar needed, first-hole-only reporting)
+and one was the correction loop reauthoring instead of repairing.
