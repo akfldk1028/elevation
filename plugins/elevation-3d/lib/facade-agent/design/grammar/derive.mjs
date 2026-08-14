@@ -12,6 +12,17 @@ function round(value) {
 }
 
 /**
+ * Two calls of one parameterised rule are two families, not one.
+ *
+ * Scoring counts distinct window families, so folding `Opening(wide)` and
+ * `Opening(narrow)` into a single `opening` would score a parameterised grammar below
+ * the duplicated rules it replaces - which is exactly the habit parameters remove.
+ */
+function familyId(symbol, param) {
+	return param === null || param === undefined ? symbol.toLowerCase() : `${symbol.toLowerCase()}_${param}`;
+}
+
+/**
  * Lay one split out along an axis.
  *
  * Absolute and relative parts take their size first; whatever is left goes to the
@@ -88,7 +99,7 @@ export function deriveFacadePrimitives({ grammar, segment, storeys, entrance = n
 				segment_id: segment.segment_id,
 				local_bounds: { u_min: round(uMin), u_max: round(uMax), z_min: round(zMin), z_max: round(zMax) },
 				depth_m: kind === "door" && entrance ? entrance.recess_m : alternative.depth_m,
-				family_id: symbol.toLowerCase(),
+				family_id: familyId(symbol, scope.param),
 				storey: storeyOf(zMin),
 				...(kind === "door" ? { role: "primary_entrance" } : {}),
 			});
@@ -106,6 +117,11 @@ export function deriveFacadePrimitives({ grammar, segment, storeys, entrance = n
 				: { ...scope, z_min: cursor, z_max: next };
 			child.index = slot.index;
 			child.total = slot.total;
+			// The argument binds to the invoked symbol and stops there; it is an argument,
+			// not an ambient mode. A part that passes nothing rebinds `param` to null, so a
+			// nested reveal cannot silently inherit the `top` its grandparent was given and
+			// every `param ==` in a rule answers for the call that rule was made by.
+			child.param = slot.part.arg;
 			child.depth = scope.depth + 1;
 			child.storey = storeyOf(child.z_min) ?? scope.storey;
 			cursor = next;
@@ -125,6 +141,8 @@ export function deriveFacadePrimitives({ grammar, segment, storeys, entrance = n
 		// between elevations, so every bay across one face comes out identical.
 		index: segment.face_index ?? 0,
 		total: segment.face_total ?? 1,
+		// Nothing calls the start symbol, so it is the one rule with no argument to read.
+		param: null,
 		storey: storeys[0]?.storey ?? 1,
 		depth: 0,
 	});

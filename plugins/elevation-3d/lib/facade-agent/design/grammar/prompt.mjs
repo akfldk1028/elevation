@@ -1,12 +1,14 @@
 import { sha256, stableJson } from "../../../core.mjs";
 import { TERMINAL_VOCABULARY } from "../../facade-vocabulary.mjs";
-import { AXES, BOUNDS, TERMINALS } from "./contract.mjs";
+import { AXES, BOUNDS, MAX_PARAM_INDEX, PARAM_VALUES, PARAM_WORDS, TERMINALS } from "./contract.mjs";
 
 export const FACADE_GRAMMAR_PROMPT_REVISION = "arr.elevation3d.facade-grammar-prompt.v1";
 
 const SYMBOL = { type: "string", pattern: "^[A-Za-z][A-Za-z0-9_]{0,31}$" };
 
-const PREDICATE_TERM = "(?:(?:index|storey) *% *[0-9]+ *== *[0-9]+|(?:index|storey) *== *(?:[0-9]+|last|top)|face_view *== *(?:front|back|left|right))";
+// Longest first, so `param == 15` cannot be read as `param == 1` with a stray 5 left over.
+const PARAM_LITERALS = [...PARAM_VALUES].sort((a, b) => b.length - a.length).join("|");
+const PREDICATE_TERM = `(?:(?:index|storey) *% *[0-9]+ *== *[0-9]+|(?:index|storey) *== *(?:[0-9]+|last|top)|face_view *== *(?:front|back|left|right)|param *== *(?:${PARAM_LITERALS}))`;
 
 /**
  * The grammar the model answers in.
@@ -60,7 +62,7 @@ export const FACADE_GRAMMAR_V3_SCHEMA = Object.freeze({
 					// The predicate set is closed, so the schema carries it too. A provider that
 					// enforces patterns then cannot emit a malformed comparison at all.
 					pattern: `^${PREDICATE_TERM}(?: *&& *${PREDICATE_TERM})?$`,
-					description: "index % <n> == <m> | index == <n> | index == last | storey % <n> == <m> | storey == <n> | face_view == front|back|left|right. Two may be joined with &&. Use null for the else branch.",
+					description: "index % <n> == <m> | index == <n> | index == last | storey % <n> == <m> | storey == <n> | face_view == front|back|left|right | param == <the arg this symbol was called with>. Two may be joined with &&. Use null for the else branch.",
 				},
 				split: {
 					type: ["object", "null"],
@@ -73,10 +75,17 @@ export const FACADE_GRAMMAR_V3_SCHEMA = Object.freeze({
 							items: {
 								type: "object",
 								additionalProperties: false,
-								required: ["size", "symbol", "repeat"],
+								required: ["size", "symbol", "arg", "repeat"],
 								properties: {
 									size: { type: "string", description: "\"2.4\" absolute metres, \"'0.5\" fraction of the scope, \"~1\" floating weight." },
 									symbol: SYMBOL,
+									// An enum rather than a pattern: it is the one constraint every strict
+									// provider enforces, so an argument outside the set cannot be emitted.
+									arg: {
+										type: ["string", "null"],
+										enum: [...PARAM_VALUES, null],
+										description: "The single argument passed to that symbol, which its own alternatives read as `param`. Use null to pass none.",
+									},
 									repeat: { type: ["boolean", "null"], description: "Tile this part as many times as it fits. Requires a floating \"~n\" size, at most one per split, and no other floating part in that split. Use null otherwise." },
 								},
 							},
@@ -105,10 +114,36 @@ floating size such as "~3.3", it is the only part in its split that may float, a
 split may hold at most one of them. Set "repeat": null on every other part.
 
 Predicates: index % <n> == <m>, index == <n>, index == last, storey % <n> == <m>,
-storey == <n>, face_view == front|back|left|right. Two may be joined with &&.
-\`index\` is the position within the repeat that produced this scope, so
+storey == <n>, face_view == front|back|left|right, param == <value>. Two may be joined
+with &&. \`index\` is the position within the repeat that produced this scope, so
 "index % 2 == 0" alternates floors and, at the top level, alternates facets across
 one elevation.
+
+Symbol arguments. Every symbol takes at most one argument. A part passes it with
+"arg", and the rule it names reads it back as \`param\`:
+
+  { "size": "~3.3", "symbol": "Floor", "arg": "top", "repeat": null }
+
+then inside rule Floor an alternative with "when": "param == top" is the top floor,
+and the alternative with "when": null is every other one. That is one Floor rule
+instead of FloorTop and FloorTypical, and it composes: Bay with arg wide and Bay with
+arg narrow are one rule, not two.
+
+An argument is an integer 0 to ${MAX_PARAM_INDEX}, or one of these words:
+
+  ${PARAM_WORDS.join(", ")}
+
+It is a label and nothing more - the words carry no built-in meaning, so "arg": "top"
+does nothing at all unless some alternative of that rule tests "param == top". Pass
+null when a part needs no argument.
+
+The argument reaches only the symbol it is passed to. It does not carry on to that
+rule's own parts, so if a bay is wide and its opening should be too, pass "arg":
+"wide" again on the part that names the opening.
+
+Prefer one parameterised rule over several near-identical named ones. You have at
+most ${BOUNDS.maxSymbols} symbols, and spending them on FloorA, FloorB, FloorC is how a grammar
+runs out of room to say anything.
 
 Terminals, and what each one is for:
 
