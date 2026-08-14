@@ -181,7 +181,9 @@ facade has no parts. Give it parts instead.
 - Openings should read as roughly a fifth to two fifths of the wall. Slits in a large
   blank wall read as a warehouse, not a designed elevation.
 - Nest an opening into lintel, jamb reveals, pane and sill rather than leaving a bare
-  rectangle - that is what separates a drawn facade from a painted one.
+  rectangle - that is what separates a drawn facade from a painted one. All four, not
+  a head and a shelf only: the reveals are the sides, and without them an opening has
+  no thickness.
 - Let the street face and the service face differ in kind, not only in window width.
 
 Deterministic code owns all placement. Never name a segment, a coordinate or a path.
