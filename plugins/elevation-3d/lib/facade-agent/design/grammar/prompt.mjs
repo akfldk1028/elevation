@@ -5,6 +5,8 @@ export const FACADE_GRAMMAR_PROMPT_REVISION = "arr.elevation3d.facade-grammar-pr
 
 const SYMBOL = { type: "string", pattern: "^[A-Za-z][A-Za-z0-9_]{0,31}$" };
 
+const PREDICATE_TERM = "(?:(?:index|storey) *% *[0-9]+ *== *[0-9]+|(?:index|storey) *== *(?:[0-9]+|last|top)|face_view *== *(?:front|back|left|right))";
+
 /**
  * The grammar the model answers in.
  *
@@ -54,7 +56,10 @@ export const FACADE_GRAMMAR_V3_SCHEMA = Object.freeze({
 			properties: {
 				when: {
 					type: ["string", "null"],
-					description: "index % <n> == <m> | index == <n> | index == last | storey % <n> == <m> | storey == <n> | face_view == front|back|left|right. Two may be joined with &&. Omit for the else branch.",
+					// The predicate set is closed, so the schema carries it too. A provider that
+					// enforces patterns then cannot emit a malformed comparison at all.
+					pattern: `^${PREDICATE_TERM}(?: *&& *${PREDICATE_TERM})?$`,
+					description: "index % <n> == <m> | index == <n> | index == last | storey % <n> == <m> | storey == <n> | face_view == front|back|left|right. Two may be joined with &&. Use null for the else branch.",
 				},
 				split: {
 					type: ["object", "null"],
@@ -105,7 +110,13 @@ storey == <n>, face_view == front|back|left|right. Two may be joined with &&.
 one elevation.
 
 Terminals: ${TERMINALS.join(", ")}. \`wall\` emits nothing. Each takes optional
-inset_m and depth_m, both at most ${BOUNDS.maxInsetM} m.`;
+inset_m and depth_m, both at most ${BOUNDS.maxInsetM} m. On a split alternative set
+terminal to null and both inset_m and depth_m to 0; on a terminal alternative set
+split to null.
+
+Before answering, check the rule graph closes: every symbol named by any part must
+also appear as a rule name. A part pointing at a symbol you never defined is the
+single most common way this answer is rejected.`;
 
 const GUIDANCE = `Design, do not decorate:
 
