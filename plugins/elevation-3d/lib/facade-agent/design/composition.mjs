@@ -21,6 +21,12 @@ export const COMPOSITION_BOUNDS = Object.freeze({
 	minOpeningRatio: 0.1,
 	/** Largest opening against the median one. Below this every opening is the same. */
 	minScaleRatio: 1.5,
+	/**
+	 * Storeys the tallest opening or pier must reach through. Two is the least that
+	 * counts as crossing a floor at all, and the placement rules already allow it -
+	 * only the two ends of an opening have to sit clear of a slab.
+	 */
+	minStoreySpan: 2,
 });
 
 const OPENING_KINDS = new Set(["door", "window"]);
@@ -57,9 +63,22 @@ export function measureComposition({ context, resolved } = {}) {
 	const openByView = new Map();
 	const openingAreas = [];
 	let hasTermination = false;
+	// How many storeys the tallest single element reaches through. One means every
+	// opening and every pier was cut to fit inside a floor, which is the geometry of
+	// stacked identical cells however much the openings differ within a storey.
+	let maxStoreySpan = 0;
 	const topStorey = context.storeys[context.storeys.length - 1];
+	const storeySpan = (bounds) => context.storeys.filter((storey) => {
+		const overlap = Math.min(bounds.z_max, storey.z_max) - Math.max(bounds.z_min, storey.z_min);
+		return overlap > 0.35 * (storey.z_max - storey.z_min);
+	}).length;
 	for (const primitive of resolved.primitives) {
 		if (primitive.kind === "cornice") hasTermination = true;
+		// A pier counts as much as a window here: an order carried through three floors
+		// is what breaks the storey lockstep, and it need not be glazed to do it.
+		if (OPENING_KINDS.has(primitive.kind) || primitive.kind === "pilaster") {
+			maxStoreySpan = Math.max(maxStoreySpan, storeySpan(primitive.local_bounds));
+		}
 		if (!OPENING_KINDS.has(primitive.kind)) continue;
 		const view = segments.get(primitive.segment_id)?.face_view ?? segments.get(primitive.segment_id)?.view;
 		const value = area(primitive.local_bounds);
@@ -91,6 +110,9 @@ export function measureComposition({ context, resolved } = {}) {
 	if (openingAreas.length > 1 && scaleRatio + 1e-9 < COMPOSITION_BOUNDS.minScaleRatio) {
 		note("SCALE_HIERARCHY_FLAT", `the largest opening is only ${scaleRatio.toFixed(2)}x the median, so every opening is the same size and the elevation has no subject; make one element clearly dominant`);
 	}
+	if (context.storeys.length > 1 && maxStoreySpan > 0 && maxStoreySpan < COMPOSITION_BOUNDS.minStoreySpan) {
+		note("STOREY_LOCKSTEP", `nothing crosses a floor - the tallest opening or pier reaches through ${maxStoreySpan} storey of ${context.storeys.length}, so the facade is one floor drawn ${context.storeys.length} times; carry a pier or a glazed slot through two or three storeys`);
+	}
 
 	return {
 		metrics: {
@@ -100,6 +122,7 @@ export function measureComposition({ context, resolved } = {}) {
 			largest_opening_m2: Number(largest.toFixed(6)),
 			median_opening_m2: Number(middle.toFixed(6)),
 			scale_ratio: scaleRatio,
+			max_storey_span: maxStoreySpan,
 			has_top_termination: hasTermination,
 			top_storey: topStorey?.storey ?? null,
 		},
