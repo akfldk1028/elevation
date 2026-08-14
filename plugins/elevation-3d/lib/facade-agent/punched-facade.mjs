@@ -6,6 +6,7 @@ import {
 	PUNCHED_FACADE_MATERIALS, PUNCHED_FACADE_SURFACES, PUNCHED_FACADE_SYSTEM,
 	validatePunchedFacadeGrammar,
 } from "../facade-grammar.mjs";
+import { TERMINAL_MATERIALS } from "./facade-vocabulary.mjs";
 
 const EPSILON = 1e-9;
 const GEOMETRY_GAP_M = 1e-4;
@@ -803,10 +804,7 @@ export const TYPED_FACADE_GRAMMAR = Object.freeze({
 	brick_module_m: Object.freeze([0.215, 0.065]), confidence: 1,
 	unresolved_surfaces: Object.freeze([]),
 });
-const TYPED_MATERIAL = Object.freeze({
-	door: "glass", window: "glass", reveal: "window-frame", lintel: "precast",
-	sill: "precast", pilaster: "brick", band: "precast", cornice: "precast",
-});
+const TYPED_MATERIAL = TERMINAL_MATERIALS;
 
 export function buildTypedFacadeDetails({ mesh, floorGuides, facadePlanes, primitives }) {
 	validateFloorGuideBudget(floorGuides);

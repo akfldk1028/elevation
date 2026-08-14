@@ -3,6 +3,7 @@ import { join, resolve } from "node:path";
 import { sha256, stableJson } from "../../core.mjs";
 import { atomicWrite, prepareSafeDirectory, safeRead } from "../path-safety.mjs";
 import { createFacadeGrammarRequest } from "../providers/grammar/contract.mjs";
+import { measureComposition } from "./composition.mjs";
 import { parseFacadeDesign } from "./contract.mjs";
 import { readVerifiedFacadeDesignContextAuthority } from "./context.mjs";
 import { buildFacadeDesignPrompt, FACADE_PROGRAM_V2_SCHEMA } from "./prompt.mjs";
@@ -12,6 +13,7 @@ import { validateResolvedFacadeProgram } from "./validator.mjs";
 
 const PROVIDERS = Object.freeze({ "openai-gpt-5.5": "gpt-5.5", "byteplus-seed-mini": "seed-2-0-mini-260428" });
 const MAX_CORRECTIONS = 2;
+const GRAMMAR_SCHEMA_VERSION = "arr.elevation3d.facade-grammar.v3";
 
 export class FacadeDesignAgentError extends Error {
 	constructor(code, message, cause) {
@@ -113,6 +115,11 @@ export async function runFacadeDesignAgent({ runDir, context, provider, ledger, 
 	let correctionCodes = [];
 	let previous = null;
 	const attempts = [];
+	// The first structurally valid answer, kept aside. Composition is a matter of design
+	// rather than of buildability, so a flat facade is worth another attempt but is not
+	// worth throwing the run away over: a warehouse the user can look at and reject beats
+	// no elevation at all. This is the fallback if no attempt ever composes.
+	let fallback = null;
 	for (let index = 0; index <= MAX_CORRECTIONS; index += 1) {
 		const attempt = index + 1;
 		const prompt = language === "grammar"
@@ -166,11 +173,38 @@ export async function runFacadeDesignAgent({ runDir, context, provider, ledger, 
 			const reason = String(error?.message ?? "").replace(/[\r\n]+/g, " ").slice(0, 600);
 			correctionCodes = [reason ? `PROGRAM_INVALID: ${reason}` : "PROGRAM_INVALID"];
 		}
-		attempts.push({ attempt, request_sha256: request.fingerprint, response_sha256: receipt.artifactSha256, validation_codes: [...correctionCodes] });
-		if (validation?.accepted) return deepFreeze({
+		let composition = null;
+		// Only a v3 grammar is held to composition, and the test is on what was actually
+		// authored rather than on what was asked for, because the two can differ. A v2
+		// program declares its base/middle/top zones outright and the validator already
+		// checks it against them; the guidance these faults cite is written for the
+		// grammar prompt and would be advice a v2 author cannot act on.
+		if (validation?.accepted && program?.schema_version === GRAMMAR_SCHEMA_VERSION) {
+			// Buildable is not the same as designed. The geometry gates above cannot tell a
+			// composed elevation from a blank wall with slits in it, so this asks the one
+			// question they miss, and asks it only once the answer is structurally sound.
+			composition = measureComposition({ context, resolved });
+			if (!fallback) fallback = { program, resolved, validation, composition };
+			correctionCodes = composition.faults;
+		}
+		attempts.push({
+			attempt, request_sha256: request.fingerprint, response_sha256: receipt.artifactSha256,
+			validation_codes: [...correctionCodes],
+			...(composition ? { composition: composition.metrics } : {}),
+		});
+		if (validation?.accepted && !composition?.codes.length) return deepFreeze({
 			schema_version: "arr.elevation3d.facade-design-agent-result.v1",
 			program, resolved, validation, attempts,
+			...(composition ? { composition: composition.metrics } : {}),
 		});
 	}
+	// Every attempt was either invalid or flat. A structurally sound one is still worth
+	// returning, carrying the composition faults so the caller can say what is wrong with
+	// it rather than the run ending with nothing to show.
+	if (fallback) return deepFreeze({
+		schema_version: "arr.elevation3d.facade-design-agent-result.v1",
+		program: fallback.program, resolved: fallback.resolved, validation: fallback.validation,
+		composition: fallback.composition.metrics, composition_faults: fallback.composition.codes, attempts,
+	});
 	fail("FACADE_DESIGN_CORRECTION_EXHAUSTED", "facade design remained invalid after two correction attempts");
 }

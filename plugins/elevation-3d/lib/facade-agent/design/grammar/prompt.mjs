@@ -1,4 +1,5 @@
 import { sha256, stableJson } from "../../../core.mjs";
+import { TERMINAL_VOCABULARY } from "../../facade-vocabulary.mjs";
 import { AXES, BOUNDS, TERMINALS } from "./contract.mjs";
 
 export const FACADE_GRAMMAR_PROMPT_REVISION = "arr.elevation3d.facade-grammar-prompt.v1";
@@ -109,23 +110,44 @@ storey == <n>, face_view == front|back|left|right. Two may be joined with &&.
 "index % 2 == 0" alternates floors and, at the top level, alternates facets across
 one elevation.
 
-Terminals: ${TERMINALS.join(", ")}. \`wall\` emits nothing. Each takes optional
-inset_m and depth_m, both at most ${BOUNDS.maxInsetM} m. On a split alternative set
-terminal to null and both inset_m and depth_m to 0; on a terminal alternative set
-split to null.
+Terminals, and what each one is for:
+
+${TERMINAL_VOCABULARY.map((terminal) => `  ${terminal.word} - ${terminal.purpose}`).join("\n")}
+
+Each takes optional inset_m and depth_m, both at most ${BOUNDS.maxInsetM} m. On a split
+alternative set terminal to null and both inset_m and depth_m to 0; on a terminal
+alternative set split to null.
+
+The start symbol is derived once per facet, not once per elevation. A folded elevation
+is several facets side by side, so a pilaster at the two edges of the start rule puts a
+pier on every fold of the building, which reads as stripes rather than structure. Use
+\`index\` and \`total\` at the start rule to tell the facets apart, and place edge piers
+only where the elevation actually turns a corner.
 
 Before answering, check the rule graph closes: every symbol named by any part must
 also appear as a rule name. A part pointing at a symbol you never defined is the
 single most common way this answer is rejected.`;
 
-const GUIDANCE = `Design, do not decorate:
+const GUIDANCE = `Compose an elevation, do not vary a pattern.
 
-- branch on index so floors alternate instead of repeating
-- branch on face_view so the street side differs from the service side
-- change opening proportion between base, middle and top; storey height is usually
-  far more available than facet width
-- nest one more level so an opening becomes jamb, pane and sill rather than a bare
-  rectangle - that is what separates a drawn facade from a painted one
+Alternating opening sizes floor by floor is the device critics call pseudo-random
+windows. It raises the variety count and still reads as a housing block, because the
+facade has no parts. Give it parts instead.
+
+- Tripartite: a base that meets the ground, a shaft, and a top that terminates. Decide
+  which storeys each one covers, and change material between them. Material follows
+  from the terminal you choose, so a base built from pilaster and band carries weight
+  that a shaft of glass and reveal does not.
+- Terminate the top. A cornice on the highest storey is what stops a building looking
+  sawn off. Without one the elevation merely runs out of floors.
+- One dominant element. An elevation needs a subject: an entrance bay carried up
+  several storeys, one wide opening against many narrow ones, one recessed field. If
+  every opening is within a hair of every other, there is nothing to look at.
+- Openings should read as roughly a fifth to two fifths of the wall. Slits in a large
+  blank wall read as a warehouse, not a designed elevation.
+- Nest an opening into lintel, jamb reveals, pane and sill rather than leaving a bare
+  rectangle - that is what separates a drawn facade from a painted one.
+- Let the street face and the service face differ in kind, not only in window width.
 
 Deterministic code owns all placement. Never name a segment, a coordinate or a path.
 Every opening must sit clear of the folds and the floor bands, only one primary

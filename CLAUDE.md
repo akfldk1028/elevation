@@ -60,3 +60,57 @@ Six live runs, eighteen grammars. Five faults were mine (model pin,
 strict schema shape, reasoning multi-output, null-vs-absent twice, a
 32-symbol cap below what the grammar needed, first-hole-only reporting)
 and one was the correction loop reauthoring instead of repairing.
+
+## 2026-08-14 the elevations render, and they still read as an apartment
+
+All four elevations of v6 rendered and passed presentation validation.
+Only the plan is rejected. They are at
+`llm-facade-live-v6/technical-render/views/<view>/competition-elevation/<view>/<view>.png`.
+
+The user's read was right: byte-different from v5/v24, architecturally the
+same. Reference reading named the device - alternating opening sizes
+storey by storey is *pseudo-random windows*, what critics call fake
+difference. It raises a variety score and still reads as a housing block.
+The whole diversity effort had been aimed at the wrong target.
+
+Root cause was the terminal vocabulary, in four hand-synced lists that
+had drifted: `lintel`, `sill` and `cornice` were plumbed through the
+renderer, the material table and the presentation validator while the
+grammar had no word for them. The model wrote a correct tripartite
+rationale and could not draw a top to the building. Also, the start
+symbol derives once per *facet*, so the model's root rule
+`'0.05 pilaster | '0.90 core | '0.05 pilaster` put a pier on all 16
+folds - that is the 32 black stripes.
+
+Changed:
+
+- new leaf module `facade-agent/facade-vocabulary.mjs` is the single
+  source for word / primitive kind / material / purpose. `contract.mjs`,
+  `derive.mjs`, `punched-facade.mjs` and the prompt all derive from it.
+  `test/elevation3d-facade-vocabulary.test.ts` holds the four in
+  agreement so they cannot drift again.
+- new `design/composition.mjs` measures the three things the elevation
+  actually lacked: opening-to-wall ratio per elevation (worst one counts),
+  a top termination, and largest-to-median opening ratio. Thresholds are
+  slack on purpose - they catch a warehouse, not taste.
+- composition runs in the design agent's correction loop, NOT in
+  `validateResolvedFacadeProgram`. Putting it in the validator broke 22
+  unrelated plumbing tests, because the validator answers "is this
+  buildable" and everything depends on it. It is gated on the authored
+  program being v3 grammar, tested on `schema_version` rather than the
+  requested language, because the offline fixture asks for grammar and
+  returns v2.
+- a structurally sound but flat answer is returned as a fallback with
+  `composition_faults` rather than failing the run.
+- the prompt's GUIDANCE no longer says "change opening proportion between
+  base, middle and top" (that is the fake-difference generator). It asks
+  for tripartite with material change, a cornice, one dominant element,
+  and a fifth to two fifths opening ratio. It also states that the start
+  symbol is per facet.
+
+Note: composition faults cost extra paid attempts. A flat-but-valid
+answer now spends up to 3 calls instead of 1, within the existing
+`ceilingUsd * (MAX_CORRECTIONS + 1)` run envelope.
+
+Next: re-run live. The prompt changed, so the request fingerprint changes
+and this is a fresh paid call, not a free ledger replay.
