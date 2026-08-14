@@ -457,11 +457,19 @@ function renderCompetition(root, view) {
 			lineStrength: { value: settings.view === "left" || settings.view === "right" ? 0.42 : 0.72 },
 		},
 		vertexShader: `varying vec2 vUv; void main(){vUv=uv;gl_Position=vec4(position.xy,0.,1.);}`,
+		// A raw ShaderMaterial gets none of three's automatic output encoding, so this pass
+		// was writing linear light straight into an sRGB buffer and every fill landed a
+		// transfer function too dark - the palette's #34373a arrived as #090a0b, which is
+		// why authored trim read as pure black. Mixing happens in linear, so the line tint
+		// is converted down to match and only the final colour is encoded.
 		fragmentShader: `uniform sampler2D tColor; uniform sampler2D tDepth; uniform vec2 texel; uniform float lineStrength; varying vec2 vUv;
+			vec3 srgbToLinear(vec3 c){return mix(c/12.92,pow((c+0.055)/1.055,vec3(2.4)),step(vec3(0.04045),c));}
+			vec3 linearToSrgb(vec3 c){return mix(c*12.92,1.055*pow(c,vec3(1./2.4))-0.055,step(vec3(0.0031308),c));}
 			void main(){vec3 c=texture2D(tColor,vUv).rgb; float d=texture2D(tDepth,vUv).r;
 			float e=0.; e=max(e,abs(d-texture2D(tDepth,vUv+vec2(texel.x,0.)).r)); e=max(e,abs(d-texture2D(tDepth,vUv-vec2(texel.x,0.)).r));
 			e=max(e,abs(d-texture2D(tDepth,vUv+vec2(0.,texel.y)).r)); e=max(e,abs(d-texture2D(tDepth,vUv-vec2(0.,texel.y)).r));
-			float line=smoothstep(0.00500,0.02000,e); gl_FragColor=vec4(mix(c,vec3(0.16,0.15,0.14),line*lineStrength),1.);}`,
+			float line=smoothstep(0.00500,0.02000,e);
+			gl_FragColor=vec4(linearToSrgb(mix(c,srgbToLinear(vec3(0.16,0.15,0.14)),line*lineStrength)),1.);}`,
 	});
 	postScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), postMaterial));
 	function renderMode(mode) {
