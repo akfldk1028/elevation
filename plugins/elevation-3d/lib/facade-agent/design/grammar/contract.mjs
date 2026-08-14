@@ -13,7 +13,9 @@ function fail(message) {
 export const TERMINALS = Object.freeze(["wall", "glass", "door", "band", "reveal", "pilaster"]);
 export const AXES = Object.freeze(["u", "z"]);
 export const BOUNDS = Object.freeze({
-	maxSymbols: 32,
+	// Derivation is bounded by depth and repeat, not by how many names the grammar
+	// uses. A facade that varies by elevation, by parity and by zone needs the room.
+	maxSymbols: 64,
 	maxAlternatives: 8,
 	maxParts: 16,
 	maxDepth: 8,
@@ -142,7 +144,7 @@ export function parseFacadeGrammar(input) {
 		}))
 		: record(program.rules, "rules", new Set(Object.keys(program.rules ?? {})));
 	const names = Object.keys(rules);
-	if (!names.length || names.length > BOUNDS.maxSymbols) fail("rules must define between one and 32 symbols");
+	if (!names.length || names.length > BOUNDS.maxSymbols) fail(`rules must define between one and ${BOUNDS.maxSymbols} symbols`);
 	const referenced = new Set();
 	const parsed = {};
 	for (const name of names) {
@@ -153,9 +155,10 @@ export function parseFacadeGrammar(input) {
 		);
 	}
 	if (!parsed[program.start]) fail("start does not name a defined rule");
-	for (const symbol of referenced) {
-		if (!parsed[symbol]) fail(`symbol ${symbol} is referenced but never defined`);
-	}
+	// Name every hole at once. Reporting only the first makes a graph missing eight
+	// rules look like a single slip, and the correction loop never sees the real gap.
+	const dangling = [...referenced].filter((symbol) => !parsed[symbol]);
+	if (dangling.length) fail(`these symbols are referenced but never defined: ${dangling.join(", ")}`);
 	const rationale = program.design_rationale === undefined
 		? []
 		: list(program.design_rationale, "design_rationale", 0, 16).map((line, index) => {

@@ -163,7 +163,7 @@ export async function runFacadeDesignAgent({ runDir, context, provider, ledger, 
 		} catch (error) {
 			// Hand the parse failure back verbatim. A bare PROGRAM_INVALID leaves the
 			// model correcting blind, and it repeats the same mistake every attempt.
-			const reason = String(error?.message ?? "").replace(/[\r\n]+/g, " ").slice(0, 200);
+			const reason = String(error?.message ?? "").replace(/[\r\n]+/g, " ").slice(0, 600);
 			correctionCodes = [reason ? `PROGRAM_INVALID: ${reason}` : "PROGRAM_INVALID"];
 		}
 		attempts.push({ attempt, request_sha256: request.fingerprint, response_sha256: receipt.artifactSha256, validation_codes: [...correctionCodes] });
