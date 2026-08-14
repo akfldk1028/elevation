@@ -114,3 +114,60 @@ answer now spends up to 3 calls instead of 1, within the existing
 
 Next: re-run live. The prompt changed, so the request fingerprint changes
 and this is a fresh paid call, not a free ledger replay.
+
+## 2026-08-14 the pipeline completes; best result is v11
+
+`llm-facade-live-v11` is the result to keep. It runs the whole pipeline
+for the first time - four elevations, plan, axon, PBR and
+`pbr-render/perspective-hero.png` - with 371 details and scores 100 on
+every axis except `repetition_variation_balance` at 70, which is the
+known-flawed metric. It is v9's accepted grammar replayed from a copied
+ledger, so it cost nothing beyond v9's own $0.12.
+
+What made the pipeline complete, in order:
+
+- `61d457f` the competition views kept their own palette role lookup and
+  it had drifted from the PBR one. It matched on the glTF material name
+  (the facade material) instead of the primitive kind (the role the
+  palette paints), so brick matched the near-black `opaque` and the
+  pilasters were the black stripes, while precast matched `concrete`,
+  the same role as the mass, and every band was painted wall-tone and
+  vanished. Measured on the v6 geometry: plan seam segments 6 -> 0.
+  The earlier guess in this file - that bands abutting the wall caused
+  the plan failure - was wrong; no band crosses the 1.2 m cut at all.
+- `authorsOwnTrim` switched the generated window frame off whenever the
+  grammar drew a reveal, a lintel OR a sill. The frame is the two
+  vertical edges of an opening, so only a reveal contests it. Once the
+  vocabulary made lintel and sill sayable the model used them, frames
+  switched off, `window-frame` lost its only source and the front and
+  right elevations failed MATERIAL_ROLE_MISSING on the missing bronze
+  role while back and left passed on the entrance door's frame alone.
+- the elevation base pass is a raw ShaderMaterial and got none of
+  three's output encoding, so linear light landed in an sRGB buffer and
+  every fill was a transfer function too dark. This affects the
+  elevation/plan/axon path only - the perspective hero renders through
+  embedded-pbr-presentation and was byte-identical before and after.
+
+Open, and worth doing in this order:
+
+1. The `giant order` attempt (v12) made things worse and is discarded.
+   Asking for an element carried through two or three storeys, without
+   relaxing anything else, made the model strip openings rather than
+   enlarge them: windows went 78 -> 8 and the elevation became a blank
+   wall. All three attempts failed composition and the fallback shipped
+   it. The STOREY_LOCKSTEP metric itself looks sound - the diagnosis
+   that a facade confining every opening to one storey is one floor
+   drawn five times still holds, and the validator has always allowed an
+   opening to cross a slab. It is the prompt that needs to ask for it
+   without trading away the opening ratio.
+2. The fallback now keeps the least-faulty attempt rather than the first;
+   that landed after v12 and has not been exercised live.
+3. Plan `TRIANGULATION_VISIBLE` has a zero-tolerance clause: any single
+   connected seam segment of 12px fails it even when the seam fraction is
+   185x under its own limit. v9 passed, v10 failed on 2 segments, v12 on
+   16. Decide whether that clause is right before tuning grammars around
+   it.
+4. The perspective hero crops the bottom of the building, so the base and
+   the entrance cannot be checked in it. Framing lives in the PBR
+   presentation path, not in the runners.
+5. `repetition_variation_balance` still scores variety down (70).
