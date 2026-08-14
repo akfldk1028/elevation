@@ -1,3 +1,5 @@
+import { TERMINAL_WORDS } from "../../facade-vocabulary.mjs";
+
 export class FacadeGrammarError extends Error {
 	constructor(message) {
 		super(message);
@@ -10,7 +12,7 @@ function fail(message) {
 	throw new FacadeGrammarError(message);
 }
 
-export const TERMINALS = Object.freeze(["wall", "glass", "door", "band", "reveal", "pilaster"]);
+export const TERMINALS = TERMINAL_WORDS;
 export const AXES = Object.freeze(["u", "z"]);
 export const BOUNDS = Object.freeze({
 	// Derivation is bounded by depth and repeat, not by how many names the grammar

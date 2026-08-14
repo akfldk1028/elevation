@@ -1,6 +1,6 @@
+import { TERMINAL_KINDS } from "../../facade-vocabulary.mjs";
 import { BOUNDS, FacadeGrammarError, predicateHolds } from "./contract.mjs";
 
-const TERMINAL_KINDS = Object.freeze({ glass: "window", door: "door", band: "band", reveal: "reveal", pilaster: "pilaster" });
 const MAX_PRIMITIVES = 2048;
 
 function fail(message) {
