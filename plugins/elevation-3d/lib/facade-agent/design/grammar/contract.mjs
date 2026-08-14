@@ -30,6 +30,37 @@ const SYMBOL = /^[A-Za-z][A-Za-z0-9_]{0,31}$/;
 const ID = /^[a-z0-9](?:[a-z0-9._-]{0,126}[a-z0-9])?$/;
 const VIEWS = new Set(["front", "back", "left", "right"]);
 
+/**
+ * CGA's `Floor(i)`: every symbol takes at most one argument, always named `param`.
+ *
+ * An argument is a *value*, never an expression. It is one of these words or a small
+ * integer, and that is the whole language - there is no operator to combine two of
+ * them, no way to compute one from the scope, and no way to name anything outside this
+ * list. So a parameter can only ever choose an alternative; it can never say what to
+ * do. The words mean nothing to the derivation, which compares tokens and no more:
+ * only a rule's own `when` gives `top` or `wide` any architectural sense.
+ *
+ * Without this a variation costs a whole new rule name, and the run that drove this
+ * change needed 54 of them to say what a dozen parameterised rules say.
+ */
+export const PARAM_WORDS = Object.freeze([
+	"base", "shaft", "top", "wide", "narrow", "tall",
+	"short", "open", "solid", "corner", "center", "service",
+]);
+export const MAX_PARAM_INDEX = 15;
+/** Every literal an argument may carry, as strings, which is the shape a strict enum needs. */
+export const PARAM_VALUES = Object.freeze([
+	...Array.from({ length: MAX_PARAM_INDEX + 1 }, (_, index) => String(index)),
+	...PARAM_WORDS,
+]);
+const PARAM_SET = new Set(PARAM_VALUES);
+
+/** Normalise one argument literal to the type `predicateHolds` will compare it with. */
+function parseParamValue(text, label) {
+	if (!PARAM_SET.has(text)) fail(`${label} is not a supported symbol argument: ${text}`);
+	return /^\d+$/.test(text) ? Number(text) : text;
+}
+
 function record(value, label, allowed) {
 	if (!value || typeof value !== "object" || Array.isArray(value)
 		|| Object.getPrototypeOf(value) !== Object.prototype) fail(`${label} must be a plain object`);
@@ -81,6 +112,12 @@ function parsePredicate(text, label) {
 		if (match) return { field: match[1], value: match[2] === "last" ? "last" : "last" };
 		match = /^face_view\s*==\s*(front|back|left|right)$/.exec(term);
 		if (match) return { field: "face_view", value: match[1] };
+		// A rule reads its own argument the same way it reads the scope: as a comparison
+		// against a literal drawn from the closed set. There is deliberately no
+		// `param % n`, no `param > n` and no term with `param` on both sides, because
+		// each of those would be the first step towards evaluating rather than matching.
+		match = /^param\s*==\s*([a-z0-9]+)$/.exec(term);
+		if (match) return { field: "param", value: parseParamValue(match[1], `${label} param comparison`) };
 		return fail(`${label} is not a supported comparison: ${term}`);
 	});
 	if (!terms.length) fail(`${label} is empty`);
@@ -88,13 +125,20 @@ function parsePredicate(text, label) {
 }
 
 function parsePart(value, label, symbols) {
-	const part = record(value, label, new Set(["size", "symbol", "repeat"]));
+	const part = record(value, label, new Set(["size", "symbol", "arg", "repeat"]));
 	if (typeof part.symbol !== "string" || !SYMBOL.test(part.symbol)) fail(`${label}.symbol is not a symbol name`);
 	symbols.add(part.symbol);
 	if (part.repeat !== undefined && part.repeat !== null && typeof part.repeat !== "boolean") fail(`${label}.repeat must be a boolean`);
+	// The argument is written by the author as a constant, so an unknown or out of range
+	// one is caught here rather than degrading to a branch that quietly never fires.
+	// A number is accepted alongside its string because both normalise to the same value.
+	const arg = (part.arg ?? null) === null
+		? null
+		: parseParamValue(typeof part.arg === "number" ? String(part.arg) : part.arg, `${label}.arg`);
 	return Object.freeze({
 		size: parseSize(part.size, `${label}.size`),
 		symbol: part.symbol,
+		arg,
 		repeat: part.repeat === true,
 	});
 }
@@ -180,7 +224,8 @@ export function predicateHolds(predicate, scope) {
 	if (!predicate) return true;
 	return predicate.every((term) => {
 		const actual = term.field === "face_view" ? scope.face_view
-			: term.field === "storey" ? scope.storey : scope.index;
+			: term.field === "param" ? scope.param ?? null
+				: term.field === "storey" ? scope.storey : scope.index;
 		if (term.value === "last") return actual === scope.total - 1;
 		if (term.modulus) return Number.isInteger(actual) && actual % term.modulus === term.value;
 		return actual === term.value;
