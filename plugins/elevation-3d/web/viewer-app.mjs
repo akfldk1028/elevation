@@ -336,13 +336,15 @@ function projectedMeshes() {
 	return root;
 }
 
-function semanticRole(material) {
-	const name = String(material?.name ?? "").toLowerCase();
-	if (name.includes("glass")) return "glass";
-	if (name.includes("window-frame") || name.includes("bronze")) return "bronze";
-	if (name.includes("precast")) return "concrete";
-	if (["brick", "opaque"].some((role) => name.includes(role))) return "opaque";
-	return "concrete";
+// The competition views used to key the role off the glTF material name, which is the
+// facade material (brick, precast) rather than the role the palette paints. That put a
+// full-height brick pilaster on the near-black opaque tint and a precast band on the
+// same tint as the mass wall, so the piers read as black stripes and the trim did not
+// read at all. embedded-pbr-presentation already resolves the role from the primitive
+// kind; the two renderers have to agree or one facade reads as two buildings.
+function semanticRole(object, material) {
+	const primitiveExtras = resolveGltfPrimitiveExtras({ gltf: loadedGltf, object });
+	return resolveSemanticRole({ object, material, primitiveExtras }).role;
 }
 
 function loadedProjectedBounds(root, axes) {
@@ -400,7 +402,7 @@ function competitionMaterials(root, palette, options = {}) {
 		typedFacade ||= facadeDetail;
 		const polygonOffsetFactor = facadeDetail ? (options.facadeDetailPolygonOffsetFactor ?? -4) : 4;
 		const originals = Array.isArray(object.material) ? object.material : [object.material];
-		const roles = originals.map(semanticRole);
+		const roles = originals.map((material) => semanticRole(object, material));
 		for (const role of roles) counts[role] += object.geometry.getAttribute("position")?.count ?? 0;
 		const fills = roles.map((role) => new THREE.MeshBasicMaterial({
 			name: role,
@@ -681,7 +683,7 @@ function competitionAxonMaterials(root, palette) {
 			object.geometry.setAttribute("uv", new THREE.Float32BufferAttribute(uv, 2));
 		}
 		const originals = Array.isArray(object.material) ? object.material : [object.material];
-		const roles = originals.map(semanticRole);
+		const roles = originals.map((material) => semanticRole(object, material));
 		for (const role of roles) counts[role] += object.geometry.getAttribute("position")?.count ?? 0;
 		const pbrs = roles.map((role) => {
 			const parameters = palette.roles[role];
