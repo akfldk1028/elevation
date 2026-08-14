@@ -4,7 +4,7 @@ import { assertSafePathSegment } from "../run-memory.mjs";
 
 export const FACADE_AGENT_PROVIDER_IDS = Object.freeze(["gpt-image-2", "seedream-5-pro", "qwen-image-2", "nano-banana-pro"]);
 export const FACADE_AGENT_PROVIDERS = Object.freeze(["gpt-image-2", "seedream-5-pro", "qwen-image-2"]);
-export const FACADE_GRAMMAR_PROVIDER_IDS = Object.freeze(["byteplus-seed-mini", "openai-gpt-5.6"]);
+export const FACADE_GRAMMAR_PROVIDER_IDS = Object.freeze(["byteplus-seed-mini", "openai-gpt-5.5"]);
 export const DEFAULT_IMAGE_PROVIDERS = Object.freeze(["seedream-5-pro"]);
 export const DEFAULT_GRAMMAR_PROVIDER = "byteplus-seed-mini";
 export const FACADE_AGENT_STAGES = Object.freeze(["preflight", "evidence", "generate", "grammar", "build", "validate", "compare"]);
@@ -78,7 +78,7 @@ export function normalizeFacadeAgentConfig(input) {
 	if (candidateId !== "creative-020") throw new FacadeAgentContractError("CANDIDATE_NOT_APPROVED", "First comparison requires creative-020");
 	if (input.briefId !== "brick-punched-window-v1") throw new FacadeAgentContractError("BRIEF_NOT_APPROVED", "First comparison requires brick-punched-window-v1");
 	if (input.maxLocalAttempts !== undefined && input.maxLocalAttempts !== 2) throw new FacadeAgentContractError("LOCAL_ATTEMPT_LIMIT_INVALID", "Exactly two local attempts are allowed");
-	const legacyGrammarProvider = input.grammarModel === "gpt-5.6" ? "openai-gpt-5.6" : DEFAULT_GRAMMAR_PROVIDER;
+	const legacyGrammarProvider = input.grammarModel === "gpt-5.5" ? "openai-gpt-5.5" : DEFAULT_GRAMMAR_PROVIDER;
 	if (input.imageProviders !== undefined && input.providers !== undefined && stableJson(input.imageProviders) !== stableJson(input.providers)) {
 		throw new FacadeAgentContractError("CONFIG_FIELD_CONFLICT", "imageProviders and providers must match when both are supplied");
 	}
@@ -147,7 +147,7 @@ export function normalizeFacadeAgentConfig(input) {
 		imageProviders,
 		providers: imageProviders,
 		grammarProvider,
-		...(grammarProvider === "openai-gpt-5.6" ? { grammarModel: "gpt-5.6" } : {}),
+		...(grammarProvider === "openai-gpt-5.5" ? { grammarModel: "gpt-5.5" } : {}),
 		imageBudgetUsd,
 		imageBudgetMicros,
 		imageEstimateUsd,

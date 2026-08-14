@@ -16,12 +16,12 @@ function proposal(program: any, depth = 0.12) {
 function provider(outputs: any[], beforeExtract?: (attempt: number, request: any) => Promise<void>) {
 	let calls = 0;
 	return {
-		id: "openai-gpt-5.6", model: "gpt-5.6", transport: "fixture",
-		preflight({ request }: any) { assert.equal(request.provider, "openai-gpt-5.6"); },
+		id: "openai-gpt-5.5", model: "gpt-5.5", transport: "fixture",
+		preflight({ request }: any) { assert.equal(request.provider, "openai-gpt-5.5"); },
 		async extract({ request, submission }: any) {
 			calls += 1;
 			assert.equal(consumePaidOperationSubmissionCapability(submission, {
-				requestKey: request.fingerprint, provider: "openai-gpt-5.6", kind: "grammar-extraction",
+				requestKey: request.fingerprint, provider: "openai-gpt-5.5", kind: "grammar-extraction",
 			}), true);
 			await beforeExtract?.(calls, request);
 			const value = outputs[calls - 1];
@@ -125,7 +125,8 @@ test("asks the model for a grammar unless a caller pins the flat language", asyn
 
 	assert.equal(seen.length > 0, true);
 	assert.equal(seen[0].promptRevision, "arr.elevation3d.facade-grammar-prompt.v1");
-	assert.equal(seen[0].schema.properties.rules.type, "object", "the model is asked for a rule graph");
+	assert.equal(seen[0].schema.properties.rules.type, "array", "the model is asked for a rule graph");
+	assert.deepEqual(seen[0].schema.properties.rules.items.required, ["name", "alternatives"]);
 	assert.equal(seen[0].schema.properties.window_families, undefined, "not the flat v2 record");
 	assert.match(seen[0].prompt, /split grammar, not a list of windows/);
 });

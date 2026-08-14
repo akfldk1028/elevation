@@ -2,8 +2,8 @@ import { FacadeProviderError } from "../../../provider.mjs";
 import { consumePaidOperationSubmissionCapability } from "../../../paid-operation-ledger.mjs";
 import { normalizeFacadeGrammarResult, readVerifiedFacadeGrammarRequestAuthority } from "../contract.mjs";
 
-const PROVIDER = "openai-gpt-5.6";
-const MODEL = "gpt-5.6";
+const PROVIDER = "openai-gpt-5.5";
+const MODEL = "gpt-5.5";
 const ENDPOINT = "https://api.openai.com/v1/responses";
 const DEFAULT_TIMEOUT_MS = 120_000;
 const MAX_TIMEOUT_MS = 300_000;
@@ -95,8 +95,13 @@ async function readBoundedJson(response) {
 function outputText(payload) {
 	if (!payload || typeof payload !== "object" || Array.isArray(payload)) throw failure("GRAMMAR_RESPONSE_INVALID", "Grammar response payload is invalid");
 	if (payload.status !== undefined && payload.status !== "completed") throw failure("GRAMMAR_RESPONSE_INVALID", "Grammar response did not complete");
-	if (!Array.isArray(payload.output) || payload.output.length !== 1) throw failure("GRAMMAR_RESPONSE_INVALID", "Grammar response must contain exactly one output message");
-	const message = payload.output[0];
+	// A reasoning model returns its reasoning alongside the answer, so the response
+	// carries several output items. Exactly one of them may be an assistant message;
+	// more than one would make the structured answer ambiguous.
+	if (!Array.isArray(payload.output) || !payload.output.length) throw failure("GRAMMAR_RESPONSE_INVALID", "Grammar response carries no output");
+	const messages = payload.output.filter((item) => item?.type === "message");
+	if (messages.length !== 1) throw failure("GRAMMAR_RESPONSE_INVALID", "Grammar response must contain exactly one output message");
+	const message = messages[0];
 	if (!message || message.type !== "message" || message.role !== "assistant" || !Array.isArray(message.content) || message.content.length !== 1) {
 		throw failure("GRAMMAR_RESPONSE_INVALID", "Grammar response message is ambiguous");
 	}
