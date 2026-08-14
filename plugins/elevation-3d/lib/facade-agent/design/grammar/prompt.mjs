@@ -178,6 +178,17 @@ facade has no parts. Give it parts instead.
 - One dominant element. An elevation needs a subject: an entrance bay carried up
   several storeys, one wide opening against many narrow ones, one recessed field. If
   every opening is within a hair of every other, there is nothing to look at.
+- Cross the floors. Nothing here confines an opening or a pier to one storey, and the
+  placement rules pass a slot that runs past a slab - only the two ends have to sit
+  clear of it. A grammar that splits every storey and then fills each one identically
+  has written five copies of one floor, which is the definition of the building you are
+  trying not to design. Split the facet along u into bays first and let a bay own the
+  full height, then decide storey by storey inside only the bays that need it. A pier
+  or a glazed slot carried through three floors is what an order is, and it is the
+  single strongest way to stop reading as stacked cells.
+- Vary the bay rhythm across the facet. Even spacing is the default the eye discards;
+  a wide-narrow-narrow-wide, or one bay held open against a tight run, gives the
+  elevation a measure.
 - Openings should read as roughly a fifth to two fifths of the wall. Slits in a large
   blank wall read as a warehouse, not a designed elevation.
 - Nest an opening into lintel, jamb reveals, pane and sill rather than leaving a bare

@@ -22,12 +22,25 @@ const WAREHOUSE = Array.from({ length: 30 }, (_, index) => {
 	return opening(0.5 + column * 1.6, 0.9 + column * 1.6, 1.0 + row * 3.3, 2.2 + row * 3.3);
 });
 
-test("a wall of identical slits with no top fails all three", () => {
+test("a wall of identical slits with no top fails every check", () => {
 	const { metrics, codes } = measureComposition({ context: CONTEXT, resolved: { primitives: WAREHOUSE } });
-	assert.deepEqual([...codes].sort(), ["OPENING_RATIO_LOW", "SCALE_HIERARCHY_FLAT", "TOP_TERMINATION_MISSING"]);
+	assert.deepEqual([...codes].sort(), ["OPENING_RATIO_LOW", "SCALE_HIERARCHY_FLAT", "STOREY_LOCKSTEP", "TOP_TERMINATION_MISSING"]);
 	assert.ok(metrics.worst_opening_ratio < COMPOSITION_BOUNDS.minOpeningRatio);
 	assert.equal(metrics.scale_ratio, 1);
 	assert.equal(metrics.has_top_termination, false);
+	// Every slit was cut to sit inside one floor, which is the shape of the problem.
+	assert.equal(metrics.max_storey_span, 1);
+});
+
+// A pier is not glazed and still breaks the lockstep, so it has to count.
+test("a pier carried through three storeys satisfies the storey span on its own", () => {
+	const primitives = [
+		...WAREHOUSE,
+		{ kind: "pilaster", segment_id: "seg-front", local_bounds: { u_min: 4.8, u_max: 5.4, z_min: 0, z_max: 9.9 } },
+	];
+	const { metrics, codes } = measureComposition({ context: CONTEXT, resolved: { primitives } });
+	assert.equal(metrics.max_storey_span, 3);
+	assert.ok(!codes.includes("STOREY_LOCKSTEP"));
 });
 
 test("a composed elevation clears all three at once", () => {
