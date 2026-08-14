@@ -132,7 +132,7 @@ Every opening must sit clear of the folds and the floor bands, only one primary
 entrance is allowed, and both the lowest and the highest storey must carry openings.
 Two openings on one segment need clearance between them, so one pane per opening.`;
 
-export function buildFacadeGrammarPrompt({ context, correctionCodes = [], attempt }) {
+export function buildFacadeGrammarPrompt({ context, correctionCodes = [], attempt, previous = null }) {
 	const boundedContext = {
 		source: context.source,
 		facade_faces: context.facade_faces,
@@ -151,6 +151,11 @@ export function buildFacadeGrammarPrompt({ context, correctionCodes = [], attemp
 		correctionCodes.length
 			? `Correct these unchanged deterministic validation codes: ${correctionCodes.join(", ")}.`
 			: "No prior validation failures.",
-	].join("\n\n");
+		// Without the previous answer the model rewrites the whole grammar every attempt
+		// and each rewrite fails somewhere new. Repairing converges; reauthoring does not.
+		previous
+			? `Your previous answer follows. Return it again with only the faults above repaired, keeping every rule that was not at fault:\n${previous}`
+			: "",
+	].filter(Boolean).join("\n\n");
 	return Object.freeze({ revision: FACADE_GRAMMAR_PROMPT_REVISION, prompt, sha256: sha256(prompt) });
 }

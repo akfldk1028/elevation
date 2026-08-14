@@ -111,11 +111,12 @@ export async function runFacadeDesignAgent({ runDir, context, provider, ledger, 
 	const imageBytes = await safeRead(root, join(root, thumbnail.path), "facade design thumbnail");
 	if (sha256(imageBytes) !== thumbnail.sha256) fail("FACADE_DESIGN_AGENT_INVALID", "facade design thumbnail changed after context verification");
 	let correctionCodes = [];
+	let previous = null;
 	const attempts = [];
 	for (let index = 0; index <= MAX_CORRECTIONS; index += 1) {
 		const attempt = index + 1;
 		const prompt = language === "grammar"
-			? buildFacadeGrammarPrompt({ context, correctionCodes, attempt })
+			? buildFacadeGrammarPrompt({ context, correctionCodes, attempt, previous })
 			: buildFacadeDesignPrompt({ context, correctionCodes, attempt });
 		const request = createFacadeGrammarRequest({
 			provider: provider.id, model: provider.model,
@@ -150,6 +151,7 @@ export async function runFacadeDesignAgent({ runDir, context, provider, ledger, 
 		try { bytes = await safeRead(root, responsePath, "facade design response"); }
 		catch (error) { fail("FACADE_DESIGN_RESULT_UNAVAILABLE", "persisted design response is unavailable without resubmission", error); }
 		if (sha256(bytes) !== receipt.artifactSha256) fail("FACADE_DESIGN_AGENT_INVALID", "design response does not match its paid receipt");
+		previous = bytes.length <= 64 * 1024 ? bytes.toString("utf8") : null;
 		let program;
 		let resolved;
 		let validation;
