@@ -110,7 +110,9 @@ function parseAlternative(value, label, symbols) {
 		if (!Number.isFinite(depth) || depth < 0 || depth > BOUNDS.maxDepthM) fail(`${label}.depth_m is out of range`);
 		return Object.freeze({ when, terminal: alternative.terminal, inset_m: inset, depth_m: depth });
 	}
-	if ((alternative.inset_m ?? null) !== null || (alternative.depth_m ?? null) !== null) fail(`${label}.inset_m and depth_m belong to a terminal`);
+	// Strict structured output forces both fields onto a split too, where zero is the
+	// only sensible answer. Only a real offset here means the model confused the two.
+	if ((alternative.inset_m ?? 0) !== 0 || (alternative.depth_m ?? 0) !== 0) fail(`${label}.inset_m and depth_m belong to a terminal`);
 	if ((alternative.split ?? null) === null) fail(`${label} is neither a split nor a terminal`);
 	const split = record(alternative.split, `${label}.split`, new Set(["axis", "parts"]));
 	if (!AXES.includes(split.axis)) fail(`${label}.split.axis must be u or z`);
