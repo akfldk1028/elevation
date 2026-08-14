@@ -815,7 +815,13 @@ export function buildTypedFacadeDetails({ mesh, floorGuides, facadePlanes, primi
 	const componentOrientations = massComponentOrientations(mesh);
 	const backing = new Map();
 	const details = [];
-	const authorsOwnTrim = primitives.some((primitive) => primitive?.kind === "reveal" || primitive?.kind === "lintel" || primitive?.kind === "sill");
+	// Only a reveal contests this. The generated frame is the two vertical edges of the
+	// opening, which is the jamb, so a grammar that draws its own reveals would end up
+	// with a frame inside a frame and a heavy border rather than a window. A lintel sits
+	// above and a sill below and neither touches it, so counting them here switched the
+	// frame off for every grammar that drew a head and a shelf - which left the whole
+	// elevation with no window-frame geometry and no bronze role at all.
+	const authorsOwnTrim = primitives.some((primitive) => primitive?.kind === "reveal");
 	for (let index = 0; index < primitives.length; index += 1) {
 		const primitive = primitives[index];
 		const plane = planes.get(primitive?.segment_id);
