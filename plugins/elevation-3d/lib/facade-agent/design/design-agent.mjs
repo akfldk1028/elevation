@@ -184,7 +184,12 @@ export async function runFacadeDesignAgent({ runDir, context, provider, ledger, 
 			// composed elevation from a blank wall with slits in it, so this asks the one
 			// question they miss, and asks it only once the answer is structurally sound.
 			composition = measureComposition({ context, resolved });
-			if (!fallback) fallback = { program, resolved, validation, composition };
+			// Keep the least faulty attempt, not the first. Holding the first shipped a
+			// blank wall once while a later attempt of the same run composed better, which
+			// is the whole point of correcting.
+			if (!fallback || composition.codes.length < fallback.composition.codes.length) {
+				fallback = { program, resolved, validation, composition };
+			}
 			correctionCodes = composition.faults;
 		}
 		attempts.push({
