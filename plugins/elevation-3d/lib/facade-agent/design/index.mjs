@@ -17,7 +17,7 @@ export function facadeDesignAgentToolSchema() {
 			action: { type: "string", enum: [...ACTIONS], default: "prepare" },
 			run_dir: { type: "string", minLength: 1, maxLength: 1024 },
 			confirm_live: { type: "boolean", default: false },
-			provider: { type: "string", enum: ["byteplus-seed-mini", "openai-gpt-5.6"] },
+			provider: { type: "string", enum: ["byteplus-seed-mini", "openai-gpt-5.5"] },
 			ceiling_usd: { type: "number", minimum: 0, maximum: 1 },
 			estimate_usd: { type: "number", minimum: 0, maximum: 1 },
 		},

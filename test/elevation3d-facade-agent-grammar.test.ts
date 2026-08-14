@@ -113,7 +113,7 @@ function responseFixture(value: unknown, overrides: Record<string, unknown> = {}
 
 function config(overrides: Record<string, unknown> = {}) {
 	return {
-		candidateId: "creative-020", grammarModel: "gpt-5.6", grammarBudgetUsd: 0.1,
+		candidateId: "creative-020", grammarModel: "gpt-5.5", grammarBudgetUsd: 0.1,
 		grammarEstimateUsd: 0.05, grammarTimeoutMs: 1_000, openAIApiKey: "sk-fixture-secret",
 		proposalProvider: "gpt-image-2",
 		...overrides,
@@ -187,8 +187,8 @@ function commonGrammarRequest(overrides: Record<string, unknown> = {}) {
 		manifestText: `${stableJson(evidence.manifest)}\n`,
 	});
 	return createFacadeGrammarRequest({
-		provider: "openai-gpt-5.6",
-		model: "gpt-5.6",
+		provider: "openai-gpt-5.5",
+		model: "gpt-5.5",
 		proposalSha256: sha256(proposalBytes),
 		evidenceManifestSha256: evidence.manifestSha256,
 		promptRevision: prompt.revision,
@@ -208,7 +208,7 @@ async function authorizedOpenAIExtract(provider: ReturnType<typeof createOpenAIG
 	let operationError: any;
 	await createPaidOperationLedger(join(root, `openai-adapter-paid-${ledgerSequence++}.json`), { approvedRoot: root }).executeOnce({
 		requestKey: request.fingerprint,
-		provider: "openai-gpt-5.6",
+		provider: "openai-gpt-5.5",
 		kind: "grammar-extraction",
 		ceilingUsd: request.ceilingUsd,
 		estimateUsd: request.estimateUsd,
@@ -233,8 +233,8 @@ function nestedPlainData(depth: number) {
 
 test("creates one deeply frozen, hash-bound common grammar request and rejects unsafe boundary input", () => {
 	const request = commonGrammarRequest();
-	assert.equal(request.provider, "openai-gpt-5.6");
-	assert.equal(request.model, "gpt-5.6");
+	assert.equal(request.provider, "openai-gpt-5.5");
+	assert.equal(request.model, "gpt-5.5");
 	assert.equal(request.proposalSha256, sha256(proposalBytes));
 	assert.equal(request.evidenceManifestSha256, evidence.manifestSha256);
 	assert.equal(request.promptRevision, "facade-grammar-v2");
@@ -279,18 +279,18 @@ test("OpenAI grammar adapter preserves the pinned Responses compatibility contra
 	});
 	const request = commonGrammarRequest();
 	assert.deepEqual(provider.preflight({ request }), {
-		provider: "openai-gpt-5.6", model: "gpt-5.6", transport: "live",
+		provider: "openai-gpt-5.5", model: "gpt-5.5", transport: "live",
 		ceilingUsd: 0.1, estimateUsd: 0.05,
 	});
 	const result = await authorizedOpenAIExtract(provider, request);
 	assert.equal(calls.length, 1);
 	const [call] = calls;
 	assert.equal(call.url, "https://api.openai.com/v1/responses");
-	assert.equal(call.body.model, "gpt-5.6");
+	assert.equal(call.body.model, "gpt-5.5");
 	assert.equal(call.body.text.format.type, "json_schema");
 	assert.equal(call.body.text.format.strict, true);
 	assert.match(call.body.input[0].content[1].image_url, /^data:image\/png;base64,/);
-	assert.equal(result.provider, "openai-gpt-5.6");
+	assert.equal(result.provider, "openai-gpt-5.5");
 	assert.equal(result.transport, "live");
 	assert.equal(result.grammarCandidate, JSON.stringify(grammar));
 });
@@ -416,7 +416,7 @@ test("calls the pinned Responses structured-output contract and binds proposal a
 	assert.deepEqual(extracted, grammar);
 	assert.equal(fetchCalls.length, 1);
 	assert.equal(fetchCalls[0].url, "https://api.openai.com/v1/responses");
-	assert.equal(fetchCalls[0].body.model, "gpt-5.6");
+	assert.equal(fetchCalls[0].body.model, "gpt-5.5");
 	assert.equal(fetchCalls[0].body.text.format.strict, true);
 	assert.equal(fetchCalls[0].body.text.format.schema.additionalProperties, false);
 	assert.deepEqual([...fetchCalls[0].body.text.format.schema.required].sort(), Object.keys(grammar).sort());

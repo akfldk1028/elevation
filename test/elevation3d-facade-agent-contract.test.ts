@@ -22,13 +22,13 @@ function approvedConfig(overrides = {}) {
 		confirmLive: false,
 		imageBudgetUsd: { "gpt-image-2": 1, "nano-banana-pro": 1 },
 		grammarBudgetUsd: 1,
-		grammarModel: "gpt-5.6",
+		grammarModel: "gpt-5.5",
 		...overrides,
 	};
 }
 
 test("normalizes schema-v2 router configuration and preserves legacy compatibility views", () => {
-	assert.deepEqual(FACADE_GRAMMAR_PROVIDER_IDS, ["byteplus-seed-mini", "openai-gpt-5.6"]);
+	assert.deepEqual(FACADE_GRAMMAR_PROVIDER_IDS, ["byteplus-seed-mini", "openai-gpt-5.5"]);
 	assert.deepEqual(DEFAULT_IMAGE_PROVIDERS, ["seedream-5-pro"]);
 	assert.equal(DEFAULT_GRAMMAR_PROVIDER, "byteplus-seed-mini");
 	const canonical = normalizeFacadeAgentConfig({
@@ -47,12 +47,12 @@ test("normalizes schema-v2 router configuration and preserves legacy compatibili
 	const legacy = normalizeFacadeAgentConfig({
 		candidateId: "creative-020", datasetRoot: "D:/dataset", outputRoot: "D:/results",
 		runId: "router-v1-001", briefId: "brick-punched-window-v1",
-		providers: ["gpt-image-2"], grammarModel: "gpt-5.6",
+		providers: ["gpt-image-2"], grammarModel: "gpt-5.5",
 		imageBudgetUsd: { "gpt-image-2": 0.5 }, grammarBudgetUsd: 0.35,
 		confirmLive: false,
 	});
 	assert.deepEqual(legacy.imageProviders, ["gpt-image-2"]);
-	assert.equal(legacy.grammarProvider, "openai-gpt-5.6");
+	assert.equal(legacy.grammarProvider, "openai-gpt-5.5");
 });
 
 test("rejects conflicting router representations, unknown grammar providers, and imprecise live confirmation", () => {
@@ -86,7 +86,7 @@ test("locks the first comparison and rejects unsafe expansion", () => {
 		confirmLive: false,
 		imageBudgetUsd: { "gpt-image-2": 1, "nano-banana-pro": 1 },
 		grammarBudgetUsd: 1,
-		grammarModel: "gpt-5.6",
+		grammarModel: "gpt-5.5",
 	});
 	assert.equal(value.maxLocalAttempts, 2);
 	assert.equal(value.maxImageSubmissionsPerProvider, 1);
@@ -102,7 +102,7 @@ test("allocates 0.35 across three providers as exact deterministic micro-dollars
 		candidateId: "creative-020", datasetRoot: "D:/dataset", outputRoot: "D:/results",
 		runId: "exact-micros-001", briefId: "brick-punched-window-v1",
 		imageProviders: ["gpt-image-2", "seedream-5-pro", "qwen-image-2"],
-		grammarProvider: "openai-gpt-5.6",
+		grammarProvider: "openai-gpt-5.5",
 		imageBudgetUsd: { "gpt-image-2": 0.5, "seedream-5-pro": 0.1, "qwen-image-2": 0.05 },
 		grammarBudgetUsd: 0.35,
 		confirmLive: true, confirmedTotalUsd: 1,

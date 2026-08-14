@@ -222,12 +222,12 @@ test("facade agent tool exposes only bounded safe inputs", async () => {
 	assert.deepEqual(tool.inputSchema.properties.brief_id.enum, ["brick-punched-window-v1"]);
 	assert.deepEqual(tool.inputSchema.properties.providers.items.enum, ["gpt-image-2", "seedream-5-pro", "qwen-image-2", "nano-banana-pro"]);
 	assert.deepEqual(tool.inputSchema.properties.image_providers.items.enum, ["gpt-image-2", "seedream-5-pro", "qwen-image-2", "nano-banana-pro"]);
-	assert.deepEqual(tool.inputSchema.properties.grammar_provider.enum, ["byteplus-seed-mini", "openai-gpt-5.6"]);
+	assert.deepEqual(tool.inputSchema.properties.grammar_provider.enum, ["byteplus-seed-mini", "openai-gpt-5.5"]);
 	assert.deepEqual(tool.inputSchema.properties.image_providers.default, ["seedream-5-pro"]);
 	assert.equal(tool.inputSchema.properties.grammar_provider.default, "byteplus-seed-mini");
 	assert.deepEqual(tool.inputSchema.properties.image_budget_usd.default, { "seedream-5-pro": 0.06 });
 	assert.equal(tool.inputSchema.properties.grammar_budget_usd.default, 0.01);
-	assert.deepEqual(tool.inputSchema.properties.grammar_model.enum, ["gpt-5.6"]);
+	assert.deepEqual(tool.inputSchema.properties.grammar_model.enum, ["gpt-5.5"]);
 	assert.equal(tool.inputSchema.properties.providers.minItems, 1);
 	assert.equal(tool.inputSchema.properties.providers.maxItems, 4);
 	assert.equal(tool.inputSchema.properties.dry_run.type, "boolean");
@@ -281,7 +281,7 @@ test("facade agent tool forwards a safe dry-run into the approved preflight harn
 			return {
 				signal, loadCandidate: async () => ({ candidate: { candidate_id: "creative-020" }, identity: { geometry_hash: "fixture" } }),
 				buildEvidence: async ({ runDir }: any) => ({ manifestSha256: "e".repeat(64), manifestPath: join(runDir, "evidence", "manifest.json") }),
-				grammarProvider: createFacadeFixtureTransport({ id: "openai-gpt-5.6", model: "gpt-5.6", extract: transport }),
+				grammarProvider: createFacadeFixtureTransport({ id: "openai-gpt-5.5", model: "gpt-5.5", extract: transport }),
 				providers: { "gpt-image-2": provider, "seedream-5-pro": provider, "qwen-image-2": provider, "nano-banana-pro": provider },
 				build: async () => ({}), validate: async () => ({}), renderDelivery: async () => ({}), renderPresentation: async () => ({}),
 			};
@@ -295,12 +295,12 @@ test("facade agent tool forwards a safe dry-run into the approved preflight harn
 		}), (error: any) => error?.code === "CONFIG_FIELD_CONFLICT");
 		await assert.rejects(() => tool.handler({
 			run_id: "conflicting-grammar-routes", dataset_root: root, output_root: join(root, "output"),
-			grammar_model: "gpt-5.6", grammar_provider: "byteplus-seed-mini",
+			grammar_model: "gpt-5.5", grammar_provider: "byteplus-seed-mini",
 		}), (error: any) => error?.code === "CONFIG_FIELD_CONFLICT");
 		const response = await tool.handler({
 			run_id: "dry-preflight", dataset_root: root, output_root: join(root, "output"),
 			image_providers: ["gpt-image-2", "seedream-5-pro", "qwen-image-2", "nano-banana-pro"],
-			grammar_provider: "openai-gpt-5.6", grammar_model: "gpt-5.6",
+			grammar_provider: "openai-gpt-5.5", grammar_model: "gpt-5.5",
 		}, controller.signal);
 		const result = JSON.parse(response.text);
 		assert.equal(result.state, "running");
@@ -309,7 +309,7 @@ test("facade agent tool forwards a safe dry-run into the approved preflight harn
 		assert.doesNotMatch(response.text, new RegExp(root.replaceAll("\\", "\\\\"), "i"));
 		const envelope = JSON.parse(await readFile(join(root, "output", "creative-020", "dry-preflight", "facade-agent-config.json"), "utf8"));
 		assert.deepEqual(envelope.config.imageProviders, ["gpt-image-2", "seedream-5-pro", "qwen-image-2", "nano-banana-pro"]);
-		assert.equal(envelope.config.grammarProvider, "openai-gpt-5.6");
+		assert.equal(envelope.config.grammarProvider, "openai-gpt-5.5");
 	} finally {
 		await rm(root, { recursive: true, force: true });
 	}

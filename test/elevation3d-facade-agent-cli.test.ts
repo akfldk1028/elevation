@@ -211,13 +211,13 @@ export const fixtureFactory = createFacadeAgentDependencyFactory(async (config) 
     buildRequest({ evidence, brief }) { return { provider, fingerprint: sha256(stableJson({ provider, evidence: evidence.manifestSha256, brief: brief.id })) }; },
     async generate({ request, submission }) { if (!consumePaidOperationSubmissionCapability(submission, { requestKey: request.fingerprint, provider, kind: "image-generation" })) throw new Error("submission rejected"); await note("generate:" + provider); if (process.env.FACADE_TEST_PROVIDER_FAILURE) throw new FacadeProviderError(process.env.FACADE_TEST_PROVIDER_FAILURE, "fixture provider failure", { provider, stage: "generate", definitiveNonSubmission: true }); return { bytes: PNG, mimeType: "image/png", remoteId: "fixture-" + provider, actualUsd: 0 }; }
   })]));
-  const grammarModels = { "byteplus-seed-mini": "seed-2-0-mini-260428", "openai-gpt-5.6": "gpt-5.6" };
+  const grammarModels = { "byteplus-seed-mini": "seed-2-0-mini-260428", "openai-gpt-5.5": "gpt-5.5" };
   const grammarId = config.grammarProvider;
   const grammarModel = grammarModels[grammarId];
   const grammarProvider = createFacadeFixtureTransport({
     id: grammarId, model: grammarModel,
     async extract({ provider, request, submission }) {
-      if (grammarId !== "openai-gpt-5.6" && !consumePaidOperationSubmissionCapability(submission, { requestKey: request.fingerprint, provider: grammarId, kind: "grammar-extraction" })) throw new Error("grammar submission rejected");
+      if (grammarId !== "openai-gpt-5.5" && !consumePaidOperationSubmissionCapability(submission, { requestKey: request.fingerprint, provider: grammarId, kind: "grammar-extraction" })) throw new Error("grammar submission rejected");
       await note("grammar:" + (provider ?? "openai"));
       return { provider: grammarId, resolvedModel: grammarModel, transport: "fixture", requestFingerprint: request.fingerprint, grammarCandidate: grammar, remoteId: "grammar-" + (provider ?? "openai"), actualUsd: 0 };
     }
@@ -599,7 +599,7 @@ test("normal CLI preflight constructs production dependencies without secrets or
 	const receipt = JSON.parse(await readFile(join(root, "output", "creative-020", "production-preflight", "stages", "preflight-receipt.json"), "utf8"));
 	assert.equal(receipt.capabilities["gpt-image-2"].code, "PROVIDER_CREDENTIALS_MISSING");
 	assert.equal(receipt.capabilities["nano-banana-pro"].code, "PROVIDER_CREDENTIALS_MISSING");
-	assert.equal(receipt.capabilities["grammar:openai-gpt-5.6"].code, "GRAMMAR_CREDENTIALS_MISSING");
+	assert.equal(receipt.capabilities["grammar:openai-gpt-5.5"].code, "GRAMMAR_CREDENTIALS_MISSING");
 
 	const evidence = invokeProduction(["evidence", ...productionArgs("production-evidence")]);
 	assert.equal(evidence.status, 0, `${evidence.stderr}\n${evidence.stdout}`);

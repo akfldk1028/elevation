@@ -21,7 +21,7 @@ const fetchImpl = async () => new Response();
 test("constructs only the selected BytePlus grammar adapter with scoped credentials", () => {
 	const calls: any[] = [];
 	const providerFactories = {
-		"openai-gpt-5.6": () => { throw new Error("unselected OpenAI grammar factory was constructed"); },
+		"openai-gpt-5.5": () => { throw new Error("unselected OpenAI grammar factory was constructed"); },
 		"byteplus-seed-mini": (env: any) => {
 			calls.push({ provider: "byteplus-seed-mini", env });
 			return Object.freeze({ transport: "live", preflight() {}, async extract() {} });
@@ -50,13 +50,13 @@ test("image and grammar selection construct independent factories with independe
 		},
 	};
 	const grammarProviderFactories = {
-		"openai-gpt-5.6": (env: any) => {
-			calls.push({ kind: "grammar", provider: "openai-gpt-5.6", env });
+		"openai-gpt-5.5": (env: any) => {
+			calls.push({ kind: "grammar", provider: "openai-gpt-5.5", env });
 			return Object.freeze({ preflight() {}, async extract() {} });
 		},
 	};
 	const config = {
-		imageProviders: ["seedream-5-pro"], grammarProvider: "openai-gpt-5.6",
+		imageProviders: ["seedream-5-pro"], grammarProvider: "openai-gpt-5.5",
 		imageBudgetUsd: { "seedream-5-pro": 1 }, imageEstimateUsd: { "seedream-5-pro": 0.1 },
 	};
 
@@ -65,7 +65,7 @@ test("image and grammar selection construct independent factories with independe
 
 	assert.deepEqual(calls, [
 		{ kind: "image", provider: "seedream-5-pro", env: { ARK_API_KEY: "byteplus-only" } },
-		{ kind: "grammar", provider: "openai-gpt-5.6", env: { OPENAI_API_KEY: "openai-only" } },
+		{ kind: "grammar", provider: "openai-gpt-5.5", env: { OPENAI_API_KEY: "openai-only" } },
 	]);
 });
 
@@ -89,9 +89,9 @@ test("grammar router rejects unknown selection before reading credentials or con
 });
 
 test("each grammar selection reads only its own credential", () => {
-	for (const selected of ["openai-gpt-5.6", "byteplus-seed-mini"] as const) {
-		const selectedKey = selected === "openai-gpt-5.6" ? "OPENAI_API_KEY" : "ARK_API_KEY";
-		const otherKey = selected === "openai-gpt-5.6" ? "ARK_API_KEY" : "OPENAI_API_KEY";
+	for (const selected of ["openai-gpt-5.5", "byteplus-seed-mini"] as const) {
+		const selectedKey = selected === "openai-gpt-5.5" ? "OPENAI_API_KEY" : "ARK_API_KEY";
+		const otherKey = selected === "openai-gpt-5.5" ? "ARK_API_KEY" : "OPENAI_API_KEY";
 		let otherReads = 0;
 		const env = Object.defineProperties({}, {
 			[selectedKey]: { enumerable: true, value: "selected-only" },
@@ -115,7 +115,7 @@ test("production dependencies expose only the selected image map and grammar ada
 		const calls: any[] = [];
 		const dependencies: any = await createProductionFacadeAgentDependencies({
 			outputRoot: root, candidateId: "creative-020", runId: "router-production",
-			imageProviders: ["seedream-5-pro"], grammarProvider: "openai-gpt-5.6",
+			imageProviders: ["seedream-5-pro"], grammarProvider: "openai-gpt-5.5",
 			imageBudgetUsd: { "seedream-5-pro": 1 }, imageEstimateUsd: { "seedream-5-pro": 0.1 },
 		}, {
 			env: ALL_ENV, fetchImpl,
@@ -126,7 +126,7 @@ test("production dependencies expose only the selected image map and grammar ada
 				},
 			},
 			grammarProviderFactories: {
-				"openai-gpt-5.6": (env: any) => {
+				"openai-gpt-5.5": (env: any) => {
 					calls.push({ kind: "grammar", env });
 					return Object.freeze({ preflight() {}, async extract() {} });
 				},
@@ -134,7 +134,7 @@ test("production dependencies expose only the selected image map and grammar ada
 		});
 
 		assert.deepEqual(Object.keys(dependencies.providers), ["seedream-5-pro"]);
-		assert.equal(dependencies.grammarProvider.id, "openai-gpt-5.6");
+		assert.equal(dependencies.grammarProvider.id, "openai-gpt-5.5");
 		assert.deepEqual(calls, [
 			{ kind: "image", env: { ARK_API_KEY: "byteplus-only" } },
 			{ kind: "grammar", env: { OPENAI_API_KEY: "openai-only" } },

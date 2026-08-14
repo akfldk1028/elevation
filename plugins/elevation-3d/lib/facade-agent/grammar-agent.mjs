@@ -23,7 +23,7 @@ import { readVerifiedProposalResultAuthority as readBytePlusProposalResultAuthor
 import { readVerifiedProposalResultAuthority as readAlibabaProposalResultAuthority } from "./image-providers/providers/alibaba/adapter.mjs";
 
 const PROVIDER = "openai";
-const MODEL = "gpt-5.6";
+const MODEL = "gpt-5.5";
 const DEFAULT_TIMEOUT_MS = 120_000;
 const MAX_TIMEOUT_MS = 300_000;
 const MAX_PROPOSAL_BYTES = 32 * 1024 * 1024;
@@ -419,7 +419,7 @@ export async function extractFacadeGrammar(input) {
 		manifestText: verified.manifestText,
 	});
 	const request = createFacadeGrammarRequest({
-		provider: "openai-gpt-5.6", model: MODEL,
+		provider: "openai-gpt-5.5", model: MODEL,
 		proposalSha256: proposal.digest, evidenceManifestSha256: verified.authority.manifestSha256,
 		promptRevision: prompt.revision, prompt: prompt.prompt, promptSha256: prompt.sha256,
 		imageBytes: proposal.bytes, imageMimeType: proposal.mimeType, schema: FACADE_GRAMMAR_SCHEMA,

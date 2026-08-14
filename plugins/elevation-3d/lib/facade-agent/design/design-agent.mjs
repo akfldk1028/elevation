@@ -10,7 +10,7 @@ import { buildFacadeGrammarPrompt, FACADE_GRAMMAR_V3_SCHEMA } from "./grammar/pr
 import { resolveFacadeProgram } from "./resolver.mjs";
 import { validateResolvedFacadeProgram } from "./validator.mjs";
 
-const PROVIDERS = Object.freeze({ "openai-gpt-5.6": "gpt-5.6", "byteplus-seed-mini": "seed-2-0-mini-260428" });
+const PROVIDERS = Object.freeze({ "openai-gpt-5.5": "gpt-5.5", "byteplus-seed-mini": "seed-2-0-mini-260428" });
 const MAX_CORRECTIONS = 2;
 
 export class FacadeDesignAgentError extends Error {
@@ -158,8 +158,11 @@ export async function runFacadeDesignAgent({ runDir, context, provider, ledger, 
 			resolved = resolveFacadeProgram(program, context);
 			validation = validateResolvedFacadeProgram({ program, context, resolved });
 			correctionCodes = validation.codes;
-		} catch {
-			correctionCodes = ["PROGRAM_INVALID"];
+		} catch (error) {
+			// Hand the parse failure back verbatim. A bare PROGRAM_INVALID leaves the
+			// model correcting blind, and it repeats the same mistake every attempt.
+			const reason = String(error?.message ?? "").replace(/[\r\n]+/g, " ").slice(0, 200);
+			correctionCodes = [reason ? `PROGRAM_INVALID: ${reason}` : "PROGRAM_INVALID"];
 		}
 		attempts.push({ attempt, request_sha256: request.fingerprint, response_sha256: receipt.artifactSha256, validation_codes: [...correctionCodes] });
 		if (validation?.accepted) return deepFreeze({

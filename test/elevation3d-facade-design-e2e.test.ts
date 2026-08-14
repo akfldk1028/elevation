@@ -44,12 +44,12 @@ test("offline fixture produces one compiled facade, eight elevations, contact sh
 	const { source: _source, ...proposal } = structuredClone(fixture.program);
 	let modelCalls = 0;
 	const provider = {
-		id: "openai-gpt-5.6", model: "gpt-5.6", transport: "fixture",
+		id: "openai-gpt-5.5", model: "gpt-5.5", transport: "fixture",
 		preflight() {},
 		async extract({ request, submission }: any) {
 			modelCalls += 1;
 			assert.equal(consumePaidOperationSubmissionCapability(submission, {
-				requestKey: request.fingerprint, provider: "openai-gpt-5.6", kind: "grammar-extraction",
+				requestKey: request.fingerprint, provider: "openai-gpt-5.5", kind: "grammar-extraction",
 			}), true);
 			return { grammarCandidate: proposal, remoteId: "offline-facade-program", actualUsd: 0 };
 		},
@@ -110,7 +110,7 @@ test("workflow resumes a compiled crash checkpoint with zero model calls", async
 	const stop = new Error("stop after proving compiled resume");
 	await assert.rejects(() => runFacadeDesignWorkflow({
 		runDir: fixture.runDir, candidate: fixture.candidate, context: fixture.context,
-		provider: { id: "openai-gpt-5.6", model: "gpt-5.6", transport: "fixture", preflight() {}, async extract() { modelCalls += 1; } },
+		provider: { id: "openai-gpt-5.5", model: "gpt-5.5", transport: "fixture", preflight() {}, async extract() { modelCalls += 1; } },
 		ledger: {}, ceilingUsd: 0.1, estimateUsd: 0.05,
 		render: async () => {
 			renderCalls += 1;
@@ -129,11 +129,11 @@ test("workflow resumes a persisted proposal with zero additional model calls", a
 	const { source: _source, ...proposal } = structuredClone(fixture.program);
 	let modelCalls = 0, renderCalls = 0;
 	const provider = {
-		id: "openai-gpt-5.6", model: "gpt-5.6", transport: "fixture", preflight() {},
+		id: "openai-gpt-5.5", model: "gpt-5.5", transport: "fixture", preflight() {},
 		async extract({ request, submission }: any) {
 			modelCalls += 1;
 			assert.equal(consumePaidOperationSubmissionCapability(submission, {
-				requestKey: request.fingerprint, provider: "openai-gpt-5.6", kind: "grammar-extraction",
+				requestKey: request.fingerprint, provider: "openai-gpt-5.5", kind: "grammar-extraction",
 			}), true);
 			return { grammarCandidate: proposal, remoteId: "persisted-proposal", actualUsd: 0 };
 		},
@@ -214,7 +214,7 @@ test("workflow retries the legacy local resume failure from its verified compile
 	const stop = new Error("stop after proving failed checkpoint recovery");
 	await assert.rejects(() => runFacadeDesignWorkflow({
 		runDir: fixture.runDir, candidate: fixture.candidate, context: fixture.context,
-		provider: { id: "openai-gpt-5.6", model: "gpt-5.6", transport: "fixture", preflight() {}, async extract() { modelCalls += 1; } },
+		provider: { id: "openai-gpt-5.5", model: "gpt-5.5", transport: "fixture", preflight() {}, async extract() { modelCalls += 1; } },
 		ledger: {}, ceilingUsd: 0.1, estimateUsd: 0.05,
 		render: async () => {
 			renderCalls += 1;
@@ -239,7 +239,7 @@ test("workflow retries a local render failure from its verified compiled checkpo
 	const stop = new Error("stop after proving local render retry");
 	await assert.rejects(() => runFacadeDesignWorkflow({
 		runDir: fixture.runDir, candidate: fixture.candidate, context: fixture.context,
-		provider: { id: "openai-gpt-5.6", model: "gpt-5.6", transport: "fixture", preflight() {}, async extract() { modelCalls += 1; } },
+		provider: { id: "openai-gpt-5.5", model: "gpt-5.5", transport: "fixture", preflight() {}, async extract() { modelCalls += 1; } },
 		ledger: {}, ceilingUsd: 0.1, estimateUsd: 0.05,
 		render: async () => {
 			renderCalls += 1;

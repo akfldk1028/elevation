@@ -776,16 +776,16 @@ test("grammar provider receives a provider-bound capability consumable only once
 
 test("OpenAI and BytePlus grammar routes receive the same unconsumed ledger submission capability", async () => {
 	const value = await fixture({ runId: "openai-common-grammar-capability", providers: ["gpt-image-2"] });
-	value.config.grammarProvider = "openai-gpt-5.6";
+	value.config.grammarProvider = "openai-gpt-5.5";
 	value.deps.grammarProvider = createFacadeFixtureTransport({
-		id: "openai-gpt-5.6",
-		model: "gpt-5.6",
+		id: "openai-gpt-5.5",
+		model: "gpt-5.5",
 		async extract(input: any) {
-			const expected = { requestKey: input.request.fingerprint, provider: "openai-gpt-5.6", kind: "grammar-extraction" };
+			const expected = { requestKey: input.request.fingerprint, provider: "openai-gpt-5.5", kind: "grammar-extraction" };
 			assert.equal(consumePaidOperationSubmissionCapability(input.submission, expected), true);
 			assert.equal(consumePaidOperationSubmissionCapability(input.submission, expected), false);
 			return normalizeFacadeGrammarResult({
-				request: input.request, provider: expected.provider, resolvedModel: "gpt-5.6",
+				request: input.request, provider: expected.provider, resolvedModel: "gpt-5.5",
 				transport: "fixture", grammarCandidate: grammar(), remoteId: "openai-common-capability", actualUsd: 0,
 			});
 		},
@@ -1207,10 +1207,10 @@ test("preserves request identity through actual provider factories with mocked f
 		timeoutMs: 1_000,
 	});
 	value.deps.grammarProvider = Object.freeze({
-		id: "openai-gpt-5.6", model: "gpt-5.6", transport: "live",
+		id: "openai-gpt-5.5", model: "gpt-5.5", transport: "live",
 		preflight: grammarProvider.preflight, extract: grammarProvider.extract,
 	});
-	value.config.grammarProvider = "openai-gpt-5.6";
+	value.config.grammarProvider = "openai-gpt-5.5";
 	value.config.confirmLive = true;
 	value.config.confirmedTotalUsd = 3;
 

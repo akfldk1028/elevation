@@ -166,7 +166,7 @@ function parseOptions(argv) {
 			...(legacyProviders ? { providers: legacyProviders } : {}),
 			imageBudgetUsd, grammarBudgetUsd,
 			...(values["--grammar-provider"] ? { grammarProvider: values["--grammar-provider"] }
-				: legacyProviders ? { grammarModel: "gpt-5.6" } : { grammarProvider: DEFAULT_GRAMMAR_PROVIDER }),
+				: legacyProviders ? { grammarModel: "gpt-5.5" } : { grammarProvider: DEFAULT_GRAMMAR_PROVIDER }),
 			maxLocalAttempts: 2,
 			confirmLive, ...(confirmLive ? { confirmedTotalUsd } : {}),
 		}),
@@ -432,7 +432,7 @@ export function facadeAgentToolSchema() {
 			dataset_root: { type: "string" }, output_root: { type: "string" }, run_id: { type: "string" },
 			providers: { type: "array", items: { type: "string", enum: [...FACADE_AGENT_PROVIDER_IDS] }, minItems: 1, maxItems: 4 },
 			image_providers: { type: "array", items: { type: "string", enum: [...FACADE_AGENT_PROVIDER_IDS] }, minItems: 1, maxItems: 4, default: [...DEFAULT_IMAGE_PROVIDERS] },
-			grammar_model: { type: "string", enum: ["gpt-5.6"] },
+			grammar_model: { type: "string", enum: ["gpt-5.5"] },
 			grammar_provider: { type: "string", enum: [...FACADE_GRAMMAR_PROVIDER_IDS], default: DEFAULT_GRAMMAR_PROVIDER },
 			brief_id: { type: "string", enum: ["brick-punched-window-v1"] }, dry_run: { type: "boolean", default: true },
 			confirm_live: { type: "boolean", default: false },
@@ -452,8 +452,8 @@ export async function runFacadeAgentTool(args, signal, defaults = {}, dependency
 	if (!dryRun && input.confirm_live === true && input.confirm_total_usd === undefined) {
 		throw new FacadeAgentContractError("LIVE_COST_CONFIRMATION_INVALID", "Live execution requires exact total cost confirmation");
 	}
-	if (Object.hasOwn(input, "grammar_model") && input.grammar_model !== "gpt-5.6") {
-		throw new FacadeAgentContractError("GRAMMAR_PROVIDER_INVALID", "grammar_model must be gpt-5.6");
+	if (Object.hasOwn(input, "grammar_model") && input.grammar_model !== "gpt-5.5") {
+		throw new FacadeAgentContractError("GRAMMAR_PROVIDER_INVALID", "grammar_model must be gpt-5.5");
 	}
 	const imageProviders = input.image_providers ?? input.providers ?? [...DEFAULT_IMAGE_PROVIDERS];
 	const defaultImageBudgets = input.providers !== undefined ? LEGACY_IMAGE_BUDGET_USD : DEFAULT_IMAGE_BUDGET_USD;
@@ -467,7 +467,7 @@ export async function runFacadeAgentTool(args, signal, defaults = {}, dependency
 		grammarBudgetUsd: input.grammar_budget_usd ?? (input.providers !== undefined ? LEGACY_GRAMMAR_BUDGET_USD : DEFAULT_GRAMMAR_BUDGET_USD),
 		...(input.grammar_provider !== undefined ? { grammarProvider: input.grammar_provider } : {}),
 		...(input.grammar_model !== undefined ? { grammarModel: input.grammar_model }
-			: input.grammar_provider === undefined && input.providers !== undefined ? { grammarModel: "gpt-5.6" } : {}),
+			: input.grammar_provider === undefined && input.providers !== undefined ? { grammarModel: "gpt-5.5" } : {}),
 		maxLocalAttempts: 2,
 		confirmLive: dryRun ? false : input.confirm_live === true,
 		...(!dryRun && input.confirm_live === true ? { confirmedTotalUsd: input.confirm_total_usd } : {}),

@@ -2,17 +2,17 @@ import { createProvider as createBytePlusProvider } from "../providers/grammar/b
 import { createProvider as createOpenAIProvider } from "../providers/grammar/openai/adapter.mjs";
 
 export const FACADE_GRAMMAR_PROVIDER_IDS = Object.freeze([
-	"openai-gpt-5.6",
+	"openai-gpt-5.5",
 	"byteplus-seed-mini",
 ]);
 
 const PROVIDER_ID_SET = new Set(FACADE_GRAMMAR_PROVIDER_IDS);
 const DEFAULT_FACTORIES = Object.freeze({
-	"openai-gpt-5.6": createOpenAIProvider,
+	"openai-gpt-5.5": createOpenAIProvider,
 	"byteplus-seed-mini": createBytePlusProvider,
 });
 const MODELS = Object.freeze({
-	"openai-gpt-5.6": "gpt-5.6",
+	"openai-gpt-5.5": "gpt-5.5",
 	"byteplus-seed-mini": "seed-2-0-mini-260428",
 });
 
@@ -23,7 +23,7 @@ function invalidProvider(message) {
 }
 
 function scopedEnvironment(id, env) {
-	return id === "openai-gpt-5.6"
+	return id === "openai-gpt-5.5"
 		? { OPENAI_API_KEY: env.OPENAI_API_KEY }
 		: { ARK_API_KEY: env.ARK_API_KEY };
 }

@@ -87,7 +87,7 @@ function parsePart(value, label, symbols) {
 	const part = record(value, label, new Set(["size", "symbol", "repeat"]));
 	if (typeof part.symbol !== "string" || !SYMBOL.test(part.symbol)) fail(`${label}.symbol is not a symbol name`);
 	symbols.add(part.symbol);
-	if (part.repeat !== undefined && typeof part.repeat !== "boolean") fail(`${label}.repeat must be a boolean`);
+	if (part.repeat !== undefined && part.repeat !== null && typeof part.repeat !== "boolean") fail(`${label}.repeat must be a boolean`);
 	return Object.freeze({
 		size: parseSize(part.size, `${label}.size`),
 		symbol: part.symbol,
@@ -97,9 +97,12 @@ function parsePart(value, label, symbols) {
 
 function parseAlternative(value, label, symbols) {
 	const alternative = record(value, label, new Set(["when", "split", "terminal", "inset_m", "depth_m"]));
-	const when = alternative.when === undefined ? null : parsePredicate(alternative.when, `${label}.when`);
-	if (alternative.terminal !== undefined) {
-		if (alternative.split !== undefined) fail(`${label} is both a split and a terminal`);
+	const when = alternative.when === undefined || alternative.when === null ? null : parsePredicate(alternative.when, `${label}.when`);
+	if (alternative.terminal !== undefined && alternative.terminal !== null) {
+		// Strict structured output requires every property to be present, so the unused
+		// half of an alternative arrives as null rather than missing. Absent means
+		// either, or the parser rejects every answer a strict provider can give.
+		if ((alternative.split ?? null) !== null) fail(`${label} is both a split and a terminal`);
 		if (!TERMINALS.includes(alternative.terminal)) fail(`${label}.terminal is not a supported terminal`);
 		const inset = alternative.inset_m ?? 0;
 		if (!Number.isFinite(inset) || inset < 0 || inset > BOUNDS.maxInsetM) fail(`${label}.inset_m is out of range`);
@@ -107,7 +110,8 @@ function parseAlternative(value, label, symbols) {
 		if (!Number.isFinite(depth) || depth < 0 || depth > BOUNDS.maxDepthM) fail(`${label}.depth_m is out of range`);
 		return Object.freeze({ when, terminal: alternative.terminal, inset_m: inset, depth_m: depth });
 	}
-	if (alternative.inset_m !== undefined || alternative.depth_m !== undefined) fail(`${label}.inset_m and depth_m belong to a terminal`);
+	if ((alternative.inset_m ?? null) !== null || (alternative.depth_m ?? null) !== null) fail(`${label}.inset_m and depth_m belong to a terminal`);
+	if ((alternative.split ?? null) === null) fail(`${label} is neither a split nor a terminal`);
 	const split = record(alternative.split, `${label}.split`, new Set(["axis", "parts"]));
 	if (!AXES.includes(split.axis)) fail(`${label}.split.axis must be u or z`);
 	const parts = list(split.parts, `${label}.split.parts`, 1, BOUNDS.maxParts)
@@ -126,7 +130,15 @@ export function parseFacadeGrammar(input) {
 	if (program.schema_version !== "arr.elevation3d.facade-grammar.v3") fail("schema_version is unsupported");
 	if (typeof program.concept_id !== "string" || !ID.test(program.concept_id)) fail("concept_id is not a safe identifier");
 	if (typeof program.start !== "string" || !SYMBOL.test(program.start)) fail("start is not a symbol name");
-	const rules = record(program.rules, "rules", new Set(Object.keys(program.rules ?? {})));
+	// A provider that enforces strict structured output cannot describe an open map,
+	// so a grammar may arrive as a list of named rules. Both shapes mean the same graph.
+	const rules = Array.isArray(program.rules)
+		? Object.fromEntries(list(program.rules, "rules", 1, BOUNDS.maxSymbols).map((entry, index) => {
+			const named = record(entry, `rules[${index}]`, new Set(["name", "alternatives"]));
+			if (typeof named.name !== "string" || !SYMBOL.test(named.name)) fail(`rules[${index}].name is not a symbol`);
+			return [named.name, named.alternatives];
+		}))
+		: record(program.rules, "rules", new Set(Object.keys(program.rules ?? {})));
 	const names = Object.keys(rules);
 	if (!names.length || names.length > BOUNDS.maxSymbols) fail("rules must define between one and 32 symbols");
 	const referenced = new Set();

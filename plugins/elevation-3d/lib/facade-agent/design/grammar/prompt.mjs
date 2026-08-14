@@ -33,11 +33,15 @@ export const FACADE_GRAMMAR_V3_SCHEMA = Object.freeze({
 			},
 		},
 		rules: {
-			type: "object",
-			description: "Symbol name to its ordered alternatives. The first whose `when` holds is taken.",
-			additionalProperties: {
-				type: "array", minItems: 1, maxItems: BOUNDS.maxAlternatives,
-				items: { $ref: "#/$defs/alternative" },
+			type: "array",
+			description: "Each entry names a symbol and its ordered alternatives. The first whose `when` holds is taken.",
+			minItems: 1, maxItems: BOUNDS.maxSymbols,
+			items: {
+				type: "object", additionalProperties: false, required: ["name", "alternatives"],
+				properties: {
+					name: SYMBOL,
+					alternatives: { type: "array", minItems: 1, maxItems: BOUNDS.maxAlternatives, items: { $ref: "#/$defs/alternative" } },
+				},
 			},
 		},
 		design_rationale: { type: "array", maxItems: 16, items: { type: "string", minLength: 1, maxLength: 512 } },
@@ -46,13 +50,14 @@ export const FACADE_GRAMMAR_V3_SCHEMA = Object.freeze({
 		alternative: {
 			type: "object",
 			additionalProperties: false,
+			required: ["when", "split", "terminal", "inset_m", "depth_m"],
 			properties: {
 				when: {
-					type: "string",
+					type: ["string", "null"],
 					description: "index % <n> == <m> | index == <n> | index == last | storey % <n> == <m> | storey == <n> | face_view == front|back|left|right. Two may be joined with &&. Omit for the else branch.",
 				},
 				split: {
-					type: "object",
+					type: ["object", "null"],
 					additionalProperties: false,
 					required: ["axis", "parts"],
 					properties: {
@@ -62,19 +67,19 @@ export const FACADE_GRAMMAR_V3_SCHEMA = Object.freeze({
 							items: {
 								type: "object",
 								additionalProperties: false,
-								required: ["size", "symbol"],
+								required: ["size", "symbol", "repeat"],
 								properties: {
 									size: { type: "string", description: "\"2.4\" absolute metres, \"'0.5\" fraction of the scope, \"~1\" floating weight." },
 									symbol: SYMBOL,
-									repeat: { type: "boolean", description: "Tile this floating part as many times as it fits. One per split." },
+									repeat: { type: ["boolean", "null"], description: "Tile this part as many times as it fits. Requires a floating \"~n\" size, at most one per split, and no other floating part in that split. Use null otherwise." },
 								},
 							},
 						},
 					},
 				},
-				terminal: { type: "string", enum: [...TERMINALS] },
-				inset_m: { type: "number", minimum: 0, maximum: BOUNDS.maxInsetM },
-				depth_m: { type: "number", minimum: 0, maximum: BOUNDS.maxDepthM },
+				terminal: { type: ["string", "null"], enum: [...TERMINALS, null] },
+				inset_m: { type: ["number", "null"] },
+				depth_m: { type: ["number", "null"] },
 			},
 		},
 	},
@@ -89,7 +94,9 @@ terminal, never both. Recursion comes from parts naming other symbols.
 Sizes: "2.4" is absolute metres, "'0.5" is a fraction of the scope along the split
 axis, "~1" is floating and shares whatever is left over by weight. A part with
 "repeat": true tiles as many times as its nominal size fits - that is how one rule
-serves a five storey tower and a twenty storey one.
+serves a five storey tower and a twenty storey one. A repeat part must carry a
+floating size such as "~3.3", it is the only part in its split that may float, and a
+split may hold at most one of them. Set "repeat": null on every other part.
 
 Predicates: index % <n> == <m>, index == <n>, index == last, storey % <n> == <m>,
 storey == <n>, face_view == front|back|left|right. Two may be joined with &&.

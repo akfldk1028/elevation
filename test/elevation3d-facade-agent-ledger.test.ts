@@ -537,7 +537,7 @@ test("persists and aggregates repeated operations as exact integer micro-dollars
 		const splits = [116_667, 116_667, 116_666];
 		for (const [index, micros] of splits.entries()) {
 			const result: any = await ledger.executeOnce({
-				requestKey: `${index + 4}`.repeat(64), provider: "openai-gpt-5.6", kind: "grammar-extraction",
+				requestKey: `${index + 4}`.repeat(64), provider: "openai-gpt-5.5", kind: "grammar-extraction",
 				ceilingMicros: micros, estimateMicros: micros,
 				runCeilingMicros: 350_000, kindCeilingMicros: 350_000,
 				operation: async () => ({ remoteId: `exact-split-${index}`, artifactSha256, actualMicros: micros }),

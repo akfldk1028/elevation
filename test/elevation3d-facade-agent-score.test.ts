@@ -74,7 +74,7 @@ async function authorizedGenerate(provider: any, request: any) {
 
 function grammarConfig(provider: string) {
 	return {
-		candidateId: "creative-020", grammarModel: "gpt-5.6", grammarBudgetUsd: 0.1,
+		candidateId: "creative-020", grammarModel: "gpt-5.5", grammarBudgetUsd: 0.1,
 		grammarEstimateUsd: 0.05, grammarTimeoutMs: 1_000, openAIApiKey: "sk-fixture",
 		proposalProvider: provider,
 	};
