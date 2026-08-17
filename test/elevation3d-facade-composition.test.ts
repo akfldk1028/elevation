@@ -143,3 +143,31 @@ test("the deterministic entrance alone does not make two faces differ", () => {
 	});
 	assert.ok(codes.includes("FACE_KIND_UNIFORM"), codes.join(", "));
 });
+
+// The test used to ask whether the building had a cornice anywhere, so one terminated
+// elevation answered on behalf of three that were left sawn off - and the elevations are
+// drawn, rendered and judged one at a time.
+test("a cornice on one face does not terminate the others", () => {
+	const face = Array.from({ length: 10 }, (_, index) => opening(0.6 + (index % 5) * 1.8, 2.0 + (index % 5) * 1.8, 0.6 + Math.floor(index / 5) * 3.3, 2.9 + Math.floor(index / 5) * 3.3));
+	const { codes, faults, metrics } = measureComposition({
+		context: TWO_FACE_CONTEXT,
+		resolved: { primitives: [...onFace("seg-front", face), ...onFace("seg-back", face), cornice] },
+	});
+	assert.ok(codes.includes("TOP_TERMINATION_MISSING"), codes.join(", "));
+	assert.deepEqual(metrics.terminated_views, ["front"]);
+	// The fault has to say which elevation is missing one, not just that one is missing.
+	assert.match(faults.find((entry) => entry.startsWith("TOP_TERMINATION_MISSING")), /back/);
+	assert.equal(metrics.has_top_termination, true);
+});
+
+// Alexander's failure threshold, not his target: a step of ten between neighbouring size
+// levels is a gap, and the largest opening reads as a separate building.
+test("a size level that jumps past ten is reported as a broken hierarchy", () => {
+	const ordinary = Array.from({ length: 12 }, (_, index) => opening(0.6 + (index % 4) * 2.2, 1.4 + (index % 4) * 2.2, 0.6 + Math.floor(index / 4) * 3.3, 1.6 + Math.floor(index / 4) * 3.3));
+	const enormous = opening(0.5, 9.5, 0.5, 15.5);
+	const { codes, metrics } = measureComposition({
+		context: CONTEXT, resolved: { primitives: [...ordinary, enormous, cornice] },
+	});
+	assert.ok(codes.includes("SCALE_STEP_BROKEN"), `${codes.join(", ")} | step ${metrics.levels_of_scale.largestStep}`);
+	assert.ok(metrics.levels_of_scale.largestStep > COMPOSITION_BOUNDS.maxLevelStep);
+});
