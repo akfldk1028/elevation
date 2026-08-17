@@ -171,3 +171,30 @@ test("a size level that jumps past ten is reported as a broken hierarchy", () =>
 	assert.ok(codes.includes("SCALE_STEP_BROKEN"), `${codes.join(", ")} | step ${metrics.levels_of_scale.largestStep}`);
 	assert.ok(metrics.levels_of_scale.largestStep > COMPOSITION_BOUNDS.maxLevelStep);
 });
+
+// Ewing & Handy 2009 put the weight on the *first floor*: their transparency model's largest
+// term is the proportion of ground-storey facade carrying windows, and the paper states that
+// windows above ground level do not raise perceived transparency once the rest is controlled.
+// The whole-face ratio cannot see the difference between a glazed street and a glazed attic.
+test("ground transparency reads the street storey, not the whole face", () => {
+	const atGround = Array.from({ length: 4 }, (_, index) => opening(0.5 + index * 2.4, 2.3 + index * 2.4, 0.4, 2.9));
+	const upHigh = Array.from({ length: 4 }, (_, index) => opening(0.5 + index * 2.4, 2.3 + index * 2.4, 13.4, 15.9));
+
+	const street = measureComposition({ context: CONTEXT, resolved: { primitives: [...atGround, cornice] } });
+	const attic = measureComposition({ context: CONTEXT, resolved: { primitives: [...upHigh, cornice] } });
+
+	// The same glass, the same whole-face ratio, and one of them is a shopfront.
+	assert.equal(street.metrics.opening_ratio_by_view.front, attic.metrics.opening_ratio_by_view.front);
+	assert.ok(street.metrics.worst_ground_transparency > 0.3, `street ${street.metrics.worst_ground_transparency}`);
+	assert.equal(attic.metrics.worst_ground_transparency, 0);
+});
+
+// An opening that runs past the first slab glazes the street only as far as the slab.
+test("a storey-crossing slot counts only the part of it that is at street level", () => {
+	const slot = opening(0.5, 2.3, 0.4, 9.5);
+	const { metrics } = measureComposition({ context: CONTEXT, resolved: { primitives: [slot, cornice] } });
+	const ground = CONTEXT.storeys[0];
+	const expected = (2.3 - 0.5) * (ground.z_max - 0.4) / (10 * (ground.z_max - ground.z_min));
+	assert.ok(Math.abs(metrics.ground_transparency_by_view.front - expected) < 1e-6,
+		`${metrics.ground_transparency_by_view.front} vs ${expected}`);
+});
