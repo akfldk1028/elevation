@@ -19,8 +19,29 @@
 export const COMPOSITION_BOUNDS = Object.freeze({
 	/** Guidance asks for a fifth to two fifths. Reject only what is plainly a blank wall. */
 	minOpeningRatio: 0.1,
-	/** Largest opening against the median one. Below this every opening is the same. */
+	/**
+	 * Largest opening against the median one. Below this every opening is the same.
+	 *
+	 * This number has no source. It was picked to catch a flat grid and it does, but it is
+	 * not a quantity anyone in the literature measures - Alexander's levels of scale are
+	 * about the step between *neighbouring* sizes, not about the largest against the middle.
+	 * `levels_of_scale` in the metrics reports that properly; see maxLevelStep.
+	 */
 	minScaleRatio: 1.5,
+	/**
+	 * The step between neighbouring size levels at which the hierarchy has broken.
+	 *
+	 * Alexander: a center helps another "at a scale which is perhaps half its size, or twice
+	 * its size - but not enormously bigger, or enormously smaller", and below a tenth "it is
+	 * less likely to help it in its intensity" (The Nature of Order, Book One, pp. 148-9).
+	 * Ten is his failure threshold, not his target, so this rejects only a genuine gap - one
+	 * enormous opening with nothing between it and the small ones, which reads as two
+	 * unrelated buildings rather than as one with a subject.
+	 *
+	 * Measured on ten schemes the largest step seen was 3.96, so this rejects none of them.
+	 * It is a guard, not a filter.
+	 */
+	maxLevelStep: 10,
 	/**
 	 * Storeys the tallest opening or pier must reach through. Two is the least that
 	 * counts as crossing a floor at all, and the placement rules already allow it -
@@ -30,6 +51,46 @@ export const COMPOSITION_BOUNDS = Object.freeze({
 });
 
 const OPENING_KINDS = new Set(["door", "window"]);
+
+/**
+ * Sizes within this factor of each other are the same size, so they form one level.
+ * Deliberately below Alexander's ideal adjacent ratio of about 2, so that a level is a
+ * tight cluster and the ratios measured between levels are real steps rather than an
+ * artefact of where the clustering cut.
+ */
+const LEVEL_TOLERANCE = 1.4;
+
+/**
+ * Levels of scale, after Alexander.
+ *
+ * The elevation's openings are grouped into size levels and the step between neighbouring
+ * levels is what gets measured. Alexander puts the useful step at about half or twice the
+ * size, out to roughly four, and says that below a tenth "it is less likely to help it in
+ * its intensity" (The Nature of Order, Book One, pp. 148-9); Salingaros's formal version of
+ * the same rule puts the ideal step at e, about 2.7 ("Hierarchical Cooperation in
+ * Architecture", JAPR 17:221-235, 2000).
+ *
+ * Size is taken as the square root of area, because a level of scale is a linear dimension
+ * - a window twice as big is twice as wide, not twice the area.
+ */
+function levelsOfScale(areas) {
+	const sizes = areas.filter((value) => value > 0).map(Math.sqrt).sort((left, right) => left - right);
+	if (!sizes.length) return { count: 0, steps: [], largestStep: 0 };
+	const levels = [[sizes[0]]];
+	for (const size of sizes.slice(1)) {
+		const current = levels[levels.length - 1];
+		if (size / current[current.length - 1] > LEVEL_TOLERANCE) levels.push([size]);
+		else current.push(size);
+	}
+	const representative = levels.map((level) => median(level));
+	const steps = representative.slice(1).map((value, index) => value / representative[index]);
+	return {
+		count: levels.length,
+		steps: steps.map((value) => Number(value.toFixed(3))),
+		largestStep: steps.length ? Number(Math.max(...steps).toFixed(3)) : 0,
+		population: levels.map((level) => level.length),
+	};
+}
 
 function area(bounds) {
 	return Math.max(0, bounds.u_max - bounds.u_min) * Math.max(0, bounds.z_max - bounds.z_min);
@@ -79,10 +140,12 @@ export function measureComposition({ context, resolved } = {}) {
 	const kindsByView = new Map();
 	const aspectsByView = new Map();
 	const countByView = new Map();
+	const terminatedViews = new Set();
 	for (const primitive of resolved.primitives) {
 		if (primitive.kind === "cornice") hasTermination = true;
 		const primitiveView = segments.get(primitive.segment_id)?.face_view ?? segments.get(primitive.segment_id)?.view;
 		if (primitiveView) {
+			if (primitive.kind === "cornice") terminatedViews.add(primitiveView);
 			if (!kindsByView.has(primitiveView)) kindsByView.set(primitiveView, new Set());
 			// The entrance is placed by deterministic code, always on the most visible ground
 			// segment, so it appears on one face whatever the grammar says. Counting it makes
@@ -126,8 +189,21 @@ export function measureComposition({ context, resolved } = {}) {
 	}
 	// A cornice is the only terminal that means "this is where the building stops".
 	// Without one the elevation reads as cut off at whatever storey it happened to reach.
-	if (!hasTermination) {
-		note("TOP_TERMINATION_MISSING", `no cornice anywhere, so the building stops at storey ${topStorey?.storey ?? "?"} rather than terminating`);
+	// Asked of every face, not of the building. The test used to be "is there a cornice
+	// anywhere", which one terminated elevation satisfied on behalf of three that were left
+	// sawn off - and the elevations are drawn and judged one at a time. Longstreth's
+	// commercial typology reads a facade's zones off the horizontal members that divide it,
+	// which is only meaningful if the members are actually on the face being read
+	// (The Buildings of Main Street, Preservation Press, 1987).
+	const unterminated = [...wallByView.keys()].filter((view) => !terminatedViews.has(view));
+	if (unterminated.length) {
+		note("TOP_TERMINATION_MISSING", unterminated.length === wallByView.size
+			? `no cornice anywhere, so the building stops at storey ${topStorey?.storey ?? "?"} rather than terminating`
+			: `${unterminated.join(", ")} ${unterminated.length === 1 ? "has" : "have"} no cornice, so ${unterminated.length === 1 ? "that elevation runs" : "those elevations run"} out of floors while the others terminate`);
+	}
+	const levels = levelsOfScale(openingAreas);
+	if (levels.largestStep > COMPOSITION_BOUNDS.maxLevelStep) {
+		note("SCALE_STEP_BROKEN", `the size levels jump by ${levels.largestStep.toFixed(1)}x, so the largest opening has nothing between it and the rest and reads as a separate building; keep neighbouring sizes within about three of each other`);
 	}
 	if (openingAreas.length > 1 && scaleRatio + 1e-9 < COMPOSITION_BOUNDS.minScaleRatio) {
 		note("SCALE_HIERARCHY_FLAT", `the largest opening is only ${scaleRatio.toFixed(2)}x the median, so every opening is the same size and the elevation has no subject; make one element clearly dominant`);
@@ -167,9 +243,11 @@ export function measureComposition({ context, resolved } = {}) {
 			largest_opening_m2: Number(largest.toFixed(6)),
 			median_opening_m2: Number(middle.toFixed(6)),
 			scale_ratio: scaleRatio,
+			levels_of_scale: levels,
 			max_storey_span: maxStoreySpan,
 			face_profiles: { front: frontProfile, back: backProfile },
 			has_top_termination: hasTermination,
+			terminated_views: [...terminatedViews].sort(),
 			top_storey: topStorey?.storey ?? null,
 		},
 		codes,
