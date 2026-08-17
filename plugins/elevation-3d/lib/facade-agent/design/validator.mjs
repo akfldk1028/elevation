@@ -131,7 +131,22 @@ export function validateResolvedFacadeProgram({ program, context, resolved } = {
 			if (!segment?.ground_access || entrance.storey !== 1 || entrance.local_bounds.z_min !== ground?.z_min) codes.add("PRIMARY_ENTRANCE_INVALID");
 		}
 
+		// Deliberately excludes mullion, transom and spandrel. A curtain wall's framing sits
+		// over its glass by construction - that is what a framed surface is - so putting the
+		// skin members in here would reject every curtain wall on contact. This has read as an
+		// oversight once already; it is not one.
 		const collidable = new Set(["door", "window", "pilaster", "band", "cornice"]);
+		// A framing member between two panes is what separates them on a glazed skin. The
+		// clearance rule below asks for bare wall between two openings, which is the right
+		// question for two holes cut in masonry and the wrong one for one framed surface: it
+		// left a facet buildable only as a single pane, or as a grid whose mullions were wider
+		// than its glass. A mullion that spans the gap is the separation.
+		const mullionSpans = (left, right) => resolved.primitives.some((primitive) => primitive.kind !== "mullion"
+			|| primitive.segment_id !== left.segment_id ? false : (
+			primitive.local_bounds.u_min + 1e-8 >= Math.min(left.local_bounds.u_max, right.local_bounds.u_max)
+			&& primitive.local_bounds.u_max - 1e-8 <= Math.max(left.local_bounds.u_min, right.local_bounds.u_min)
+			&& Math.min(primitive.local_bounds.z_max, left.local_bounds.z_max, right.local_bounds.z_max)
+				- Math.max(primitive.local_bounds.z_min, left.local_bounds.z_min, right.local_bounds.z_min) > 1e-8));
 		for (let leftIndex = 0; leftIndex < resolved.primitives.length; leftIndex += 1) {
 			const left = resolved.primitives[leftIndex];
 			if (!collidable.has(left.kind)) continue;
@@ -144,7 +159,8 @@ export function validateResolvedFacadeProgram({ program, context, resolved } = {
 					const verticalOverlap = Math.min(left.local_bounds.z_max, right.local_bounds.z_max)
 						- Math.max(left.local_bounds.z_min, right.local_bounds.z_min);
 					const gap = Math.max(right.local_bounds.u_min - left.local_bounds.u_max, left.local_bounds.u_min - right.local_bounds.u_max);
-					if (verticalOverlap > 1e-8 && gap >= 0 && gap + 1e-8 < context.exclusions.edge_clearance_m) {
+					if (verticalOverlap > 1e-8 && gap >= 0 && gap + 1e-8 < context.exclusions.edge_clearance_m
+						&& !mullionSpans(left, right)) {
 						measure("OPENING_CLEARANCE_INVALID", rightIndex, gap, context.exclusions.edge_clearance_m);
 					}
 				}
