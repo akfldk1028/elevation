@@ -111,7 +111,10 @@ export function measureComposition({ context, resolved } = {}) {
 		note("SCALE_HIERARCHY_FLAT", `the largest opening is only ${scaleRatio.toFixed(2)}x the median, so every opening is the same size and the elevation has no subject; make one element clearly dominant`);
 	}
 	if (context.storeys.length > 1 && maxStoreySpan > 0 && maxStoreySpan < COMPOSITION_BOUNDS.minStoreySpan) {
-		note("STOREY_LOCKSTEP", `nothing crosses a floor - the tallest opening or pier reaches through ${maxStoreySpan} storey of ${context.storeys.length}, so the facade is one floor drawn ${context.storeys.length} times; carry a pier or a glazed slot through two or three storeys`);
+		// The fault has to carry its own guard. Asked for the order on its own, the model
+		// bought it by stripping openings until the elevation was a blank wall, which is a
+		// worse answer than the lockstep. Naming the count it must not lose stops the trade.
+		note("STOREY_LOCKSTEP", `nothing crosses a floor - the tallest opening or pier reaches through ${maxStoreySpan} storey of ${context.storeys.length}, so the facade is one floor drawn ${context.storeys.length} times; carry a pier or a glazed slot through two or three storeys in one or two bays, and keep all ${openingAreas.length} openings while doing it - removing openings to make room for the order fails the opening ratio instead`);
 	}
 
 	return {

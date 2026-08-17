@@ -81,3 +81,14 @@ test("the worst elevation sets the opening ratio", () => {
 	assert.ok(metrics.opening_ratio_by_view.front > metrics.opening_ratio_by_view.back);
 	assert.equal(metrics.worst_opening_ratio, metrics.opening_ratio_by_view.back);
 });
+
+// v12 answered the bare lockstep fault by deleting windows until the elevation was a
+// blank wall - a worse building than the stacked cells it replaced. The fault has to
+// carry its own guard, because the model acts on the fault text and not on this comment.
+test("the lockstep fault names the openings it must not trade away", () => {
+	const { faults } = measureComposition({ context: CONTEXT, resolved: { primitives: WAREHOUSE } });
+	const lockstep = faults.find((fault) => fault.startsWith("STOREY_LOCKSTEP:"));
+	assert.ok(lockstep, "expected a STOREY_LOCKSTEP fault");
+	assert.match(lockstep, new RegExp(`keep all ${WAREHOUSE.length} openings`));
+	assert.match(lockstep, /opening ratio/);
+});

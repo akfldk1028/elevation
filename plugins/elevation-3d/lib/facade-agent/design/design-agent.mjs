@@ -90,6 +90,24 @@ function responseBytes(value) {
 	return Buffer.from(text);
 }
 
+/**
+ * Which of two flat-but-buildable answers to keep when no attempt ever composes.
+ *
+ * Counting faults alone makes a blank wall a single fault, so it beats an elevation that
+ * kept its openings and merely wants a cornice and a subject - and a blank wall is what
+ * then ships. An elevation with no openings is not one fault among four; it is the thing
+ * the whole measure exists to prevent, so it sorts behind any answer that still has its
+ * openings. Fewest faults breaks the tie among the rest.
+ *
+ * @returns {boolean} true when `candidate` should replace `incumbent`.
+ */
+export function isBetterFallbackComposition(candidate, incumbent) {
+	if (!incumbent) return true;
+	const blank = (composition) => composition.codes.includes("OPENING_RATIO_LOW");
+	if (blank(candidate) !== blank(incumbent)) return blank(incumbent);
+	return candidate.codes.length < incumbent.codes.length;
+}
+
 function deepFreeze(value) {
 	if (!value || typeof value !== "object" || Object.isFrozen(value)) return value;
 	for (const child of Object.values(value)) deepFreeze(child);
@@ -187,7 +205,7 @@ export async function runFacadeDesignAgent({ runDir, context, provider, ledger, 
 			// Keep the least faulty attempt, not the first. Holding the first shipped a
 			// blank wall once while a later attempt of the same run composed better, which
 			// is the whole point of correcting.
-			if (!fallback || composition.codes.length < fallback.composition.codes.length) {
+			if (isBetterFallbackComposition(composition, fallback?.composition)) {
 				fallback = { program, resolved, validation, composition };
 			}
 			correctionCodes = composition.faults;

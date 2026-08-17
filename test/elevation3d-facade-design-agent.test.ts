@@ -4,7 +4,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { createPaidOperationLedger, consumePaidOperationSubmissionCapability } from "../plugins/elevation-3d/lib/facade-agent/paid-operation-ledger.mjs";
-import { runFacadeDesignAgent } from "../plugins/elevation-3d/lib/facade-agent/design/design-agent.mjs";
+import { isBetterFallbackComposition, runFacadeDesignAgent } from "../plugins/elevation-3d/lib/facade-agent/design/design-agent.mjs";
 import { createFacadeDesignFixture } from "./helpers/facade-design-fixture.ts";
 
 function proposal(program: any, depth = 0.12) {
@@ -129,4 +129,29 @@ test("asks the model for a grammar unless a caller pins the flat language", asyn
 	assert.deepEqual(seen[0].schema.properties.rules.items.required, ["name", "alternatives"]);
 	assert.equal(seen[0].schema.properties.window_families, undefined, "not the flat v2 record");
 	assert.match(seen[0].prompt, /split grammar, not a list of windows/);
+});
+
+// No attempt composed, so one of them still has to ship. Ranking by fault count alone
+// counts a blank wall as a single fault, which is how one shipped: it beat an elevation
+// that kept its openings and only wanted a cornice and a subject.
+test("the fallback prefers an elevation that kept its openings over a blank wall", () => {
+	const blank = { codes: ["OPENING_RATIO_LOW"] };
+	const flat = { codes: ["TOP_TERMINATION_MISSING", "SCALE_HIERARCHY_FLAT", "STOREY_LOCKSTEP"] };
+	assert.equal(isBetterFallbackComposition(flat, blank), true);
+	assert.equal(isBetterFallbackComposition(blank, flat), false);
+});
+
+test("the fallback keeps the least faulty attempt once none of them is blank", () => {
+	const one = { codes: ["STOREY_LOCKSTEP"] };
+	const two = { codes: ["STOREY_LOCKSTEP", "SCALE_HIERARCHY_FLAT"] };
+	assert.equal(isBetterFallbackComposition(one, two), true);
+	assert.equal(isBetterFallbackComposition(two, one), false);
+	assert.equal(isBetterFallbackComposition(two, null), true);
+});
+
+test("the fallback still ranks blank walls against each other", () => {
+	const blank = { codes: ["OPENING_RATIO_LOW"] };
+	const worse = { codes: ["OPENING_RATIO_LOW", "TOP_TERMINATION_MISSING"] };
+	assert.equal(isBetterFallbackComposition(blank, worse), true);
+	assert.equal(isBetterFallbackComposition(worse, blank), false);
 });
