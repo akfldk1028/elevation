@@ -171,3 +171,152 @@ Open, and worth doing in this order:
    the entrance cannot be checked in it. Framing lives in the PBR
    presentation path, not in the runners.
 5. `repetition_variation_balance` still scores variety down (70).
+
+## 2026-08-15 the five open items, closed
+
+All five are done, plus a sixth that fell out of the third. Everything here is
+tested offline. Nothing has been through a live run: the next live grammar call
+is the first thing that exercises items 1 and 2, and it is a fresh paid call
+because the prompt changed and so does its fingerprint.
+
+1. The giant-order wording now names what it must not spend. Asking for an
+   element carried through three floors, on its own, made the model buy it by
+   deleting windows - 78 down to 8, and a blank wall. The bullet says the order
+   is one or two bays against the ordinary ones and that every other bay keeps
+   its storey split and its windows, and it says outright that emptying the
+   facade fails the opening ratio instead. The STOREY_LOCKSTEP fault carries the
+   same guard with the count it must keep, because the model reads the fault and
+   not the prompt when it is correcting.
+2. The fallback no longer ranks by fault count alone. Counting faults makes a
+   blank wall one fault, so it beats an elevation that kept its openings and
+   only wants a cornice and a subject - which is how a blank wall shipped. An
+   answer with no openings now sorts behind every answer that has them, and
+   fewest faults breaks the tie among the rest. `isBetterFallbackComposition` is
+   exported and tested rather than inlined, since driving the whole agent to
+   reach three composition failures is not a test anyone will keep.
+3. TRIANGULATION_VISIBLE measures the length a seam runs, not how many samples
+   fell in it. Measured on four persisted plan views: v10's two failures were
+   compact specks 13 px and 11 px across, and v12's real seams - roof-quad
+   diagonals and four coplanar band lines - ran 111 to 185 px. An order of
+   magnitude apart with nothing between them, so the gate is zero tolerance at
+   48 px on a 2400 px sheet. v9 and v11 still pass, v10 now passes, v12 still
+   fails on nine segments. `competition-elevation.mjs` had a second copy of this
+   metric under the same name measuring pixel counts at full resolution; both
+   now import one constant and report `{ visible, longest_px }`.
+4. `composePerspectiveHero` reframes with `contain` instead of `cover`, so the
+   parapet and the ground storey survive and the margin is filled with the
+   plate's own paper. **The runners still crop.** The `fit: "cover"` line is in
+   `.superpowers/sdd/2026-08-10-llm-facade-design-agent/run-live-grammar-*.mjs`,
+   which are untracked and one per run; the completed ones were left alone
+   rather than rewriting how a finished run was produced. The next runner must
+   call `composePerspectiveHero` instead of that line, or item 4 is only fixed
+   in the library.
+5. `repetition_variation_balance` no longer scores difference down. Its third
+   term was one minus the share of segments carrying a distinct rhythm, so a
+   street face and a service face that differ in kind - the thing the guidance
+   asks for - drove it to zero and held the axis at 70. It now measures the
+   share of a segment's openings that belong to a repeat, averaged over
+   segments: repetition belongs inside a face, difference between them.
+
+And the sixth. The creative-013 front e2e had been failing since `339880c`, the
+sRGB fix, and the handoff did not know it. Encoding the base pass correctly
+brightened every fill, so the same lines cross the strong-edge threshold that
+used to fall just under it: strong went 0.014953 -> 0.015667 while total went
+0.016074 -> 0.015743. The drawing has no more lines in it - it has the contrast
+it was always supposed to have - and the untyped limit of 0.015 had 0.3% of
+headroom, so it failed the first correctly encoded render. It is 0.020 now,
+still under the typed 0.025 because a plain mass has less to draw than a facade.
+The same commit moved which pixels fall under the dark-luminance test, so the
+two component bounding boxes that test pinned no longer exist; it asserts the
+property those two were sampling instead - every dark component is classified as
+authored, and every depth silhouette is fully covered by the depth buffer.
+
+## 2026-08-15 open: `61d457f` broke the typed-facade e2e, and the fix is a real choice
+
+`test/elevation3d-facade-agent-e2e.test.ts` - the offline Seedream/BytePlus
+`brick-punched-window-v1` fixture - fails, and has since `61d457f`. Bisected:
+its parent `4cda591` passes, `61d457f` fails. This is the only remaining red
+test; everything else in the suite passes.
+
+That commit moved the competition views onto `resolveSemanticRole`, which keys
+the palette role off the primitive kind. `KIND_ROLES` carries the procedural and
+the design grammar vocabularies and not the typed one, so `brick-cladding`,
+`corner-return`, `window-reveal`, `precast-lintel` and `precast-sill` fall
+through to the `concrete` fallback. Nothing is left on `opaque` and the front
+elevation fails `MATERIAL_ROLE_MISSING`. `multi-elevation.mjs` now names the
+codes in that rejection - it used to say only "front validation was not
+accepted", which is why this looked like a render fault rather than a role one.
+
+Adding the five kinds is the fix, but the role for `brick-cladding` is squeezed
+from three sides and both obvious answers were measured and rejected:
+
+- `opaque`, which is what the old material-name lookup gave it, puts 83% of the
+  building on the darkest tint. The elevation passes; the PBR presentation then
+  fails `PBR_PRESENTATION_RANGE_INVALID` with a building luminance P50 of 9.9 on
+  the back view. `KIND_ROLES` is shared with the PBR path, so it cannot answer
+  the two renderers differently.
+- `concrete`, matching the design vocabulary where the wall pier is wall, gives
+  the cladding the same role as the exact mass. The plan then fails on its own
+  validation, which is the seam this commit's own message describes: two
+  surfaces on one role make their depth edge a same-material seam.
+
+`concrete` is the only bright role in the palette - bronze measures a mean
+luminance of 3 to 32 across the views - so no single assignment satisfies a
+bright 83% field, a role that is not the mass's, and a non-empty `opaque`.
+Something has to give: a fifth role, a per-renderer override on the shared
+table, or accepting one of the two failures as the lesser. That is a call about
+what the drawings should look like, not a lookup to be patched, so it is left
+here rather than guessed at.
+
+## 2026-08-17 v11 is superseded; the grammar can be authored without paying
+
+**Do not treat `llm-facade-live-v11` as the result to keep.** It reads as an
+apartment block and now there are numbers for why: front 3.7% opening ratio,
+back 4.8%, **left and right at literally 0%** - two blank flanks - and
+`max_storey_span` 1, which is the whole building being one floor drawn five
+times. It scored 100 on five of six axes while looking like that, which is
+the clearest statement available of what those axes miss.
+
+Eight schemes now clear every gate, at
+`facade-agent-verification/llm-facade-design-agent-20260810/creative-020/llm-facade-subagent-v1/`.
+Open `elevations.html` there to see them together. Worst-case opening ratio
+across the set is 21-34% on every face, `max_storey_span` 2 to 5,
+`scale_ratio` 2.3 to 11.7, composition faults zero.
+
+They were authored by subagents, not by a paid provider, through
+`design/authoring-kit.mjs`. The one paid operation in this pipeline is asking
+for the grammar; everything after it is local deterministic code, so the
+answers are held to the identical gates. Cost for the eight: nothing.
+
+**What that does not prove.** Every one of those subagents read
+`composition.mjs`, `validator.mjs`, `resolver.mjs` and `derive.mjs` and
+hand-computed its coordinates before writing any JSON, and every one passed on
+its first attempt, predicting the metrics to three decimals. The paid provider
+sees a prompt and a thumbnail. So the STOREY_LOCKSTEP rewording and the
+fallback ranking from the previous session are still **unexercised against a
+real provider run** - these eight say the gates and the renderer work, not that
+the prompt does.
+
+Open, in the order worth doing:
+
+1. Nothing measures whether two faces differ in *kind*. The guidance asks the
+   street face and the service face to differ in kind rather than in window
+   width, and `measureComposition` only reads each view's ratio independently.
+   Scheme A passed with a front and a back identical apart from the
+   deterministic entrance. Naming it in the prompt was enough for schemes D
+   through H, but that is a request, not a gate.
+2. Scheme D fails to render: its back elevation trips LINE_DENSITY_EXCEEDED at
+   strong 0.02520 against a typed limit of 0.025, by 0.8%. Its
+   `total_edge_density` is 0.0253 against a limit of 0.035, so the drawing is
+   within the line budget and only the strong sub-limit fires. After the sRGB
+   fix strong is 99.5% of total on these drawings, which makes the strong limit
+   the de facto line budget at a number nobody chose - the same collapse that
+   was already re-derived for the untyped case. It was left alone here because
+   the design that fails it is one of ours, and moving a gate to admit your own
+   work needs someone else's eyes.
+3. `61d457f` still breaks the typed-facade e2e; the diagnosis and the two
+   measured dead ends are in the previous section. Unchanged.
+4. The presentation ambient lives in `REVEAL_FACADE_PRESENTATION_STYLE` as an
+   override. The preset default is still calibrated for facades without
+   reveals, so anyone writing a new runner hits the same wall unless they use
+   the constant.
