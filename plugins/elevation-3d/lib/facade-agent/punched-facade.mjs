@@ -286,7 +286,15 @@ function validateMassBacking(mesh, plane, tangent, componentOrientations) {
 	const coverage = massBackingCoverage(support, bounds);
 	if (coverage.targetArea <= EPSILON
 		|| Math.abs(coverage.coveredArea - coverage.targetArea) > Math.max(EPSILON, coverage.targetArea * 1e-6)) {
-		throw new TypeError("invalid facade geometry: detail lacks exact-MASS backing");
+		// Carry the measurement. This rejection says a rectangle the code itself inscribed in
+		// the face is not backed by the face, which is either a real hole in the mass or a
+		// precision fault in the inscription - and the two are told apart by how big the
+		// shortfall is. Saying only that it happened sends the reader to the wrong one.
+		const shortfall = coverage.targetArea - coverage.coveredArea;
+		throw new TypeError("invalid facade geometry: detail lacks exact-MASS backing"
+			+ ` (plane ${plane.extent_m[0].toFixed(4)}x${plane.extent_m[1].toFixed(4)} m at ${plane.origin.map((value) => value.toFixed(3)).join(",")};`
+			+ ` covered ${coverage.coveredArea.toFixed(9)} of ${coverage.targetArea.toFixed(9)} m2, short by ${shortfall.toExponential(3)},`
+			+ ` relative ${(shortfall / Math.max(coverage.targetArea, EPSILON)).toExponential(3)})`);
 	}
 	if (support.some(({ componentOrientation }) => componentOrientation === null)) {
 		throw new TypeError("invalid facade geometry: supporting facade requires a closed MASS component");
