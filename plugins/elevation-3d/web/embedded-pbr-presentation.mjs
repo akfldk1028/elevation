@@ -29,7 +29,10 @@ function markPresentationOnly(node, name) {
 
 const SEMANTIC_ROLE_COLORS = Object.freeze({ concrete: 0xff0000, glass: 0x00ff00, bronze: 0x0000ff, opaque: 0xffff00 });
 const SEMANTIC_ROLES = Object.freeze(Object.keys(SEMANTIC_ROLE_COLORS));
-const KIND_ROLES = Object.freeze({
+// Exported so the vocabulary drift test can read the table itself rather than a parse of
+// its text. A kind missing from here does not fail - it falls through to `concrete` - so
+// the only thing that catches the omission is a test that can see the real object.
+export const KIND_ROLES = Object.freeze({
 	// procedural grammar vocabulary
 	mullion: "bronze", "window-frame": "bronze", glazing: "glass", "opaque-panel": "opaque",
 	"floor-band": "concrete", parapet: "concrete", "exact-mass": "concrete",
@@ -41,6 +44,26 @@ const KIND_ROLES = Object.freeze({
 	door: "glass", window: "glass", reveal: "bronze",
 	lintel: "concrete", sill: "opaque", band: "opaque", cornice: "concrete",
 	pilaster: "concrete",
+	// curtain wall vocabulary. `mullion` is already mapped above with the procedural
+	// vocabulary and means the same member there, so the two agree on one entry.
+	//
+	// A transom is a glazed skin's sill and takes the sill's role. It is thin, and thin
+	// members are what carry the darkest tint in this table. It is also the only opaque
+	// left on a facade written entirely in curtain-wall words - glass panes, bronze
+	// mullions, concrete spandrels - and every elevation must show all four roles or it
+	// fails MATERIAL_ROLE_MISSING, which is how the missing bronze was found.
+	//
+	// The spandrel is the one member of the three that covers a large area, and it is
+	// deliberately NOT opaque. A large field on the darkest tint is the measured cause of
+	// the PBR luminance floor failing: brick-cladding on opaque put 83% of the building
+	// there and took the back view's luminance P50 to 9.9, failing
+	// PBR_PRESENTATION_RANGE_INVALID. concrete is the palette's only bright role, so it is
+	// the only assignment that leaves a mostly-spandrel facade readable. The known cost is
+	// that it shares a role with `exact-mass`, and two surfaces on one role make their
+	// depth edge a same-material seam; a spandrel sits between a window head and the sill
+	// above, so it is high in the storey and does not cross the 1.2 m plan cut, but a
+	// grammar that puts one at grade would be the case to watch.
+	transom: "opaque", spandrel: "concrete",
 });
 
 function namedRole(value) {

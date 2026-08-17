@@ -389,3 +389,43 @@ test("rejects coordinates whose facade joints collapse after Float32 persistence
 		/Float32 separation budget exceeded/i,
 	);
 });
+
+test("a curtain wall draws its own jamb, so the generated window frame stands down", () => {
+	const buildTypedFacadeDetails = (punchedFacade as any).buildTypedFacadeDetails;
+	const segment = facadePlanes.facade_planes[0];
+	const pane = {
+		kind: "window", segment_id: segment.segment_id, depth_m: 0.02,
+		local_bounds: { u_min: 1, u_max: 2, z_min: 1, z_max: 3 },
+	};
+	const mullion = (u: number) => ({
+		kind: "mullion", segment_id: segment.segment_id, depth_m: 0.08,
+		local_bounds: { u_min: u, u_max: u + 0.06, z_min: 1, z_max: 3 },
+	});
+	const kinds = (primitives: unknown[]) => new Set(
+		buildTypedFacadeDetails({ mesh, floorGuides, facadePlanes, primitives }).map((detail: any) => detail.kind),
+	);
+
+	// A bare pane still gets the two vertical edges that make it read as a window.
+	assert.equal(kinds([pane]).has("window-frame"), true);
+	// With mullions either side it would be a frame inside a frame, which reads as a heavy
+	// black border rather than a window - the same fault a drawn reveal already avoided.
+	const skin = kinds([pane, mullion(0.94), mullion(2)]);
+	assert.equal(skin.has("window-frame"), false);
+	assert.deepEqual([...skin].sort(), ["mullion", "window"], "the mullion is the jamb now");
+
+	const materials = new Set(buildTypedFacadeDetails({
+		mesh, floorGuides, facadePlanes,
+		primitives: [pane, mullion(0.94), {
+			kind: "transom", segment_id: segment.segment_id, depth_m: 0.06,
+			local_bounds: { u_min: 1, u_max: 2, z_min: 3, z_max: 3.08 },
+		}, {
+			kind: "spandrel", segment_id: segment.segment_id, depth_m: 0.02,
+			local_bounds: { u_min: 1, u_max: 2, z_min: 3.08, z_max: 4 },
+		}],
+	}).map((detail: any) => `${detail.kind}:${detail.material}`));
+	assert.deepEqual(
+		[...materials].sort(),
+		["mullion:window-frame", "spandrel:precast", "transom:window-frame", "window:glass"],
+		"the curtain wall renders in materials the facade already has, so nothing downstream gains a fifth",
+	);
+});
