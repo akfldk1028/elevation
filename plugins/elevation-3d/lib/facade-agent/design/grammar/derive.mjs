@@ -3,6 +3,23 @@ import { BOUNDS, FacadeGrammarError, predicateHolds } from "./contract.mjs";
 
 const MAX_PRIMITIVES = 2048;
 
+/**
+ * The members of a glazed skin, which are allowed to reach the corner.
+ *
+ * `fold_clearance_m` keeps an *opening* off the fold, because a hole cut through a turn
+ * breaks the mass, and only `door` and `window` are ever checked against it. But the
+ * clearance is applied by insetting the whole derivation scope, so it confined the framing
+ * too - a skin stopped 0.3 m short of the corner it exists to turn, 27% of the width on a
+ * 2.2 m facet, and never raised a fault to say so.
+ *
+ * Widening the root scope is not available: every size fraction in every authored grammar
+ * is a fraction *of that scope*, so all ten grammars written against it fail the moment it
+ * moves. Instead a skin member that has already run to the edge of its scope is carried the
+ * rest of the way to the facet edge. A grammar that writes no skin words derives exactly
+ * what it derived before, to the last decimal.
+ */
+const SKIN_KINDS = new Set(["mullion", "transom", "spandrel"]);
+
 function fail(message) {
 	throw new FacadeGrammarError(message);
 }
@@ -94,10 +111,19 @@ export function deriveFacadePrimitives({ grammar, segment, storeys, entrance = n
 			const zMin = scope.z_min + inset, zMax = scope.z_max - inset;
 			if (uMax - uMin <= 1e-6 || zMax - zMin <= 1e-6) return;
 			const kind = TERMINAL_KINDS[alternative.terminal];
+			// A skin member flush with the edge of the placeable field is carried out to the
+			// facet itself, so the framing runs past the structure and turns the corner the way
+			// a curtain wall does. It has to be flush already: a member the grammar deliberately
+			// held back stays where it was put.
+			const reach = SKIN_KINDS.has(kind) && !inset;
+			const uStart = reach && Math.abs(uMin - placeable.u_min) <= 1e-8 ? 0 : uMin;
+			const uEnd = reach && Math.abs(uMax - placeable.u_max) <= 1e-8 ? segment.length_m : uMax;
 			primitives.push({
 				kind,
 				segment_id: segment.segment_id,
-				local_bounds: { u_min: round(uMin), u_max: round(uMax), z_min: round(zMin), z_max: round(zMax) },
+				// Clamped, because rounding a facet width up puts the member past the segment and
+				// the validator reads that as SEGMENT_BOUNDS_INVALID.
+				local_bounds: { u_min: Math.max(0, round(uStart)), u_max: Math.min(segment.length_m, round(uEnd)), z_min: round(zMin), z_max: round(zMax) },
 				depth_m: kind === "door" && entrance ? entrance.recess_m : alternative.depth_m,
 				family_id: familyId(symbol, scope.param),
 				storey: storeyOf(zMin),
@@ -129,9 +155,13 @@ export function deriveFacadePrimitives({ grammar, segment, storeys, entrance = n
 		}
 	};
 
-	walk(grammar.start, {
+	const placeable = {
 		u_min: segment.placeable?.u_min ?? 0,
 		u_max: segment.placeable?.u_max ?? segment.length_m,
+	};
+	walk(grammar.start, {
+		u_min: placeable.u_min,
+		u_max: placeable.u_max,
 		z_min: segment.local_z[0],
 		z_max: segment.local_z[1],
 		segment_id: segment.segment_id,
