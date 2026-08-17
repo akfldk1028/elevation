@@ -213,6 +213,13 @@ facade has no parts. Give it parts instead.
   no thickness.
 - Let the street face and the service face differ in kind, not only in window width.
 
+\`visibility_score\` on a segment is how squarely it faces the axonometric viewpoint the
+presentation is rendered from, not how prominent it is on the street. It is 0 for a
+segment turned away from that viewpoint, so a face reading 0 throughout is not a face
+nobody sees - it is a face the hero image looks at edge-on or from behind. Deterministic
+code puts the single entrance on the most visible ground segment by this score; you do
+not choose where the entrance goes.
+
 Deterministic code owns all placement. Never name a segment, a coordinate or a path.
 Every opening must sit clear of the folds and the floor bands, only one primary
 entrance is allowed, and both the lowest and the highest storey must carry openings.
@@ -222,7 +229,11 @@ export function buildFacadeGrammarPrompt({ context, correctionCodes = [], attemp
 	const boundedContext = {
 		source: context.source,
 		facade_faces: context.facade_faces,
-		facade_segments: context.facade_segments,
+		// `view` is the segment's own authority field and `face_view` is the face it was
+		// grouped into; they disagree on every segment, and only `face_view` is what the
+		// predicate tests. Sending both invites an author to design against the wrong one,
+		// which is the same one-name-two-measurements drift this codebase keeps paying for.
+		facade_segments: context.facade_segments.map(({ view: _view, ...segment }) => segment),
 		storeys: context.storeys,
 		exclusions: context.exclusions,
 		existing_openings: context.existing_openings,
