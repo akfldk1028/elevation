@@ -26,7 +26,9 @@ export async function buildMultiElevationManifest(views) {
 	for (const name of ELEVATION_NAMES) {
 		const view = views[name];
 		if (view.palette.sha256 !== view.base?.palette_sha256) fail(`${name} palette SHA-256 does not match base evidence`);
-		if (!view.validation?.accepted) fail(`${name} validation was not accepted`);
+		// Carry the codes. A bare "not accepted" is the one rejection in this file that says
+		// nothing about itself, and the validation object is right here.
+		if (!view.validation?.accepted) fail(`${name} validation was not accepted: ${view.validation?.codes?.join(", ") || "no codes reported"}`);
 		if (view.validation.metrics?.canonical_svg_mismatch) fail(`${name} canonical SVG differs`);
 		if (view.base?.clipping?.applied || view.validation.codes?.includes("ELEVATION_CONTENT_CLIPPED")) fail(`${name} content is clipped`);
 		if (view.width !== 2400 || view.height !== 2400) fail(`${name} output is not 2400x2400`);
