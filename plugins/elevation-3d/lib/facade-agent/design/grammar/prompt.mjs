@@ -106,6 +106,11 @@ rules maps a symbol to ordered alternatives; the first whose \`when\` holds is t
 so an alternative without \`when\` is the else branch. An alternative is a split or a
 terminal, never both. Recursion comes from parts naming other symbols.
 
+Parts are laid out in the order you write them, from the start of the axis: the first
+part of a z split is the one that meets the ground and the last is the one under the
+roof, and the first part of a u split is at the low-u edge of the scope. So a tripartite
+section is written base, shaft, top, in that order.
+
 Sizes: "2.4" is absolute metres, "'0.5" is a fraction of the scope along the split
 axis, "~1" is floating and shares whatever is left over by weight. A part with
 "repeat": true tiles as many times as its nominal size fits - that is how one rule
@@ -149,15 +154,17 @@ Terminals, and what each one is for:
 
 ${TERMINAL_VOCABULARY.map((terminal) => `  ${terminal.word} - ${terminal.purpose}`).join("\n")}
 
-Each takes optional inset_m and depth_m, both at most ${BOUNDS.maxInsetM} m. On a split
-alternative set terminal to null and both inset_m and depth_m to 0; on a terminal
+Every alternative carries inset_m and depth_m - they are required fields, not optional
+ones - and both are at most ${BOUNDS.maxInsetM} m. Use 0 where a terminal needs neither. On a
+split alternative set terminal to null and both inset_m and depth_m to 0; on a terminal
 alternative set split to null.
 
 The start symbol is derived once per facet, not once per elevation. A folded elevation
 is several facets side by side, so a pilaster at the two edges of the start rule puts a
 pier on every fold of the building, which reads as stripes rather than structure. Use
-\`index\` and \`total\` at the start rule to tell the facets apart, and place edge piers
-only where the elevation actually turns a corner.
+\`index == 0\` and \`index == last\` at the start rule to tell the end facets from
+the ones between them, and place edge piers only where the elevation actually turns a
+corner. There is no \`total\`; \`last\` is how you name the far end whatever the count is.
 
 Before answering, check the rule graph closes: every symbol named by any part must
 also appear as a rule name. A part pointing at a symbol you never defined is the
@@ -192,8 +199,14 @@ facade has no parts. Give it parts instead.
 - Vary the bay rhythm across the facet. Even spacing is the default the eye discards;
   a wide-narrow-narrow-wide, or one bay held open against a tight run, gives the
   elevation a measure.
-- Openings should read as roughly a fifth to two fifths of the wall. Slits in a large
-  blank wall read as a warehouse, not a designed elevation.
+- Openings should read as roughly a fifth to two fifths of the wall, and that is measured
+  exactly: the door and window rectangles you draw, summed, against the area of that
+  face's wall. Nothing else counts towards it - a lintel, a sill, a reveal, a band and a
+  pilaster are all wall for this purpose, however much of the surface they cover. It is
+  taken per face and the poorest face is judged, so a generous street front does not
+  carry a mean back. Size the panes themselves to reach a fifth: an author who sizes so
+  that the panes-only and the panes-plus-trim readings both land in range ends up at a
+  twentieth, which is a blank wall with slits in it.
 - Nest an opening into lintel, jamb reveals, pane and sill rather than leaving a bare
   rectangle - that is what separates a drawn facade from a painted one. All four, not
   a head and a shelf only: the reveals are the sides, and without them an opening has
