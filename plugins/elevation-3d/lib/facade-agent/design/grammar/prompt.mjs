@@ -178,14 +178,17 @@ facade has no parts. Give it parts instead.
 - One dominant element. An elevation needs a subject: an entrance bay carried up
   several storeys, one wide opening against many narrow ones, one recessed field. If
   every opening is within a hair of every other, there is nothing to look at.
-- Cross the floors. Nothing here confines an opening or a pier to one storey, and the
-  placement rules pass a slot that runs past a slab - only the two ends have to sit
-  clear of it. A grammar that splits every storey and then fills each one identically
-  has written five copies of one floor, which is the definition of the building you are
-  trying not to design. Split the facet along u into bays first and let a bay own the
-  full height, then decide storey by storey inside only the bays that need it. A pier
-  or a glazed slot carried through three floors is what an order is, and it is the
-  single strongest way to stop reading as stacked cells.
+- Cross the floors, and do not pay for it in openings. Nothing here confines an opening
+  or a pier to one storey, and the placement rules pass a slot that runs past a slab -
+  only the two ends have to sit clear of it. A grammar that splits every storey and then
+  fills each one identically has written five copies of one floor, which is the
+  definition of the building you are trying not to design. So add an order: one or two
+  bays of the facet carry a pier or a glazed slot through three floors, while every
+  other bay keeps its storey split and every window it already had. The order is a tall
+  element added against the ordinary ones, never a blank field left where they used to
+  be. Emptying the facade is not a way to satisfy this - an elevation that answers it by
+  deleting windows fails the opening ratio below instead, and is a worse answer than the
+  stacked cells it replaced.
 - Vary the bay rhythm across the facet. Even spacing is the default the eye discards;
   a wide-narrow-narrow-wide, or one bay held open against a tight run, gives the
   elevation a measure.
