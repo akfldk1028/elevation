@@ -122,6 +122,27 @@ export function measureComposition({ context, resolved } = {}) {
 		wallByView.set(view, (wallByView.get(view) ?? 0) + segment.length_m * height);
 	}
 	const openByView = new Map();
+	// Ground-storey glazing, kept separate from the rest.
+	//
+	// The opening ratio this file already takes is over the whole face, and that quantity has
+	// no support in the literature - no study was found regressing perception or behaviour on
+	// whole-facade window share, and Gehl's A-E scale, which is usually cited for it, counts
+	// doors per 100 m and contains no glazing figure at all. What is evidenced is the ground
+	// storey specifically. Ewing & Handy, "Measuring the Unmeasurable", J. Urban Design 14(1),
+	// 2009: transparency has three terms and the largest is the proportion of *first floor*
+	// facade carrying windows (1.219, p = 0.002); the paper states outright that windows above
+	// ground level do not raise perceived transparency once the others are controlled. Ewing
+	// et al., J. Planning Education and Research 36(1), 2016: on 588 New York blocks, with
+	// density, FAR, retail share and Walk Score controlled, the proportion of windows on the
+	// street is one of only three streetscape features significantly related to observed
+	// pedestrian counts.
+	//
+	// It is reported and not yet gated. The base it rests on is thin - 48 video clips rated by
+	// 10 experts, ICC 0.499, 32% of total variance - and a threshold taken from a study of
+	// American commercial streets has not been shown to transfer to this candidate.
+	const groundOpenByView = new Map();
+	const groundWallByView = new Map();
+	const groundStorey = context.storeys[0];
 	const openingAreas = [];
 	let hasTermination = false;
 	// How many storeys the tallest single element reaches through. One means every
@@ -169,10 +190,29 @@ export function measureComposition({ context, resolved } = {}) {
 		const value = area(primitive.local_bounds);
 		openByView.set(view, (openByView.get(view) ?? 0) + value);
 		openingAreas.push(value);
+		// The part of this opening that falls inside the ground storey, so a slot running past
+		// the first slab contributes only the height it actually glazes at street level.
+		if (groundStorey) {
+			const overlap = Math.min(primitive.local_bounds.z_max, groundStorey.z_max) - Math.max(primitive.local_bounds.z_min, groundStorey.z_min);
+			if (overlap > 0) {
+				const width = Math.max(0, primitive.local_bounds.u_max - primitive.local_bounds.u_min);
+				groundOpenByView.set(view, (groundOpenByView.get(view) ?? 0) + width * overlap);
+			}
+		}
 	}
 
+	if (groundStorey) {
+		for (const segment of context.facade_segments) {
+			const view = segment.face_view ?? segment.view;
+			const low = Math.max(segment.local_z?.[0] ?? 0, groundStorey.z_min);
+			const high = Math.min(segment.local_z?.[1] ?? 0, groundStorey.z_max);
+			if (high > low) groundWallByView.set(view, (groundWallByView.get(view) ?? 0) + segment.length_m * (high - low));
+		}
+	}
 	const openingRatios = {};
 	for (const [view, wall] of wallByView) openingRatios[view] = wall > 0 ? Number(((openByView.get(view) ?? 0) / wall).toFixed(6)) : 0;
+	const groundRatios = {};
+	for (const [view, wall] of groundWallByView) groundRatios[view] = wall > 0 ? Number(((groundOpenByView.get(view) ?? 0) / wall).toFixed(6)) : 0;
 	const ratios = Object.values(openingRatios);
 	const worstRatio = ratios.length ? Math.min(...ratios) : 0;
 	const largest = openingAreas.length ? Math.max(...openingAreas) : 0;
@@ -239,6 +279,8 @@ export function measureComposition({ context, resolved } = {}) {
 		metrics: {
 			opening_ratio_by_view: openingRatios,
 			worst_opening_ratio: Number(worstRatio.toFixed(6)),
+			ground_transparency_by_view: groundRatios,
+			worst_ground_transparency: Object.values(groundRatios).length ? Number(Math.min(...Object.values(groundRatios)).toFixed(6)) : 0,
 			opening_count: openingAreas.length,
 			largest_opening_m2: Number(largest.toFixed(6)),
 			median_opening_m2: Number(middle.toFixed(6)),
