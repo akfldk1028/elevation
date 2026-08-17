@@ -212,3 +212,60 @@ test("a cornice at grade does not terminate the elevation above it", () => {
 	// The primitive is there; it is simply not doing the job the gate is named for.
 	assert.equal(metrics.has_top_termination, true);
 });
+
+const skinBay = (uMin: number, uMax: number, zMin: number, zMax: number, segment = "seg-front") => ([
+	{ kind: "mullion", segment_id: segment, local_bounds: { u_min: uMin, u_max: uMin + 0.08, z_min: 0, z_max: 16.5 } },
+	{ kind: "transom", segment_id: segment, local_bounds: { u_min: uMin, u_max: uMax, z_min: zMin - 0.1, z_max: zMin } },
+	{ kind: "spandrel", segment_id: segment, local_bounds: { u_min: uMin, u_max: uMax, z_min: zMax, z_max: zMax + 0.7 } },
+	{ ...opening(uMin + 0.08, uMax, zMin, zMax), segment_id: segment },
+]);
+
+// A unitised skin's vision panes are identical because that is what unitised means. The
+// largest-against-median question was asked of every opening in the building, so it
+// rejected every honest curtain wall - the ratio is 1.0 by construction.
+test("a uniform glazed skin is not told its openings are all the same size", () => {
+	const skin = [1, 2, 3, 4, 5].flatMap((storey) => [0.4, 2.4, 4.4, 6.4, 8.4]
+		.flatMap((u) => skinBay(u, u + 1.8, (storey - 1) * 3.3 + 0.5, (storey - 1) * 3.3 + 2.6)));
+	const { codes, metrics } = measureComposition({ context: CONTEXT, resolved: { primitives: [...skin, cornice] } });
+
+	assert.equal(metrics.construction_by_view.front, "skin");
+	// Every pane really is the same size - the measure would have fired on the old reading.
+	assert.ok(metrics.scale_ratio < 1.5, `scale_ratio ${metrics.scale_ratio}`);
+	assert.ok(!codes.includes("SCALE_HIERARCHY_FLAT"), codes.join(", "));
+	// And the mullion carries the skin past the floors, so it is not in storey lockstep.
+	assert.ok(metrics.max_storey_span >= 2, `span ${metrics.max_storey_span}`);
+});
+
+// The question still has to be asked of the faces where an opening is an event cut into a
+// wall, or scoping it would have been a way of switching it off.
+test("a punched face is still asked for a subject when a skin sits beside it", () => {
+	const skin = [1, 2, 3].flatMap((storey) => [0.4, 2.4]
+		.flatMap((u) => skinBay(u, u + 1.8, (storey - 1) * 3.3 + 0.5, (storey - 1) * 3.3 + 2.6, "seg-front")));
+	const flatPunched = Array.from({ length: 12 }, (_, index) => ({
+		...opening(0.6 + (index % 4) * 2.2, 2.0 + (index % 4) * 2.2, 0.6 + Math.floor(index / 4) * 3.3, 2.9 + Math.floor(index / 4) * 3.3),
+		segment_id: "seg-back",
+	}));
+	const { codes, metrics } = measureComposition({
+		context: TWO_FACE_CONTEXT,
+		resolved: { primitives: [...skin, ...flatPunched, ...CORNICES] },
+	});
+
+	assert.equal(metrics.construction_by_view.front, "skin");
+	assert.equal(metrics.construction_by_view.back, "punched");
+	assert.ok(codes.includes("SCALE_HIERARCHY_FLAT"), codes.join(", "));
+	// The skin's panes must not be what the punched face is judged on.
+	assert.notEqual(metrics.punched_scale_ratio, metrics.scale_ratio);
+});
+
+// How open a skin is, is not the same question as how much of a masonry wall was cut away.
+test("skin transparency reads the glass against the skin, not against the whole face", () => {
+	const skin = [1, 2, 3, 4, 5].flatMap((storey) => [0.4, 2.4, 4.4]
+		.flatMap((u) => skinBay(u, u + 1.8, (storey - 1) * 3.3 + 0.5, (storey - 1) * 3.3 + 2.6)));
+	const { metrics } = measureComposition({ context: CONTEXT, resolved: { primitives: [...skin, cornice] } });
+
+	const share = metrics.skin_transparency_by_view.front;
+	assert.ok(share > 0 && share < 1, `share ${share}`);
+	// The skin covers only part of a face this wide, so the whole-face ratio is much lower
+	// than the share of the skin that is actually glass.
+	assert.ok(share > metrics.opening_ratio_by_view.front, `${share} vs ${metrics.opening_ratio_by_view.front}`);
+});

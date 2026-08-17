@@ -182,9 +182,13 @@ facade has no parts. Give it parts instead.
   that a shaft of glass and reveal does not.
 - Terminate the top. A cornice on the highest storey is what stops a building looking
   sawn off. Without one the elevation merely runs out of floors.
-- One dominant element. An elevation needs a subject: an entrance bay carried up
-  several storeys, one wide opening against many narrow ones, one recessed field. If
-  every opening is within a hair of every other, there is nothing to look at.
+- One dominant element, on a face built as a wall with openings cut into it. Such an
+  elevation needs a subject: an entrance bay carried up several storeys, one wide opening
+  against many narrow ones, one recessed field. If every opening is within a hair of every
+  other, there is nothing to look at. This is not asked of a glazed skin - a unitised
+  system's panes are identical because that is what unitised means, and the check knows
+  which construction each face is in. Do not add one oversized pane to a skin to satisfy
+  it; that is the answer this paragraph exists to prevent.
 - Cross the floors, and do not pay for it in openings. Nothing here confines an opening
   or a pier to one storey, and the placement rules pass a slot that runs past a slab -
   only the two ends have to sit clear of it. A grammar that splits every storey and then
@@ -198,7 +202,8 @@ facade has no parts. Give it parts instead.
   stacked cells it replaced.
 - Vary the bay rhythm across the facet. Even spacing is the default the eye discards;
   a wide-narrow-narrow-wide, or one bay held open against a tight run, gives the
-  elevation a measure.
+  elevation a measure. A unitised skin is the exception: it is evenly spaced on purpose,
+  and its measure comes from the base, the top and the corner instead.
 - Openings should read as roughly a fifth to two fifths of the wall, and that is measured
   exactly: the door and window rectangles you draw, summed, against the area of that
   face's wall, where that area is the sum over the face's segments of segment length_m
@@ -209,7 +214,10 @@ facade has no parts. Give it parts instead.
   taken per face and the poorest face is judged, so a generous street front does not
   carry a mean back. Size the panes themselves to reach a fifth: an author who sizes so
   that the panes-only and the panes-plus-trim readings both land in range ends up at a
-  twentieth, which is a blank wall with slits in it.
+  twentieth, which is a blank wall with slits in it. A fifth to two fifths is the range for
+  a wall with openings cut into it. A glazed skin runs higher - half to two thirds of the
+  face is vision glass on a real curtain wall - and overshooting the range on a face built
+  that way is not a fault.
 - Nest an opening into lintel, jamb reveals, pane and sill rather than leaving a bare
   rectangle - that is what separates a drawn facade from a painted one. All four, not
   a head and a shelf only: the reveals are the sides, and without them an opening has
@@ -238,7 +246,10 @@ not choose where the entrance goes.
 Deterministic code owns all placement. Never name a segment, a coordinate or a path.
 Every opening must sit clear of the folds and the floor bands, only one primary
 entrance is allowed, and both the lowest and the highest storey must carry openings.
-Two openings on one segment need clearance between them, so one pane per opening.`;
+Two openings on one segment need 0.3 m of clear wall between them wherever they overlap
+in height, so one pane per opening. A mullion does not count as that clearance - the rule
+sees openings and not framing - so a facet cannot be divided into a grid of vision panes
+side by side. One pane per facet, framed at its edges, is the skin this grammar can build.`;
 
 export function buildFacadeGrammarPrompt({ context, correctionCodes = [], attempt, previous = null }) {
 	const boundedContext = {
