@@ -7,7 +7,7 @@ import { startPreview, stopPreview } from "./preview.mjs";
 import { findChrome } from "./results.mjs";
 import { buildViewerBundle } from "./viewer.mjs";
 import { buildElevationAnnotations } from "./elevation-annotations.mjs";
-import { validateCompetitionElevation } from "./elevation-presentation-validation.mjs";
+import { MIN_VISIBLE_SEAM_PX, validateCompetitionElevation } from "./elevation-presentation-validation.mjs";
 import { atomicCopy, atomicWrite, prepareSafeDirectory } from "./facade-agent/path-safety.mjs";
 
 const OUTPUT_SIZE = 2400;
@@ -128,23 +128,31 @@ function diagnosticMetrics({ base, materialId, depth, normal, width, height, bou
 		candidateCount++;
 	}
 	const visited = new Uint8Array(candidates.length);
-	const segmentCounts = { connected_at_least_12px: 0, short: 0, axial: 0, diagonal: 0 };
+	// Same seam vocabulary as the presentation validator: a segment counts once its
+	// bounding box spans MIN_VISIBLE_SEAM_PX, because that is the length at which a seam
+	// reads as a drawn line rather than as aliasing. The two used to disagree - this one
+	// measured a component by its pixel count and that one by its sample count, both under
+	// the name `connected_at_least_12px` - and one name over two measurements is how the
+	// last drift started.
+	const segmentCounts = { visible: 0, short: 0, axial: 0, diagonal: 0, longest_px: 0 };
 	for (let y = bounds.min_y; y <= bounds.max_y; y++) for (let x = bounds.min_x; x <= bounds.max_x; x++) {
 		const start = y * width + x;
 		if (!candidates[start] || visited[start]) continue;
 		const stack = [start]; visited[start] = 1;
-		let size = 0, minX = x, maxX = x, minY = y, maxY = y;
+		let minX = x, maxX = x, minY = y, maxY = y;
 		while (stack.length) {
 			const index = stack.pop(), currentX = index % width, currentY = Math.floor(index / width);
-			size++; minX = Math.min(minX, currentX); maxX = Math.max(maxX, currentX); minY = Math.min(minY, currentY); maxY = Math.max(maxY, currentY);
+			minX = Math.min(minX, currentX); maxX = Math.max(maxX, currentX); minY = Math.min(minY, currentY); maxY = Math.max(maxY, currentY);
 			for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
 				const next = (currentY + dy) * width + currentX + dx;
 				if ((dx || dy) && candidates[next] && !visited[next]) { visited[next] = 1; stack.push(next); }
 			}
 		}
-		if (size >= 12) segmentCounts.connected_at_least_12px++;
-		else segmentCounts.short++;
 		const segmentWidth = maxX - minX + 1, segmentHeight = maxY - minY + 1;
+		const extent = Math.max(segmentWidth, segmentHeight);
+		if (extent > segmentCounts.longest_px) segmentCounts.longest_px = extent;
+		if (extent >= MIN_VISIBLE_SEAM_PX) segmentCounts.visible++;
+		else segmentCounts.short++;
 		if (segmentWidth >= segmentHeight * 3 || segmentHeight >= segmentWidth * 3) segmentCounts.axial++;
 		else segmentCounts.diagonal++;
 	}

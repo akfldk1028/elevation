@@ -60,7 +60,7 @@ test("plan is a declared cut and top is an uncut roof projection", { timeout: 60
 		assert.deepEqual([artifact.width, artifact.height], [2400, 2400]);
 		assert.equal(artifact.validation.accepted, true, artifact.validation.codes.join(", "));
 		assert.ok(artifact.validation.metrics.same_material_seam_fraction <= 0.001);
-		assert.equal(artifact.validation.metrics.seam_segments.connected_at_least_12px, 0);
+		assert.equal(artifact.validation.metrics.seam_segments.visible, 0);
 		assert.ok(artifact.manifest.content_bounds_px.min_x < 300);
 		assert.ok(artifact.manifest.content_bounds_px.max_x > 2100);
 		for (const diagnostic of Object.values(artifact.diagnostics)) {
