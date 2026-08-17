@@ -72,8 +72,30 @@ export function measureComposition({ context, resolved } = {}) {
 		const overlap = Math.min(bounds.z_max, storey.z_max) - Math.max(bounds.z_min, storey.z_min);
 		return overlap > 0.35 * (storey.z_max - storey.z_min);
 	}).length;
+	// What each face is made of, so two faces can be compared by kind rather than by size.
+	// A profile is the set of terminals the face uses, the shape of its typical opening and
+	// how densely it is punched - the three things that make one wall a different sort of
+	// wall from another, and none of which the opening ratio can see.
+	const kindsByView = new Map();
+	const aspectsByView = new Map();
+	const countByView = new Map();
 	for (const primitive of resolved.primitives) {
 		if (primitive.kind === "cornice") hasTermination = true;
+		const primitiveView = segments.get(primitive.segment_id)?.face_view ?? segments.get(primitive.segment_id)?.view;
+		if (primitiveView) {
+			if (!kindsByView.has(primitiveView)) kindsByView.set(primitiveView, new Set());
+			// The entrance is placed by deterministic code, always on the most visible ground
+			// segment, so it appears on one face whatever the grammar says. Counting it makes
+			// that face different from every other by construction and the comparison below
+			// can never fail - which is exactly what it did before this line.
+			if (primitive.kind !== "door") kindsByView.get(primitiveView).add(primitive.kind);
+			if (OPENING_KINDS.has(primitive.kind)) {
+				const width = primitive.local_bounds.u_max - primitive.local_bounds.u_min;
+				const height = primitive.local_bounds.z_max - primitive.local_bounds.z_min;
+				if (height > 0) (aspectsByView.get(primitiveView) ?? aspectsByView.set(primitiveView, []).get(primitiveView)).push(width / height);
+				countByView.set(primitiveView, (countByView.get(primitiveView) ?? 0) + 1);
+			}
+		}
 		// A pier counts as much as a window here: an order carried through three floors
 		// is what breaks the storey lockstep, and it need not be glazed to do it.
 		if (OPENING_KINDS.has(primitive.kind) || primitive.kind === "pilaster") {
@@ -110,6 +132,26 @@ export function measureComposition({ context, resolved } = {}) {
 	if (openingAreas.length > 1 && scaleRatio + 1e-9 < COMPOSITION_BOUNDS.minScaleRatio) {
 		note("SCALE_HIERARCHY_FLAT", `the largest opening is only ${scaleRatio.toFixed(2)}x the median, so every opening is the same size and the elevation has no subject; make one element clearly dominant`);
 	}
+	// The street face and the service face have to differ in kind, not in window width. The
+	// guidance has always asked for it and nothing measured it, so an elevation whose front
+	// and back were the same wall - told apart only by the deterministic entrance - passed
+	// with no faults at all. Density is per unit of wall so a longer face is not counted as
+	// a different sort of face merely for holding more openings.
+	const faceProfile = (view) => {
+		const aspects = aspectsByView.get(view) ?? [];
+		const wall = wallByView.get(view) ?? 0;
+		return [
+			[...(kindsByView.get(view) ?? [])].sort().join("+"),
+			median(aspects).toFixed(1),
+			wall > 0 ? ((countByView.get(view) ?? 0) / wall).toFixed(1) : "0",
+		].join("|");
+	};
+	const frontProfile = wallByView.has("front") ? faceProfile("front") : null;
+	const backProfile = wallByView.has("back") ? faceProfile("back") : null;
+	const facesDiffer = frontProfile === null || backProfile === null || frontProfile !== backProfile;
+	if (!facesDiffer) {
+		note("FACE_KIND_UNIFORM", `the front and the back are the same wall - same terminals, same opening proportion, same density (${frontProfile}); give one of them a different device rather than a different window width`);
+	}
 	if (context.storeys.length > 1 && maxStoreySpan > 0 && maxStoreySpan < COMPOSITION_BOUNDS.minStoreySpan) {
 		// The fault has to carry its own guard. Asked for the order on its own, the model
 		// bought it by stripping openings until the elevation was a blank wall, which is a
@@ -126,6 +168,7 @@ export function measureComposition({ context, resolved } = {}) {
 			median_opening_m2: Number(middle.toFixed(6)),
 			scale_ratio: scaleRatio,
 			max_storey_span: maxStoreySpan,
+			face_profiles: { front: frontProfile, back: backProfile },
 			has_top_termination: hasTermination,
 			top_storey: topStorey?.storey ?? null,
 		},
