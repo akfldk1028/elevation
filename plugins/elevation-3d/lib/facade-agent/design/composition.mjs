@@ -53,6 +53,17 @@ export const COMPOSITION_BOUNDS = Object.freeze({
 const OPENING_KINDS = new Set(["door", "window"]);
 
 /**
+ * The words that make a face a glazed skin rather than a wall with holes in it.
+ *
+ * A curtain wall is a continuous framed surface hung in front of the structure: mullions
+ * and transoms divide it, spandrel panels close the slab zone, and the vision glass between
+ * them is the field rather than a set of events cut into masonry. Which of the two
+ * constructions a face is built in decides which questions can sensibly be asked of it, so
+ * it is read off the terminals the grammar actually used.
+ */
+const SKIN_KINDS = new Set(["mullion", "transom", "spandrel"]);
+
+/**
  * Sizes within this factor of each other are the same size, so they form one level.
  * Deliberately below Alexander's ideal adjacent ratio of about 2, so that a level is a
  * tight cluster and the ratios measured between levels are real steps rather than an
@@ -161,6 +172,13 @@ export function measureComposition({ context, resolved } = {}) {
 	const kindsByView = new Map();
 	const aspectsByView = new Map();
 	const countByView = new Map();
+	// Openings kept by face, so a measure that only makes sense on one construction can be
+	// asked only of the faces built that way.
+	const openingAreasByView = new Map();
+	// Everything the skin itself is made of - the glass and the members that divide it -
+	// which is the denominator for how transparent a skin is, as distinct from how much of
+	// a masonry wall has been cut away.
+	const skinFieldByView = new Map();
 	const terminatedViews = new Set();
 	for (const primitive of resolved.primitives) {
 		if (primitive.kind === "cornice") hasTermination = true;
@@ -177,6 +195,9 @@ export function measureComposition({ context, resolved } = {}) {
 			// segment, so it appears on one face whatever the grammar says. Counting it makes
 			// that face different from every other by construction and the comparison below
 			// can never fail - which is exactly what it did before this line.
+			if (SKIN_KINDS.has(primitive.kind) || primitive.kind === "window") {
+				skinFieldByView.set(primitiveView, (skinFieldByView.get(primitiveView) ?? 0) + area(primitive.local_bounds));
+			}
 			if (primitive.kind === "door") continue;
 			kindsByView.get(primitiveView).add(primitive.kind);
 			if (OPENING_KINDS.has(primitive.kind)) {
@@ -199,6 +220,7 @@ export function measureComposition({ context, resolved } = {}) {
 		const value = area(primitive.local_bounds);
 		openByView.set(view, (openByView.get(view) ?? 0) + value);
 		openingAreas.push(value);
+		if (view) openingAreasByView.set(view, [...(openingAreasByView.get(view) ?? []), value]);
 		// The part of this opening that falls inside the ground storey, so a slot running past
 		// the first slab contributes only the height it actually glazes at street level.
 		if (groundStorey) {
@@ -250,12 +272,32 @@ export function measureComposition({ context, resolved } = {}) {
 			? `no cornice anywhere, so the building stops at storey ${topStorey?.storey ?? "?"} rather than terminating`
 			: `${unterminated.join(", ")} ${unterminated.length === 1 ? "has" : "have"} no cornice, so ${unterminated.length === 1 ? "that elevation runs" : "those elevations run"} out of floors while the others terminate`);
 	}
+	// Which construction each face is written in, and how much of a skin is actually glass.
+	const construction = {};
+	const skinTransparency = {};
+	for (const view of wallByView.keys()) {
+		const kinds = kindsByView.get(view) ?? new Set();
+		const skin = [...kinds].some((kind) => SKIN_KINDS.has(kind));
+		construction[view] = skin ? "skin" : "punched";
+		const field = skinFieldByView.get(view) ?? 0;
+		if (skin && field > 0) skinTransparency[view] = Number(((openByView.get(view) ?? 0) / field).toFixed(6));
+	}
+	// A skin's vision panes are identical because that is what a unitised system is, so the
+	// largest-against-median question is asked only of the faces where an opening is an event
+	// cut into a wall. Asking it of a curtain wall rejects every honest one: the ratio is 1.0
+	// by construction, and the subject of a skin is the skin, not one big window.
+	const punchedOpeningAreas = [...openingAreasByView.entries()]
+		.filter(([view]) => construction[view] !== "skin")
+		.flatMap(([, areas]) => areas);
+	const punchedLargest = punchedOpeningAreas.length ? Math.max(...punchedOpeningAreas) : 0;
+	const punchedMedian = median(punchedOpeningAreas);
+	const punchedScaleRatio = punchedMedian > 0 ? Number((punchedLargest / punchedMedian).toFixed(6)) : 0;
 	const levels = levelsOfScale(openingAreas);
 	if (levels.largestStep > COMPOSITION_BOUNDS.maxLevelStep) {
 		note("SCALE_STEP_BROKEN", `the size levels jump by ${levels.largestStep.toFixed(1)}x, so the largest opening has nothing between it and the rest and reads as a separate building; keep neighbouring sizes within about three of each other`);
 	}
-	if (openingAreas.length > 1 && scaleRatio + 1e-9 < COMPOSITION_BOUNDS.minScaleRatio) {
-		note("SCALE_HIERARCHY_FLAT", `the largest opening is only ${scaleRatio.toFixed(2)}x the median, so every opening is the same size and the elevation has no subject; make one element clearly dominant`);
+	if (punchedOpeningAreas.length > 1 && punchedScaleRatio + 1e-9 < COMPOSITION_BOUNDS.minScaleRatio) {
+		note("SCALE_HIERARCHY_FLAT", `on the faces built as a wall with openings cut into it, the largest opening is only ${punchedScaleRatio.toFixed(2)}x the median, so every opening is the same size and the elevation has no subject; make one element clearly dominant, or build the face as a glazed skin where uniformity is the system`);
 	}
 	// The street face and the service face have to differ in kind, not in window width. The
 	// guidance has always asked for it and nothing measured it, so an elevation whose front
@@ -286,7 +328,7 @@ export function measureComposition({ context, resolved } = {}) {
 		// The fault has to carry its own guard. Asked for the order on its own, the model
 		// bought it by stripping openings until the elevation was a blank wall, which is a
 		// worse answer than the lockstep. Naming the count it must not lose stops the trade.
-		note("STOREY_LOCKSTEP", `nothing crosses a floor - the tallest opening or pier reaches through ${maxStoreySpan} storey of ${context.storeys.length}, so the facade is one floor drawn ${context.storeys.length} times; carry a pier or a glazed slot through two or three storeys in one or two bays, and keep all ${openingAreas.length} openings while doing it - removing openings to make room for the order fails the opening ratio instead`);
+		note("STOREY_LOCKSTEP", `nothing crosses a floor - the tallest opening or pier reaches through ${maxStoreySpan} storey of ${context.storeys.length}, so the facade is one floor drawn ${context.storeys.length} times; carry a pier or a glazed slot through two or three storeys in one or two bays, and keep all ${openingAreas.length} openings while doing it - removing openings to make room for the order fails the opening ratio instead. On a glazed skin the mullion is what crosses the floors, and it counts`);
 	}
 
 	return {
@@ -299,6 +341,12 @@ export function measureComposition({ context, resolved } = {}) {
 			largest_opening_m2: Number(largest.toFixed(6)),
 			median_opening_m2: Number(middle.toFixed(6)),
 			scale_ratio: scaleRatio,
+			punched_scale_ratio: punchedScaleRatio,
+			construction_by_view: construction,
+			// Vision glass as a share of everything the skin is made of. Reported and not
+			// gated: it is the honest reading of how open a curtain wall is, but no threshold
+			// for it has been established here or found in the literature.
+			skin_transparency_by_view: skinTransparency,
 			levels_of_scale: levels,
 			max_storey_span: maxStoreySpan,
 			face_profiles: { front: frontProfile, back: backProfile },
