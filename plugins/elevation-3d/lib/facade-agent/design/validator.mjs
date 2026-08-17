@@ -73,8 +73,13 @@ export function validateResolvedFacadeProgram({ program, context, resolved } = {
 					if (overlap > 1e-6) open.add(storey.storey);
 				}
 			}
+			// Only the highest storey is asked about. The lowest-storey half could never fire:
+			// `resolveFacadeProgram` prepends the deterministic entrance unconditionally and
+			// `entrancePrimitive` throws unless it fits inside storey one, so an opening always
+			// overlaps the ground storey whatever the grammar wrote. It was a fossil of the v2
+			// zone check it sits opposite, and it read as a rule forbidding a solid plinth.
 			const numbers = context.storeys.map((storey) => storey.storey);
-			if (!open.has(numbers[0]) || !open.has(numbers[numbers.length - 1])) codes.add("HIERARCHY_MISSING");
+			if (!open.has(numbers[numbers.length - 1])) codes.add("HIERARCHY_MISSING");
 		}
 
 		const segments = new Map(context.facade_segments.map((segment) => [segment.segment_id, segment]));

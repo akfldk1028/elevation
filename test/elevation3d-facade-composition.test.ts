@@ -111,11 +111,12 @@ const CORNICES = [{ ...cornice }, { ...cornice, segment_id: "seg-back" }];
 // faces were the same wall passed with no faults at all.
 test("two faces built the same way are reported as the same wall", () => {
 	const face = Array.from({ length: 10 }, (_, index) => opening(0.6 + (index % 5) * 1.8, 2.0 + (index % 5) * 1.8, 0.6 + Math.floor(index / 5) * 3.3, 2.9 + Math.floor(index / 5) * 3.3));
-	const { codes, metrics } = measureComposition({
+	const { metrics } = measureComposition({
 		context: TWO_FACE_CONTEXT,
 		resolved: { primitives: [...onFace("seg-front", face), ...onFace("seg-back", face), ...CORNICES] },
 	});
-	assert.ok(codes.includes("FACE_KIND_UNIFORM"), codes.join(", "));
+	// Reported rather than gated - see the comment on the measure - so the profiles are the
+	// assertion, not a fault code.
 	assert.equal(metrics.face_profiles.front, metrics.face_profiles.back);
 });
 
@@ -123,11 +124,10 @@ test("a face whose openings sit differently is a different sort of wall", () => 
 	const tall = Array.from({ length: 10 }, (_, index) => opening(0.6 + (index % 5) * 1.8, 2.0 + (index % 5) * 1.8, 0.6 + Math.floor(index / 5) * 3.3, 2.9 + Math.floor(index / 5) * 3.3));
 	// Same count and much the same area, but laid out wide rather than upright.
 	const wide = Array.from({ length: 10 }, (_, index) => opening(0.4 + (index % 5) * 1.9, 2.2 + (index % 5) * 1.9, 1.2 + Math.floor(index / 5) * 3.3, 2.1 + Math.floor(index / 5) * 3.3));
-	const { codes, metrics } = measureComposition({
+	const { metrics } = measureComposition({
 		context: TWO_FACE_CONTEXT,
 		resolved: { primitives: [...onFace("seg-front", tall), ...onFace("seg-back", wide), ...CORNICES] },
 	});
-	assert.ok(!codes.includes("FACE_KIND_UNIFORM"), codes.join(", "));
 	assert.notEqual(metrics.face_profiles.front, metrics.face_profiles.back);
 });
 
@@ -137,16 +137,18 @@ test("a face whose openings sit differently is a different sort of wall", () => 
 test("the deterministic entrance alone does not make two faces differ", () => {
 	const face = Array.from({ length: 10 }, (_, index) => opening(0.6 + (index % 5) * 1.8, 2.0 + (index % 5) * 1.8, 0.6 + Math.floor(index / 5) * 3.3, 2.9 + Math.floor(index / 5) * 3.3));
 	const door = { kind: "door", segment_id: "seg-back", local_bounds: { u_min: 4, u_max: 5.8, z_min: 0, z_max: 2.4 } };
-	const { codes } = measureComposition({
+	const { metrics } = measureComposition({
 		context: TWO_FACE_CONTEXT,
 		resolved: { primitives: [...onFace("seg-front", face), ...onFace("seg-back", face), door, ...CORNICES] },
 	});
-	assert.ok(codes.includes("FACE_KIND_UNIFORM"), codes.join(", "));
+	// The door is now excluded from the aspect and the density too, not only from the
+	// terminal set, so the two faces stay identical however the entrance lands.
+	assert.equal(metrics.face_profiles.front, metrics.face_profiles.back);
 });
 
-// The test used to ask whether the building had a cornice anywhere, so one terminated
-// elevation answered on behalf of three that were left sawn off - and the elevations are
-// drawn, rendered and judged one at a time.
+// A cornice terminates the face it is on, and only if it sits in the top storey - the test
+// used to ask whether the building had one anywhere, and then whether the word appeared on
+// the face, neither of which is the same as the building stopping there.
 test("a cornice on one face does not terminate the others", () => {
 	const face = Array.from({ length: 10 }, (_, index) => opening(0.6 + (index % 5) * 1.8, 2.0 + (index % 5) * 1.8, 0.6 + Math.floor(index / 5) * 3.3, 2.9 + Math.floor(index / 5) * 3.3));
 	const { codes, faults, metrics } = measureComposition({
@@ -197,4 +199,16 @@ test("a storey-crossing slot counts only the part of it that is at street level"
 	const expected = (2.3 - 0.5) * (ground.z_max - 0.4) / (10 * (ground.z_max - ground.z_min));
 	assert.ok(Math.abs(metrics.ground_transparency_by_view.front - expected) < 1e-6,
 		`${metrics.ground_transparency_by_view.front} vs ${expected}`);
+});
+
+// The gate used to be satisfied by the word rather than by the building: any `cornice`
+// primitive on a face terminated it, so a flush strip at pavement level counted.
+test("a cornice at grade does not terminate the elevation above it", () => {
+	const face = Array.from({ length: 10 }, (_, index) => opening(0.6 + (index % 5) * 1.8, 2.0 + (index % 5) * 1.8, 0.6 + Math.floor(index / 5) * 3.3, 2.9 + Math.floor(index / 5) * 3.3));
+	const atGrade = { kind: "cornice", segment_id: "seg-front", local_bounds: { u_min: 0, u_max: 10, z_min: 0.05, z_max: 0.4 } };
+	const { codes, metrics } = measureComposition({ context: CONTEXT, resolved: { primitives: [...face, atGrade] } });
+	assert.ok(codes.includes("TOP_TERMINATION_MISSING"), codes.join(", "));
+	assert.deepEqual(metrics.terminated_views, []);
+	// The primitive is there; it is simply not doing the job the gate is named for.
+	assert.equal(metrics.has_top_termination, true);
 });

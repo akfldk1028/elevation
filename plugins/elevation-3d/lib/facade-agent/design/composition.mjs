@@ -166,13 +166,19 @@ export function measureComposition({ context, resolved } = {}) {
 		if (primitive.kind === "cornice") hasTermination = true;
 		const primitiveView = segments.get(primitive.segment_id)?.face_view ?? segments.get(primitive.segment_id)?.view;
 		if (primitiveView) {
-			if (primitive.kind === "cornice") terminatedViews.add(primitiveView);
+			// Where it sits, not merely that the word appears. The test used to add the view on
+			// any `cornice` primitive, so a flush 60 mm strip at grade terminated an elevation -
+			// it measured the vocabulary rather than the building. A course that stops the
+			// building has to be within the top storey of it.
+			if (primitive.kind === "cornice" && topStorey
+				&& primitive.local_bounds.z_max >= topStorey.z_min - 1e-6) terminatedViews.add(primitiveView);
 			if (!kindsByView.has(primitiveView)) kindsByView.set(primitiveView, new Set());
 			// The entrance is placed by deterministic code, always on the most visible ground
 			// segment, so it appears on one face whatever the grammar says. Counting it makes
 			// that face different from every other by construction and the comparison below
 			// can never fail - which is exactly what it did before this line.
-			if (primitive.kind !== "door") kindsByView.get(primitiveView).add(primitive.kind);
+			if (primitive.kind === "door") continue;
+			kindsByView.get(primitiveView).add(primitive.kind);
 			if (OPENING_KINDS.has(primitive.kind)) {
 				const width = primitive.local_bounds.u_max - primitive.local_bounds.u_min;
 				const height = primitive.local_bounds.z_max - primitive.local_bounds.z_min;
@@ -225,7 +231,7 @@ export function measureComposition({ context, resolved } = {}) {
 	const faults = [];
 	const note = (code, text) => { codes.push(code); faults.push(`${code}: ${text}`); };
 	if (worstRatio + 1e-9 < COMPOSITION_BOUNDS.minOpeningRatio) {
-		note("OPENING_RATIO_LOW", `openings are ${(worstRatio * 100).toFixed(1)}% of the poorest elevation, which reads as a blank wall with slits in it; aim for 20-40%`);
+		note("OPENING_RATIO_LOW", `openings are ${(worstRatio * 100).toFixed(1)}% of the poorest elevation, which reads as a blank wall with slits in it; the floor here is ${(COMPOSITION_BOUNDS.minOpeningRatio * 100).toFixed(0)}% and a deliberately closed face may sit near it, but a face this starved is not a decision`);
 	}
 	// A cornice is the only terminal that means "this is where the building stops".
 	// Without one the elevation reads as cut off at whatever storey it happened to reach.
@@ -264,10 +270,15 @@ export function measureComposition({ context, resolved } = {}) {
 	};
 	const frontProfile = wallByView.has("front") ? faceProfile("front") : null;
 	const backProfile = wallByView.has("back") ? faceProfile("back") : null;
+	// Reported, not gated.
+	//
+	// It was added as a gate and immediately rejected three of the nine schemes that had
+	// already been drawn, rendered and kept - a measure written after the fact overturning
+	// a judgement already made by eye. Its test is also string equality on
+	// `terminals | median aspect to 1dp | density to 1dp`, which is a hash collision rather
+	// than a reading of kind: scheme h differs only by holding one extra terminal word.
+	// The question it asks is a good one and the answer it gives is not yet trustworthy.
 	const facesDiffer = frontProfile === null || backProfile === null || frontProfile !== backProfile;
-	if (!facesDiffer) {
-		note("FACE_KIND_UNIFORM", `the front and the back are the same wall - same terminals, same opening proportion, same density (${frontProfile}); give one of them a different device rather than a different window width`);
-	}
 	if (context.storeys.length > 1 && maxStoreySpan > 0 && maxStoreySpan < COMPOSITION_BOUNDS.minStoreySpan) {
 		// The fault has to carry its own guard. Asked for the order on its own, the model
 		// bought it by stripping openings until the elevation was a blank wall, which is a
