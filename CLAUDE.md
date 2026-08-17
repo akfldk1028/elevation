@@ -320,3 +320,89 @@ Open, in the order worth doing:
    override. The preset default is still calibrated for facades without
    reveals, so anyone writing a new runner hits the same wall unless they use
    the constant.
+
+## 2026-08-17 subsymmetry was tried and does not work; and the pipeline runs on one mass
+
+Two findings, one negative and one larger than everything above it.
+
+### Bay subsymmetry: implemented, measured, discarded
+
+The reading was that the remaining fault is horizontal - the faces are
+stratified into bands and each band is a uniform run of near-identical bays,
+"one bay drawn six times in three flavours" - and that Alexander's local
+symmetries would catch it. It does not. The measure was built (bays grouped by
+u-overlap, labelled by their openings quantised to 0.05 m, scored as
+non-trivial palindromic runs per bay), measured across all ten grammars, and
+reverted. The numbers, front/back:
+
+    a ABCCBA .333 / ABCCBD .167      f AAAAAA .000 / AAAAAB .000
+    b ABCBCA .333 / ABCBCD .333      g ABBBBA .167 / AAAAAB .000
+    c ABCCBA .333 / ABCCBD .167      h ABCBBA .167 / AABAAC .333
+    d ABBBBA .167 / 12 bays .000     p ABCCDA .000 / ABBBBC .000
+    e ABBBBB .000 / ABAAAC .167    v11 AAABAA .333 / AAABAC .167
+
+v11 - the known-bad scheme - ties for the top of the set, on a front of
+`AAABAA`, five identical bays and one odd one. G, which reads best by eye,
+scores zero. There is no gap to derive a threshold from: the only values are
+0, 1/6 and 2/6, which is quantisation from six bays rather than two
+populations. `a-b-a-b-a-b` scores 1.000, three times the best real scheme, and
+is exactly the fault the measure was built to catch.
+
+Three things worth keeping from the attempt:
+
+- **A and C emit identical bay sequences on both faces.** No measure over bay
+  order can separate them, so whatever makes C read worse is *inside* a bay.
+  The horizontal-sequence hypothesis is not merely unsupported, it is refuted
+  for this pair.
+- **The site polygon nearly ate the measure.** Both long faces fold
+  0.707, 1, 0.707, 0.707, 1, 0.707 - itself `a-b-a-a-b-a`, scoring 0.667,
+  identical in all ten schemes because it is the plan and not the design.
+  Labelling bays by drawn width put scheme F top of the sheet for placing one
+  identical rule on all six facets and letting the folds do the work. Labelling
+  by unforeshortened width removes it. Any future face-sequence measure has to
+  handle this or it measures the site.
+- 48-90% of every scheme's windows sit in a vertical repeat of two or more
+  identical openings, and the flanks carry two bays each and cannot be measured
+  at all. The near-identity is in both axes and neither sorts these schemes.
+
+### The pipeline has only ever run on creative-020
+
+`MAAS_ELEVATION_TEST_SET_20260730` holds three candidates. creative-020 has 35
+vertices and **two** distinct z levels - a plain extruded prism, every vertical
+face a full rectangle. creative-004 has 86 vertices and 13 levels; creative-013
+has 184 and 15. The set is three candidates because it is meant to test
+generalisation.
+
+creative-013 throws in `deriveFacadeSegmentsFromMass`, before the LLM, the
+gates or the renderer see anything. The rejection now carries its measurement,
+and it says `covered 0.000000000 of 3.101669840 m2` on the 2.3575 x 1.3157 m
+plane at (9.269, 0.334, 4.476) - **zero**, not a rounding shortfall.
+
+The obvious reading, that the code assumes rectangular faces, is wrong:
+`usableFaceRectangle` already takes the face boundary polygon and inscribes the
+largest rectangle in it. A plane the function derived from a coplanar triangle
+group finds none of that group coplanar with it, which is self-contradictory.
+This is a bug in that path, not a limitation to design around. Not yet
+eliminated: `massSupportTriangles` requires all three points within 1e-5 of the
+plane; `deriveFacadeSegmentsFromMass` passes one global
+`closedShellOrientation` for every triangle, which is fine for a single closed
+prism; and the plane origin is chosen by matching a vertex on (u, z) alone.
+
+**Everything tuned in this session came from that one prism** - seam length
+48 px, untyped strong-edge 0.020, ambient 1.7/2.2/0.86, the opening-ratio
+target, the face-kind profile. None has been shown to be a property of the
+pipeline rather than of creative-020. Preparing another candidate does not need
+a retained delivery: `.superpowers/sdd/2026-08-10-llm-facade-design-agent/prepare-any-candidate.mjs`
+builds the evidence pack from the candidate and takes the GLB and thumbnails
+from the e2e results tree.
+
+### And the vocabulary cannot say curtain wall
+
+The grammar's entire terminal set is `wall glass door reveal lintel sill band
+cornice pilaster`. Nine punched-masonry words. There is no mullion, transom,
+spandrel, louvre, balcony, canopy, projecting bay or arch. The nine schemes all
+read as one architectural language because the language has no other words - no
+prompt work will produce a curtain wall. Adding one is not a one-file change
+(`facade-vocabulary.mjs` feeds contract, derive, punched-facade and the prompt,
+held in agreement by a test) and it breaks the premises of the composition
+measures, which assume openings are a minority of the wall.
