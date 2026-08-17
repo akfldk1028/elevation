@@ -124,3 +124,7 @@ export { runFacadeDesignAgent } from "./design-agent.mjs";
 export { reviewFacadeDesign } from "./critic.mjs";
 export { createFacadeDesignCritic, scoreFacadeDesign } from "./scoring.mjs";
 export { createFacadeDesignStateStore } from "./state-store.mjs";
+export {
+	checkAuthoredGrammar, renderAuthoredFacade,
+	REVEAL_FACADE_PRESENTATION_STYLE, writeGrammarBrief,
+} from "./authoring-kit.mjs";
