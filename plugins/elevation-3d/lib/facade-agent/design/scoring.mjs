@@ -103,13 +103,31 @@ export function scoreFacadeDesign({ context, artifacts, primitives } = {}) {
 	]);
 
 	const signatures = new Map();
+	// The opening's shape without its storey. Repetition is a rhythm the eye follows along
+	// and up a face, so the same window on five floors is a repeat, not five singletons.
+	const shapes = new Map();
 	for (const primitive of openings) {
 		const entry = signatures.get(primitive.segment_id) ?? [];
 		const width = (primitive.local_bounds.u1 - primitive.local_bounds.u0).toFixed(3);
-		entry.push(`${storeyOf(primitive)}:${primitive.kind}:${primitive.family_id ?? "-"}:${width}`);
+		const shape = `${primitive.kind}:${primitive.family_id ?? "-"}:${width}`;
+		entry.push(`${storeyOf(primitive)}:${shape}`);
 		signatures.set(primitive.segment_id, entry);
+		shapes.set(primitive.segment_id, [...(shapes.get(primitive.segment_id) ?? []), shape]);
 	}
 	const distinctSignatures = new Set([...signatures.values()].map((entry) => [...entry].sort().join("|")));
+	// The share of a segment's openings that belong to a repeat, averaged over segments.
+	//
+	// This replaces `1 - distinct segment rhythms / segments`, which measured repetition
+	// between elevations and so scored a building down for the one thing that made it
+	// designed: a street face and a service face that differ in kind drove that term to
+	// zero and capped the axis at 70 however well composed the facade was. Repetition
+	// belongs inside a face; difference belongs between them.
+	const segmentRepetition = mean([...shapes.values()].map((entry) => {
+		if (entry.length < 2) return 0;
+		const counts = new Map();
+		for (const shape of entry) counts.set(shape, (counts.get(shape) ?? 0) + 1);
+		return [...counts.values()].filter((n) => n > 1).reduce((sum, n) => sum + n, 0) / entry.length;
+	}));
 	const facadeArea = context.facade_segments
 		.reduce((sum, segment) => sum + segment.length_m * (segment.local_z[1] - segment.local_z[0]), 0);
 	const openingArea = openings.reduce((sum, primitive) => sum + area(primitive), 0);
@@ -117,7 +135,7 @@ export function scoreFacadeDesign({ context, artifacts, primitives } = {}) {
 	const balance = mean([
 		clamp01(new Set(windows.map((primitive) => primitive.family_id)).size / 2),
 		clamp01(openingRatio / TARGET_OPENING_RATIO),
-		1 - clamp01(distinctSignatures.size / Math.max(1, signatures.size)),
+		segmentRepetition,
 	]);
 
 	const framedRatio = openings.length ? framed.size / openings.length : 0;
@@ -151,6 +169,7 @@ export function scoreFacadeDesign({ context, artifacts, primitives } = {}) {
 		total_storeys: storeyNumbers.length,
 		distinct_segment_signatures: distinctSignatures.size,
 		segments_with_openings: signatures.size,
+		segment_opening_repetition: Number(segmentRepetition.toFixed(6)),
 		opening_area_ratio: Number(openingRatio.toFixed(6)),
 	};
 	const notes = [

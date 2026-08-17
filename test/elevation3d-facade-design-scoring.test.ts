@@ -134,3 +134,44 @@ test("critic scores the compiled facade and rejects a manifest that lost its GLB
 		(error: unknown) => error instanceof FacadeDesignScoringError,
 	);
 });
+
+// The axis used to read repetition between elevations, as one minus the share of segments
+// carrying a distinct rhythm. A street face and a service face that differ in kind - the
+// thing the guidance asks for - drove that term to zero and held the axis at 70 however
+// well the facade was composed. Repetition belongs inside a face; difference between them.
+test("elevations that deliberately differ are not scored down for differing", async (t) => {
+	const { context } = await createFacadeDesignFixture(t);
+	const primitives = design(context, { storeyHeights: [0.8, 4.1] });
+	for (const primitive of primitives) {
+		if (primitive.kind !== "window") continue;
+		const segmentIndex = context.facade_segments
+			.findIndex((segment: any) => segment.segment_id === primitive.segment_id);
+		primitive.local_bounds.u1 = primitive.local_bounds.u0 + 0.7 + segmentIndex * 0.12
+			+ (primitive.family_id === "wide" ? 0.4 : 0);
+	}
+
+	const { scores, metrics } = scoreFacadeDesign({ context, artifacts: ARTIFACTS, primitives });
+
+	// Every segment now carries its own rhythm, which is exactly what used to be punished.
+	assert.equal(metrics.distinct_segment_signatures, metrics.segments_with_openings);
+	// Each of those rhythms still repeats up its own face, and that is what is measured.
+	assert.ok(metrics.segment_opening_repetition > 0.75, `repetition ${metrics.segment_opening_repetition}`);
+	assert.ok(scores.repetition_variation_balance >= SCORE_LIMITS.repetition_variation_balance,
+		`repetition_variation_balance scored ${scores.repetition_variation_balance}`);
+});
+
+// The axis still has to fail something. A face whose every opening is a one-off has no
+// rhythm to read, which is the fault the term is actually for.
+test("a face where no opening repeats scores its repetition down", async (t) => {
+	const { context } = await createFacadeDesignFixture(t);
+	const primitives = design(context, { storeyHeights: [0.8, 4.1] });
+	let unique = 0;
+	for (const primitive of primitives) {
+		if (primitive.kind !== "window") continue;
+		primitive.local_bounds.u1 = primitive.local_bounds.u0 + 0.6 + (unique += 1) * 0.037;
+	}
+
+	const { metrics } = scoreFacadeDesign({ context, artifacts: ARTIFACTS, primitives });
+
+	assert.equal(metrics.segment_opening_repetition, 0);
+});
