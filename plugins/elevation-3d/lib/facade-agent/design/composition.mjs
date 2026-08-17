@@ -187,8 +187,11 @@ export function measureComposition({ context, resolved } = {}) {
 			}
 		}
 		// A pier counts as much as a window here: an order carried through three floors
-		// is what breaks the storey lockstep, and it need not be glazed to do it.
-		if (OPENING_KINDS.has(primitive.kind) || primitive.kind === "pilaster") {
+		// is what breaks the storey lockstep, and it need not be glazed to do it. A mullion
+		// counts for the same reason and it is the whole point of a glazed skin - without it
+		// a curtain wall of storey-height panes reports a span of one and is told it is one
+		// floor drawn five times, while its framing runs the height of the building.
+		if (OPENING_KINDS.has(primitive.kind) || primitive.kind === "pilaster" || primitive.kind === "mullion") {
 			maxStoreySpan = Math.max(maxStoreySpan, storeySpan(primitive.local_bounds));
 		}
 		if (!OPENING_KINDS.has(primitive.kind)) continue;

@@ -101,6 +101,40 @@ test("resolves the three size forms against the scope", () => {
 	assert.equal(Math.abs(floating - (span - 0.4 - span * 0.25)) < 1e-6, true);
 });
 
+test("derives a curtain wall bay as a framed grid rather than a punched hole", () => {
+	// One storey of a glazed skin: mullion, pane, mullion across the bay, and down the
+	// storey a transom, the pane and the spandrel that closes the slab zone.
+	const parsed = grammar({
+		Facade: [{ split: { axis: "z", parts: [{ size: "~3.3", symbol: "Storey", repeat: true }] } }],
+		Storey: [{ split: { axis: "z", parts: [
+			{ size: "0.08", symbol: "Transom" },
+			{ size: "~1", symbol: "Bay" },
+			{ size: "0.9", symbol: "Spandrel" },
+		] } }],
+		Bay: [{ split: { axis: "u", parts: [
+			{ size: "0.06", symbol: "Mullion" },
+			{ size: "~1", symbol: "Glass" },
+			{ size: "0.06", symbol: "Mullion" },
+		] } }],
+		Mullion: [{ terminal: "mullion", depth_m: 0.08 }],
+		Transom: [{ terminal: "transom", depth_m: 0.06 }],
+		Spandrel: [{ terminal: "spandrel" }],
+		Glass: GLASS,
+	});
+	const out = deriveFacadePrimitives({ grammar: parsed, segment: SEGMENT, storeys: STOREYS }) as any[];
+	const counts = new Map<string, number>();
+	for (const primitive of out) counts.set(primitive.kind, (counts.get(primitive.kind) ?? 0) + 1);
+
+	assert.deepEqual(
+		[...counts.entries()].sort(),
+		[["mullion", 10], ["spandrel", 5], ["transom", 5], ["window", 5]],
+		"five storeys, each with two mullions, one transom, one spandrel and one pane",
+	);
+	const spandrel = out.find((primitive) => primitive.kind === "spandrel");
+	const pane = out.find((primitive) => primitive.kind === "window");
+	assert.equal(spandrel.local_bounds.z_min >= pane.local_bounds.z_max - 1e-9, true, "the spandrel closes the slab zone above the pane");
+});
+
 test("rejects grammars that reach outside the closed language", () => {
 	const rejects = (rules: Record<string, unknown>, start = "Facade") =>
 		assert.throws(() => grammar(rules, start), (error: unknown) => error instanceof FacadeGrammarError);

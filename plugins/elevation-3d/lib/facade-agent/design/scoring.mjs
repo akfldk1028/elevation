@@ -5,7 +5,10 @@ import { sha256 } from "../../core.mjs";
 import { SCORE_LIMITS } from "./critic.mjs";
 
 const OPENING_KINDS = new Set(["door", "window"]);
-const TRIM_KINDS = new Set(["window-frame", "reveal", "lintel", "sill", "band"]);
+// A mullion and a transom are what trims a pane in a glazed skin, exactly as a reveal and
+// a sill trim a punched opening. Without them here a correctly detailed curtain wall
+// scores as an untrimmed hole in a wall.
+const TRIM_KINDS = new Set(["window-frame", "reveal", "lintel", "sill", "band", "mullion", "transom"]);
 const TRIM_GAP_M = 0.08;
 const TARGET_OPENING_RATIO = 0.2;
 const MINIMUM_ENTRANCE_AREA_RATIO = 2;

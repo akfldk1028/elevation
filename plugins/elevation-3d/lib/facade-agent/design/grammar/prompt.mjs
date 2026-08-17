@@ -204,8 +204,8 @@ facade has no parts. Give it parts instead.
   face's wall, where that area is the sum over the face's segments of segment length_m
   times the height in local_z - the real folded surface, not the frontage it projects
   onto. On a pleated face that surface is larger than the elevation looks, so the same
-  glass reads as a smaller share than you would judge by eye. Nothing else counts towards it - a lintel, a sill, a reveal, a band and a
-  pilaster are all wall for this purpose, however much of the surface they cover. It is
+  glass reads as a smaller share than you would judge by eye. Nothing else counts towards it - a lintel, a sill, a reveal, a band, a
+  pilaster, a mullion, a transom and a spandrel are all wall for this purpose, however much of the surface they cover. It is
   taken per face and the poorest face is judged, so a generous street front does not
   carry a mean back. Size the panes themselves to reach a fifth: an author who sizes so
   that the panes-only and the panes-plus-trim readings both land in range ends up at a
@@ -213,7 +213,19 @@ facade has no parts. Give it parts instead.
 - Nest an opening into lintel, jamb reveals, pane and sill rather than leaving a bare
   rectangle - that is what separates a drawn facade from a painted one. All four, not
   a head and a shelf only: the reveals are the sides, and without them an opening has
-  no thickness.
+  no thickness. In a glazed skin the mullion and the transom do that job instead: the
+  mullion is the side, so a pane held between two mullions already has its thickness.
+- There are two constructions available, not one. Punched masonry is a hole cut in a
+  wall - wall, glass, reveal, lintel, sill - and it is what every one of these facades
+  has been so far. A curtain wall is the other: a continuous glazed skin hung in front of
+  the structure, written as mullion, transom, spandrel and glass. Mullions run vertically
+  past the floors, transoms divide one pane from the next, and the spandrel is the opaque
+  panel that closes the slab zone between a window head and the sill above. Drawn that way
+  the glass is the field and the solid is what is left over, which is the reverse of
+  punching holes in a wall. Choose one per face and commit to it - a mullion inside a
+  punched reveal is neither construction - and note that a skin still needs its base and
+  its top, so the storey it meets the ground at and the course that terminates it are
+  still yours to compose.
 - Let the street face and the service face differ in kind, not only in window width.
 
 \`visibility_score\` on a segment is how squarely it faces the axonometric viewpoint the

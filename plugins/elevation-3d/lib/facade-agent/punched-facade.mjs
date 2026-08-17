@@ -829,7 +829,10 @@ export function buildTypedFacadeDetails({ mesh, floorGuides, facadePlanes, primi
 	// above and a sill below and neither touches it, so counting them here switched the
 	// frame off for every grammar that drew a head and a shelf - which left the whole
 	// elevation with no window-frame geometry and no bronze role at all.
-	const authorsOwnTrim = primitives.some((primitive) => primitive?.kind === "reveal");
+	// A mullion is the same argument in the curtain wall's language: it is the vertical
+	// member at the edge of a pane, so it is that skin's jamb and it does contest the
+	// frame. A transom is horizontal, like the lintel and the sill, and does not.
+	const authorsOwnTrim = primitives.some((primitive) => primitive?.kind === "reveal" || primitive?.kind === "mullion");
 	for (let index = 0; index < primitives.length; index += 1) {
 		const primitive = primitives[index];
 		const plane = planes.get(primitive?.segment_id);
