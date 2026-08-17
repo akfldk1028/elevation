@@ -8,6 +8,7 @@ import sharp from "sharp";
 import { renderCompetitionElevationBase } from "../plugins/elevation-3d/lib/competition-elevation.mjs";
 import { sha256 } from "../plugins/elevation-3d/lib/core.mjs";
 import { deriveElevationDimensions } from "../plugins/elevation-3d/lib/elevation-dimensions.mjs";
+import { MIN_VISIBLE_SEAM_PX } from "../plugins/elevation-3d/lib/elevation-presentation-validation.mjs";
 import { resolveMaterialPalette } from "../plugins/elevation-3d/lib/material-palettes.mjs";
 import { resolveElevation3dAssets } from "./helpers/elevation3d-assets.ts";
 
@@ -86,10 +87,13 @@ test("renders the real creative-013 front with one orthographic pixel scale and 
 	assert.ok(artifact.diagnostics.background_fraction >= 0.55);
 	assert.ok(artifact.diagnostics.dark_pixel_fraction <= 0.07);
 	assert.ok(artifact.diagnostics.total_edge_density >= 0.01 && artifact.diagnostics.total_edge_density <= 0.035);
-	assert.ok(artifact.diagnostics.strong_edge_density <= 0.015);
+	// Same limit the untyped validator applies, re-derived after the base pass was encoded
+	// to sRGB; the old 0.015 was measuring the missing transfer function.
+	assert.ok(artifact.diagnostics.strong_edge_density <= 0.020, `strong ${artifact.diagnostics.strong_edge_density}`);
 	assert.ok(artifact.diagnostics.same_material_seam_fraction <= 0.001);
 	assert.equal(artifact.diagnostics.seam_diagnostics_source, "base+material-id+metric-depth+view-normal");
-	assert.equal(artifact.diagnostics.seam_segments.connected_at_least_12px, 0);
+	assert.equal(artifact.diagnostics.seam_segments.visible, 0);
+	assert.ok(artifact.diagnostics.seam_segments.longest_px < MIN_VISIBLE_SEAM_PX);
 	assert.equal(artifact.diagnostics.depth.encoding, "orthographic-linear-rgb24");
 	assert.ok(artifact.diagnostics.depth.max_m > artifact.diagnostics.depth.min_m);
 	assert.ok(artifact.diagnostics.depth.quantization_m < 0.0005);

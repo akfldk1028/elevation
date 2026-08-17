@@ -49,7 +49,7 @@ test("renders and accepts a dimensioned creative-013 front with complete provena
 	const palette = resolveMaterialPalette("competition-warm");
 	const artifacts = await renderCompetitionElevation({ runDir, glbPath: assets.selectedGlb, ...input, palette, view: "front", candidateId: "creative-013" });
 	assert.deepEqual(await sharp(artifacts.final_png.path).metadata().then(({ width, height }) => [width, height]), [2400, 2400]);
-	assert.equal(artifacts.validation.accepted, true);
+	assert.equal(artifacts.validation.accepted, true, artifacts.validation.codes.join(", "));
 	assert.deepEqual(artifacts.validation.codes, []);
 	assert.deepEqual(artifacts.displayed_dimensions.levels, [0, 3300, 6600, 9900]);
 	assert.deepEqual(artifacts.displayed_dimensions.floor_intervals, [3300, 3300, 3300]);
@@ -57,10 +57,19 @@ test("renders and accepts a dimensioned creative-013 front with complete provena
 	assert.equal(artifacts.presentation.authored_dark_geometry.invalid_pixels, 0);
 	assert.ok(artifacts.presentation.authored_dark_geometry.valid_pixels > 0);
 	assert.equal(artifacts.presentation.authored_dark_geometry.suppressed_screen_artifact_pixels, 0);
-	for (const bbox of [[1455, 807, 1461, 807], [356, 1016, 358, 1016]]) {
-		const evidence = artifacts.presentation.authored_dark_geometry.component_evidence.find((item) => JSON.stringify(item.bbox_px) === JSON.stringify(bbox));
-		assert.equal(evidence.classification, "selected-glb-depth-silhouette");
-		assert.equal(evidence.finite_depth_pixels, evidence.pixels);
+	// Every dark component has to be accounted for as authored geometry, and a silhouette
+	// has to be one the selected GLB's depth buffer actually covers. Pinning two component
+	// bounding boxes said this only about two of them, and the boxes moved the moment the
+	// base pass was encoded to sRGB - the dark test is a luminance threshold, so a correct
+	// transfer function reshapes which pixels fall under it. The property is what mattered.
+	const evidence = artifacts.presentation.authored_dark_geometry.component_evidence;
+	const silhouettes = evidence.filter((item) => item.classification === "selected-glb-depth-silhouette");
+	assert.ok(silhouettes.length > 0, "no dark component was traced to the selected GLB depth buffer");
+	for (const item of evidence) {
+		assert.ok(["selected-glb-depth-silhouette", "semantic-bronze-opaque"].includes(item.classification), `unclassified dark component at ${item.bbox_px}`);
+	}
+	for (const item of silhouettes) {
+		assert.equal(item.finite_depth_pixels, item.pixels, `silhouette at ${item.bbox_px} is not fully covered by the depth buffer`);
 	}
 	assert.notEqual(artifacts.base_manifest.path, artifacts.render_manifest.path);
 	assert.match(artifacts.base_manifest.path, /front-base-render-manifest\.json$/);
@@ -137,7 +146,7 @@ test("rejects a one-millimetre dimension tamper and visible seam overload", asyn
 	const input = await inputs();
 	const report = await validateCompetitionElevation({
 		artifacts: {
-			base: { width: 2400, height: 2400, selected_glb_sha256: input.dimensions.selected_glb_sha256, camera: { ...input.camera, type: "orthographic", px_per_m_x: 80, px_per_m_y: 80 }, content_bounds_px: { min_x: 216, min_y: 800, max_x: 2183, max_y: 1599 }, diagnostics: { total_edge_density: 0.06, strong_edge_density: 0.04, same_material_seam_fraction: 0.002, seam_segments: { connected_at_least_12px: 2 }, role_pixel_counts: { concrete: 1, glass: 1, bronze: 1, opaque: 1 } } },
+			base: { width: 2400, height: 2400, selected_glb_sha256: input.dimensions.selected_glb_sha256, camera: { ...input.camera, type: "orthographic", px_per_m_x: 80, px_per_m_y: 80 }, content_bounds_px: { min_x: 216, min_y: 800, max_x: 2183, max_y: 1599 }, diagnostics: { total_edge_density: 0.06, strong_edge_density: 0.04, same_material_seam_fraction: 0.002, seam_segments: { visible: 2, longest_px: 185 }, role_pixel_counts: { concrete: 1, glass: 1, bronze: 1, opaque: 1 } } },
 			dimensions: { ...input.dimensions, overall_height: { ...input.dimensions.overall_height, display_mm: 9901 } },
 			annotation: { overlaps_content: false, overlaps_annotations: false, min_page_clearance_px: 48 },
 		},
@@ -165,7 +174,7 @@ test("does not relax dark-pixel limits for renamed or facade-details curtain-wal
 					content_bounds_px: { min_x: 216, min_y: 800, max_x: 2183, max_y: 1599 },
 					diagnostics: {
 						dark_pixel_fraction: 0.2, total_edge_density: 0.02, strong_edge_density: 0.02,
-						same_material_seam_fraction: 0, seam_segments: { connected_at_least_12px: 0 },
+						same_material_seam_fraction: 0, seam_segments: { visible: 0, longest_px: 0 },
 						role_pixel_counts: { concrete: 1, glass: 1, bronze: 1, opaque: 1 },
 					},
 				},

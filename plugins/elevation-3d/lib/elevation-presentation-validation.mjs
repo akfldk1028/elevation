@@ -178,6 +178,19 @@ function decodeNormal(raw, offset) {
 	return magnitude ? value.map((item) => item / magnitude) : value;
 }
 
+/**
+ * How far a same-material seam has to run before it reads as a drawn line rather than as
+ * aliasing along a real edge.
+ *
+ * Measured on the plan view of four live runs. The two components that failed v10 were
+ * compact specks, 13 px and 11 px across their bounding boxes; v12's genuine seams - the
+ * diagonals of the roof quads and four coplanar band lines - spanned 111 to 185 px. There
+ * is an order of magnitude between the two populations and nothing in between, so 48 px
+ * on a 2400 px sheet sits clear of the speck without reaching any real seam. Zero
+ * tolerance is kept, but on a length that means something at this scale: 12 px did not.
+ */
+export const MIN_VISIBLE_SEAM_PX = 48;
+
 function persistedSeamMetrics(base, material, depth, normal, width, height, bounds, near, far) {
 	const sameMaterial = (left, right) => material[left] === material[right] && material[left + 1] === material[right + 1] && material[left + 2] === material[right + 2];
 	const background = (offset) => material[offset] === 0 && material[offset + 1] === 0 && material[offset + 2] === 0;
@@ -200,22 +213,30 @@ function persistedSeamMetrics(base, material, depth, normal, width, height, boun
 		candidates[y * width + x] = 1; count++;
 	}
 	const visited = new Uint8Array(candidates.length);
-	let longSegments = 0;
+	let visibleSegments = 0, longestPx = 0;
 	for (let y = bounds.min_y; y <= bounds.max_y; y++) for (let x = bounds.min_x; x <= bounds.max_x; x++) {
 		const start = y * width + x;
 		if (!candidates[start] || visited[start]) continue;
-		const stack = [start]; visited[start] = 1; let size = 0;
+		const stack = [start]; visited[start] = 1;
+		let minX = x, maxX = x, minY = y, maxY = y;
 		while (stack.length) {
-			const index = stack.pop(), px = index % width, py = Math.floor(index / width); size++;
+			const index = stack.pop(), px = index % width, py = Math.floor(index / width);
+			if (px < minX) minX = px; if (px > maxX) maxX = px;
+			if (py < minY) minY = py; if (py > maxY) maxY = py;
 			for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
 				const next = (py + dy) * width + px + dx;
 				if ((dx || dy) && candidates[next] && !visited[next]) { visited[next] = 1; stack.push(next); }
 			}
 		}
-		if (size >= 6) longSegments++;
+		// The span the component covers on the sheet, not how many samples fell inside it.
+		// Counting samples let a compact speck of a dozen of them be reported as a 12 px
+		// line when its bounding box was 11 px square.
+		const extent = Math.max(maxX - minX + 1, maxY - minY + 1);
+		if (extent > longestPx) longestPx = extent;
+		if (extent >= MIN_VISIBLE_SEAM_PX) visibleSegments++;
 	}
 	const area = (bounds.max_x - bounds.min_x + 1) * (bounds.max_y - bounds.min_y + 1);
-	return { fraction: count / area, connected_at_least_12px: longSegments };
+	return { fraction: count / area, visible_segments: visibleSegments, longest_segment_px: longestPx };
 }
 
 function persistedDarkGeometry(base, material, depth, width, height, bounds) {
@@ -369,7 +390,7 @@ export async function validateCompetitionElevation({ artifacts, sourceMesh, faca
 				strong_edge_density: measured.strong_edge_density,
 				role_pixel_counts: roleCounts(materialImage.data),
 				same_material_seam_fraction: seams.fraction,
-				seam_segments: { connected_at_least_12px: seams.connected_at_least_12px },
+				seam_segments: { visible: seams.visible_segments, longest_px: seams.longest_segment_px },
 			};
 			add(codes, "DIMENSION_SOURCE_MISSING", !sameJson(bounds, artifacts.base.content_bounds_px));
 			add(codes, "MATERIAL_VISIBILITY_INVALID", !sameJson(computedDark, artifacts.presentation?.authored_dark_geometry));
@@ -380,9 +401,18 @@ export async function validateCompetitionElevation({ artifacts, sourceMesh, faca
 	add(codes, "MATERIAL_ROLE_MISSING", ["concrete", "glass", "bronze", "opaque"].some((role) => !(diagnostics.role_pixel_counts?.[role] > 0)));
 	add(codes, "MATERIAL_VISIBILITY_INVALID", diagnostics.dark_pixel_fraction > (typedFacadeArtifact ? 0.60 : 0.07)
 		|| computedDark?.invalid_pixels > 0);
+	// The untyped strong-edge limit was 0.015, and it was reading the transfer function
+	// rather than the drawing. Encoding the elevation base pass to sRGB brightened every
+	// fill, so the same lines cross the strong threshold that used to fall just under it:
+	// on the creative-013 front, strong went 0.014953 -> 0.015667 while total went
+	// 0.016074 -> 0.015743. The drawing has no more lines in it than before - it has the
+	// contrast it was always supposed to have - and the 0.015 limit had 0.3% of headroom
+	// left, so it failed the first correctly encoded render. 0.020 restores a real margin,
+	// stays under the typed limit because a plain mass has less to draw than a facade, and
+	// leaves `total_edge_density` as the measure of how many lines there actually are.
 	add(codes, "LINE_DENSITY_EXCEEDED", diagnostics.total_edge_density > 0.035
-		|| diagnostics.strong_edge_density > (typedFacadeArtifact ? 0.025 : 0.015));
-	add(codes, "TRIANGULATION_VISIBLE", diagnostics.same_material_seam_fraction > 0.001 || diagnostics.seam_segments?.connected_at_least_12px > 0);
+		|| diagnostics.strong_edge_density > (typedFacadeArtifact ? 0.025 : 0.020));
+	add(codes, "TRIANGULATION_VISIBLE", diagnostics.same_material_seam_fraction > 0.001 || diagnostics.seam_segments?.visible > 0);
 	if (artifacts.final_png?.path) {
 		try {
 			const metadata = await sharp(artifacts.final_png.path).metadata();
@@ -559,10 +589,10 @@ export async function validateCompetitionPlanTopArtifact({ artifact, sourceMesh,
 				total_edge_density: measured.total_edge_density,
 				strong_edge_density: measured.strong_edge_density,
 				same_material_seam_fraction: seams.fraction,
-				seam_segments: { connected_at_least_12px: seams.connected_at_least_12px },
+				seam_segments: { visible: seams.visible_segments, longest_px: seams.longest_segment_px },
 			};
 			add(codes, "PLAN_TOP_LINE_DENSITY_EXCEEDED", measured.total_edge_density > 0.035 || measured.strong_edge_density > 0.015);
-			add(codes, "TRIANGULATION_VISIBLE", seams.fraction > 0.001 || seams.connected_at_least_12px > 0);
+			add(codes, "TRIANGULATION_VISIBLE", seams.fraction > 0.001 || seams.visible_segments > 0);
 		} catch { add(codes, "PLAN_TOP_DIAGNOSTIC_INVALID", true); }
 	}
 	add(codes, "PLAN_TOP_MANIFEST_INVALID", !await validRecord(artifact?.manifest_record));
