@@ -1,5 +1,6 @@
 import { lstat, readFile, unlink } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
+import sharp from "sharp";
 
 import { sha256, stableJson } from "../core.mjs";
 import { deriveDeliveryCameras } from "../final-delivery.mjs";
@@ -42,6 +43,42 @@ async function safeNoReparsePoints(path) {
 
 function exactViewNames(value) {
 	return Object.keys(value ?? {}).sort().join("|") === [...VIEW_NAMES].sort().join("|");
+}
+
+export const PERSPECTIVE_HERO_SIZE = Object.freeze({ width: 1920, height: 1280 });
+
+/**
+ * Reframe a square presentation view as the landscape hero without cropping it.
+ *
+ * The runners had been doing this with `fit: "cover"`, which fills the wider frame by
+ * taking a centre band out of the square: on the v11 hero that removed the parapet at the
+ * top and the whole ground storey at the bottom, so the base and the entrance - the two
+ * things a hero is looked at for - were the parts it threw away. `contain` keeps the
+ * building whole and pays for it in margin, which is the right trade for a review image.
+ *
+ * The margin is filled with the plate's own background, sampled from a corner of the
+ * source, so the hero reads as the same drawing on the same paper rather than as a render
+ * pasted onto a second colour.
+ */
+export async function composePerspectiveHero({ sourceBytes, width = PERSPECTIVE_HERO_SIZE.width, height = PERSPECTIVE_HERO_SIZE.height } = {}) {
+	if (!Buffer.isBuffer(sourceBytes) || !sourceBytes.length) fail("FACADE_PRESENTATION_HERO_INVALID", "perspective hero source bytes are required");
+	if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width < 1 || height < 1 || width > 8192 || height > 8192) {
+		fail("FACADE_PRESENTATION_HERO_INVALID", "perspective hero dimensions are invalid");
+	}
+	let source;
+	try { source = await sharp(sourceBytes).removeAlpha().raw().toBuffer({ resolveWithObject: true }); }
+	catch (error) { fail("FACADE_PRESENTATION_HERO_INVALID", "perspective hero source is not a readable image", error); }
+	const { width: sourceWidth, height: sourceHeight } = source.info;
+	const corner = (x, y) => [0, 1, 2].map((channel) => source.data[(y * sourceWidth + x) * 3 + channel]);
+	const corners = [[0, 0], [sourceWidth - 1, 0], [0, sourceHeight - 1], [sourceWidth - 1, sourceHeight - 1]].map(([x, y]) => corner(x, y));
+	const background = [0, 1, 2].map((channel) => Math.round(corners.reduce((sum, pixel) => sum + pixel[channel], 0) / corners.length));
+	try {
+		return await sharp(sourceBytes)
+			.resize(width, height, { fit: "contain", background: { r: background[0], g: background[1], b: background[2], alpha: 1 } })
+			.png().toBuffer();
+	} catch (error) {
+		return fail("FACADE_PRESENTATION_HERO_INVALID", "perspective hero could not be composed", error);
+	}
 }
 
 function viewHash(view) {

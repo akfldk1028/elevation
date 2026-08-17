@@ -9,7 +9,7 @@ import { test } from "node:test";
 import { Document, NodeIO } from "@gltf-transform/core";
 import sharp from "sharp";
 
-import { deliverFacadeFinalPresentation as deliverPresentationBoundary } from "../plugins/elevation-3d/lib/facade-agent/final-presentation.mjs";
+import { composePerspectiveHero, deliverFacadeFinalPresentation as deliverPresentationBoundary, PERSPECTIVE_HERO_SIZE } from "../plugins/elevation-3d/lib/facade-agent/final-presentation.mjs";
 import { readContentAddressedJson, verifyFacadeArtifactClosure } from "../plugins/elevation-3d/lib/facade-agent/artifact-closure.mjs";
 import { facadeCandidateHash } from "../plugins/elevation-3d/lib/facade-agent/candidate-authority.mjs";
 import { technicalCameraAuthorityFromGlb } from "../plugins/elevation-3d/lib/camera-authority.mjs";
@@ -802,4 +802,44 @@ test("fails closed instead of overwriting an existing final presentation", async
 		}), (error: any) => error?.code === "FACADE_PRESENTATION_OUTPUT_EXISTS");
 		assert.equal(calls.length, 0);
 	} finally { await rm(f.runDir, { recursive: true, force: true }); }
+});
+
+// The hero used to be a `fit: "cover"` crop of the square axon plate, which took a centre
+// band and threw away the parapet and the whole ground storey - the base and the entrance
+// being the two things the image is looked at for.
+test("the perspective hero reframes the plate without cropping the building off it", async () => {
+	const size = 600, buildingTop = 20, buildingHeight = 560;
+	const plate = await sharp({ create: { width: size, height: size, channels: 3, background: { r: 250, g: 250, b: 247 } } })
+		.composite([{
+			input: await sharp({ create: { width: 200, height: buildingHeight, channels: 3, background: { r: 20, g: 20, b: 20 } } }).png().toBuffer(),
+			left: 200, top: buildingTop,
+		}])
+		.png().toBuffer();
+
+	const hero = await composePerspectiveHero({ sourceBytes: plate });
+	const { data, info } = await sharp(hero).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+	assert.deepEqual([info.width, info.height], [PERSPECTIVE_HERO_SIZE.width, PERSPECTIVE_HERO_SIZE.height]);
+
+	const rowsWithBuilding: number[] = [];
+	for (let y = 0; y < info.height; y += 1) {
+		for (let x = 0; x < info.width; x += 1) {
+			if (data[(y * info.width + x) * 3] < 128) { rowsWithBuilding.push(y); break; }
+		}
+	}
+	const first = rowsWithBuilding[0], last = rowsWithBuilding[rowsWithBuilding.length - 1];
+	// Both ends survive, with paper above and below rather than a cut.
+	assert.ok(first > 0, "the top of the building was cropped");
+	assert.ok(last < info.height - 1, "the base of the building was cropped");
+	// And it is the whole building, not a band of it: the plate's 560 of 600 rows are all
+	// still there, which a cover crop to this aspect could not manage.
+	assert.ok((last - first + 1) / info.height > 0.9, `building spans only ${((last - first + 1) / info.height).toFixed(3)} of the hero`);
+	// The margin is the plate's own paper, not a second background colour.
+	assert.deepEqual([data[0], data[1], data[2]], [250, 250, 247]);
+});
+
+test("the perspective hero refuses a source it cannot read", async () => {
+	await assert.rejects(() => composePerspectiveHero({ sourceBytes: Buffer.from("not an image") }),
+		(error: any) => error?.code === "FACADE_PRESENTATION_HERO_INVALID");
+	await assert.rejects(() => composePerspectiveHero({ sourceBytes: Buffer.alloc(0) }),
+		(error: any) => error?.code === "FACADE_PRESENTATION_HERO_INVALID");
 });
