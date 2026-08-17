@@ -161,6 +161,15 @@ function grammarPrimitives(program, context, entrance) {
 			segment: {
 				...segment,
 				face_total: faceTotals.get(segment.face_id) ?? 1,
+				// The inset is the derivation's whole coordinate frame, not a filter on openings.
+				// Only `door` and `window` are checked against `fold_clearance_m`, so it looks
+				// redundantly strict on framing - a skin stops 0.3 m short of the corner it is
+				// meant to turn, 27% of the width on a 2.2 m facet, and never raises a fault.
+				// Opening it to the full facet was measured and is not available: every fraction
+				// in every authored grammar is a fraction *of this scope*, so all ten existing
+				// grammars fail FOLD_CLEARANCE_INVALID and SEGMENT_BOUNDS_INVALID the moment it
+				// widens. Letting skin members run to the corner needs a second scope threaded
+				// through the derivation, not a wider root.
 				placeable: { u_min: fold, u_max: segment.length_m - fold },
 			},
 			storeys: context.storeys,
