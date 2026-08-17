@@ -201,7 +201,10 @@ facade has no parts. Give it parts instead.
   elevation a measure.
 - Openings should read as roughly a fifth to two fifths of the wall, and that is measured
   exactly: the door and window rectangles you draw, summed, against the area of that
-  face's wall. Nothing else counts towards it - a lintel, a sill, a reveal, a band and a
+  face's wall, where that area is the sum over the face's segments of segment length_m
+  times the height in local_z - the real folded surface, not the frontage it projects
+  onto. On a pleated face that surface is larger than the elevation looks, so the same
+  glass reads as a smaller share than you would judge by eye. Nothing else counts towards it - a lintel, a sill, a reveal, a band and a
   pilaster are all wall for this purpose, however much of the surface they cover. It is
   taken per face and the poorest face is judged, so a generous street front does not
   carry a mean back. Size the panes themselves to reach a fifth: an author who sizes so
