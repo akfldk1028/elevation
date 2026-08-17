@@ -92,3 +92,54 @@ test("the lockstep fault names the openings it must not trade away", () => {
 	assert.match(lockstep, new RegExp(`keep all ${WAREHOUSE.length} openings`));
 	assert.match(lockstep, /opening ratio/);
 });
+
+const TWO_FACE_CONTEXT = {
+	...CONTEXT,
+	facade_segments: [
+		{ segment_id: "seg-front", face_view: "front", length_m: 10, local_z: [0, 16.5] },
+		{ segment_id: "seg-back", face_view: "back", length_m: 10, local_z: [0, 16.5] },
+	],
+};
+
+const onFace = (segment: string, primitives: any[]) => primitives.map((primitive) => ({ ...primitive, segment_id: segment }));
+// A cornice terminates every facet in a real grammar. Putting one on a single face would
+// make the two walls differ on that alone, which is true but not what these tests are about.
+const CORNICES = [{ ...cornice }, { ...cornice, segment_id: "seg-back" }];
+
+// The guidance has always asked the street face and the service face to differ in kind
+// rather than in window width, and nothing measured it, so an elevation whose two long
+// faces were the same wall passed with no faults at all.
+test("two faces built the same way are reported as the same wall", () => {
+	const face = Array.from({ length: 10 }, (_, index) => opening(0.6 + (index % 5) * 1.8, 2.0 + (index % 5) * 1.8, 0.6 + Math.floor(index / 5) * 3.3, 2.9 + Math.floor(index / 5) * 3.3));
+	const { codes, metrics } = measureComposition({
+		context: TWO_FACE_CONTEXT,
+		resolved: { primitives: [...onFace("seg-front", face), ...onFace("seg-back", face), ...CORNICES] },
+	});
+	assert.ok(codes.includes("FACE_KIND_UNIFORM"), codes.join(", "));
+	assert.equal(metrics.face_profiles.front, metrics.face_profiles.back);
+});
+
+test("a face whose openings sit differently is a different sort of wall", () => {
+	const tall = Array.from({ length: 10 }, (_, index) => opening(0.6 + (index % 5) * 1.8, 2.0 + (index % 5) * 1.8, 0.6 + Math.floor(index / 5) * 3.3, 2.9 + Math.floor(index / 5) * 3.3));
+	// Same count and much the same area, but laid out wide rather than upright.
+	const wide = Array.from({ length: 10 }, (_, index) => opening(0.4 + (index % 5) * 1.9, 2.2 + (index % 5) * 1.9, 1.2 + Math.floor(index / 5) * 3.3, 2.1 + Math.floor(index / 5) * 3.3));
+	const { codes, metrics } = measureComposition({
+		context: TWO_FACE_CONTEXT,
+		resolved: { primitives: [...onFace("seg-front", tall), ...onFace("seg-back", wide), ...CORNICES] },
+	});
+	assert.ok(!codes.includes("FACE_KIND_UNIFORM"), codes.join(", "));
+	assert.notEqual(metrics.face_profiles.front, metrics.face_profiles.back);
+});
+
+// The entrance is placed by deterministic code on the most visible ground segment, so it
+// lands on one face whatever the grammar wrote. Counting it would make that face different
+// by construction and the measure could never fail.
+test("the deterministic entrance alone does not make two faces differ", () => {
+	const face = Array.from({ length: 10 }, (_, index) => opening(0.6 + (index % 5) * 1.8, 2.0 + (index % 5) * 1.8, 0.6 + Math.floor(index / 5) * 3.3, 2.9 + Math.floor(index / 5) * 3.3));
+	const door = { kind: "door", segment_id: "seg-back", local_bounds: { u_min: 4, u_max: 5.8, z_min: 0, z_max: 2.4 } };
+	const { codes } = measureComposition({
+		context: TWO_FACE_CONTEXT,
+		resolved: { primitives: [...onFace("seg-front", face), ...onFace("seg-back", face), door, ...CORNICES] },
+	});
+	assert.ok(codes.includes("FACE_KIND_UNIFORM"), codes.join(", "));
+});
