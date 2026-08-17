@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
+import { checkAuthoredGrammar } from "../plugins/elevation-3d/lib/facade-agent/design/authoring-kit.mjs";
+import { createFacadeDesignFixture } from "./helpers/facade-design-fixture.ts";
+
 import {
 	TERMINAL_KINDS,
 	TERMINAL_MATERIALS,
@@ -77,4 +80,45 @@ test("the vocabulary can say a curtain wall as well as a punched wall", () => {
 	}
 	assert.equal(TERMINAL_MATERIALS.mullion, TERMINAL_MATERIALS.transom, "the two directions of one grid are one material");
 	assert.equal(TERMINAL_KINDS.spandrel, "spandrel");
+});
+
+// The fold inset is the derivation's coordinate frame, so it confined the framing as well as
+// the openings - a skin stopped 0.3 m short of the corner it exists to turn, and never raised
+// a fault to say so. A skin member already flush with its scope is carried to the facet.
+test("skin framing reaches the corner and openings still do not", async (t) => {
+	const { context } = await createFacadeDesignFixture(t);
+	const segment = context.facade_segments[0];
+	const fold = context.exclusions.fold_clearance_m;
+	const grammar = {
+		schema_version: "arr.elevation3d.facade-grammar.v3",
+		concept_id: "skin-reach",
+		start: "Facet",
+		entrance: {
+			segment_selector: "primary_visible_ground_segment", preferred_bay: "central_focus",
+			door_family: "portal", width_m: 1.4, height_m: 2.4, recess_m: 0.1,
+		},
+		rules: [
+			{ name: "Facet", alternatives: [{ when: null, split: { axis: "u", parts: [
+				{ size: "0.09", symbol: "Mull", arg: null, repeat: null },
+				{ size: "~1", symbol: "Pane", arg: null, repeat: null },
+				{ size: "0.09", symbol: "Mull", arg: null, repeat: null },
+			] }, terminal: null, inset_m: 0, depth_m: 0 }] },
+			{ name: "Mull", alternatives: [{ when: null, split: null, terminal: "mullion", inset_m: 0, depth_m: 0.08 }] },
+			{ name: "Pane", alternatives: [{ when: null, split: null, terminal: "glass", inset_m: 0.4, depth_m: 0.02 }] },
+		],
+		design_rationale: ["one module per facet, framed at its edges"],
+	};
+	const report = checkAuthoredGrammar({ context, grammar });
+	assert.ok(report.stage !== "parse" && report.stage !== "resolve", report.error ?? report.stage);
+
+	const onSegment = report.resolved.primitives.filter((primitive: any) => primitive.segment_id === segment.segment_id);
+	const mullions = onSegment.filter((primitive: any) => primitive.kind === "mullion");
+	const panes = onSegment.filter((primitive: any) => primitive.kind === "window");
+	assert.ok(mullions.length >= 2, `expected framing, got ${mullions.length}`);
+
+	// The framing runs to the facet itself.
+	assert.ok(Math.min(...mullions.map((m: any) => m.local_bounds.u_min)) <= 1e-6, "left mullion stops short of the corner");
+	assert.ok(Math.max(...mullions.map((m: any) => m.local_bounds.u_max)) >= segment.length_m - 1e-6, "right mullion stops short of the corner");
+	// The glass does not: a hole cut through a turn still breaks the mass.
+	assert.ok(Math.min(...panes.map((p: any) => p.local_bounds.u_min)) >= fold - 1e-6, "a pane reached into the fold");
 });
