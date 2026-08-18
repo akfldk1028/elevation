@@ -257,15 +257,55 @@ test("a punched face is still asked for a subject when a skin sits beside it", (
 	assert.notEqual(metrics.punched_scale_ratio, metrics.scale_ratio);
 });
 
-// How open a skin is, is not the same question as how much of a masonry wall was cut away.
-test("skin transparency reads the glass against the skin, not against the whole face", () => {
-	const skin = [1, 2, 3, 4, 5].flatMap((storey) => [0.4, 2.4, 4.4]
-		.flatMap((u) => skinBay(u, u + 1.8, (storey - 1) * 3.3 + 0.5, (storey - 1) * 3.3 + 2.6)));
-	const { metrics } = measureComposition({ context: CONTEXT, resolved: { primitives: [...skin, cornice] } });
+// How open a skin is, is not the same question as how much of a masonry wall was cut away:
+// the skin is measured over the band of the face it actually covers, so a skin hung on the
+// upper storeys is not marked down for the masonry below it.
+test("skin transparency is read over the band the skin covers", () => {
+	// A skin hung on storeys 4 and 5 only, its framing bounded to the band it covers - which
+	// is what sets the band the reading is taken over.
+	const upperOnly = [
+		...[0.4, 2.4, 4.4, 6.4, 8.4].map((u) => ({
+			kind: "mullion", segment_id: "seg-front",
+			local_bounds: { u_min: u, u_max: u + 0.08, z_min: 9.9, z_max: 16.2 },
+		})),
+		...[4, 5].flatMap((storey) => [0.4, 2.4, 4.4, 6.4, 8.4]
+			.map((u) => opening(u + 0.08, u + 1.8, (storey - 1) * 3.3 + 0.5, (storey - 1) * 3.3 + 2.6))),
+	];
+	const { metrics } = measureComposition({ context: CONTEXT, resolved: { primitives: [...upperOnly, cornice] } });
 
 	const share = metrics.skin_transparency_by_view.front;
 	assert.ok(share > 0 && share < 1, `share ${share}`);
-	// The skin covers only part of a face this wide, so the whole-face ratio is much lower
-	// than the share of the skin that is actually glass.
-	assert.ok(share > metrics.opening_ratio_by_view.front, `${share} vs ${metrics.opening_ratio_by_view.front}`);
+	// Two storeys of skin on a five storey face: the whole-face ratio is dragged down by the
+	// three storeys the skin never reaches, and the skin's own reading is not.
+	assert.ok(share > metrics.opening_ratio_by_view.front * 1.5,
+		`${share} vs whole face ${metrics.opening_ratio_by_view.front}`);
+});
+
+// The denominator used to be the summed area of the skin members, which paid an author to
+// leave the face uncovered: hold the corner mullion back and the strip it declines to cover
+// leaves the denominator, so the reported figure rises while the elevation gains piers.
+test("a skin that leaves the face bare cannot report itself as more transparent", () => {
+	const glass = [1, 2, 3, 4, 5].map((storey) =>
+		opening(2.0, 8.0, (storey - 1) * 3.3 + 0.5, (storey - 1) * 3.3 + 2.6));
+	const member = (uMin: number, uMax: number) => ({
+		kind: "mullion", segment_id: "seg-front",
+		local_bounds: { u_min: uMin, u_max: uMax, z_min: 0.5, z_max: 15.5 },
+	});
+
+	// Same glass both times. One skin runs the width of the face; the other stops short and
+	// leaves 2 m of bare mass at each end.
+	const covering = measureComposition({
+		context: CONTEXT,
+		resolved: { primitives: [...glass, member(0, 2.0), member(8.0, 10), cornice] },
+	});
+	const heldBack = measureComposition({
+		context: CONTEXT,
+		resolved: { primitives: [...glass, member(1.9, 2.0), member(8.0, 8.1), cornice] },
+	});
+
+	assert.equal(covering.metrics.construction_by_view.front, "skin");
+	assert.equal(heldBack.metrics.construction_by_view.front, "skin");
+	// Holding the framing back must not be rewarded.
+	assert.ok(heldBack.metrics.skin_transparency_by_view.front <= covering.metrics.skin_transparency_by_view.front + 1e-9,
+		`held back ${heldBack.metrics.skin_transparency_by_view.front} vs covering ${covering.metrics.skin_transparency_by_view.front}`);
 });
