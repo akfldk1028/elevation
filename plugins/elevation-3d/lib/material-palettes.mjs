@@ -1,7 +1,11 @@
+import { SEMANTIC_ROLES } from "./semantic-role-mask.mjs";
 import { sha256, stableJson } from "./core.mjs";
 
 const SCHEMA_VERSION = "arr.elevation3d.material-palette.v1";
-const ROLE_NAMES = ["concrete", "glass", "bronze", "opaque"];
+// A fifth copy of the role list lived here and the consolidation missed it, so adding
+// `masonry` passed every test that reads the leaf module and then hung the render page for
+// sixty seconds with nothing to say. It reads the one table now.
+const ROLE_NAMES = SEMANTIC_ROLES;
 const ROLE_FIELDS = ["elevation_fill", "axon_pbr", "opacity", "roughness", "metalness", "line_contrast", "texture_intensity", "normal_intensity"];
 const UNIT_INTERVAL_FIELDS = ["roughness", "metalness", "line_contrast", "texture_intensity", "normal_intensity"];
 

@@ -13,6 +13,13 @@
  * pixel is either a role or it is background, and the slack absorbs edge antialiasing without
  * ever letting two roles overlap: each channel test excludes the other three primaries.
  */
+// Four, and a fifth was measured and rejected. A clad wall wants a role that is bright and is
+// not the mass's, and `masonry` on magenta gave it one: the plan seam cleared and every
+// required role stayed present. It cost **nine contract tests** - the palette schema, the
+// immutable daylight preset, the persisted style hash and the delivery evidence all name the
+// role set, and those hashes bind artifacts that already exist. It also did not fix the
+// facade it was added for, which fails on `luminanceP05 5.64 against 10` - lighting, not
+// colour. Adding a role is a change to the evidence contract, not to a palette.
 export const SEMANTIC_ROLE_IDS = Object.freeze({
 	concrete: Object.freeze([255, 0, 0]),
 	glass: Object.freeze([0, 255, 0]),

@@ -72,7 +72,7 @@ export const KIND_ROLES = Object.freeze({
 	// member that covers a large area must not take the darkest tint, and the thin trim
 	// carries it instead. So the cladding is bright and the sill is opaque, matching
 	// `sill` and `lintel` and `reveal` word for word - a precast sill is a sill.
-	"brick-cladding": "concrete", "corner-return": "concrete", "window-reveal": "bronze",
+	"brick-cladding": "concrete", "corner-return": "opaque", "window-reveal": "bronze",
 	"precast-lintel": "concrete", "precast-sill": "opaque",
 });
 
@@ -343,7 +343,11 @@ export function createEmbeddedPbrPresentation({
 			roleCounts[role] = (roleCounts[role] ?? 0) + 1;
 			if (adjustedMaterials.has(material)) continue;
 			adjustedMaterials.add(material);
-			material.color?.multiply?.(new THREE.Color(style.materialResponse[role].tintMultiplier));
+			// Guarded. This read is inside the render page, so a role the style has no entry for
+			// does not raise a fault - it throws where nothing is listening and the run dies as a
+			// 60 s timeout. Adding the fifth role cost exactly that before the entry existed.
+			const response = style.materialResponse[role];
+			if (response?.tintMultiplier) material.color?.multiply?.(new THREE.Color(response.tintMultiplier));
 			if (role === "concrete" && Number.isFinite(material.roughness)) {
 				material.roughness = clamp(material.roughness + style.materialResponse.concrete.maxRoughnessDelta, 0, 1);
 			} else if (role === "bronze" && Number.isFinite(material.metalness)) {
