@@ -175,10 +175,17 @@ export function measureComposition({ context, resolved } = {}) {
 	// Openings kept by face, so a measure that only makes sense on one construction can be
 	// asked only of the faces built that way.
 	const openingAreasByView = new Map();
-	// Everything the skin itself is made of - the glass and the members that divide it -
-	// which is the denominator for how transparent a skin is, as distinct from how much of
-	// a masonry wall has been cut away.
-	const skinFieldByView = new Map();
+	// How far up and down the face the skin reaches, which is what the glass is measured
+	// against.
+	//
+	// The denominator was the summed area of the skin members. That is gameable and an author
+	// found it before it shipped: hold the corner mullion 5 mm back from the scope edge and
+	// the 0.3 m fold strip leaves the denominator altogether, taking the reported figure from
+	// 0.56 to about 0.83 while leaving a 0.6 m band of bare mass at every fold - piers, which
+	// is the fault the measure exists to catch. Measured against the face over the band the
+	// skin covers, a strip the skin declines to cover counts against it, which is the
+	// behaviour a reader of the number expects.
+	const skinExtentByView = new Map();
 	const terminatedViews = new Set();
 	for (const primitive of resolved.primitives) {
 		if (primitive.kind === "cornice") hasTermination = true;
@@ -196,7 +203,10 @@ export function measureComposition({ context, resolved } = {}) {
 			// that face different from every other by construction and the comparison below
 			// can never fail - which is exactly what it did before this line.
 			if (SKIN_KINDS.has(primitive.kind) || primitive.kind === "window") {
-				skinFieldByView.set(primitiveView, (skinFieldByView.get(primitiveView) ?? 0) + area(primitive.local_bounds));
+				const extent = skinExtentByView.get(primitiveView) ?? { z_min: Infinity, z_max: -Infinity };
+				extent.z_min = Math.min(extent.z_min, primitive.local_bounds.z_min);
+				extent.z_max = Math.max(extent.z_max, primitive.local_bounds.z_max);
+				skinExtentByView.set(primitiveView, extent);
 			}
 			if (primitive.kind === "door") continue;
 			kindsByView.get(primitiveView).add(primitive.kind);
@@ -279,8 +289,17 @@ export function measureComposition({ context, resolved } = {}) {
 		const kinds = kindsByView.get(view) ?? new Set();
 		const skin = [...kinds].some((kind) => SKIN_KINDS.has(kind));
 		construction[view] = skin ? "skin" : "punched";
-		const field = skinFieldByView.get(view) ?? 0;
-		if (skin && field > 0) skinTransparency[view] = Number(((openByView.get(view) ?? 0) / field).toFixed(6));
+		const extent = skinExtentByView.get(view);
+		if (skin && extent && extent.z_max > extent.z_min) {
+			let field = 0;
+			for (const segment of context.facade_segments) {
+				if ((segment.face_view ?? segment.view) !== view) continue;
+				const low = Math.max(segment.local_z?.[0] ?? 0, extent.z_min);
+				const high = Math.min(segment.local_z?.[1] ?? 0, extent.z_max);
+				if (high > low) field += segment.length_m * (high - low);
+			}
+			if (field > 0) skinTransparency[view] = Number(((openByView.get(view) ?? 0) / field).toFixed(6));
+		}
 	}
 	// A skin's vision panes are identical because that is what a unitised system is, so the
 	// largest-against-median question is asked only of the faces where an opening is an event
