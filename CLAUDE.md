@@ -406,3 +406,43 @@ prompt work will produce a curtain wall. Adding one is not a one-file change
 (`facade-vocabulary.mjs` feeds contract, derive, punched-facade and the prompt,
 held in agreement by a test) and it breaks the premises of the composition
 measures, which assume openings are a minority of the wall.
+
+## 2026-08-18 the curtain wall renders, and the fold clearance is what you see
+
+`grammar-cw3.json` is the first facade in this project that reads as an office
+rather than an apartment: glass running five storeys, mullions unbroken from
+grade to cornice, a spandrel at every slab, a cornice closing the top. It clears
+every gate with zero faults and reaches `skin_transparency_by_view` **0.618**
+against cw2's 0.562. Rendered at
+`.../creative-020/llm-facade-subagent-v1/cw3/`; all eight views pass
+presentation validation. All twelve grammars (a-h, p, cw, cw2, cw3) pass, and
+the five gate suites are 51/51 green.
+
+**The elevation's loudest element is a clearance constant, not a design
+decision.** `design/context.mjs:227` sets `fold_clearance_m: 0.3` for every
+candidate, and `resolver.mjs` insets the derivation scope by it at both edges.
+creative-020's facets are 2.206 m wide, so the two strips are 27% of every
+facet. Decomposed on cw3's front face: the fold strip costs **0.246** of skin
+transparency, every mullion and transom together costs **0.041**. Six to one.
+The ceiling for this facet is 0.660 and cw3 is at 94% of it. Do not tune a
+skin-transparency threshold here - it would be a threshold on the fold constant.
+0.3 m is a fair corner-column dimension; 2.2 m facets are what make it dominate,
+and the mass is another agent's work.
+
+**`FOLD_CLEARANCE_INVALID` cannot fire on a grammar-derived window.** The scope
+is already inset by exactly the clearance, `derive.mjs` only narrows from the
+scope, and the carry-to-facet-edge at `derive.mjs:118` fires only for
+`SKIN_KINDS` (mullion / transom / spandrel) - `window` is not in it. A probe
+with the corner mullions stripped out entirely and *nothing* framing the fold
+still passes validation. Relaxing the fault to admit framed glass at the fold
+was implemented, measured, and **reverted as dead code**: the predicate is never
+evaluated. Opening the root scope to the full facet was tried in the previous
+session and broke all ten grammars, because every size fraction is a fraction of
+that scope. Both dead ends are now measured; do not re-walk them.
+
+What is still open and is a real choice: cw3 puts a `mullion` in the forced
+strip, `mullion` maps to `window-frame` / the `bronze` role, and two adjacent
+facets each contribute 0.35 m, so every fold renders as a **0.70 m near-black
+band** against 1.506 m of glass. That is concrete-frame proportion; a real
+curtain wall mullion is 50-150 mm. The strip is forced but its material is not,
+and whether a bright `spandrel` there reads better is being authored as cw4.
