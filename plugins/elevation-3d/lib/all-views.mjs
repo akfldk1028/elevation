@@ -126,7 +126,14 @@ async function reviewedArtifact(root, name, previousManifest, requirePrior) {
 	const identity = manifest.view ?? manifest.mode;
 	if (manifest.schema_version !== expectedSchema || identity !== name) throw new Error(`${name} persisted manifest schema or identity is invalid`);
 	if (["front", "back", "left", "right"].includes(name) && manifest.provenance?.final_png_sha256 !== image.sha256) throw new Error(`${name} manifest image SHA-256 does not match current PNG`);
-	if (!validation.accepted || !Array.isArray(validation.codes)) throw new Error(`${name} persisted validation is not accepted`);
+	// Naming the codes, because "not accepted" sent the last diagnosis of this down the wrong
+	// path entirely - it reads as a render fault when it is usually a palette or seam one.
+	// multi-elevation.mjs was given the same treatment for the elevation views; this is the
+	// plan, top and axon half of it.
+	if (!validation.accepted || !Array.isArray(validation.codes)) {
+		const codes = Array.isArray(validation.codes) ? validation.codes.join(", ") : "codes missing";
+		throw new Error(`${name} persisted validation is not accepted: ${codes}`);
+	}
 	const palette = manifest.palette;
 	if (!palette?.preset || !palette?.sha256 || manifest.provenance?.palette_sha256 && manifest.provenance.palette_sha256 !== palette.sha256) throw new Error(`${name} persisted palette identity is invalid`);
 	const binding = { image, manifest: manifestRecord, validation: validationRecord, palette: { preset: palette.preset, sha256: palette.sha256 } };
