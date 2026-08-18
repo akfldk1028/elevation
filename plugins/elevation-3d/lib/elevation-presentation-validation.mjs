@@ -1,3 +1,4 @@
+import { countRolePixels, SEMANTIC_ROLES } from "./semantic-role-mask.mjs";
 import { readFile } from "node:fs/promises";
 import { NodeIO } from "@gltf-transform/core";
 import sharp from "sharp";
@@ -156,17 +157,7 @@ function rasterMetrics(raw, width, height) {
 	return { background, bounds: { min_x: minX, min_y: minY, max_x: maxX, max_y: maxY }, foreground_fraction: foreground / (width * height), dark_fraction: dark / (width * height), total_edge_density: edges / samples, strong_edge_density: strong / samples };
 }
 
-function roleCounts(raw) {
-	const counts = { concrete: 0, glass: 0, bronze: 0, opaque: 0 };
-	for (let offset = 0; offset < raw.length; offset += 3) {
-		const red = raw[offset], green = raw[offset + 1], blue = raw[offset + 2];
-		if (red > 200 && green < 80 && blue < 80) counts.concrete++;
-		else if (green > 200 && red < 80 && blue < 80) counts.glass++;
-		else if (blue > 200 && red < 80 && green < 80) counts.bronze++;
-		else if (red > 180 && green > 180 && blue < 80) counts.opaque++;
-	}
-	return counts;
-}
+const roleCounts = (raw) => countRolePixels(raw);
 
 function decodeDepth(raw, offset, near, far) {
 	return near + (raw[offset] / 255 + raw[offset + 1] / (255 ** 2) + raw[offset + 2] / (255 ** 3)) * (far - near);

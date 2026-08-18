@@ -1,3 +1,4 @@
+import { SEMANTIC_ROLE_IDS } from "../semantic-role-mask.mjs";
 import sharp from "sharp";
 import { COMPETITION_DAYLIGHT_STYLE_ID, renderStyleHash, resolvePbrRenderStyle } from "./render-style.mjs";
 
@@ -176,9 +177,6 @@ export async function analyzePresentationPng({ png, buildingBounds, background }
 	};
 }
 
-const SEMANTIC_ROLE_IDS = Object.freeze({
-	concrete: [255, 0, 0], glass: [0, 255, 0], bronze: [0, 0, 255], opaque: [255, 255, 0],
-});
 
 export async function analyzeSemanticRolePng({ finalPng, roleMaskPng, geometry = {} }) {
 	const [finalImage, maskImage] = await Promise.all([
