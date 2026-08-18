@@ -244,12 +244,22 @@ code puts the single entrance on the most visible ground segment by this score; 
 not choose where the entrance goes.
 
 Deterministic code owns all placement. Never name a segment, a coordinate or a path.
-Every opening must sit clear of the folds and the floor bands, only one primary
-entrance is allowed, and both the lowest and the highest storey must carry openings.
+Openings must clear the floor bands, only one primary entrance is allowed, and both the
+lowest and the highest storey must carry openings.
+
+How an opening meets a fold depends on which construction you are drawing, because the
+two are not doing the same thing there. A hole punched in a solid wall must stay 0.3 m
+clear of the fold: cutting one through a turn breaks the mass. A glazed skin does not
+pierce the mass at the corner, it replaces it, so its glass may run right to the fold as
+long as the strip is framed - a mullion or a spandrel pier standing at the facet edge and
+overlapping the glass in height. Bare glass meeting the corner is still rejected. Write
+the corner member with \`inset_m: 0\` and flush with the edge of its scope, or it will not
+reach the facet.
+
 Two openings on one segment need 0.3 m of clear wall between them wherever they overlap
-in height, so one pane per opening. A mullion does not count as that clearance - the rule
-sees openings and not framing - so a facet cannot be divided into a grid of vision panes
-side by side. One pane per facet, framed at its edges, is the skin this grammar can build.`;
+in height - unless a mullion stands between them, which counts as the separation. So a
+facet may be divided into a grid of vision panes side by side, which is what a curtain
+wall is, and a punched wall still needs real pier between its holes.`;
 
 export function buildFacadeGrammarPrompt({ context, correctionCodes = [], attempt, previous = null }) {
 	const boundedContext = {
