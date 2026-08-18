@@ -1,3 +1,4 @@
+import { SEMANTIC_ROLE_COLORS, SEMANTIC_ROLES } from "../lib/semantic-role-mask.mjs";
 import { viewPresentationPolicy } from "../lib/texturing/render-style.mjs";
 
 const SCALAR_PROPERTIES = ["roughness", "metalness", "envMapIntensity", "opacity", "transparent", "depthWrite"];
@@ -27,8 +28,7 @@ function markPresentationOnly(node, name) {
 	return node;
 }
 
-const SEMANTIC_ROLE_COLORS = Object.freeze({ concrete: 0xff0000, glass: 0x00ff00, bronze: 0x0000ff, opaque: 0xffff00 });
-const SEMANTIC_ROLES = Object.freeze(Object.keys(SEMANTIC_ROLE_COLORS));
+
 // Exported so the vocabulary drift test can read the table itself rather than a parse of
 // its text. A kind missing from here does not fail - it falls through to `concrete` - so
 // the only thing that catches the omission is a test that can see the real object.

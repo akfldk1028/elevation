@@ -244,6 +244,9 @@ code puts the single entrance on the most visible ground segment by this score; 
 not choose where the entrance goes.
 
 Deterministic code owns all placement. Never name a segment, a coordinate or a path.
+Every solid member needs a thickness: give any terminal that is not glass or the door a
+\`depth_m\` above zero. A member with no thickness is not a flush one, it is nothing, and it
+cannot be built. Glass and the door may sit at zero because they are cut rather than built.
 Openings must clear the floor bands, only one primary entrance is allowed, and both the
 lowest and the highest storey must carry openings.
 

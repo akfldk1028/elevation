@@ -1,3 +1,4 @@
+import { countRolePixels } from "./semantic-role-mask.mjs";
 import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import puppeteer from "puppeteer-core";
@@ -168,17 +169,7 @@ function diagnosticMetrics({ base, materialId, depth, normal, width, height, bou
 	};
 }
 
-function materialRolePixelCounts(raw, width, height) {
-	const counts = { concrete: 0, glass: 0, bronze: 0, opaque: 0 };
-	for (let offset = 0; offset < width * height * 3; offset += 3) {
-		const red = raw[offset], green = raw[offset + 1], blue = raw[offset + 2];
-		if (red > 200 && green < 80 && blue < 80) counts.concrete++;
-		else if (green > 200 && red < 80 && blue < 80) counts.glass++;
-		else if (blue > 200 && red < 80 && green < 80) counts.bronze++;
-		else if (red > 180 && green > 180 && blue < 80) counts.opaque++;
-	}
-	return counts;
-}
+const materialRolePixelCounts = (raw, width, height) => countRolePixels(raw, width * height);
 
 function hexLab(hex) {
 	const rgb = [1, 3, 5].map((index) => Number.parseInt(hex.slice(index, index + 2), 16) / 255)

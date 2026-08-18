@@ -145,7 +145,17 @@ export function validateResolvedFacadeProgram({ program, context, resolved } = {
 				else if (inBand(bounds.z_max)) measure("FLOOR_BAND_INTRUSION", index, bounds.z_max, clearance);
 			}
 			const depthLimit = primitive.kind === "door" ? context.exclusions.max_recess_m : context.exclusions.max_projection_m;
-			if (!Number.isFinite(primitive.depth_m) || primitive.depth_m < 0 || primitive.depth_m > depthLimit) {
+			// A solid member needs a thickness. `boxGeometry` in punched-facade.mjs throws on
+			// `Math.abs(n1 - n0) <= EPSILON`, so a member written with `depth_m: 0` passes every
+			// gate here and then kills the compiler with "detail prism has non-positive
+			// dimensions" - which is a stack trace, not a fault code, so the correction loop
+			// never sees it and the author cannot repair it. Both repo-blind authors wrote it.
+			// Openings are exempt because they are cut rather than built: glass and the door
+			// take their depth from the reveal around them and several accepted grammars leave
+			// them at zero.
+			const mustHaveThickness = primitive.kind !== "glass" && primitive.kind !== "window" && primitive.kind !== "door";
+			if (!Number.isFinite(primitive.depth_m) || primitive.depth_m < 0 || primitive.depth_m > depthLimit
+				|| (mustHaveThickness && primitive.depth_m <= 0)) {
 				measure("PROJECTION_LIMIT_EXCEEDED", index, primitive.depth_m ?? Number.MAX_SAFE_INTEGER, depthLimit);
 			}
 		}
