@@ -446,3 +446,48 @@ facets each contribute 0.35 m, so every fold renders as a **0.70 m near-black
 band** against 1.506 m of glass. That is concrete-frame proportion; a real
 curtain wall mullion is 50-150 mm. The strip is forced but its material is not,
 and whether a bright `spandrel` there reads better is being authored as cw4.
+
+## 2026-08-18 cw4 is the scheme to keep, and the strong-edge limit is now the binding one
+
+`grammar-cw4.json` supersedes cw3 and is the best facade this project has
+produced. Same skin as cw3 with one substitution: the forced 0.3 m fold strip
+carries a bright `spandrel` pier instead of a dark `mullion`, and only a 40 mm
+mullion stands at the glass edge. `dark_pixel_fraction` 0.114931 -> **0.031661**,
+3.6x less dark ink, and the facade stops reading as a concrete frame with infill
+panels. `skin_transparency_by_view` 0.618289 -> **0.62123**, zero faults, all
+eight views render and pass.
+
+Two things worth knowing about that number. The pier-for-mullion swap is
+**exactly free** to six decimals - cw3 spent 0.05 m of scope per edge on the
+corner mullion, cw4 spends 0.01 on the pier plus 0.04 on the mullion, and both
+leave a 1.5060696 m pane. The +0.0029 is vertical: slab clearance 0.16 -> 0.155
+and the skin cornice 0.60 -> 0.45. And the 50-150 mm mullion a real curtain wall
+would use is not reachable - the budget is `pier_scope + mullion <= 0.05` for
+glass parity, so 40 mm is what parity buys. **The proportion did not change,
+only the tone.** cw4 reads as a light frame, not as a glazed skin, and that is
+the ceiling for a 2.2 m facet.
+
+`spandrel` is the only terminal that is both bright (`concrete`, the one bright
+role) and in `SKIN_KINDS`, so it is the only word that can occupy the strip at
+all. `lintel` and `cornice` are bright but not carryable. That single fact is
+the whole scheme.
+
+**The KIND_ROLES seam warning is confirmed with a number.** A full-height
+precast pier crossing the 1.2 m plan cut failed `TRIANGULATION_VISIBLE` at 7
+visible segments, longest 95 px, because `spandrel` and `exact-mass` share
+`concrete`. Fixed in the grammar, not the code, by springing the pier at 1.5 m -
+which leaves a visible notch in the base silhouette and is a compromise, not a
+design decision.
+
+**`total_edge_density > 0.035` is unreachable and the note claiming otherwise is
+now corrected in the source.** Across thirteen rendered schemes x four
+elevations, strong is 95.6% to 99.9% of total, never below; the 0.035 clause
+would need strong under 71% of total to fire first. So the strong limit is the
+entire line budget, at a number chosen when it was a strict subset - the same
+collapse already re-derived for the untyped case (0.015 -> 0.020) and never
+re-derived for the typed one. It is deliberately **not** retuned: nothing that
+should pass is failing (highest of the thirteen is cw4 front at 0.024224, 3.1%
+of headroom; scheme D's back at 0.02520 is the only failure). Picking a
+replacement is a judgement about how busy a drawing may look, and that is the
+judgement class with measured evidence against it. The next scheme to fail it is
+the trigger to re-derive 0.025 and 0.035 together.
