@@ -45,7 +45,32 @@ triangles are tilted between 1e-7 and 15 degrees off vertical, and they carry **
 against the 582 m² that is exactly vertical**. More than half the building's wall is dropped
 before the perimeter is assembled, leaving three disconnected planes.
 
-This is the one that looks like a real limitation rather than a bug. A sloped wall is a wall.
+This is the one that looks like a real limitation rather than a bug.
+
+**How much a tolerance would recover, measured.** Sweeping the acceptance angle on
+creative-004:
+
+| accepted tilt | vertical plane groups | wall area |
+|---|---|---|
+| exactly vertical (today) | **3** | 582 m2 |
+| <= 5 deg | 39 | 1125 m2 |
+| **<= 10 deg** | **52** | **1331 m2** |
+| <= 20 deg | 52 | 1331 m2 |
+
+Today's filter keeps 3 of 52 planes and 44% of the wall. **The count saturates at 10 degrees**
+- nothing further appears between 10 and 20 - so every wall on this building is within 10
+degrees of vertical and a 10-degree tolerance is not an arbitrary loosening that risks
+sweeping in roof surfaces. Whether the right answer is a tolerance, a projection, or treating
+a battered plane as its own facet type is still yours; this only says what is being lost.
+
+**A synthetic authority is not a way around this, and should not be.**
+`assertCanonicalFacadeSegmentAuthority` requires the supplied authority to match the canonical
+derivation byte for byte, so the design layer cannot be fed hand-built segments. That lock is
+correct and was left alone. `harness-004.mjs` in the sdd directory assembles one anyway, purely
+to measure - it reaches 67 segments across all four views on creative-004 - and it is refused
+at the evidence pack, which is the system working. **No elevation can be produced for this
+candidate until the derivation itself yields its walls.**
+ A sloped wall is a wall.
 Deciding what a facade segment *is* on a battered surface — does it stay a rectangle in the
 plane of the slope, does `local_z` become slope-length or true height, does the fold between
 two battered planes still have a vertical corner — is a massing decision, and everything
