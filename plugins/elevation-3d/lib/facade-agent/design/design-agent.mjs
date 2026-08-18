@@ -133,13 +133,16 @@ function locatedCodes(validation, resolved, context) {
 	return validation.codes.map((code) => {
 		const measurement = worst.get(code);
 		if (!measurement) return code;
+		// SEGMENT_BOUNDS_INVALID is raised *because* the bounds are missing or unreadable, so the
+		// primitive it names is exactly the one whose local_bounds cannot be dereferenced. Naming
+		// the fault must never be what crashes the correction loop.
 		const primitive = resolved?.primitives?.[measurement.primitive_index];
+		const bounds = primitive?.local_bounds;
 		const segment = primitive ? byId.get(primitive.segment_id) : null;
-		const where = primitive
+		const where = primitive && bounds && [bounds.u_min, bounds.u_max, bounds.z_min, bounds.z_max].every(Number.isFinite)
 			? ` on the ${segment?.face_view ?? segment?.view ?? "unknown"} elevation, at a ${primitive.kind}`
-			+ ` spanning u ${primitive.local_bounds.u_min}-${primitive.local_bounds.u_max}`
-			+ ` z ${primitive.local_bounds.z_min}-${primitive.local_bounds.z_max}`
-			: "";
+			+ ` spanning u ${bounds.u_min}-${bounds.u_max} z ${bounds.z_min}-${bounds.z_max}`
+			: primitive ? ` on the ${segment?.face_view ?? segment?.view ?? "unknown"} elevation, at a ${primitive.kind} with unreadable bounds` : "";
 		return `${code} (measured ${measurement.actual} against ${measurement.limit}${where})`;
 	});
 }
