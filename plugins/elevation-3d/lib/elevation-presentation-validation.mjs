@@ -410,6 +410,19 @@ export async function validateCompetitionElevation({ artifacts, sourceMesh, faca
 	// left, so it failed the first correctly encoded render. 0.020 restores a real margin,
 	// stays under the typed limit because a plain mass has less to draw than a facade, and
 	// leaves `total_edge_density` as the measure of how many lines there actually are.
+	//
+	// That last clause is wrong, and the same sRGB fix is why. Measured over thirteen
+	// authored schemes, four elevations each: strong is 95.6% to 99.9% of total, never
+	// below. For the 0.035 clause to fire first, strong would have to be under 71% of
+	// total. So `total_edge_density > 0.035` is unreachable on any drawing this pipeline
+	// currently makes - here and at PLAN_TOP below - and the strong limit is the whole
+	// line budget, at a number that was chosen for a strict subset of it.
+	//
+	// Left in place rather than retuned: 0.025 is not failing anything that should pass
+	// (the highest of the thirteen is 0.02422), and picking its replacement would be a
+	// judgement about how busy a drawing may look, which is the one judgement class this
+	// project has evidence it is bad at. Two schemes now sit within 4% of it, so the next
+	// scheme to fail it is the trigger to re-derive both numbers together.
 	add(codes, "LINE_DENSITY_EXCEEDED", diagnostics.total_edge_density > 0.035
 		|| diagnostics.strong_edge_density > (typedFacadeArtifact ? 0.025 : 0.020));
 	add(codes, "TRIANGULATION_VISIBLE", diagnostics.same_material_seam_fraction > 0.001 || diagnostics.seam_segments?.visible > 0);
