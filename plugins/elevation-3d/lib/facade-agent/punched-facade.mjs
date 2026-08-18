@@ -728,7 +728,19 @@ export function deriveFacadeSegmentsFromMass({ mesh } = {}) {
 	while (current && !used.has(current.segment_id)) {
 		segments.push(current); used.add(current.segment_id); current = byStart.get(current.end_corner_id);
 	}
-	if (segments.length !== unsorted.length || current?.segment_id !== first.segment_id) throw new TypeError("invalid facade topology: perimeter is not one closed cycle");
+	if (segments.length !== unsorted.length || current?.segment_id !== first.segment_id) {
+		// Carrying the measurement, for the same reason the exact-MASS backing rejection below
+		// does: "not one closed cycle" reads as a bug in the walker when it is a statement about
+		// the footprint, and without the numbers there is no way to tell a footprint in two
+		// pieces from one that merely fails to chain at this tolerance.
+		const reached = segments.length, total = unsorted.length;
+		const dangling = segments.length && !byStart.get(segments[segments.length - 1].end_corner_id)
+			? segments[segments.length - 1].end_corner_id : null;
+		throw new TypeError(`invalid facade topology: perimeter is not one closed cycle`
+			+ ` (walked ${reached} of ${total} segments from ${first.segment_id};`
+			+ ` ${dangling ? `the chain ends at corner ${dangling} and nothing starts there` : "it closed early into a shorter loop"},`
+			+ ` so the footprint is ${reached < total ? "in more than one piece or breaks at this tolerance" : "self-intersecting"})`);
+	}
 	const xs = mesh.vertices.map((point) => point[0]), ys = mesh.vertices.map((point) => point[1]);
 	const facadeLengths = {
 		front: Math.max(...xs) - Math.min(...xs), back: Math.max(...xs) - Math.min(...xs),
