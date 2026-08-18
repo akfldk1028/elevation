@@ -1,3 +1,4 @@
+import { SEMANTIC_ROLES, classifyRolePixel } from "./semantic-role-mask.mjs";
 import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import puppeteer from "puppeteer-core";
@@ -10,7 +11,10 @@ import { atomicCopy, atomicWrite, prepareSafeDirectory } from "./facade-agent/pa
 
 const OUTPUT_SIZE = 2400;
 const VIEW_NAMES = ["axon", "opposite-axon"];
-const ROLE_NAMES = ["concrete", "glass", "bronze", "opaque"];
+// Measured over every role the mask can carry; *required* of these four. A facade written
+// entirely in curtain-wall words has no masonry in it and must still pass, so the fifth role
+// is counted and separated but never demanded.
+const REQUIRED_ROLES = ["concrete", "glass", "bronze", "opaque"];
 const MIN_ROLE_COLOR_DISTANCE = 12;
 const BUILDING_MARGIN_LIMITS = { minimum: 0.12, relevant_maximum: 0.21, letterbox_maximum: 0.35 };
 
@@ -33,7 +37,7 @@ function assertInputs({ glbPath, palette, cameras, candidateId }) {
 	if (!glbPath) throw new Error("selected GLB required");
 	if (typeof candidateId !== "string" || !candidateId) throw new Error("candidate identity required");
 	if (!palette?.sha256 || !palette?.preset || !palette?.roles) throw new Error("resolved material palette required");
-	for (const role of ROLE_NAMES) {
+	for (const role of SEMANTIC_ROLES) {
 		const record = palette.roles[role];
 		if (!record || typeof record.axon_pbr !== "string" || !["roughness", "metalness", "opacity", "texture_intensity", "normal_intensity"].every((field) => Number.isFinite(record[field]))) {
 			throw new Error(`resolved axon_pbr material role required: ${role}`);
@@ -79,13 +83,10 @@ function decodedImageMetrics(raw, width, height) {
 	};
 }
 
-function roleAt(materialId, offset) {
-	const [red, green, blue] = [materialId[offset], materialId[offset + 1], materialId[offset + 2]];
-	return red > 200 && green < 80 && blue < 80 ? "concrete"
-		: green > 200 && red < 80 && blue < 80 ? "glass"
-			: blue > 200 && red < 80 && green < 80 ? "bronze"
-				: red > 180 && green > 180 && blue < 80 ? "opaque" : null;
-}
+// The seventh copy of this classifier lived here. It did not know the fifth role, so 83% of a
+// clad building came back null and the building stopped existing as far as this file was
+// concerned.
+const roleAt = (materialId, offset) => classifyRolePixel(materialId[offset], materialId[offset + 1], materialId[offset + 2]);
 
 function trimmedChannelMean(histogram, count, trimRatio = 0.1) {
 	let lowTrim = Math.floor(count * trimRatio), highTrim = lowTrim, retained = 0, sum = 0;
@@ -101,14 +102,14 @@ function trimmedChannelMean(histogram, count, trimRatio = 0.1) {
 }
 
 function rolePixelMetrics(base, materialId, width, height) {
-	const metrics = Object.fromEntries(ROLE_NAMES.map((role) => [role, { visible_pixels: 0, histograms: Array.from({ length: 3 }, () => new Uint32Array(256)) }]));
+	const metrics = Object.fromEntries(SEMANTIC_ROLES.map((role) => [role, { visible_pixels: 0, histograms: Array.from({ length: 3 }, () => new Uint32Array(256)) }]));
 	for (let offset = 0; offset < width * height * 3; offset += 3) {
 		const role = roleAt(materialId, offset);
 		if (!role) continue;
 		metrics[role].visible_pixels++;
 		for (let channel = 0; channel < 3; channel++) metrics[role].histograms[channel][base[offset + channel]]++;
 	}
-	return Object.fromEntries(ROLE_NAMES.map((role) => {
+	return Object.fromEntries(SEMANTIC_ROLES.map((role) => {
 		const record = metrics[role];
 		const meanRgb = record.histograms.map((histogram) => trimmedChannelMean(histogram, record.visible_pixels));
 		return [role, {
@@ -121,13 +122,16 @@ function rolePixelMetrics(base, materialId, width, height) {
 
 function colorSeparation(materialRoles) {
 	const pairs = {};
-	for (let leftIndex = 0; leftIndex < ROLE_NAMES.length; leftIndex++) for (let rightIndex = leftIndex + 1; rightIndex < ROLE_NAMES.length; rightIndex++) {
-		const left = ROLE_NAMES[leftIndex], right = ROLE_NAMES[rightIndex];
+	// Only roles that are actually on screen. A role with no pixels has a trimmed mean of black,
+	// and two absent roles would read as perfectly collapsed onto each other.
+	const present = SEMANTIC_ROLES.filter((role) => materialRoles[role].visible_pixels > 0);
+	for (let leftIndex = 0; leftIndex < present.length; leftIndex++) for (let rightIndex = leftIndex + 1; rightIndex < present.length; rightIndex++) {
+		const left = present[leftIndex], right = present[rightIndex];
 		pairs[`${left}__${right}`] = Math.hypot(...materialRoles[left].trimmed_mean_rgb.map((value, channel) => value - materialRoles[right].trimmed_mean_rgb[channel]));
 	}
 	return {
 		color_space: "srgb8-euclidean", statistic: "10%-trimmed-mean", threshold: MIN_ROLE_COLOR_DISTANCE,
-		pairwise_distances: pairs, minimum_pairwise_distance: Math.min(...Object.values(pairs)),
+		pairwise_distances: pairs, minimum_pairwise_distance: Object.keys(pairs).length ? Math.min(...Object.values(pairs)) : 0,
 	};
 }
 
@@ -173,10 +177,20 @@ export function validateCompetitionAxonManifest(manifest) {
 		|| manifest.building_content.touches_frame) codes.push("WHITE_SPACE_INVALID");
 	if (manifest.clipping.clipped) codes.push("GLB_CLIPPED");
 	if (manifest.context.intersects_building || manifest.context.authoritative) codes.push("CONTEXT_INTERSECTION");
-	if (ROLE_NAMES.some((role) => !(manifest.material_roles[role]?.visible_pixels > 0))) codes.push("MATERIAL_ROLE_COLLAPSE");
-	if (!(manifest.material_color_separation?.minimum_pairwise_distance >= MIN_ROLE_COLOR_DISTANCE)) codes.push("MATERIAL_ROLE_COLLAPSE");
-	if (ROLE_NAMES.some((role) => manifest.material_roles[role]?.visible_pixels > 0 && manifest.material_roles[role].mean_luminance <= 20)) codes.push("PBR_COLOR_INVALID");
-	return { schema_version: "arr.elevation3d.competition-axon-validation.v1", accepted: codes.length === 0, codes };
+	// MATERIAL_ROLE_COLLAPSE is two different faults wearing one name - a role nobody can see,
+	// and two roles nobody can tell apart - and the code alone says neither which nor by how
+	// much. The detail rides along so the rejection is readable.
+	const detail = [];
+	const absent = REQUIRED_ROLES.filter((role) => !(manifest.material_roles[role]?.visible_pixels > 0));
+	if (absent.length) { codes.push("MATERIAL_ROLE_COLLAPSE"); detail.push(`no pixels for ${absent.join(", ")}`); }
+	const separation = manifest.material_color_separation?.minimum_pairwise_distance;
+	if (!(separation >= MIN_ROLE_COLOR_DISTANCE)) {
+		codes.push("MATERIAL_ROLE_COLLAPSE");
+		const pairs = Object.entries(manifest.material_color_separation?.pairwise_distances ?? {}).sort((a, b) => a[1] - b[1])[0];
+		detail.push(`closest pair ${pairs ? `${pairs[0]} at ${pairs[1].toFixed(1)}` : "none"} against ${MIN_ROLE_COLOR_DISTANCE}`);
+	}
+	if (SEMANTIC_ROLES.some((role) => manifest.material_roles[role]?.visible_pixels > 0 && manifest.material_roles[role].mean_luminance <= 20)) codes.push("PBR_COLOR_INVALID");
+	return { schema_version: "arr.elevation3d.competition-axon-validation.v1", accepted: codes.length === 0, codes, ...(detail.length ? { detail: detail.join("; ") } : {}) };
 }
 
 async function renderView({ runDir, glbPath, palette, cameras, candidateId, view, selectedGlbSha256, signal, lifecycle }) {
@@ -234,7 +248,7 @@ async function renderView({ runDir, glbPath, palette, cameras, candidateId, view
 		const browserArtifact = await page.evaluate(() => globalThis.__ELEVATION3D_ARTIFACT__);
 		const imageMetrics = decodedImageMetrics(decoded.data, decoded.info.width, decoded.info.height);
 		const pixelEvidence = measureCompetitionAxonPixels({ base: decoded.data, materialId: decodedMaterial.data, width: decodedMaterial.info.width, height: decodedMaterial.info.height });
-		const materialRoles = Object.fromEntries(ROLE_NAMES.map((role) => [role, { ...palette.roles[role], geometry_vertices: browserArtifact.material_roles[role].geometry_vertices, ...pixelEvidence.material_roles[role] }]));
+		const materialRoles = Object.fromEntries(SEMANTIC_ROLES.map((role) => [role, { ...palette.roles[role], geometry_vertices: browserArtifact.material_roles[role].geometry_vertices, ...pixelEvidence.material_roles[role] }]));
 		const manifest = {
 			schema_version: "arr.elevation3d.competition-axon.v1", view, candidate_id: candidateId,
 			selected_glb: { path: resolve(glbPath), sha256: selectedGlbSha256 }, selected_glb_sha256: selectedGlbSha256,

@@ -132,7 +132,7 @@ async function reviewedArtifact(root, name, previousManifest, requirePrior) {
 	// plan, top and axon half of it.
 	if (!validation.accepted || !Array.isArray(validation.codes)) {
 		const codes = Array.isArray(validation.codes) ? validation.codes.join(", ") : "codes missing";
-		throw new Error(`${name} persisted validation is not accepted: ${codes}`);
+		throw new Error(`${name} persisted validation is not accepted: ${codes}${validation.detail ? ` (${validation.detail})` : ""}`);
 	}
 	const palette = manifest.palette;
 	if (!palette?.preset || !palette?.sha256 || manifest.provenance?.palette_sha256 && manifest.provenance.palette_sha256 !== palette.sha256) throw new Error(`${name} persisted palette identity is invalid`);
