@@ -59,7 +59,14 @@ test("director persists prepared authority, corrects validator rejection, and re
 	assert.equal(adapter.calls, 2);
 	assert.equal(result.validation.accepted, true);
 	assert.equal(result.attempts.length, 2);
-	assert.deepEqual(result.attempts[0].validation_codes, ["PROJECTION_LIMIT_EXCEEDED"]);
+	// The code carries its locus now. A bare code left a repo-blind author spending two of its
+	// three attempts working out which face and which member the fault meant, so the measured
+	// value, the limit and the offending primitive travel with it.
+	assert.equal(result.attempts[0].validation_codes.length, 1);
+	const reported = result.attempts[0].validation_codes[0];
+	assert.match(reported, /^PROJECTION_LIMIT_EXCEEDED /, reported);
+	assert.match(reported, /measured [\d.]+ against [\d.]+/, reported);
+	assert.match(reported, /elevation, at a \w+ spanning u [\d.]+-[\d.]+ z [\d.]+-[\d.]+/, reported);
 	assert.equal(result.program.source.context_sha256, fixture.context.source.context_sha256);
 	assert.doesNotMatch(await readFile(join(fixture.runDir, "facade-design", "attempt-02", "response.json"), "utf8"), /"source"/);
 	assert.equal((await fixture.ledger.summary()).operations.length, 2);

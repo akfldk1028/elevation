@@ -54,12 +54,12 @@ function layout(parts, length) {
 		else if (part.size.kind === "relative") fixed += part.size.value * length;
 	}
 	const leftover = length - fixed;
-	if (leftover < -1e-9) return null;
+	if (leftover < -1e-9) return { overrun: fixed - length, fixed };
 	const repeat = parts.find((part) => part.repeat);
 	const slots = [];
 	if (repeat) {
 		const count = Math.max(1, Math.min(BOUNDS.maxRepeat, Math.round(leftover / repeat.size.value)));
-		if (leftover / count <= 1e-6) return null;
+		if (leftover / count <= 1e-6) return { overrun: 0, fixed, starved: true };
 		for (const part of parts) {
 			if (!part.repeat) {
 				slots.push({ part, size: part.size.kind === "relative" ? part.size.value * length : part.size.value, index: 0, total: 1 });
@@ -67,17 +67,17 @@ function layout(parts, length) {
 			}
 			for (let index = 0; index < count; index += 1) slots.push({ part, size: leftover / count, index, total: count });
 		}
-		return slots;
+		return { slots };
 	}
 	const weight = parts.filter((part) => part.size.kind === "float").reduce((sum, part) => sum + part.size.value, 0);
-	if (weight > 0 && leftover <= 1e-9) return null;
+	if (weight > 0 && leftover <= 1e-9) return { overrun: 0, fixed, starved: true };
 	for (const part of parts) {
 		const size = part.size.kind === "absolute" ? part.size.value
 			: part.size.kind === "relative" ? part.size.value * length
 				: (leftover * part.size.value) / weight;
 		slots.push({ part, size, index: 0, total: 1 });
 	}
-	return slots;
+	return { slots };
 }
 
 function chooseAlternative(alternatives, scope) {
@@ -133,8 +133,22 @@ export function deriveFacadePrimitives({ grammar, segment, storeys, entrance = n
 		}
 		const { axis, parts } = alternative.split;
 		const along = axis === "u" ? scope.u_max - scope.u_min : scope.z_max - scope.z_min;
-		const slots = layout(parts, along);
-		if (!slots) return;
+		// An over-subscribed split used to answer null here and the entire subtree vanished with
+		// no code, no count and no warning. A repo-blind author lost 60% of an elevation to it and
+		// was told only that its opening ratio was low; it cost that author an attempt out of three
+		// and it would cost a paid provider the same. Writing parts that do not fit is an authoring
+		// error, so it is reported as one - the correction loop hands a PROGRAM_INVALID reason back
+		// to the author verbatim.
+		const laid = layout(parts, along);
+		if (!laid.slots) {
+			const have = round(along);
+			fail(laid.starved
+				? `split of ${symbol} on ${axis} leaves nothing for its repeat: its fixed parts already use ${round(laid.fixed)} m of ${have} m`
+				: `split of ${symbol} on ${axis} does not fit: its parts need ${round(laid.fixed)} m but the scope is ${have} m,`
+					+ ` ${round(laid.overrun)} m too little. On a facet the u scope is the facet width, and the fold clearance`
+					+ ` has already been taken off it for a punched wall - do not budget for it twice.`);
+		}
+		const { slots } = laid;
 		let cursor = axis === "u" ? scope.u_min : scope.z_min;
 		for (const slot of slots) {
 			const next = cursor + slot.size;

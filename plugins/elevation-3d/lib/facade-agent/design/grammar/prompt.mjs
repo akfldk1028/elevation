@@ -251,10 +251,13 @@ How an opening meets a fold depends on which construction you are drawing, becau
 two are not doing the same thing there. A hole punched in a solid wall must stay 0.3 m
 clear of the fold: cutting one through a turn breaks the mass. A glazed skin does not
 pierce the mass at the corner, it replaces it, so its glass may run right to the fold as
-long as the strip is framed - a mullion or a spandrel pier standing at the facet edge and
-overlapping the glass in height. Bare glass meeting the corner is still rejected. Write
-the corner member with \`inset_m: 0\` and flush with the edge of its scope, or it will not
-reach the facet.
+long as the strip is framed. Framed means a mullion or a spandrel pier that stands at the
+facet edge, overlaps the glass in height, and **touches the glass**: the member's inner
+face and the pane's outer edge must be the same coordinate. A gap between them, even a
+few millimetres, is bare wall at the corner and is rejected exactly as bare glass is.
+Write the corner member with \`inset_m: 0\` and flush with the edge of its scope, and put
+the pane immediately beside it in the same split, so no arithmetic can open a sliver
+between the two.
 
 Two openings on one segment need 0.3 m of clear wall between them wherever they overlap
 in height - unless a mullion stands between them, which counts as the separation. So a

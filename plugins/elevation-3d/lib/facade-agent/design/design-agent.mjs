@@ -114,6 +114,35 @@ function deepFreeze(value) {
 	return Object.freeze(value);
 }
 
+/**
+ * A validation code plus where it happened and by how much.
+ *
+ * `FOLD_CLEARANCE_INVALID` alone does not say which elevation, which opening, or whether the
+ * author missed by a millimetre or by a metre, and the author cannot read the validator to
+ * find out. Every `measure()` call already records the primitive, the measured value and the
+ * limit; this turns the worst one per code into the sentence the author actually needs.
+ */
+function locatedCodes(validation, resolved, context) {
+	const byId = new Map((context.facade_segments ?? []).map((segment) => [segment.segment_id, segment]));
+	const worst = new Map();
+	for (const measurement of validation.measurements ?? []) {
+		const previous = worst.get(measurement.code);
+		const miss = Math.abs(measurement.limit - measurement.actual);
+		if (!previous || miss > previous.miss) worst.set(measurement.code, { ...measurement, miss });
+	}
+	return validation.codes.map((code) => {
+		const measurement = worst.get(code);
+		if (!measurement) return code;
+		const primitive = resolved?.primitives?.[measurement.primitive_index];
+		const segment = primitive ? byId.get(primitive.segment_id) : null;
+		const where = primitive
+			? ` on the ${segment?.face_view ?? segment?.view ?? "unknown"} elevation, at a ${primitive.kind}`
+			+ ` spanning u ${primitive.local_bounds.u_min}-${primitive.local_bounds.u_max}`
+			+ ` z ${primitive.local_bounds.z_min}-${primitive.local_bounds.z_max}`
+			: "";
+		return `${code} (measured ${measurement.actual} against ${measurement.limit}${where})`;
+	});
+}
 export async function runFacadeDesignAgent({ runDir, context, provider, ledger, ceilingUsd, estimateUsd, language = "grammar", signal } = {}) {
 	const authority = readVerifiedFacadeDesignContextAuthority(context);
 	if (!authority) fail("FACADE_DESIGN_AGENT_INVALID", "a verified facade design context is required");
@@ -184,7 +213,12 @@ export async function runFacadeDesignAgent({ runDir, context, provider, ledger, 
 			program = parseFacadeDesign(JSON.parse(bytes.toString("utf8")), { sourceAuthority: authority });
 			resolved = resolveFacadeProgram(program, context);
 			validation = validateResolvedFacadeProgram({ program, context, resolved });
-			correctionCodes = validation.codes;
+			// With the locus attached. The note below says a bare PROGRAM_INVALID leaves the model
+			// correcting blind and repeating itself, and that is just as true of a validation code:
+			// a repo-blind author given only FOLD_CLEARANCE_INVALID spent two of its three attempts
+			// finding out which face and which pane it meant. The validator has always measured
+			// `actual` against `limit` per primitive and nothing has ever read it.
+			correctionCodes = locatedCodes(validation, resolved, context);
 		} catch (error) {
 			// Hand the parse failure back verbatim. A bare PROGRAM_INVALID leaves the
 			// model correcting blind, and it repeats the same mistake every attempt.
