@@ -87,6 +87,22 @@ export function validateResolvedFacadeProgram({ program, context, resolved } = {
 		const entrances = resolved.primitives.filter((primitive) => primitive.kind === "door" && primitive.role === "primary_entrance");
 		if (entrances.length !== 1) codes.add("PRIMARY_ENTRANCE_INVALID");
 
+		const skinSegments = new Set(resolved.primitives
+			.filter((primitive) => primitive.kind === "mullion" || primitive.kind === "transom" || primitive.kind === "spandrel")
+			.map((primitive) => primitive.segment_id));
+		const framedToFold = (primitive, segment, atLowEdge) => resolved.primitives.some((member) => {
+			// Either solid skin member answers for the corner. A mullion is the obvious one,
+			// but a precast pier standing at the fold is the stronger return, and keying the
+			// rule to one word rejected the scheme that did it properly. `transom` is excluded:
+			// it is a horizontal member and cannot stand in for the turn.
+			if ((member.kind !== "mullion" && member.kind !== "spandrel") || member.segment_id !== primitive.segment_id) return false;
+			const covers = atLowEdge
+				? member.local_bounds.u_min <= 1e-8 && member.local_bounds.u_max + 1e-8 >= primitive.local_bounds.u_min
+				: member.local_bounds.u_max + 1e-8 >= segment.length_m && member.local_bounds.u_min <= primitive.local_bounds.u_max + 1e-8;
+			if (!covers) return false;
+			return Math.min(member.local_bounds.z_max, primitive.local_bounds.z_max)
+				- Math.max(member.local_bounds.z_min, primitive.local_bounds.z_min) > 1e-8;
+		});
 		for (let index = 0; index < resolved.primitives.length; index += 1) {
 			const primitive = resolved.primitives[index];
 			const segment = segments.get(primitive.segment_id);
@@ -98,8 +114,18 @@ export function validateResolvedFacadeProgram({ program, context, resolved } = {
 				continue;
 			}
 			if (primitive.kind === "door" || primitive.kind === "window") {
+				// A hole must stay off the fold because cutting one through a turn breaks the
+				// mass. That is an argument about punching a solid wall, and a glazed skin is
+				// not doing that: its corner glass replaces the mass rather than piercing it,
+				// and the corner mullion is the return. So on a segment carrying a skin the
+				// requirement is not 0.3 m of bare mass, it is that the strip be framed - a
+				// mullion that runs to the facet edge and overlaps the pane in height.
 				const edge = Math.min(bounds.u_min, segment.length_m - bounds.u_max);
-				if (edge + 1e-8 < context.exclusions.fold_clearance_m) measure("FOLD_CLEARANCE_INVALID", index, edge, context.exclusions.fold_clearance_m);
+				if (edge + 1e-8 < context.exclusions.fold_clearance_m
+					&& !(primitive.kind === "window" && skinSegments.has(primitive.segment_id)
+						&& framedToFold(primitive, segment, bounds.u_min <= segment.length_m - bounds.u_max))) {
+					measure("FOLD_CLEARANCE_INVALID", index, edge, context.exclusions.fold_clearance_m);
+				}
 				// An opening must not start or finish inside a floor band, because that is
 				// where the slab lands. It may pass a slab on its way - a double-height
 				// lobby and a vertical slot both do - so the test is on the two ends

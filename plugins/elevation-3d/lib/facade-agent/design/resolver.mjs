@@ -1,7 +1,7 @@
 import { sha256, stableJson } from "../../core.mjs";
 import { readVerifiedFacadeDesignContextAuthority } from "./context.mjs";
 import { readVerifiedFacadeProgramAuthority } from "./contract.mjs";
-import { deriveFacadePrimitives } from "./grammar/derive.mjs";
+import { deriveFacadePrimitives, SKIN_KINDS } from "./grammar/derive.mjs";
 
 const verifiedResolutionAuthorities = new WeakMap();
 
@@ -156,20 +156,27 @@ function grammarPrimitives(program, context, entrance) {
 	const faceTotals = new Map((context.facade_faces ?? []).map((face) => [face.face_id, face.segment_ids.length]));
 	const primitives = [];
 	for (const segment of context.facade_segments) {
-		const derived = deriveFacadePrimitives({
+		const derive = (inset) => deriveFacadePrimitives({
 			grammar: program,
 			segment: {
 				...segment,
 				face_total: faceTotals.get(segment.face_id) ?? 1,
-				// The inset is the derivation's whole coordinate frame, not a filter on openings,
-				// and it stays that way: every size fraction in every authored grammar is a
-				// fraction *of this scope*, so widening it fails all ten of them on
-				// FOLD_CLEARANCE_INVALID and SEGMENT_BOUNDS_INVALID. Skin framing reaches the
-				// corner by being carried there at emission instead - see SKIN_KINDS in derive.mjs.
-				placeable: { u_min: fold, u_max: segment.length_m - fold },
+				// The inset is the derivation's whole coordinate frame, not a filter on openings.
+				// It exists because a hole cut through a turn breaks the mass - an argument about
+				// punching a solid wall. A glazed skin does not pierce the mass at the corner, it
+				// replaces it, and its corner mullion is the return, so on a skin segment the
+				// clearance is the wrong constraint and 0.3 m of it on a 2.2 m facet is 27% of the
+				// width. Which construction a segment carries is not knowable before deriving it,
+				// so it is derived once inset and, if skin members came out, derived again over the
+				// whole facet. Widening the scope cannot be done unconditionally: every size
+				// fraction in every authored grammar is a fraction *of this scope*. A grammar that
+				// writes no skin word takes the first result and is unchanged to the last decimal.
+				placeable: { u_min: inset, u_max: segment.length_m - inset },
 			},
 			storeys: context.storeys,
 		});
+		const punched = derive(fold);
+		const derived = punched.some((primitive) => SKIN_KINDS.has(primitive.kind)) ? derive(0) : punched;
 		for (const primitive of derived) {
 			if (primitive.kind === "door") continue;
 			if (displacedByEntrance(entrance, segment.segment_id, primitive.local_bounds, gap)) continue;
