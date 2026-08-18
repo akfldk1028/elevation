@@ -18,7 +18,7 @@ const MAX_PRIMITIVES = 2048;
  * rest of the way to the facet edge. A grammar that writes no skin words derives exactly
  * what it derived before, to the last decimal.
  */
-const SKIN_KINDS = new Set(["mullion", "transom", "spandrel"]);
+export const SKIN_KINDS = new Set(["mullion", "transom", "spandrel"]);
 
 function fail(message) {
 	throw new FacadeGrammarError(message);
