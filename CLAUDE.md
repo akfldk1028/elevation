@@ -491,3 +491,38 @@ of headroom; scheme D's back at 0.02520 is the only failure). Picking a
 replacement is a judgement about how busy a drawing may look, and that is the
 judgement class with measured evidence against it. The next scheme to fail it is
 the trigger to re-derive 0.025 and 0.035 together.
+
+## 2026-08-18 correction: none of these are curtain walls
+
+Two sections above call cw3 and cw4 curtain walls. They are not, and the user
+said so on sight: it is glass set into a thick wall. The claim was made from the
+*terminals* the grammar used - mullion, transom, spandrel - and not from the
+drawing. This repo had already written the same sentence about scheme C: a
+'deeply glazed frame' that is still punched openings which happen to be large.
+
+Three reasons, and they share one root:
+
+- **The glass cannot cross a fold.** A curtain wall is a continuous skin hung in
+  front of the structure and it turns corners. Here each 2.206 m facet gets its
+  own isolated glass strip with 0.6 m of solid between. That is punched, by
+  definition, however tall the strip is.
+- **The vertical solid beats the horizontal.** Pier 0.70 m against spandrel
+  0.20 m reads as a pier rhythm, not a mullion grid.
+- **The glass sits in the wall, not in front of it.** Primitives are placed on
+  the face; nothing is hung off it.
+
+Root: derivation is per *facet* and its scope is inset by `fold_clearance_m`, so
+a continuous skin is not expressible. **The pipeline models one construction -
+holes in a solid mass.** A curtain wall is a different construction, not a
+different pattern of holes, which is why going from nine terminals to twelve did
+not produce one. See [[facade-grammar-vocabulary-is-punched-masonry]], which was
+right that the vocabulary was the blocker and wrong that vocabulary was enough.
+
+`fold_clearance_m: 0.3` is a bare literal in `context.mjs:227` with no derivation
+anywhere. Its stated rationale, in `derive.mjs`, is that *a hole cut through a
+turn breaks the mass* - which is an argument about punching a solid wall. In a
+glazed skin the corner glass does not pierce the mass, it replaces it, and the
+corner mullion is the return. The clearance should therefore be a property of
+the construction (punched: 0.3; skin: the mullion width), not a global constant.
+That is the one change that would move the fold band from 0.70 m to about
+0.10 m, which is the difference between a pier rhythm and a mullion grid.
