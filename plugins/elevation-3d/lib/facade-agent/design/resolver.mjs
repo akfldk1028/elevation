@@ -175,8 +175,26 @@ function grammarPrimitives(program, context, entrance) {
 			},
 			storeys: context.storeys,
 		});
-		const punched = derive(fold);
-		const derived = punched.some((primitive) => SKIN_KINDS.has(primitive.kind)) ? derive(0) : punched;
+		// The inset pass is a probe, so it must not be the one that throws. A skin grammar whose
+		// parts fit the facet but not the inset scope would otherwise die before anything could
+		// find out it was a skin - the two changes that landed together on 2026-08-18, the
+		// construction-dependent scope and the loud layout failure, collide exactly there. None of
+		// the fourteen authored grammars happens to be that wide, which is why it did not show.
+		const attempt = (inset) => { try { return { primitives: derive(inset) }; } catch (error) { return { error }; } };
+		const carriesSkin = (primitives) => primitives.some((primitive) => SKIN_KINDS.has(primitive.kind));
+		const inset = attempt(fold);
+		let derived;
+		if (inset.primitives && !carriesSkin(inset.primitives)) {
+			derived = inset.primitives;
+		} else {
+			const whole = attempt(0);
+			// The wider scope is only granted to a skin. A punched grammar that overruns the inset
+			// scope must still be rejected, and with the inset measurement, or the clearance quietly
+			// stops applying to the construction it exists for.
+			if (whole.primitives && carriesSkin(whole.primitives)) derived = whole.primitives;
+			else if (inset.primitives) derived = inset.primitives;
+			else throw inset.error;
+		}
 		for (const primitive of derived) {
 			if (primitive.kind === "door") continue;
 			if (displacedByEntrance(entrance, segment.segment_id, primitive.local_bounds, gap)) continue;

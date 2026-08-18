@@ -102,10 +102,21 @@ export function checkAuthoredGrammar({ context, grammar } = {}) {
 	if (!authority) throw new TypeError("a verified facade design context is required");
 	let program;
 	let resolved;
+	// Following the cause chain, because the outer message is always the same sentence and the
+	// one underneath it is the whole diagnosis - "facade program resolution failed" told an
+	// author nothing, while its cause names the symbol, the axis and the two lengths.
+	const why = (error) => {
+		const chain = [];
+		for (let current = error, depth = 0; current && depth < 4; current = current.cause, depth += 1) {
+			const message = String(current?.message ?? current);
+			if (message && !chain.includes(message)) chain.push(message);
+		}
+		return chain.join(": ").slice(0, 900);
+	};
 	try { program = parseFacadeDesign(grammar, { sourceAuthority: authority }); }
-	catch (error) { return { ok: false, stage: "parse", error: String(error?.message ?? error).slice(0, 900) }; }
+	catch (error) { return { ok: false, stage: "parse", error: why(error) }; }
 	try { resolved = resolveFacadeProgram(program, context); }
-	catch (error) { return { ok: false, stage: "resolve", error: String(error?.message ?? error).slice(0, 900) }; }
+	catch (error) { return { ok: false, stage: "resolve", error: why(error) }; }
 	const validation = validateResolvedFacadeProgram({ program, context, resolved });
 	if (!validation.accepted) return { ok: false, stage: "validate", codes: validation.codes };
 	const composition = measureComposition({ context, resolved });

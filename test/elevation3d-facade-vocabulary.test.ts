@@ -149,3 +149,43 @@ test("a skin whose corner member cannot be the return is still rejected", async 
 	assert.ok((report.codes ?? []).includes("FOLD_CLEARANCE_INVALID"),
 		`unframed glass at the fold should be rejected, got ${JSON.stringify(report.codes ?? report.stage)}`);
 });
+
+// The inset derivation is only a probe - it exists to find out which construction a segment
+// carries - so it must not be the pass that throws. A skin whose parts fit the facet but not
+// the inset scope would otherwise die before anything could learn it was a skin. The wider
+// scope stays earned: the same widths written with a punched terminal are still rejected, and
+// with the inset measurement, or the clearance quietly stops applying to the construction it
+// exists for.
+const overWideGrammar = (edgeTerminal: string) => ({
+	schema_version: "arr.elevation3d.facade-grammar.v3",
+	concept_id: `over-wide-${edgeTerminal}`,
+	start: "Facet",
+	entrance: {
+		segment_selector: "primary_visible_ground_segment", preferred_bay: "central_focus",
+		door_family: "portal", width_m: 1.4, height_m: 2.4, recess_m: 0.1,
+	},
+	rules: [
+		{ name: "Facet", alternatives: [{ when: null, split: { axis: "u", parts: [
+			{ size: "3.7", symbol: "Edge", arg: null, repeat: null },
+			{ size: "~1", symbol: "Pane", arg: null, repeat: null },
+		] }, terminal: null, inset_m: 0, depth_m: 0 }] },
+		{ name: "Edge", alternatives: [{ when: null, split: null, terminal: edgeTerminal, inset_m: 0, depth_m: 0.05 }] },
+		{ name: "Pane", alternatives: [{ when: null, split: null, terminal: "glass", inset_m: 0, depth_m: 0.02 }] },
+	],
+	design_rationale: ["wider than the inset scope, narrower than the facet"],
+});
+
+test("a skin wider than the inset scope still derives, and a punched wall does not", async (t) => {
+	const { context } = await createFacadeDesignFixture(t);
+	const narrowest = Math.min(...context.facade_segments.map((segment: any) => segment.length_m));
+	const inset = narrowest - 2 * context.exclusions.fold_clearance_m;
+	assert.ok(narrowest > 3.7 && inset < 3.7, `fixture facet ${narrowest} no longer straddles the test width`);
+
+	// Reaching validation at all is the point: it got the whole facet to compose in.
+	const skin = checkAuthoredGrammar({ context, grammar: overWideGrammar("mullion") });
+	assert.notEqual(skin.stage, "resolve", `a skin was refused the facet: ${String(skin.error)}`);
+
+	const punched = checkAuthoredGrammar({ context, grammar: overWideGrammar("pilaster") });
+	assert.equal(punched.stage, "resolve", "a punched wall was given the skin scope");
+	assert.match(String(punched.error), /does not fit: its parts need 3\.7 m but the scope is/);
+});
