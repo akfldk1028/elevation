@@ -115,11 +115,14 @@ Sizes: "2.4" is absolute metres, "'0.5" is a fraction of the scope along the spl
 axis, "~1" is floating and shares whatever is left over by weight. A part with
 "repeat": true tiles as many times as its nominal size fits - that is how one rule
 serves a five storey tower and a twenty storey one. The nominal size is a target, not
-a promise: the count is the nearest whole number of tiles and every tile is drawn at an
-equal share of what the fixed parts leave, so tiles stretch or shrink a little to fill
-the scope exactly and no remainder strip is ever left. A repeat part must carry a
-floating size such as "~3.3", it is the only part in its split that may float, and a
-split may hold at most one of them. Set "repeat": null on every other part.
+a promise: the count is the nearest whole number of tiles BUT NEVER ZERO, and every
+tile is drawn at an equal share of what the fixed parts leave, so tiles stretch or
+shrink to fill the scope exactly and no remainder strip is ever left. The never-zero
+matters on a small scope: a repeat cannot be used to make a rule vanish on a narrow
+facet - it will squeeze one tile into whatever is left, however badly the nominal fits.
+A repeat part must carry a floating size such as "~3.3", it is the only part in its
+split that may float, and a split may hold at most one of them. Set "repeat": null on
+every other part.
 
 Predicates: index % <n> == <m>, index == <n>, index == last, storey % <n> == <m>,
 storey == <n>, face_view == front|back|left|right, param == <value>. Two may be joined
@@ -285,7 +288,12 @@ How an opening meets a fold depends on which construction you are drawing, becau
 two are not doing the same thing there. A hole punched in a solid wall must stay 0.3 m
 clear of the fold: cutting one through a turn breaks the mass. The fault is
 FOLD_CLEARANCE_INVALID, and what it measures is the distance from the opening's nearest
-edge to the facet edge; exactly 0.3 m clears, the fault fires only short of it. A glazed skin does not pierce the mass at the corner, it replaces
+edge to the facet edge; exactly 0.3 m clears, the fault fires only short of it. On a
+punched facet the clearance is taken off BEFORE your rule runs: the u scope handed to
+your split is already inset 0.3 m at each fold, so your parts must fit the facet width
+minus 0.6 m, and budgeting the clearance again is the commonest way a split fails to
+fit. A facet that derives skin members gets the whole width instead, which is what lets
+a skin frame the fold. A glazed skin does not pierce the mass at the corner, it replaces
 it, so its glass may run right to the fold as long as the strip is framed. Framed means a
 mullion or a spandrel pier that reaches the facet edge itself - its own rectangle starting
 at the very edge of the facet, not merely near it - overlaps the glass in height, and
@@ -348,7 +356,7 @@ export function buildFacadeGrammarPrompt({ context, correctionCodes = [], attemp
 	// twice did not bring the windows back.
 	const wideCount = spans.filter((span) => span.width >= 1.2).length;
 	const facetAdvisory = facetsVary
-		? `On this candidate the facets are not uniform: widths run ${widthMin.toFixed(2)} to ${widthMax.toFixed(2)} m and the shortest facet is ${heightMin.toFixed(2)} m tall against a ${buildingTop.toFixed(2)} m building, so most facets see only part of the height. The start symbol derives once per facet at ITS OWN size: a z split must fit the facet's own height, not the building's, and a fractional size scales with each facet - a fraction that draws a window on the widest facet draws a centimetre sliver on the narrowest, and slivers fail the clearance gates. Use absolute sizes for members that must not shrink, and predicates to give the narrow facets a simpler rule or bare wall. That caution is for the narrow facets only: ${wideCount} of the ${spans.length} facets are 1.2 m or wider and they are where the design lives - every one of them must carry its openings and its storey split, because retreating to bare wall everywhere fails the opening-ratio floor, not the clearance gates.`
+		? `On this candidate the facets are not uniform: widths run ${widthMin.toFixed(2)} to ${widthMax.toFixed(2)} m and the shortest facet is ${heightMin.toFixed(2)} m tall against a ${buildingTop.toFixed(2)} m building, so most facets see only part of the height. The start symbol derives once per facet at ITS OWN size: a z split must fit the facet's own height, not the building's, and a fractional size scales with each facet - a fraction that draws a window on the widest facet draws a centimetre sliver on the narrowest, and slivers fail the clearance gates. Use absolute sizes for members that must not shrink, and predicates to give the narrow facets a simpler rule or bare wall - a predicate cannot test a size, so name the narrow facets by face_view and index from the technical context's segment list. That caution is for the narrow facets only: ${wideCount} of the ${spans.length} facets are 1.2 m or wider and they are where the design lives - every one of them must carry its openings and its storey split, because retreating to bare wall everywhere fails the opening-ratio floor, not the clearance gates.`
 		: "";
 	const prompt = [
 		"You are the architectural facade director. Return exactly one FacadeGrammarV3 object.",
