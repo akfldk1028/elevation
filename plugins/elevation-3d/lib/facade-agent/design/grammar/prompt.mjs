@@ -327,6 +327,29 @@ export function buildFacadeGrammarPrompt({ context, correctionCodes = [], attemp
 		.sort((left, right) => right.visibility_score - left.visibility_score
 			|| right.length_m - left.length_m || left.segment_id.localeCompare(right.segment_id))[0] ?? null;
 	const entranceFace = entranceSegment ? (entranceSegment.face_view ?? entranceSegment.view) : null;
+	// A stepped or battered mass has facets of very different sizes, and the first live run
+	// on one spent its attempts finding that out: a z split written for the building height
+	// overran a 3.7 m facet, and fractional sizes that drew windows on the wide facets drew
+	// centimetre slivers on the narrow ones, which then failed the clearance gates. The
+	// numbers are computable here, so say them - but only when they vary, because on a prism
+	// this sentence is noise.
+	const spans = (context.facade_segments ?? []).map((segment) => ({
+		width: segment.length_m, height: (segment.local_z?.[1] ?? 0) - (segment.local_z?.[0] ?? 0),
+	})).filter((span) => Number.isFinite(span.width) && Number.isFinite(span.height));
+	const buildingTop = Math.max(0, ...(context.storeys ?? []).map((storey) => storey.z_max));
+	const widthMin = spans.length ? Math.min(...spans.map((span) => span.width)) : 0;
+	const widthMax = spans.length ? Math.max(...spans.map((span) => span.width)) : 0;
+	const heightMin = spans.length ? Math.min(...spans.map((span) => span.height)) : 0;
+	const facetsVary = spans.length > 0 && (widthMax / Math.max(widthMin, 1e-9) > 1.5 || buildingTop - heightMin > 1e-6);
+	// The guard sentence at the end is not decoration. Without it the first live provider
+	// answered this advisory by emptying the building - seven primitives, one window - the
+	// same trade the giant-order bullet caused before it carried the same guard: told what
+	// to avoid, the model avoids it by deleting the design, and OPENING_RATIO_LOW relayed
+	// twice did not bring the windows back.
+	const wideCount = spans.filter((span) => span.width >= 1.2).length;
+	const facetAdvisory = facetsVary
+		? `On this candidate the facets are not uniform: widths run ${widthMin.toFixed(2)} to ${widthMax.toFixed(2)} m and the shortest facet is ${heightMin.toFixed(2)} m tall against a ${buildingTop.toFixed(2)} m building, so most facets see only part of the height. The start symbol derives once per facet at ITS OWN size: a z split must fit the facet's own height, not the building's, and a fractional size scales with each facet - a fraction that draws a window on the widest facet draws a centimetre sliver on the narrowest, and slivers fail the clearance gates. Use absolute sizes for members that must not shrink, and predicates to give the narrow facets a simpler rule or bare wall. That caution is for the narrow facets only: ${wideCount} of the ${spans.length} facets are 1.2 m or wider and they are where the design lives - every one of them must carry its openings and its storey split, because retreating to bare wall everywhere fails the opening-ratio floor, not the clearance gates.`
+		: "";
 	const prompt = [
 		"You are the architectural facade director. Return exactly one FacadeGrammarV3 object.",
 		OPERATORS,
@@ -334,6 +357,7 @@ export function buildFacadeGrammarPrompt({ context, correctionCodes = [], attemp
 		entranceFace
 			? `On this candidate the entrance lands on the ${entranceFace} face - it holds the ground segment that ranks first on the visibility-then-length ordering the placement code uses, and only a door too wide for that segment could move it. Treat ${entranceFace} as the street face; the differ-in-kind asked for above is between it and the face opposite.`
 			: "",
+		facetAdvisory,
 		`Attempt: ${attempt}.`,
 		`Technical context: ${stableJson(boundedContext)}`,
 		correctionCodes.length

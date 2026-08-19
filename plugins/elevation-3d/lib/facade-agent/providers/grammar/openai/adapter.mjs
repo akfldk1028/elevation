@@ -6,7 +6,11 @@ const PROVIDER = "openai-gpt-5.5";
 const MODEL = "gpt-5.5";
 const ENDPOINT = "https://api.openai.com/v1/responses";
 const DEFAULT_TIMEOUT_MS = 120_000;
-const MAX_TIMEOUT_MS = 300_000;
+// 300 s was calibrated on the prism candidate's brief. The stepped candidate's brief is
+// half again as large (37 segments plus the facet advisory) and its first live call timed
+// out at exactly the cap, stranding an uncertain paid operation. The bound exists to keep
+// a runner from hanging forever, not to race the model; 600 s still does that job.
+const MAX_TIMEOUT_MS = 600_000;
 const MAX_RESPONSE_BYTES = 1024 * 1024;
 
 function failure(code, message, { definitiveNonSubmission = false, remoteId = null, status = null } = {}) {
