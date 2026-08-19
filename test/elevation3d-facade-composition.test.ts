@@ -24,7 +24,9 @@ const WAREHOUSE = Array.from({ length: 30 }, (_, index) => {
 
 test("a wall of identical slits with no top fails every check", () => {
 	const { metrics, codes } = measureComposition({ context: CONTEXT, resolved: { primitives: WAREHOUSE } });
-	assert.deepEqual([...codes].sort(), ["OPENING_RATIO_LOW", "SCALE_HIERARCHY_FLAT", "STOREY_LOCKSTEP", "TOP_TERMINATION_MISSING"]);
+	// MATERIAL_ROLE_MISSING too: bare slits carry no sill, band or transom, so the opaque
+	// role has no source and the render gate would reject the elevation anyway.
+	assert.deepEqual([...codes].sort(), ["MATERIAL_ROLE_MISSING", "OPENING_RATIO_LOW", "SCALE_HIERARCHY_FLAT", "STOREY_LOCKSTEP", "TOP_TERMINATION_MISSING"]);
 	assert.ok(metrics.worst_opening_ratio < COMPOSITION_BOUNDS.minOpeningRatio);
 	assert.equal(metrics.scale_ratio, 1);
 	assert.equal(metrics.has_top_termination, false);
@@ -52,6 +54,9 @@ test("a composed elevation clears all three at once", () => {
 		}),
 		// The subject: one bay carried up two storeys against many ordinary ones.
 		opening(4.0, 6.4, 0.4, 6.2),
+		// A composed elevation carries its opaque role; without a band the render gate
+		// rejects it however well the three composition measures score.
+		{ kind: "band", segment_id: "seg-front", local_bounds: { u_min: 0, u_max: 10, z_min: 3.3, z_max: 3.45 } },
 		cornice,
 	];
 	const { metrics, codes } = measureComposition({ context: CONTEXT, resolved: { primitives } });
