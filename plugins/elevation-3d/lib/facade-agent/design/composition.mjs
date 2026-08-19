@@ -282,6 +282,30 @@ export function measureComposition({ context, resolved } = {}) {
 			? `no cornice anywhere, so the building stops at storey ${topStorey?.storey ?? "?"} rather than terminating`
 			: `${unterminated.join(", ")} ${unterminated.length === 1 ? "has" : "have"} no cornice, so ${unterminated.length === 1 ? "that elevation runs" : "those elevations run"} out of floors while the others terminate`);
 	}
+	// Every elevation must show all four palette roles, or the render gate
+	// MATERIAL_ROLE_MISSING rejects it after every design gate has passed - which is where
+	// both the first live stepped-mass run and a blind author's accepted design died,
+	// because the correction loop never sees a render fault. The role a kind carries is
+	// deterministic, so the certain part of that question is answerable here. Conservative
+	// on purpose: the mass keeps concrete on every view, a window without a reveal grows a
+	// generated bronze frame, so only the roles with no possible source are faulted;
+	// whether a drawn source survives occlusion stays the renderer's question.
+	const doorView = (() => {
+		const door = resolved.primitives.find((primitive) => primitive.kind === "door");
+		const segment = door ? segments.get(door.segment_id) : null;
+		return segment ? (segment.face_view ?? segment.view) : null;
+	})();
+	for (const view of [...wallByView.keys()].sort()) {
+		const kinds = kindsByView.get(view) ?? new Set();
+		const hasDoor = doorView === view;
+		const missing = [];
+		if (!kinds.has("window") && !hasDoor) missing.push(["glass", "a window (or the placed entrance)"]);
+		if (!["sill", "band", "transom"].some((kind) => kinds.has(kind))) missing.push(["opaque", "a sill, a band or a transom - they are the only kinds that carry it, so a pure skin needs its transom"]);
+		if (!["mullion", "reveal", "window"].some((kind) => kinds.has(kind)) && !hasDoor) missing.push(["bronze", "a mullion or a reveal (a window without a reveal grows its own bronze frame)"]);
+		for (const [role, source] of missing) {
+			note("MATERIAL_ROLE_MISSING", `the ${view} elevation has no kind that can produce the ${role} role, and the render gate requires all four roles on every elevation; it needs ${source}`);
+		}
+	}
 	// Which construction each face is written in, and how much of a skin is actually glass.
 	const construction = {};
 	const skinTransparency = {};
