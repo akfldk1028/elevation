@@ -68,11 +68,15 @@ export const KIND_ROLES = Object.freeze({
 	// views onto resolveSemanticRole, so all five fell through to the `concrete` fallback,
 	// nothing was left on `opaque` and the front elevation failed MATERIAL_ROLE_MISSING.
 	//
-	// The assignment is the same reasoning the two vocabularies above already use: the one
-	// member that covers a large area must not take the darkest tint, and the thin trim
-	// carries it instead. So the cladding is bright and the sill is opaque, matching
-	// `sill` and `lintel` and `reveal` word for word - a precast sill is a sill.
-	"brick-cladding": "concrete", "corner-return": "opaque", "window-reveal": "bronze",
+	// The cladding cannot take `concrete`: it runs from grade, its cut face meets the
+	// mass's at the 1.2 m plan cut, and two surfaces on one role make that boundary a
+	// same-material seam - measured 8 visible segments, longest 135 px, TRIANGULATION_VISIBLE.
+	// So it takes `opaque`, which is what the pre-61d457f material-name lookup gave it and
+	// what the typed elevations' 0.60 dark-fraction limit was calibrated for. The known PBR
+	// cost of a large opaque field - back-view luminance P50 9.9 against a floor of 10 -
+	// is carried by the reveal presentation style the typed delivery now renders under,
+	// not by this table.
+	"brick-cladding": "opaque", "corner-return": "opaque", "window-reveal": "bronze",
 	"precast-lintel": "concrete", "precast-sill": "opaque",
 });
 

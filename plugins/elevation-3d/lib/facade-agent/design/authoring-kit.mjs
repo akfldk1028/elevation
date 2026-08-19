@@ -25,7 +25,7 @@ import { renderAllViews } from "../../all-views.mjs";
 import { deriveDeliveryCameras } from "../../final-delivery.mjs";
 import { resolveMaterialPalette } from "../../material-palettes.mjs";
 import { renderEmbeddedPbrViews } from "../../texturing/render-validator.mjs";
-import { composePerspectiveHero } from "../final-presentation.mjs";
+import { composePerspectiveHero, REVEAL_FACADE_PRESENTATION_STYLE } from "../final-presentation.mjs";
 import { measureComposition } from "./composition.mjs";
 import { compileFacadeDesign } from "./compiler.mjs";
 import { parseFacadeDesign } from "./contract.mjs";
@@ -34,29 +34,11 @@ import { buildFacadeGrammarPrompt, FACADE_GRAMMAR_V3_SCHEMA } from "./grammar/pr
 import { resolveFacadeProgram } from "./resolver.mjs";
 import { validateResolvedFacadeProgram } from "./validator.mjs";
 
-/**
- * Presentation ambient for facades that draw their own trim.
- *
- * The `competition-daylight-v1` preset was calibrated on facades with almost no jamb
- * reveals. Once a grammar nests every opening the way the guidance asks, the bronze role
- * goes from under 2% of the building to about 13%, and those returns face into the opening
- * where they see the sky and the room environment and almost none of the sun. The building's
- * luminance floor then falls to about 3 against the range gate's `luminanceP05 >= 10`.
- *
- * Ambient alone does not clear it: on the most glazed scheme measured, the top end reached
- * 239 against a 248 ceiling before the shadows reached 10. Ambient up and exposure down
- * together squeeze both ends, and ACES rolls the highlights off so the floor gains more than
- * the ceiling loses. Measured across six schemes: P05 13.3 to 62.6, P95 at most 243.1.
- *
- * This is an override rather than a change to the preset because the preset's values are
- * pinned by `elevation3d-texturing-render-style.test.ts` and by every retained baseline.
- */
-export const REVEAL_FACADE_PRESENTATION_STYLE = Object.freeze({
-	materialResponse: { glass: { tintMultiplier: "#5f8194" } },
-	environment: { intensity: 1.7 },
-	hemisphere: { intensity: 2.2 },
-	exposure: 0.86,
-});
+// Presentation ambient for facades that draw their own trim. The derivation and the
+// measurements live with the constant in final-presentation.mjs, which is its home now that
+// the typed delivery path renders under it as well; it stays exported from here because
+// every runner and the design index import it as part of the authoring kit.
+export { REVEAL_FACADE_PRESENTATION_STYLE };
 
 /**
  * Write the brief an author needs: the prompt the director would have sent, the schema the
