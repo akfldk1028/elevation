@@ -206,7 +206,24 @@ function grammarPrimitives(program, context, entrance) {
 		}
 		for (const primitive of derived) {
 			if (primitive.kind === "door") continue;
-			if (displacedByEntrance(entrance, segment.segment_id, primitive.local_bounds, gap)) continue;
+			// The horizontal gap is breathing room between the door and other OPENINGS. Applying
+			// it to solid members deleted a full-height corner mullion whose bottom 2.6 m merely
+			// shared the entrance storey - the skin lost its fold framing on the entrance facet
+			// and FOLD_CLEARANCE_INVALID fired on windows four storeys up, pointing nowhere near
+			// the door. A solid member yields only where it actually covers the door, and it
+			// yields by being cut at the door head rather than deleted: the author cannot know
+			// where the deterministic entrance lands, so a grid mullion crossing the centred
+			// door is not an authoring error, and deleting its full 16.5 m took the separation
+			// and the fold framing of every storey above with it. What stands above the door
+			// survives; what does not reach past the door head goes.
+			if (primitive.kind === "window") {
+				if (displacedByEntrance(entrance, segment.segment_id, primitive.local_bounds, gap)) continue;
+			} else if (displacedByEntrance(entrance, segment.segment_id, primitive.local_bounds, 0)) {
+				const doorTop = entrance.local_bounds.z_max;
+				if (primitive.local_bounds.z_max <= doorTop + 1e-8) continue;
+				primitives.push({ ...primitive, local_bounds: { ...primitive.local_bounds, z_min: Math.max(primitive.local_bounds.z_min, doorTop) } });
+				continue;
+			}
 			primitives.push(primitive);
 		}
 	}
