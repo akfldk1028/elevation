@@ -526,3 +526,22 @@ corner mullion is the return. The clearance should therefore be a property of
 the construction (punched: 0.3; skin: the mullion width), not a global constant.
 That is the one change that would move the fold band from 0.70 m to about
 0.10 m, which is the difference between a pier rhythm and a mullion grid.
+
+## 2026-08-19 the typed-facade e2e is green, and the suite is 867/867
+
+`4ac7bfa`. The `61d457f` break is closed with the pair both halves of which were
+already on the table: `brick-cladding` takes `opaque` (the pre-61d457f state,
+what the typed 0.60 dark-fraction limit was calibrated for - the plan's 8 seam
+segments clear because the cladding's cut face stops sharing the mass's role),
+and `deliverFacadeFinalPresentation` takes `renderStyleOverrides`, defaulting to
+`REVEAL_FACADE_PRESENTATION_STYLE`, so the typed delivery renders under the
+reveal ambient instead of the preset that measured its back view at P50 9.85.
+Measured after both: P05 27.6-41.4 / P50 36.4-76.6 / P95 <= 243.1. The constant
+now lives in `final-presentation.mjs`; the authoring kit re-exports it.
+
+Two things this settles from the earlier open lists: the fifth role stays
+rejected (nothing needed it), and item 4 of 2026-08-17 - "anyone writing a new
+runner hits the same wall unless they use the constant" - no longer applies to
+the delivery path, which defaults to it.
+
+Retained verification run: `D:\Data\50_ELE\facade-agent-verification\typed-e2e-debug-20260819`.
