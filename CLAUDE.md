@@ -566,3 +566,26 @@ The reconstructed attempt-1 geometry lives as `grammar-fold-probe.json` and
 changed again, so the next live provider call is still a fresh fingerprint. `run-live-grammar-v13.mjs`
 is ready in the sdd directory: composePerspectiveHero for the hero and the reveal ambient
 for the PBR, the two defects every earlier runner carried.
+
+## 2026-08-19 the first live-provider facade ships: llm-facade-live-v14
+
+The result to keep. gpt-5.5, brief unmodified, three attempts, $0.20 all
+told across v13+v14 ($0.12 wasted measuring the blind-correction defect,
+$0.08 for the two corrections that landed). Attempt 1 (replayed free from
+v13's ledger) died on the fixed-parts overrun; attempt 2 - the first
+correction ever delivered WITH the resolver's cause - fixed the
+arithmetic and left one real fault (FLOOR_BAND_INTRUSION, head 0.12 m
+from a slab line, correctly reported as a distance by the new message);
+attempt 3 accepted: mixed construction (back skin 0.589 transparency,
+three punched faces, worst opening ratio 0.242), 852 details, all eight
+views + PBR + hero rendered and accepted, critic 100/100/99/100/94/100.
+The back elevation reads as a curtain wall - continuous glass, mullion
+grid, spandrels at slabs, storefront base - which no live run had ever
+produced.
+
+Replay mechanics, learned the hard way: a free replay needs the SAME
+ledger file AND the attempt's persisted prepared.json/response.json
+copied into the new run dir, the ledger trimmed to only the ops being
+replayed (the aggregate budget counts dead reservations), and no stale
+failed state.json. Run dir:
+`facade-agent-verification/llm-facade-design-agent-20260810/creative-020/llm-facade-live-v14`.
