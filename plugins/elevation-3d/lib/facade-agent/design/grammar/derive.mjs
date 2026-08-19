@@ -122,8 +122,15 @@ export function deriveFacadePrimitives({ grammar, segment, storeys, entrance = n
 				kind,
 				segment_id: segment.segment_id,
 				// Clamped, because rounding a facet width up puts the member past the segment and
-				// the validator reads that as SEGMENT_BOUNDS_INVALID.
-				local_bounds: { u_min: Math.max(0, round(uStart)), u_max: Math.min(segment.length_m, round(uEnd)), z_min: round(zMin), z_max: round(zMax) },
+				// the validator reads that as SEGMENT_BOUNDS_INVALID. z gets the same clamp as u:
+				// a stepped mass's segments carry unrounded local_z (e.g. 7.284812029999999), so
+				// rounding an emitted top to 8 decimals lands a hair past it and the validator has
+				// no epsilon - a fault no prism segment could ever produce.
+				local_bounds: {
+					u_min: Math.max(0, round(uStart)), u_max: Math.min(segment.length_m, round(uEnd)),
+					z_min: Math.max(segment.local_z?.[0] ?? -Infinity, round(zMin)),
+					z_max: Math.min(segment.local_z?.[1] ?? Infinity, round(zMax)),
+				},
 				depth_m: kind === "door" && entrance ? entrance.recess_m : alternative.depth_m,
 				family_id: familyId(symbol, scope.param),
 				storey: storeyOf(zMin),

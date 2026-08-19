@@ -15,7 +15,7 @@ const DETAIL_PRIMITIVES_PER_BAY = 15;
 export const PUNCHED_FACADE_BUDGETS = Object.freeze({
 	maxFacadeWidthM: 120,
 	maxFacadePlanes: 4,
-	maxFacadeSegments: 32,
+	maxFacadeSegments: 64,
 	maxBaysPerPlane: 128,
 	maxFloorGuides: 65,
 	maxStoreys: 64,
@@ -139,8 +139,10 @@ function validatePlanes(facadePlanes, grammar) {
 	if (!segmentAuthority && new Set(planes.map((plane) => plane.view)).size !== planes.length) {
 		throw new TypeError("invalid facade geometry: facade views must be unique");
 	}
-	if (segmentAuthority && (new Set(planes.map((plane) => plane.segment_id)).size !== planes.length
-		|| planes.some((plane, index) => plane.end_corner_id !== planes[(index + 1) % planes.length].start_corner_id))) {
+	// Corner chaining is no longer asked of the authority: a stepped mass's inscribed
+	// rectangles do not meet corner to corner (see deriveFacadeSegmentsFromMass), and the
+	// design path pins the authority byte for byte in assertCanonicalFacadeSegmentAuthority.
+	if (segmentAuthority && new Set(planes.map((plane) => plane.segment_id)).size !== planes.length) {
 		throw new TypeError("invalid facade geometry: facade segment topology is invalid");
 	}
 	for (const plane of planes) {
@@ -218,9 +220,14 @@ function pointKey(point) {
 }
 
 function onRectangleBoundary(start, end, bounds) {
+	// Not EPSILON: projected coordinates drift by a few nanometres because the tangent is
+	// built from a normal rounded to 8 decimals (the same drift usableFaceRectangle already
+	// compensates for when it snaps rectangle corners to real vertices). At 1e-9 an edge
+	// 1.5e-8 off the boundary reads as a hole in the mass and zeroes the whole coverage;
+	// 1e-7 matches the vertex-matching tolerance used everywhere else in this derivation.
 	return [
 		[0, bounds.u0], [0, bounds.u1], [1, bounds.v0], [1, bounds.v1],
-	].some(([axis, value]) => Math.abs(start[axis] - value) <= EPSILON && Math.abs(end[axis] - value) <= EPSILON);
+	].some(([axis, value]) => Math.abs(start[axis] - value) <= 1e-7 && Math.abs(end[axis] - value) <= 1e-7);
 }
 
 function massBackingCoverage(support, bounds) {
@@ -686,19 +693,40 @@ function connectedTriangleGroups(mesh, triangleIndexes) {
 
 export function deriveFacadeSegmentsFromMass({ mesh } = {}) {
 	const orientation = closedShellOrientation(mesh);
-	const planeGroups = new Map();
+	// Coplanarity is a tolerance, not a string. Grouping by the rounded normal-and-offset
+	// key fractured one plane of a stepped mass into several groups a few nanometres apart
+	// (each triangle's offset is taken from its own first vertex, so float noise lands in
+	// the key), and every fragment then failed downstream: a fragment's boundary pinches
+	// where its missing neighbours would have been, and a single-triangle fragment is a
+	// sliver with no inscribed rectangle. Planes a micron apart are the same plane.
+	const vertical = [];
 	for (let triangleIndex = 0; triangleIndex < mesh.triangles.length; triangleIndex++) {
 		const points = mesh.triangles[triangleIndex].map((index) => mesh.vertices[index]);
 		const raw = cross(points[1].map((value, axis) => value - points[0][axis]), points[2].map((value, axis) => value - points[0][axis]));
 		const length = Math.hypot(...raw);
 		const normal = raw.map((value) => value * orientation / length);
 		if (Math.abs(normal[2]) > 1e-7) continue;
-		const roundedNormal = normal.map((value) => Number(value.toFixed(8)));
-		const offset = Number(dot(roundedNormal, points[0]).toFixed(8));
-		const key = `${roundedNormal.join(",")}|${offset}`;
-		const group = planeGroups.get(key) ?? { normal: roundedNormal, indexes: [] };
-		group.indexes.push(triangleIndex);
-		planeGroups.set(key, group);
+		vertical.push({ triangleIndex, normal, offset: dot(normal, points[0]), area: length / 2 });
+	}
+	const parent = vertical.map((_, index) => index);
+	const findRoot = (index) => (parent[index] === index ? index : (parent[index] = findRoot(parent[index])));
+	for (let left = 0; left < vertical.length; left++) for (let right = left + 1; right < vertical.length; right++) {
+		if (dot(vertical[left].normal, vertical[right].normal) < 1 - 1e-9) continue;
+		if (Math.abs(vertical[left].offset - vertical[right].offset) > 1e-6) continue;
+		parent[findRoot(right)] = findRoot(left);
+	}
+	const planeGroups = new Map();
+	for (let index = 0; index < vertical.length; index++) {
+		const group = planeGroups.get(findRoot(index)) ?? { members: [] };
+		group.members.push(vertical[index]);
+		planeGroups.set(findRoot(index), group);
+	}
+	for (const group of planeGroups.values()) {
+		// The group's plane is its largest triangle's, not its first one's: the largest face
+		// carries the least normal noise, and the choice is deterministic under any grouping.
+		const representative = group.members.reduce((best, member) => (member.area > best.area ? member : best));
+		group.normal = representative.normal.map((value) => Number(value.toFixed(8)));
+		group.indexes = group.members.map((member) => member.triangleIndex);
 	}
 	const unsorted = [];
 	for (const group of planeGroups.values()) for (const indexes of connectedTriangleGroups(mesh, group.indexes)) {
@@ -722,24 +750,21 @@ export function deriveFacadeSegmentsFromMass({ mesh } = {}) {
 	if (!unsorted.length || unsorted.length > PUNCHED_FACADE_BUDGETS.maxFacadeSegments) throw new RangeError("facade segment budget exceeded");
 	const byStart = new Map(unsorted.map((segment) => [segment.start_corner_id, segment]));
 	if (byStart.size !== unsorted.length) throw new TypeError("invalid facade topology: perimeter segment starts are ambiguous");
-	const first = [...unsorted].sort((left, right) => left.origin[0] - right.origin[0] || left.origin[1] - right.origin[1] || left.segment_id.localeCompare(right.segment_id))[0];
+	// A prism's walls chain into one closed cycle through their rectangle corners, and the
+	// derivation used to demand exactly that. On a stepped mass the chain is not a property
+	// of the envelope: each segment is the largest rectangle inscribed in its wall patch, and
+	// two adjacent patches of different heights inscribe rectangles whose bottom corners do
+	// not meet. Envelope closure is already guaranteed where it belongs -
+	// closedShellOrientation proves the mesh is one closed shell, and every segment is
+	// exact-MASS backed - so the walk orders segments along the chain wherever corners do
+	// meet and starts a fresh chain from the sort order where they do not.
+	const ordered = [...unsorted].sort((left, right) => left.origin[0] - right.origin[0] || left.origin[1] - right.origin[1] || left.segment_id.localeCompare(right.segment_id));
 	const segments = [], used = new Set();
-	let current = first;
-	while (current && !used.has(current.segment_id)) {
-		segments.push(current); used.add(current.segment_id); current = byStart.get(current.end_corner_id);
-	}
-	if (segments.length !== unsorted.length || current?.segment_id !== first.segment_id) {
-		// Carrying the measurement, for the same reason the exact-MASS backing rejection below
-		// does: "not one closed cycle" reads as a bug in the walker when it is a statement about
-		// the footprint, and without the numbers there is no way to tell a footprint in two
-		// pieces from one that merely fails to chain at this tolerance.
-		const reached = segments.length, total = unsorted.length;
-		const dangling = segments.length && !byStart.get(segments[segments.length - 1].end_corner_id)
-			? segments[segments.length - 1].end_corner_id : null;
-		throw new TypeError(`invalid facade topology: perimeter is not one closed cycle`
-			+ ` (walked ${reached} of ${total} segments from ${first.segment_id};`
-			+ ` ${dangling ? `the chain ends at corner ${dangling} and nothing starts there` : "it closed early into a shorter loop"},`
-			+ ` so the footprint is ${reached < total ? "in more than one piece or breaks at this tolerance" : "self-intersecting"})`);
+	for (const seed of ordered) {
+		let current = seed;
+		while (current && !used.has(current.segment_id)) {
+			segments.push(current); used.add(current.segment_id); current = byStart.get(current.end_corner_id);
+		}
 	}
 	const xs = mesh.vertices.map((point) => point[0]), ys = mesh.vertices.map((point) => point[1]);
 	const facadeLengths = {
