@@ -589,3 +589,28 @@ copied into the new run dir, the ledger trimmed to only the ops being
 replayed (the aggregate budget counts dead reservations), and no stale
 failed state.json. Run dir:
 `facade-agent-verification/llm-facade-design-agent-20260810/creative-020/llm-facade-live-v14`.
+
+## 2026-08-19 the stepped mass teaches the loop four lessons ($0.24 of live runs, one blind pass)
+
+Two live runs on creative-013 failed in opposite directions and a blind author then
+passed attempt 3 with a design that reads the terracing as one composition (three skin
+faces tracing the steps, punched front, worst opening 0.231). What all three runs taught,
+each fixed and committed:
+
+- `9e8385f` the brief now carries a dynamic facet advisory (widths/heights computed per
+  candidate, silent on a prism) ending with the guard that names where the design must
+  still live - the advisory without the guard made the live model empty the building to
+  seven primitives, the giant-order trade again.
+- `9e8385f` the OpenAI adapter timeout cap is 600 s; the stepped brief blew the 300 s cap
+  and stranded an uncertain paid operation.
+- `b50570c` two rules only the error messages knew are now stated: the punched u scope is
+  pre-inset by the fold clearance (both the live model and the blind author budgeted it
+  twice), and a repeat never draws zero tiles (an author built bare-wall-for-free on the
+  contrary reading).
+- `ea2f148` MATERIAL_ROLE_MISSING's certain half runs in composition now, inside the
+  correction loop - a live fallback and the blind author's accepted design both died in
+  the renderer on a rule ("a pure skin needs its transom") the loop never relayed.
+
+Still open for 013: a fresh live run on the hardened brief (fingerprint moved again), and
+the blind design needs its transoms before it can render. Total live spend today $0.44
+across v13/v14/013-a/013-b, plus one uncertain $0.04 from the timeout.
