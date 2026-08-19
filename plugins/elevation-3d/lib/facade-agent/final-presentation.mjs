@@ -48,6 +48,32 @@ function exactViewNames(value) {
 export const PERSPECTIVE_HERO_SIZE = Object.freeze({ width: 1920, height: 1280 });
 
 /**
+ * The `competition-daylight-v1` preset was calibrated on facades with almost no jamb
+ * reveals. Once a facade nests every opening - which the design grammar's guidance asks for
+ * and the typed vocabulary draws as `window-reveal` - the bronze role goes from under 2% of
+ * the building to about 13%, and those returns face into the opening where they see the sky
+ * and the room environment and almost none of the sun. The building's luminance floor then
+ * falls to about 3 against the range gate's `luminanceP05 >= 10`.
+ *
+ * Ambient alone does not clear it: on the most glazed scheme measured, the top end reached
+ * 239 against a 248 ceiling before the shadows reached 10. Ambient up and exposure down
+ * together squeeze both ends, and ACES rolls the highlights off so the floor gains more than
+ * the ceiling loses. Measured across six schemes: P05 13.3 to 62.6, P95 at most 243.1.
+ *
+ * This is an override rather than a change to the preset because the preset's values are
+ * pinned by `elevation3d-texturing-render-style.test.ts` and by every retained baseline.
+ * It lives here rather than in the authoring kit because the typed delivery renders under
+ * it too: brick-cladding carries the `opaque` role, and a 78%-opaque elevation under the
+ * default ambient measured a building P50 of 9.85 against the floor of 10.
+ */
+export const REVEAL_FACADE_PRESENTATION_STYLE = Object.freeze({
+	materialResponse: { glass: { tintMultiplier: "#5f8194" } },
+	environment: { intensity: 1.7 },
+	hemisphere: { intensity: 2.2 },
+	exposure: 0.86,
+});
+
+/**
  * Reframe a square presentation view as the landscape hero without cropping it.
  *
  * The runners had been doing this with `fit: "cover"`, which fills the wider frame by
@@ -214,6 +240,7 @@ function validateRender(render, { selectedGlbSha256, canonicalSelection, present
 export async function deliverFacadeFinalPresentation({
 	runDir, presentationRoot, candidateId, candidateSha256, provider, selectedVersion, artifact, validation, validationReceipt, technicalDelivery,
 	input, signal, lifecycle, deps = {},
+	renderStyleOverrides = REVEAL_FACADE_PRESENTATION_STYLE,
 } = {}) {
 	throwIfAborted(signal);
 	const absoluteRunDir = resolve(runDir);
@@ -297,6 +324,7 @@ export async function deliverFacadeFinalPresentation({
 			cameras,
 			proceduralBaseline,
 			renderStyleId: "competition-daylight-v1",
+			renderStyleOverrides,
 			canonicalSelection,
 			signal,
 			lifecycle,
