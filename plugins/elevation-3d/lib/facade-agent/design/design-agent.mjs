@@ -223,9 +223,14 @@ export async function runFacadeDesignAgent({ runDir, context, provider, ledger, 
 			// `actual` against `limit` per primitive and nothing has ever read it.
 			correctionCodes = locatedCodes(validation, resolved, context);
 		} catch (error) {
-			// Hand the parse failure back verbatim. A bare PROGRAM_INVALID leaves the
-			// model correcting blind, and it repeats the same mistake every attempt.
-			const reason = String(error?.message ?? "").replace(/[\r\n]+/g, " ").slice(0, 600);
+			// Hand the failure back verbatim, INCLUDING its cause chain. The resolver wraps
+			// its loud layout message ("needs 1.96 m but the scope is 1.606 m ... do not
+			// budget for it twice") in a generic "facade program resolution failed", and
+			// relaying only the wrapper is how a live run spent all three attempts on the
+			// same overrun: the model was told the program was invalid and nothing else.
+			const chain = [];
+			for (let cause = error; cause && chain.length < 4; cause = cause.cause) chain.push(String(cause?.message ?? cause));
+			const reason = chain.join(" - ").replace(/[\r\n]+/g, " ").slice(0, 900);
 			correctionCodes = [reason ? `PROGRAM_INVALID: ${reason}` : "PROGRAM_INVALID"];
 		}
 		let composition = null;

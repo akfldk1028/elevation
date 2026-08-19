@@ -82,6 +82,38 @@ test("director caps correction at two attempts without relaxing validation", asy
 	assert.equal(adapter.calls, 3);
 });
 
+// The first live provider run spent all three attempts on one overrun because the
+// correction relayed only the resolver's wrapper - "facade program resolution failed" -
+// and the layout message with the numbers and the fix stayed inside error.cause. The
+// model must see the cause, or it corrects blind and repeats itself.
+test("a resolve failure reaches the next attempt with its cause, not just the wrapper", async (t) => {
+	const fixture = await setup(t);
+	const overrun = {
+		schema_version: "arr.elevation3d.facade-grammar.v3",
+		concept_id: "overrun-probe",
+		start: "Facade",
+		entrance: {
+			segment_selector: "primary_visible_ground_segment", preferred_bay: "central_focus",
+			door_family: "storefront-double", width_m: 1.6, height_m: 2.6, recess_m: 0.3,
+		},
+		rules: [
+			{ name: "Facade", alternatives: [{ when: null, split: { axis: "u", parts: [{ size: "50", symbol: "W", arg: null, repeat: null }] }, terminal: null, inset_m: 0, depth_m: 0 }] },
+			{ name: "W", alternatives: [{ when: null, split: null, terminal: "wall", inset_m: 0, depth_m: 0 }] },
+		],
+	};
+	let secondPrompt = "";
+	const adapter = provider(Array(3).fill(overrun), async (attempt, request) => {
+		if (attempt === 2) secondPrompt = request.prompt;
+	});
+	await assert.rejects(() => runFacadeDesignAgent({
+		runDir: fixture.runDir, context: fixture.context, provider: adapter, ledger: fixture.ledger,
+		ceilingUsd: 0.1, estimateUsd: 0.05, language: "grammar",
+	}), (error: any) => error?.code === "FACADE_DESIGN_CORRECTION_EXHAUSTED");
+	assert.equal(adapter.calls, 3);
+	assert.match(secondPrompt, /PROGRAM_INVALID: facade program resolution failed - /, secondPrompt.slice(-600));
+	assert.match(secondPrompt, /does not fit: its parts need/, secondPrompt.slice(-600));
+});
+
 test("an uncertain paid design submission is never replayed", async (t) => {
 	const fixture = await setup(t);
 	const adapter = provider([new Error("connection lost after submit")]);
