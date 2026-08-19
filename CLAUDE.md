@@ -545,3 +545,24 @@ runner hits the same wall unless they use the constant" - no longer applies to
 the delivery path, which defaults to it.
 
 Retained verification run: `D:\Data\50_ELE\facade-agent-verification\typed-e2e-debug-20260819`.
+
+## 2026-08-19 third blind run: the entrance was deleting the grammar's members
+
+`f5da9a9`. A repo-blind author given "a masonry building that opens into glass where it
+meets the street" produced the first mixed-construction design (back face skin, three
+punched faces, worst opening ratio 0.174, skin transparency 0.527) and passed on attempt 2.
+Attempt 1 exposed that the entrance carve-out dropped any primitive grazing the door plus
+its 0.3 m gap - a full-height corner mullion lost its whole 16.5 m to a 2.6 m overlap, and
+with it the fold framing and mullion-as-separation exemptions the brief promises. Fifteen
+of the eighteen retained grammars were quietly losing one to three members each; verdicts
+all unchanged under the fix. Solids now yield only where they cover the door, cut at the
+door head. FLOOR_BAND_INTRUSION's boundary epsilons are symmetric now (exactly 0.15 clears,
+both sides of both lines) and it reports distance-to-slab, not a coordinate. The brief
+states the rules the authors had to guess (door discarded, wall emits nothing, repeat
+rounding, one-skin-word classification, exact boundaries).
+
+The reconstructed attempt-1 geometry lives as `grammar-fold-probe.json` and
+`grammar-grid-probe.json` beside the other subagent grammars, both accepted. The prompt
+changed again, so the next live provider call is still a fresh fingerprint. `run-live-grammar-v13.mjs`
+is ready in the sdd directory: composePerspectiveHero for the hero and the reveal ambient
+for the PBR, the two defects every earlier runner carried.
