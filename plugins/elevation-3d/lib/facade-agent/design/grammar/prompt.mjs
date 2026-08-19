@@ -155,9 +155,12 @@ Terminals, and what each one is for:
 ${TERMINAL_VOCABULARY.map((terminal) => `  ${terminal.word} - ${terminal.purpose}`).join("\n")}
 
 Every alternative carries inset_m and depth_m - they are required fields, not optional
-ones - and both are at most ${BOUNDS.maxInsetM} m. Use 0 where a terminal needs neither. On a
-split alternative set terminal to null and both inset_m and depth_m to 0; on a terminal
-alternative set split to null.
+ones - and both are at most ${BOUNDS.maxInsetM} m. inset_m shrinks the member in its plane: the
+drawn rectangle is the scope pulled in by inset_m on all four sides, so an inset of 0.12
+takes 0.24 m off the width AND 0.24 m off the height, and a member shorter than twice its
+inset vanishes into a sliver or into nothing. depth_m is its thickness out of the plane.
+Use 0 where a terminal needs neither. On a split alternative set terminal to null and both
+inset_m and depth_m to 0; on a terminal alternative set split to null.
 
 The start symbol is derived once per facet, not once per elevation. A folded elevation
 is several facets side by side, so a pilaster at the two edges of the start rule puts a
@@ -188,7 +191,14 @@ facade has no parts. Give it parts instead.
   other, there is nothing to look at. This is not asked of a glazed skin - a unitised
   system's panes are identical because that is what unitised means, and the check knows
   which construction each face is in. Do not add one oversized pane to a skin to satisfy
-  it; that is the answer this paragraph exists to prevent.
+  it; that is the answer this paragraph exists to prevent. Measured exactly: on the faces
+  built as punched wall, the largest opening's area must be at least 1.5x the median
+  opening's area (reported as scale_ratio, largest_opening_m2 / median_opening_m2; below
+  1.5 is SCALE_HIERARCHY_FLAT). And the hierarchy must be a ladder, not a cliff: openings
+  are clustered into size levels by sqrt(area), and if one level is more than 10x the next
+  (levels_of_scale in the metrics) the subject reads as a separate building and
+  SCALE_STEP_BROKEN fires - keep neighbouring sizes within about two or three of each
+  other, which is also the step that reads as deliberate.
 - Cross the floors, and do not pay for it in openings. Nothing here confines an opening
   or a pier to one storey, and the placement rules pass a slot that runs past a slab -
   only the two ends have to sit clear of it. A grammar that splits every storey and then
@@ -215,9 +225,13 @@ facade has no parts. Give it parts instead.
   carry a mean back. Size the panes themselves to reach a fifth: an author who sizes so
   that the panes-only and the panes-plus-trim readings both land in range ends up at a
   twentieth, which is a blank wall with slits in it. A fifth to two fifths is the range for
-  a wall with openings cut into it. A glazed skin runs higher - half to two thirds of the
-  face is vision glass on a real curtain wall - and overshooting the range on a face built
-  that way is not a fault.
+  a wall with openings cut into it; the checker rejects only below 10% on the poorest face
+  (OPENING_RATIO_LOW), so a deliberately closed face may sit between the two numbers - but
+  that gap is headroom for a decision, not the target. A glazed skin runs higher - half to
+  two thirds of the face is vision glass on a real curtain wall - and that figure is
+  reported as skin_transparency_by_view, not gated: overshooting the punched range on a
+  face built as a skin is not a fault, and undershooting the skin range fails nothing but
+  the drawing.
 - Nest an opening into lintel, jamb reveals, pane and sill rather than leaving a bare
   rectangle - that is what separates a drawn facade from a painted one. All four, not
   a head and a shelf only: the reveals are the sides, and without them an opening has
@@ -252,15 +266,20 @@ lowest and the highest storey must carry openings.
 
 How an opening meets a fold depends on which construction you are drawing, because the
 two are not doing the same thing there. A hole punched in a solid wall must stay 0.3 m
-clear of the fold: cutting one through a turn breaks the mass. A glazed skin does not
-pierce the mass at the corner, it replaces it, so its glass may run right to the fold as
-long as the strip is framed. Framed means a mullion or a spandrel pier that stands at the
-facet edge, overlaps the glass in height, and **touches the glass**: the member's inner
-face and the pane's outer edge must be the same coordinate. A gap between them, even a
-few millimetres, is bare wall at the corner and is rejected exactly as bare glass is.
-Write the corner member with \`inset_m: 0\` and flush with the edge of its scope, and put
-the pane immediately beside it in the same split, so no arithmetic can open a sliver
-between the two.
+clear of the fold: cutting one through a turn breaks the mass. The fault is
+FOLD_CLEARANCE_INVALID, and what it measures is the distance from the opening's nearest
+edge to the facet edge. A glazed skin does not pierce the mass at the corner, it replaces
+it, so its glass may run right to the fold as long as the strip is framed. Framed means a
+mullion or a spandrel pier that reaches the facet edge itself - its own rectangle starting
+at the very edge of the facet, not merely near it - overlaps the glass in height, and
+**touches the glass**: the member's inner face and the pane's outer edge must be the same
+coordinate. A gap between them, even a few millimetres, is bare wall at the corner and is
+rejected exactly as bare glass is. A skin member written with \`inset_m: 0\` and flush with
+the edge of its scope is carried out to the facet edge automatically; any nonzero inset
+cancels that carry and leaves the member short of the edge, which fails the framing test
+however exactly it touches the pane. So write the corner member with \`inset_m: 0\` and
+flush with the edge of its scope, and put the pane immediately beside it in the same
+split, so no arithmetic can open a sliver between the two.
 
 Two openings on one segment need 0.3 m of clear wall between them wherever they overlap
 in height - unless a mullion stands between them, which counts as the separation. So a
@@ -281,10 +300,23 @@ export function buildFacadeGrammarPrompt({ context, correctionCodes = [], attemp
 		existing_openings: context.existing_openings,
 		technical_thumbnails: context.technical_thumbnails,
 	};
+	// Which face is the street is not a guess the author should have to make: deterministic
+	// code puts the entrance on the highest-visibility ground segment that can hold it, so
+	// the face that segment belongs to is knowable here. Two authors given the same brief
+	// guessed it differently until it was stated.
+	const fold = context.exclusions?.fold_clearance_m ?? 0;
+	const entranceSegment = (context.facade_segments ?? [])
+		.filter((segment) => segment.ground_access && segment.length_m >= 0.8 + fold * 2)
+		.sort((left, right) => right.visibility_score - left.visibility_score
+			|| right.length_m - left.length_m || left.segment_id.localeCompare(right.segment_id))[0] ?? null;
+	const entranceFace = entranceSegment ? (entranceSegment.face_view ?? entranceSegment.view) : null;
 	const prompt = [
 		"You are the architectural facade director. Return exactly one FacadeGrammarV3 object.",
 		OPERATORS,
 		GUIDANCE,
+		entranceFace
+			? `On this candidate the entrance lands on the ${entranceFace} face - it holds the ground segment that ranks first on the visibility-then-length ordering the placement code uses, and only a door too wide for that segment could move it. Treat ${entranceFace} as the street face; the differ-in-kind asked for above is between it and the face opposite.`
+			: "",
 		`Attempt: ${attempt}.`,
 		`Technical context: ${stableJson(boundedContext)}`,
 		correctionCodes.length

@@ -122,7 +122,7 @@ function deepFreeze(value) {
  * find out. Every `measure()` call already records the primitive, the measured value and the
  * limit; this turns the worst one per code into the sentence the author actually needs.
  */
-function locatedCodes(validation, resolved, context) {
+export function locatedCodes(validation, resolved, context) {
 	const byId = new Map((context.facade_segments ?? []).map((segment) => [segment.segment_id, segment]));
 	const worst = new Map();
 	for (const measurement of validation.measurements ?? []) {
