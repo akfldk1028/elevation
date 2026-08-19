@@ -11,11 +11,13 @@ import { TERMINAL_MATERIALS } from "./facade-vocabulary.mjs";
 const EPSILON = 1e-9;
 const GEOMETRY_GAP_M = 1e-4;
 const DETAIL_PRIMITIVES_PER_BAY = 15;
+/** |normal_z| at 15 degrees off vertical: the wall/roof discriminator. See the derive filter. */
+const WALL_TILT_NZ_LIMIT = Math.sin((15 * Math.PI) / 180);
 
 export const PUNCHED_FACADE_BUDGETS = Object.freeze({
 	maxFacadeWidthM: 120,
 	maxFacadePlanes: 4,
-	maxFacadeSegments: 64,
+	maxFacadeSegments: 128,
 	maxBaysPerPlane: 128,
 	maxFloorGuides: 65,
 	maxStoreys: 64,
@@ -148,8 +150,8 @@ function validatePlanes(facadePlanes, grammar) {
 	for (const plane of planes) {
 		if (!grammar.surfaces.includes(plane.view) || !finitePoint(plane.origin) || !finitePoint(plane.normal)
 			|| !finitePoint(plane.extent_m, 2) || plane.extent_m.some((value) => value <= 0)
-			|| Math.abs(Math.hypot(...plane.normal) - 1) > 1e-6 || Math.abs(plane.normal[2]) > 1e-8) {
-			throw new TypeError("invalid facade geometry: planes require canonical views, unit horizontal normals, origins, and positive extents");
+			|| Math.abs(Math.hypot(...plane.normal) - 1) > 1e-6 || Math.abs(plane.normal[2]) > WALL_TILT_NZ_LIMIT) {
+			throw new TypeError("invalid facade geometry: planes require canonical views, unit wall normals within the batter limit, origins, and positive extents");
 		}
 		if (plane.extent_m[0] + EPSILON < grammar.bay_width_m) {
 			throw new TypeError("invalid facade geometry: facade extent cannot contain an approved bay");
@@ -314,10 +316,26 @@ function validateMassBacking(mesh, plane, tangent, componentOrientations) {
 	return coverage;
 }
 
+/**
+ * The in-plane climb vector: the direction that gains one metre of true height while
+ * staying on the facade plane. Vertical planes climb straight up, [0, 0, 1], which keeps
+ * every prism byte-identical. A battered plane leans the climb into the surface so a
+ * detail placed at (u, z) lies ON the wall instead of poking through it; z stays TRUE
+ * height everywhere because storeys, floor bands and ground access are all in z. The cost
+ * is that one metre of z buys 1/cos(batter) metres of surface, 1.5% at ten degrees.
+ */
+function climbVector(normal) {
+	const horizontal = normal[0] * normal[0] + normal[1] * normal[1];
+	if (!(horizontal > 0)) throw new TypeError("invalid facade geometry: facade plane is horizontal");
+	const lean = -normal[2] / horizontal;
+	return [lean * normal[0], lean * normal[1], 1];
+}
+
 function localPoint(plane, tangent, u, v, n) {
+	const climb = climbVector(plane.normal);
 	return [
-		plane.origin[0] + tangent[0] * u + plane.normal[0] * n,
-		plane.origin[1] + tangent[1] * u + plane.normal[1] * n,
+		plane.origin[0] + tangent[0] * u + plane.normal[0] * n + climb[0] * v,
+		plane.origin[1] + tangent[1] * u + plane.normal[1] * n + climb[1] * v,
 		plane.origin[2] + v,
 	];
 }
@@ -454,7 +472,7 @@ function assertFloat32Separation(floors, planes) {
 	const halfGap = GEOMETRY_GAP_M / 2;
 	const values = [...floors];
 	for (const plane of planes) {
-		const tangent = [-plane.normal[1], plane.normal[0], 0];
+		const tangent = wallTangent(plane.normal);
 		for (let axis = 0; axis < 2; axis++) {
 			values.push(plane.origin[axis]);
 			values.push(plane.origin[axis] + tangent[axis] * plane.extent_m[0]);
@@ -608,10 +626,35 @@ function roundedPoint(point) {
 	return point.map((value) => Number(value.toFixed(8)));
 }
 
+/**
+ * The horizontal in-plane tangent, unit length. `[-n1, n0, 0]` is unit only when the
+ * normal itself is horizontal; on a battered plane it comes out |cos(batter)| long and
+ * every u coordinate measured with it is a few percent short. Vertical normals divide
+ * by exactly 1, so prisms are bit-identical.
+ */
+function wallTangent(normal) {
+	const horizontal = Math.hypot(normal[0], normal[1]);
+	if (!(horizontal > 0)) throw new TypeError("invalid facade geometry: facade plane is horizontal");
+	// A rounded vertical normal measures within 1e-8 of unit horizontal already; dividing
+	// by that noise would move every retained prism artifact by a ninth decimal, so only a
+	// real batter is corrected.
+	const unit = Math.abs(horizontal - 1) > 1e-6 ? horizontal : 1;
+	return [-normal[1] / unit, normal[0] / unit, 0];
+}
+
 /** The point on a facade plane at drawing coordinates (u, z), derived from any face point. */
-function planePoint(reference, tangent, u, z) {
-	const offset = u - dot(reference, tangent);
-	return [reference[0] + tangent[0] * offset, reference[1] + tangent[1] * offset, z];
+function planePoint(reference, tangent, normal, u, z) {
+	// Climbing to z must stay on the plane: on a battered plane, changing z without the
+	// in-plane climb leaves the synthesized point off the surface by (z shift) * normal_z,
+	// which is metres, and every backing test then finds nothing within its tolerance.
+	const climb = climbVector(normal);
+	const along = u - dot(reference, tangent);
+	const rise = z - reference[2];
+	return [
+		reference[0] + tangent[0] * along + climb[0] * rise,
+		reference[1] + tangent[1] * along + climb[1] * rise,
+		z,
+	];
 }
 
 /**
@@ -623,7 +666,7 @@ function planePoint(reference, tangent, u, z) {
  * placed later still sits on mass. A face that is already rectangular returns its full
  * extent, which keeps prismatic candidates byte-identical to the earlier pipeline.
  */
-function usableFaceRectangle(mesh, indexes, tangent) {
+function usableFaceRectangle(mesh, indexes, tangent, normal) {
 	const localIndex = new Map();
 	const points = [];
 	const triangles = indexes.map((index) => mesh.triangles[index].map((vertex) => {
@@ -644,7 +687,7 @@ function usableFaceRectangle(mesh, indexes, tangent) {
 	// which is enough to lose exact-MASS backing, so a rectangle corner that is a real
 	// face vertex uses that vertex verbatim.
 	const corner = (u, z) => vertices.find((point) => Math.abs(dot(point, tangent) - u) <= 1e-7
-		&& Math.abs(point[2] - z) <= 1e-7) ?? planePoint(vertices[0], tangent, u, z);
+		&& Math.abs(point[2] - z) <= 1e-7) ?? planePoint(vertices[0], tangent, normal, u, z);
 	return {
 		u0: rectangle.u_min, u1: rectangle.u_max, z0: rectangle.z_min, z1: rectangle.z_max,
 		start: [...corner(rectangle.u_min, rectangle.z_min)], end: [...corner(rectangle.u_max, rectangle.z_min)],
@@ -705,7 +748,13 @@ export function deriveFacadeSegmentsFromMass({ mesh } = {}) {
 		const raw = cross(points[1].map((value, axis) => value - points[0][axis]), points[2].map((value, axis) => value - points[0][axis]));
 		const length = Math.hypot(...raw);
 		const normal = raw.map((value) => value * orientation / length);
-		if (Math.abs(normal[2]) > 1e-7) continue;
+		// A wall is within 15 degrees of vertical, not exactly vertical. creative-004 is a
+		// battered mass: 118 of its triangles lean 1e-7 to 10 degrees off plumb and carry
+		// 749 m2 of wall against the 582 m2 that is exact, so the old 1e-7 filter discarded
+		// more than half the building before the perimeter was assembled. Measured on that
+		// mass the wall population saturates at 10 degrees and nothing exists between 10 and
+		// 45, so any cut in that plateau separates walls from roofs; 15 sits mid-plateau.
+		if (Math.abs(normal[2]) > WALL_TILT_NZ_LIMIT) continue;
 		vertical.push({ triangleIndex, normal, offset: dot(normal, points[0]), area: length / 2 });
 	}
 	const parent = vertical.map((_, index) => index);
@@ -731,8 +780,8 @@ export function deriveFacadeSegmentsFromMass({ mesh } = {}) {
 	const unsorted = [];
 	for (const group of planeGroups.values()) for (const indexes of connectedTriangleGroups(mesh, group.indexes)) {
 		const normal = group.normal;
-		const tangent = [-normal[1], normal[0], 0];
-		const usable = usableFaceRectangle(mesh, indexes, tangent);
+		const tangent = wallTangent(normal);
+		const usable = usableFaceRectangle(mesh, indexes, tangent, normal);
 		if (!usable) continue;
 		const { u0, u1, z0, z1, start, end } = usable;
 		if (u1 - u0 <= EPSILON || z1 - z0 <= EPSILON) throw new TypeError("invalid facade topology: vertical segment is degenerate");
@@ -826,7 +875,7 @@ export function buildPunchedFacadeDetails({ mesh, floorGuides, facadePlanes, gra
 		if (floors[0] < minimum - EPSILON || floors.at(-1) > maximum + EPSILON) {
 			throw new TypeError("invalid facade geometry: floor guides exceed a facade plane extent");
 		}
-		const tangent = [-plane.normal[1], plane.normal[0], 0];
+		const tangent = wallTangent(plane.normal);
 		const massBacking = validateMassBacking(mesh, plane, tangent, componentOrientations);
 		const { regions, ...returnWidths } = bayRegions(plane.extent_m[0], canonical);
 		for (let floorIndex = 0; floorIndex + 1 < floors.length; floorIndex++) {
@@ -876,7 +925,7 @@ export function buildTypedFacadeDetails({ mesh, floorGuides, facadePlanes, primi
 		const material = TYPED_MATERIAL[primitive?.kind];
 		const local = primitive?.local_bounds;
 		if (!plane || !material || !local) throw new TypeError("invalid typed facade primitive authority");
-		const tangent = [-plane.normal[1], plane.normal[0], 0];
+		const tangent = wallTangent(plane.normal);
 		if (!backing.has(plane.segment_id)) backing.set(
 			plane.segment_id, validateMassBacking(mesh, plane, tangent, componentOrientations),
 		);

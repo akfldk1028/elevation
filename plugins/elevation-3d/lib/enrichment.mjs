@@ -104,7 +104,12 @@ function clipRange(polygon, scalar, minimum, maximum) {
 
 function clipToFacadeRectangle(polygon, plane) {
 	const [width, height] = plane.extent_m;
-	const tangent = [-plane.normal[1], plane.normal[0], 0];
+	const horizontal = Math.hypot(plane.normal[0], plane.normal[1]);
+	// A rounded vertical normal measures within 1e-8 of unit horizontal; dividing by that
+	// noise would move every retained prism artifact by a ninth decimal. Only a real
+	// batter is corrected.
+	const unit = Math.abs(horizontal - 1) > 1e-6 ? horizontal : 1;
+	const tangent = [-plane.normal[1] / unit, plane.normal[0] / unit, 0];
 	const tangentOffset = (point) => dot(subtract(point, plane.origin), tangent);
 	const elevation = (point) => point[2] - plane.origin[2];
 	return clipRange(clipRange(polygon, tangentOffset, 0, width), elevation, 0, height);
@@ -152,7 +157,12 @@ function triangleRecords(mesh) {
 
 function extentTriangles(component, plane) {
 	const [width, height] = plane.extent_m;
-	const tangent = [-plane.normal[1], plane.normal[0], 0];
+	const horizontal = Math.hypot(plane.normal[0], plane.normal[1]);
+	// A rounded vertical normal measures within 1e-8 of unit horizontal; dividing by that
+	// noise would move every retained prism artifact by a ninth decimal. Only a real
+	// batter is corrected.
+	const unit = Math.abs(horizontal - 1) > 1e-6 ? horizontal : 1;
+	const tangent = [-plane.normal[1] / unit, plane.normal[0] / unit, 0];
 	const offset = (point) => dot(subtract(point, plane.origin), tangent);
 	const elevation = (point) => point[2] - plane.origin[2];
 	return component.triangles.filter((triangle) => {
@@ -194,7 +204,12 @@ function facadeDetails(mesh, floorGuides, facadePlanes, grammar) {
 	const parapetHeight = Math.max(0, Number(grammar.parapet_height_m));
 	for (const plane of facadePlanes.facade_planes) {
 		const [width, height] = plane.extent_m;
-		const tangent = [-plane.normal[1], plane.normal[0], 0];
+		const horizontal = Math.hypot(plane.normal[0], plane.normal[1]);
+		// A rounded vertical normal measures within 1e-8 of unit horizontal; dividing by that
+		// noise would move every retained prism artifact by a ninth decimal. Only a real
+		// batter is corrected.
+		const unit = Math.abs(horizontal - 1) > 1e-6 ? horizontal : 1;
+		const tangent = [-plane.normal[1] / unit, plane.normal[0] / unit, 0];
 		const offset = (point) => dot(subtract(point, plane.origin), tangent);
 		const elevation = (point) => point[2] - plane.origin[2];
 		const facadePolygon = (triangle) => clipToFacadeRectangle(triangle.vertices, plane);

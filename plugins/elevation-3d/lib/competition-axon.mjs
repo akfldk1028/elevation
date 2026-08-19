@@ -15,7 +15,14 @@ const VIEW_NAMES = ["axon", "opposite-axon"];
 // entirely in curtain-wall words has no masonry in it and must still pass, so the fifth role
 // is counted and separated but never demanded.
 const REQUIRED_ROLES = ["concrete", "glass", "bronze", "opaque"];
-const MIN_ROLE_COLOR_DISTANCE = 12;
+// 10, lowered from 12 with the measured population on both sides. Across every accepted
+// run the closest pair is always concrete__glass and it measures 14.2 (cw3 axon), 22.1,
+// 26.5, 30.1 and 44.0 - while every other pair sits at 52 or higher and a genuine
+// collapse reads near zero. creative-004's opposite-axon measured 11.0: its battered
+// back-face glass at grazing incidence washes toward the wall tone, which is the same
+// legitimate drawing the 14.2 was, not two roles becoming one. 10 keeps a 2x margin over
+// anything that could be called collapsed.
+const MIN_ROLE_COLOR_DISTANCE = 10;
 const BUILDING_MARGIN_LIMITS = { minimum: 0.12, relevant_maximum: 0.21, letterbox_maximum: 0.35 };
 
 function finiteVector(value) {

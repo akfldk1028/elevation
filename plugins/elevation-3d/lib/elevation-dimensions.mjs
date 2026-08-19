@@ -180,7 +180,12 @@ export async function deriveElevationDimensions({ sourceMesh, artifact, facadePl
 	if (!validVector(plane.origin) || !validVector(plane.normal) || Math.abs(vectorLength(plane.normal) - 1) > 1e-6 || !validExtent) {
 		throw new Error("dimension source invalid: facade_planes.facade_planes");
 	}
-	const tangent = [-plane.normal[1], plane.normal[0], 0];
+	const horizontal = Math.hypot(plane.normal[0], plane.normal[1]);
+	// A rounded vertical normal measures within 1e-8 of unit horizontal; dividing by that
+	// noise would move every retained prism artifact by a ninth decimal. Only a real
+	// batter is corrected.
+	const unit = Math.abs(horizontal - 1) > 1e-6 ? horizontal : 1;
+	const tangent = [-plane.normal[1] / unit, plane.normal[0] / unit, 0];
 	const horizontalStart = dot(plane.origin, axes.horizontal);
 	const horizontalEndPoint = plane.origin.map((value, axis) => value + tangent[axis] * plane.extent_m[0]);
 	const verticalEndPoint = plane.origin.map((value, axis) => value + (axis === 2 ? Number(plane.extent_m[1]) : 0));

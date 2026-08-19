@@ -50,7 +50,13 @@ function elevationFrames(elevationDepths) {
 }
 
 function projection(plane, axis) {
-	const tangent = [-plane.normal[1], plane.normal[0]];
+	// Unit horizontal tangent: [-n1, n0] is only unit when the normal is horizontal, and a
+	// battered plane's projected span would come out cos(batter) short of its true length.
+	// A rounded vertical normal measures within 1e-8 of unit already; dividing by that noise
+	// would shift every retained prism artifact, so only a real batter is corrected.
+	const horizontal = Math.hypot(plane.normal[0], plane.normal[1]);
+	const unit = Math.abs(horizontal - 1) > 1e-6 ? horizontal : 1;
+	const tangent = [-plane.normal[1] / unit, plane.normal[0] / unit];
 	const start = [plane.origin[0], plane.origin[1]];
 	const end = [start[0] + tangent[0] * plane.extent_m[0], start[1] + tangent[1] * plane.extent_m[0]];
 	const first = start[0] * axis[0] + start[1] * axis[1];
