@@ -128,7 +128,15 @@ export function validateEmbeddedPbrRender({
 	// geometry, with the box moved by boundary pixels - against creative-020's 0.0044 on a
 	// convex prism cut. The geometry question is carried by the IoU gate at 0.985; this one
 	// exists to catch a translated or rescaled render, which moves the box by far more.
-	if (records.some((record) => !(record.baselineProjectedExtentDelta <= 0.05))) codes.push("PROCEDURAL_BASELINE_MISMATCH");
+	//
+	// The plan view is exempt, with the measurement that showed why: the technical plan
+	// draws the full projection while the presentation plan draws what the 1.2 m clip
+	// leaves, and on a mass whose footprint varies with height those are different widths
+	// of the same building - measured 0.004 on the prism, 0.033 on the stepped mass and
+	// 0.101 on the battered one, tracking the taper and nothing about the render. The
+	// plan's integrity is carried by the camera identity check, which pins its clipping
+	// plane exactly, and by the textured-versus-diagnostic silhouette gates above.
+	if (records.some((record) => record !== views?.plan && !(record.baselineProjectedExtentDelta <= 0.05))) codes.push("PROCEDURAL_BASELINE_MISMATCH");
 	if (VIEW_NAMES.slice(0, 6).some((name) => views?.[name]?.cameraType !== "orthographic")
 		|| VIEW_NAMES.slice(6).some((name) => views?.[name]?.cameraType !== "perspective")) codes.push("CAMERA_PROJECTION_INVALID");
 	if (["axon", "opposite-axon"].some((name) => !(views?.[name]?.pbrPixelDelta >= 0.5))) codes.push("PBR_EVIDENCE_MISSING");

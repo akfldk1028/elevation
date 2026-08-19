@@ -34,18 +34,57 @@ export async function readGeometry(path) {
 	return { vertices, triangles };
 }
 
-function canonical(geometry, tolerance) {
-	const pointKeys = geometry.vertices.map((point) => point.map((value) => Math.round(value / tolerance)).join(","));
-	const positions = [...new Set(pointKeys)].sort();
-	const triangles = geometry.triangles.map((triangle) => triangle.map((index) => pointKeys[index]).sort().join("|")).sort();
-	return { positions, triangles };
+/**
+ * Tolerance-true vertex matching, not quantization. Rounding each coordinate into a
+ * tolerance-sized bucket compares buckets, and two values well inside the tolerance can
+ * straddle a bucket boundary: a battered mass's float64 vertex 5e-6 from its float32 copy
+ * in the GLB landed in different buckets and the exact-MASS gate called the same geometry
+ * different. A grid keyed at the tolerance with a 27-cell probe finds every neighbour
+ * within the true euclidean tolerance instead, whatever side of a bucket edge it fell on.
+ */
+function representativeGrid(tolerance) {
+	const cells = new Map();
+	const representatives = [];
+	const cellKey = (point) => point.map((value) => Math.floor(value / tolerance)).join(",");
+	const near = (point) => {
+		const base = point.map((value) => Math.floor(value / tolerance));
+		for (let dx = -1; dx <= 1; dx += 1) for (let dy = -1; dy <= 1; dy += 1) for (let dz = -1; dz <= 1; dz += 1) {
+			for (const id of cells.get(`${base[0] + dx},${base[1] + dy},${base[2] + dz}`) ?? []) {
+				const candidate = representatives[id];
+				if (Math.hypot(point[0] - candidate[0], point[1] - candidate[1], point[2] - candidate[2]) <= tolerance) return id;
+			}
+		}
+		return null;
+	};
+	const add = (point) => {
+		const found = near(point);
+		if (found !== null) return found;
+		const id = representatives.length;
+		representatives.push(point);
+		const key = cellKey(point);
+		cells.set(key, [...(cells.get(key) ?? []), id]);
+		return id;
+	};
+	return { near, add, count: () => representatives.length };
 }
 
 export function compareGeometry(source, output, tolerance = 1e-5) {
-	const a = canonical(source, tolerance);
-	const b = canonical(output, tolerance);
+	const grid = representativeGrid(tolerance);
+	const sourceIds = source.vertices.map((point) => grid.add(point));
+	const matched = new Set();
+	let unmatchedOutput = 0;
+	const outputIds = output.vertices.map((point) => {
+		const id = grid.near(point);
+		if (id === null) unmatchedOutput += 1;
+		else matched.add(id);
+		return id;
+	});
 	const reasons = [];
-	if (JSON.stringify(a.positions) !== JSON.stringify(b.positions)) reasons.push("Canonical vertex positions differ");
-	if (JSON.stringify(a.triangles) !== JSON.stringify(b.triangles)) reasons.push("Canonical triangle connectivity differs");
-	return { accepted: reasons.length === 0, tolerance_m: tolerance, source_vertex_count: source.vertices.length, output_vertex_count: output.vertices.length, canonical_vertex_count: b.positions.length, source_triangle_count: source.triangles.length, output_triangle_count: output.triangles.length, reasons };
+	if (unmatchedOutput > 0 || matched.size !== grid.count()) reasons.push("Canonical vertex positions differ");
+	const triangleKeys = (triangles, ids) => triangles
+		.map((triangle) => triangle.map((index) => ids[index] ?? "missing").sort().join("|")).sort();
+	if (JSON.stringify(triangleKeys(source.triangles, sourceIds)) !== JSON.stringify(triangleKeys(output.triangles, outputIds))) {
+		reasons.push("Canonical triangle connectivity differs");
+	}
+	return { accepted: reasons.length === 0, tolerance_m: tolerance, source_vertex_count: source.vertices.length, output_vertex_count: output.vertices.length, canonical_vertex_count: grid.count(), source_triangle_count: source.triangles.length, output_triangle_count: output.triangles.length, reasons };
 }

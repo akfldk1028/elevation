@@ -193,6 +193,15 @@ function grammarPrimitives(program, context, entrance) {
 			// stops applying to the construction it exists for.
 			if (whole.primitives && carriesSkin(whole.primitives)) derived = whole.primitives;
 			else if (inset.primitives) derived = inset.primitives;
+			// A facet narrower than twice the fold clearance cannot be punched at all - its
+			// inset scope is zero or negative before the grammar says anything - and if the
+			// whole-facet probe could not dress it as a skin either, there is nothing any
+			// grammar could lawfully put there. That is bare wall, not a layout error, and it
+			// still counts in every composition denominator. The predicates have no width
+			// test, so without this a stepped mass's centimetre slivers force every author
+			// into index guards that break whenever the segment list shifts. Facets wide
+			// enough to design on keep the loud failure.
+			else if (segment.length_m < fold * 2) derived = [];
 			else throw inset.error;
 		}
 		for (const primitive of derived) {
