@@ -114,7 +114,10 @@ section is written base, shaft, top, in that order.
 Sizes: "2.4" is absolute metres, "'0.5" is a fraction of the scope along the split
 axis, "~1" is floating and shares whatever is left over by weight. A part with
 "repeat": true tiles as many times as its nominal size fits - that is how one rule
-serves a five storey tower and a twenty storey one. A repeat part must carry a
+serves a five storey tower and a twenty storey one. The nominal size is a target, not
+a promise: the count is the nearest whole number of tiles and every tile is drawn at an
+equal share of what the fixed parts leave, so tiles stretch or shrink a little to fill
+the scope exactly and no remainder strip is ever left. A repeat part must carry a
 floating size such as "~3.3", it is the only part in its split that may float, and a
 split may hold at most one of them. Set "repeat": null on every other part.
 
@@ -159,7 +162,9 @@ ones - and both are at most ${BOUNDS.maxInsetM} m. inset_m shrinks the member in
 drawn rectangle is the scope pulled in by inset_m on all four sides, so an inset of 0.12
 takes 0.24 m off the width AND 0.24 m off the height, and a member shorter than twice its
 inset vanishes into a sliver or into nothing. depth_m is its thickness out of the plane.
-Use 0 where a terminal needs neither. On a split alternative set terminal to null and both
+Use inset_m: 0 where a member wants its whole scope. depth_m: 0 is legal only for glass
+and the door, which are cut rather than built; every other terminal needs a thickness
+(the rule and its reason are below). On a split alternative set terminal to null and both
 inset_m and depth_m to 0; on a terminal alternative set split to null.
 
 The start symbol is derived once per facet, not once per elevation. A folded elevation
@@ -247,7 +252,10 @@ facade has no parts. Give it parts instead.
   punching holes in a wall. Choose one per face and commit to it - a mullion inside a
   punched reveal is neither construction - and note that a skin still needs its base and
   its top, so the storey it meets the ground at and the course that terminates it are
-  still yours to compose.
+  still yours to compose. A face is classified by the stronger claim: one skin word
+  anywhere on it - mullion, transom or spandrel - and the whole face is measured as a
+  skin, so a masonry base under a glazed top answers to the skin figures, not the
+  punched ones.
 - Let the street face and the service face differ in kind, not only in window width.
 
 \`visibility_score\` on a segment is how squarely it faces the axonometric viewpoint the
@@ -255,20 +263,29 @@ presentation is rendered from, not how prominent it is on the street. It is 0 fo
 segment turned away from that viewpoint, so a face reading 0 throughout is not a face
 nobody sees - it is a face the hero image looks at edge-on or from behind. Deterministic
 code puts the single entrance on the most visible ground segment by this score; you do
-not choose where the entrance goes.
+not choose where the entrance goes. Nor do you draw it: a \`door\` terminal you write is
+discarded, the entrance object at the top of your answer is the only door there is. Where
+the placed entrance lands, an opening of yours within 0.3 m of it is omitted, and a solid
+member that crosses it is cut at the door head - what stands above the door survives - so
+a grid whose mullion happens to meet the centred door is not an error.
 
 Deterministic code owns all placement. Never name a segment, a coordinate or a path.
 Every solid member needs a thickness: give any terminal that is not glass or the door a
 \`depth_m\` above zero. A member with no thickness is not a flush one, it is nothing, and it
 cannot be built. Glass and the door may sit at zero because they are cut rather than built.
-Openings must clear the floor bands, only one primary entrance is allowed, and both the
-lowest and the highest storey must carry openings.
+(\`wall\` emits nothing, so its depth_m is ignored; 0 is fine there.)
+Openings must clear the floor bands: neither end of an opening may land within 0.15 m of
+a slab line - exactly 0.15 m clears, the same boundary rule as the fold - though an
+opening may pass a slab on its way, which is how a double-height lobby and a vertical
+slot are drawn. The fault is FLOOR_BAND_INTRUSION and it reports how far from the slab
+line the offending end sat. Only one primary entrance is allowed, and both the lowest
+and the highest storey must carry openings.
 
 How an opening meets a fold depends on which construction you are drawing, because the
 two are not doing the same thing there. A hole punched in a solid wall must stay 0.3 m
 clear of the fold: cutting one through a turn breaks the mass. The fault is
 FOLD_CLEARANCE_INVALID, and what it measures is the distance from the opening's nearest
-edge to the facet edge. A glazed skin does not pierce the mass at the corner, it replaces
+edge to the facet edge; exactly 0.3 m clears, the fault fires only short of it. A glazed skin does not pierce the mass at the corner, it replaces
 it, so its glass may run right to the fold as long as the strip is framed. Framed means a
 mullion or a spandrel pier that reaches the facet edge itself - its own rectangle starting
 at the very edge of the facet, not merely near it - overlaps the glass in height, and

@@ -132,17 +132,26 @@ export function validateResolvedFacadeProgram({ program, context, resolved } = {
 				// rather than on fitting inside one storey. Requiring containment is what
 				// makes every facade read as stacked identical cells.
 				const clearance = context.exclusions.floor_band_clearance_m;
+				// Exactly `clearance` away clears, on both sides of both boundaries - the same
+				// boundary semantics the fold rule states. The four epsilons used to disagree:
+				// an opening head exactly 0.15 m under a slab passed through the z_max clause
+				// and fired through the z_min clause of the storey above, which is the same
+				// physical line.
 				const inBand = (z) => context.storeys.some((storey) => {
 					const atGrade = primitive.kind === "door" && Math.abs(z - context.storeys[0].z_min) <= 1e-8;
 					if (atGrade) return false;
-					return (z > storey.z_min - clearance - 1e-8 && z < storey.z_min + clearance - 1e-8)
-						|| (z > storey.z_max - clearance + 1e-8 && z < storey.z_max + clearance + 1e-8);
+					return (z > storey.z_min - clearance + 1e-8 && z < storey.z_min + clearance - 1e-8)
+						|| (z > storey.z_max - clearance + 1e-8 && z < storey.z_max + clearance - 1e-8);
 				});
 				const top = context.storeys[context.storeys.length - 1].z_max;
+				// The measurement is the distance to the slab line it violates, against the
+				// clearance it needed. Reporting the raw coordinate ("measured 13.05 against
+				// 0.15") read as nonsense to the one audience this message exists for.
+				const slabDistance = (z) => Math.min(...context.storeys.flatMap((storey) => [Math.abs(z - storey.z_min), Math.abs(z - storey.z_max)]));
 				if (bounds.z_min < context.storeys[0].z_min - 1e-8 || bounds.z_max > top + 1e-8) {
 					measure("FLOOR_BAND_INTRUSION", index, bounds.z_max, top);
-				} else if (inBand(bounds.z_min)) measure("FLOOR_BAND_INTRUSION", index, bounds.z_min, clearance);
-				else if (inBand(bounds.z_max)) measure("FLOOR_BAND_INTRUSION", index, bounds.z_max, clearance);
+				} else if (inBand(bounds.z_min)) measure("FLOOR_BAND_INTRUSION", index, slabDistance(bounds.z_min), clearance);
+				else if (inBand(bounds.z_max)) measure("FLOOR_BAND_INTRUSION", index, slabDistance(bounds.z_max), clearance);
 			}
 			const depthLimit = primitive.kind === "door" ? context.exclusions.max_recess_m : context.exclusions.max_projection_m;
 			// A solid member needs a thickness. `boxGeometry` in punched-facade.mjs throws on
