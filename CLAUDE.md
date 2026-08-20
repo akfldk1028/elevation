@@ -614,3 +614,23 @@ each fixed and committed:
 Still open for 013: a fresh live run on the hardened brief (fingerprint moved again), and
 the blind design needs its transoms before it can render. Total live spend today $0.44
 across v13/v14/013-a/013-b, plus one uncertain $0.04 from the timeout.
+
+## 2026-08-20 two more stepped-mass runs, two more loop repairs
+
+013-c ($0.12): the advisory's guard held - the model kept a rich design through all three
+attempts - and the run exhausted on whack-a-mole: the correction relayed one worst
+measurement per code, the model fixed that window, a sibling surfaced next attempt, and
+attempt 3 repeated attempt 2's unfixed 6 cm sliver verbatim. `14c14ad` relays up to three
+instances per code with the count of the rest.
+
+013-d ($0.12): the composition role check fired live exactly as designed - attempt 2 was
+told which roles its front face could not produce - and the fallback shipped that attempt
+into the renderer anyway, dying at MATERIAL_ROLE_MISSING after the paid calls were spent;
+attempt 3 was told only a bare HIERARCHY_MISSING and corrected blind. `af980f1` makes a
+MATERIAL_ROLE_MISSING design fallback-ineligible and gives the two measurement-less codes
+their explanations in words.
+
+Live spend to date: $0.68 across six runs plus one uncertain $0.04 timeout. Every run has
+converted into at least one committed loop repair; creative-013 itself is still unshipped
+by a live provider (the blind author ships it fine). The full-suite tripo ledger race test
+flaked once on a Windows lock-file EPERM, 3/3 green in isolation - not related.
