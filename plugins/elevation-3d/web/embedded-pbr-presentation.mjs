@@ -44,6 +44,11 @@ export const KIND_ROLES = Object.freeze({
 	door: "glass", window: "glass", reveal: "bronze",
 	lintel: "concrete", sill: "opaque", band: "opaque", cornice: "concrete",
 	pilaster: "concrete",
+	// An arch is a drawn event, not a flush course: on `concrete` it vanished into the
+	// wall field exactly as lintels always have (mass and precast share the tint), and an
+	// invisible arch is not worth its curve. It is thin like a sill, so it takes the
+	// sill's dark role and reads as the drawn head of its opening.
+	arch: "opaque",
 	// curtain wall vocabulary. `mullion` is already mapped above with the procedural
 	// vocabulary and means the same member there, so the two agree on one entry.
 	//

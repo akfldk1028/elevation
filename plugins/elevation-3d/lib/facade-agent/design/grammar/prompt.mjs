@@ -34,7 +34,10 @@ export const FACADE_GRAMMAR_V3_SCHEMA = Object.freeze({
 				door_family: { type: "string", pattern: "^[a-z0-9](?:[a-z0-9._-]{0,126}[a-z0-9])?$" },
 				width_m: { type: "number", minimum: 0.8, maximum: 6 },
 				height_m: { type: "number", minimum: 1.8, maximum: 6 },
-				recess_m: { type: "number", minimum: 0, maximum: 1.5 },
+				// 0.5 is the exclusions' max_recess_m. The schema used to allow 1.5 while the
+				// validator held every recess to 0.5, and a blind author lost its final attempt
+				// to exactly that gap - the schema said yes and the gate said no.
+				recess_m: { type: "number", minimum: 0, maximum: 0.5 },
 			},
 		},
 		rules: {
@@ -122,7 +125,10 @@ matters on a small scope: a repeat cannot be used to make a rule vanish on a nar
 facet - it will squeeze one tile into whatever is left, however badly the nominal fits.
 A repeat part must carry a floating size such as "~3.3", it is the only part in its
 split that may float, and a split may hold at most one of them. Set "repeat": null on
-every other part.
+every other part. \`index\` is in scope only at the start rule (the facet's position on
+its face) and inside a rule a repeat expands (the tile's position in the run); a rule
+reached through an ordinary split does not inherit its parent's index, so route
+facet-specific behaviour at the start rule and pass intent down through \`arg\`.
 
 Predicates: index % <n> == <m>, index == <n>, index == last, storey % <n> == <m>,
 storey == <n>, face_view == front|back|left|right, param == <value>. Two may be joined
@@ -192,7 +198,9 @@ facade has no parts. Give it parts instead.
   from the terminal you choose, so a base built from pilaster and band carries weight
   that a shaft of glass and reveal does not.
 - Terminate the top. A cornice on the highest storey is what stops a building looking
-  sawn off. Without one the elevation merely runs out of floors.
+  sawn off. Without one the elevation merely runs out of floors. This is gated, per
+  elevation, as TOP_TERMINATION_MISSING - a skin face needs its literal cornice course
+  too, the spandrel head does not stand in for it.
 - One dominant element, on a face built as a wall with openings cut into it. Such an
   elevation needs a subject: an entrance bay carried up several storeys, one wide opening
   against many narrow ones, one recessed field. If every opening is within a hair of every
@@ -245,6 +253,13 @@ facade has no parts. Give it parts instead.
   a head and a shelf only: the reveals are the sides, and without them an opening has
   no thickness. In a glazed skin the mullion and the transom do that job instead: the
   mullion is the side, so a pane held between two mullions already has its thickness.
+- \`arch\` is the one terminal that is not a box: the rectangle you give it is the arch's
+  bounding frame, drawn as a curved band whose springings sit at the bottom corners and
+  whose crown touches the top edge. Use it where a lintel would go - directly over an
+  opening, the opening's head at the arch's springing line, the arch about half as tall
+  as it is wide for a segmental arch and as tall as its half-width for a round one. It
+  is solid and needs a depth_m like a lintel. An arched opening is a scale event: one
+  arched entrance bay or an arcade at the base outranks scattering arches everywhere.
 - There are two constructions available, not one. Punched masonry is a hole cut in a
   wall - wall, glass, reveal, lintel, sill - and it is what every one of these facades
   has been so far. A curtain wall is the other: a continuous glazed skin hung in front of

@@ -9,7 +9,7 @@ import { readVerifiedFacadeValidationAuthority } from "./enrichment-validation.m
 import { assertCanonicalFacadeSegmentAuthority } from "./facade-agent/punched-facade.mjs";
 
 const TYPED_FACADE_KINDS = new Set(["corner-return", "brick-cladding", "window-reveal", "window-frame", "glazing", "precast-lintel", "precast-sill"]);
-const DESIGN_FACADE_KINDS = new Set(["door", "window", "window-frame", "reveal", "lintel", "sill", "pilaster", "band", "cornice", "mullion", "transom", "spandrel"]);
+const DESIGN_FACADE_KINDS = new Set(["door", "window", "window-frame", "reveal", "lintel", "sill", "pilaster", "band", "cornice", "mullion", "transom", "spandrel", "arch"]);
 
 async function verifiedDesignFacadeArtifact(path, designFacadeManifest, sourceMesh, facadeSegmentAuthority) {
 	try {
