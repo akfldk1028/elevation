@@ -681,3 +681,19 @@ Still open from the round: per-facet routing capacity (index dead below the star
 8 alternatives cap the routes - the plinth author called a 14-way discrimination unroutable
 and worked around it; an engine answer would be index inheritance through single-part
 splits or a higher start-rule alternative cap).
+
+## 2026-08-20 the material axis, and a reference-conditioned scheme
+
+The user's second critique - one palette, one glassy language - closed the same way as the
+first: competition-brick is the fourth preset (the first where the wall reads as a fired
+material; ribbon scheme rendered in it reads as a brick building), render-any takes a
+palette argument, and the sheet's material section shows the same grammar in warm/stone/
+neutral/brick. The ninth scheme, grammar-blind-013-sheer, is the first reference-conditioned
+one: "SANAA-like sheer unitised glass, no plinth" produced four skin faces at 0.79-0.87
+transparency with the glass standing on a 0.16 m shadow gap - the intent naming a real
+precedent is the reference mechanism that costs nothing, since blind authors know famous
+buildings even without the repo. z=0 is now named a slab line in the brief (an author lost
+an attempt learning it). Known dishonest label deferred: the title block prints COMPETITION
+WARM whatever palette rendered; generator and validator share the hardcode so nothing
+mismatches, but the fix must thread the palette into the canonical-SVG recomputation on both
+sides at once.
