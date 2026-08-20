@@ -634,3 +634,26 @@ Live spend to date: $0.68 across six runs plus one uncertain $0.04 timeout. Ever
 converted into at least one committed loop repair; creative-013 itself is still unshipped
 by a live provider (the blind author ships it fine). The full-suite tripo ledger race test
 flaked once on a Windows lock-file EPERM, 3/3 green in isolation - not related.
+
+## 2026-08-20 013-e closes the live campaign; the blind design ships transomed
+
+013-e ($0.12, cumulative $0.80 + one uncertain $0.04): every known feedback repair applied,
+and the run still exhausted - attempt 1 referenced undefined symbols, attempts 2 and 3 died
+on new instances of FLOOR_BAND_INTRUSION and FOLD_CLEARANCE_INVALID with the ends of
+fraction-sized windows landing millimetres from slab lines. Five live runs failed five
+different ways on the same underlying task: per-facet slab-relative arithmetic on 37
+irregular facets, the thing the blind author solved by hand-computing absolute margins per
+facet. Verdict recorded as model convergence under the 3-attempt budget, not a feedback gap.
+
+The blind design ships: `grammar-blind-013-t.json` is the blind grammar with one
+substitution (the 0.4 m skin plinth spandrel -> sill, giving every skin face its opaque
+role; concept "-transomed", geometry otherwise untouched), accepted and rendered end to end
+at `creative-013/llm-facade-subagent-creative-013/render-blind-013-t/` - all eight views,
+PBR, hero. The stepped mass now has two shipped designs: 013-a (punched-led) and this
+(skin-led, the terracing read as one composition).
+
+If 013 live is attempted again, the options on the table are: raise MAX_CORRECTIONS for
+irregular candidates (cost scales linearly), give the grammar a slab-snapped z size so the
+model stops doing slab arithmetic (engine feature, breaks no existing grammar if additive),
+or accept that non-prism masses route through the subagent path, which costs nothing and
+has now shipped twice.
