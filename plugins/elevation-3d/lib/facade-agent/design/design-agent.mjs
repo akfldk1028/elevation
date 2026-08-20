@@ -147,9 +147,16 @@ export function locatedCodes(validation, resolved, context) {
 			: primitive ? ` on the ${segment?.face_view ?? segment?.view ?? "unknown"} elevation, at a ${primitive.kind} with unreadable bounds` : "";
 		return `measured ${measurement.actual} against ${measurement.limit}${where}`;
 	};
+	// Codes the validator raises without a measurement. A bare code leaves the model
+	// correcting blind - the lesson this module keeps re-learning - and these two have
+	// no primitive to point at, so they carry their explanation instead.
+	const BARE_CODE_EXPLANATIONS = {
+		HIERARCHY_MISSING: "the highest storey carries no opening; both the lowest and the highest storey must, and an opening counts for every storey its height overlaps",
+		PRIMARY_ENTRANCE_INVALID: "the run must place exactly one primary entrance on a ground-access segment; the grammar does not write it, but its geometry must leave room for it",
+	};
 	return validation.codes.map((code) => {
 		const list = (perCode.get(code) ?? []).sort((left, right) => right.miss - left.miss);
-		if (!list.length) return code;
+		if (!list.length) return BARE_CODE_EXPLANATIONS[code] ? `${code} (${BARE_CODE_EXPLANATIONS[code]})` : code;
 		const shown = list.slice(0, 3).map(locate).join("; and ");
 		const remainder = list.length > 3 ? `; and ${list.length - 3} more like these` : "";
 		return `${code} (${shown}${remainder})`;
@@ -255,8 +262,12 @@ export async function runFacadeDesignAgent({ runDir, context, provider, ledger, 
 			composition = measureComposition({ context, resolved });
 			// Keep the least faulty attempt, not the first. Holding the first shipped a
 			// blank wall once while a later attempt of the same run composed better, which
-			// is the whole point of correcting.
-			if (isBetterFallbackComposition(composition, fallback?.composition)) {
+			// is the whole point of correcting. But never one carrying MATERIAL_ROLE_MISSING:
+			// the other composition faults are matters of taste the pipeline can still draw,
+			// this one is a certain renderer rejection - a fallback carrying it shipped once
+			// and died in the render gates, wasting the whole delivery.
+			if (!composition.codes.includes("MATERIAL_ROLE_MISSING")
+				&& isBetterFallbackComposition(composition, fallback?.composition)) {
 				fallback = { program, resolved, validation, composition };
 			}
 			correctionCodes = composition.faults;
