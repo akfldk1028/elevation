@@ -35,6 +35,18 @@ const PRESETS = deepFreeze({
 		bronze: { elevation_fill: "#7a6751", axon_pbr: "#91785d", opacity: 1, roughness: 0.36, metalness: 0.64, line_contrast: 0.79, texture_intensity: 0.10, normal_intensity: 0.08 },
 		opaque: { elevation_fill: "#454746", axon_pbr: "#515352", opacity: 1, roughness: 0.62, metalness: 0.12, line_contrast: 0.75, texture_intensity: 0.08, normal_intensity: 0.06 },
 	},
+	// The first preset where the wall reads as a fired material rather than a render tone.
+	// The three presets above differ in temperature, not in what the building seems to be
+	// made of, and a vocabulary that says `brick` deserved a palette that does. The wall
+	// field is a mid-light brick red (luminance ~125, well clear of the dark threshold and
+	// the luminance floors), the glass stays cool so concrete_glass keeps its distance,
+	// bronze is a warm dark and opaque a cool near-black so the closest pair stays apart.
+	"competition-brick": {
+		concrete: { elevation_fill: "#b3745a", axon_pbr: "#a86a50", opacity: 1, roughness: 0.85, metalness: 0, line_contrast: 0.72, texture_intensity: 0.22, normal_intensity: 0.16 },
+		glass: { elevation_fill: "#8fa6ad", axon_pbr: "#a9c0c6", opacity: 0.42, roughness: 0.14, metalness: 0, line_contrast: 0.58, texture_intensity: 0.05, normal_intensity: 0.03 },
+		bronze: { elevation_fill: "#3f2f26", axon_pbr: "#503c2f", opacity: 1, roughness: 0.31, metalness: 0.72, line_contrast: 0.84, texture_intensity: 0.09, normal_intensity: 0.08 },
+		opaque: { elevation_fill: "#2f3134", axon_pbr: "#3b3d40", opacity: 1, roughness: 0.58, metalness: 0.16, line_contrast: 0.78, texture_intensity: 0.08, normal_intensity: 0.06 },
+	},
 });
 
 function resolveRequest(presetOrOverrides) {

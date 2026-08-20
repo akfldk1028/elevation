@@ -304,7 +304,9 @@ cannot be built. Glass and the door may sit at zero because they are cut rather 
 Openings must clear the floor bands: neither end of an opening may land within 0.15 m of
 a slab line - exactly 0.15 m clears, the same boundary rule as the fold - though an
 opening may pass a slab on its way, which is how a double-height lobby and a vertical
-slot are drawn. The fault is FLOOR_BAND_INTRUSION and it reports how far from the slab
+slot are drawn. The ground line z=0 is a slab line too (only the placed entrance may sit
+on it), so glass that should read as meeting the ground stands on a thin bare-wall
+shadow gap rather than on z=0 itself. The fault is FLOOR_BAND_INTRUSION and it reports how far from the slab
 line the offending end sat. Only one primary entrance is allowed, and both the lowest
 and the highest storey must carry openings.
 
