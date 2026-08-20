@@ -697,3 +697,18 @@ an attempt learning it). Known dishonest label deferred: the title block prints 
 WARM whatever palette rendered; generator and validator share the hardcode so nothing
 mismatches, but the fix must thread the palette into the canonical-SVG recomputation on both
 sides at once.
+
+## 2026-08-20 the showcase renderer, and what its ground plane revealed
+
+`render-showcase.mjs` (sdd dir, untracked) is a presentation-only renderer outside the
+gated chain: same GLB, procedural brick/limestone materials, PMREM environment glass, warm
+sun with soft shadows, sky and ground, auto-derived three-quarter camera. It answers the
+"this doesn't feel AI-based" critique's code-addressable half; the diffusion half has its
+conditioning ready (every render already emits depth/normal/material-id).
+
+Its ground plane exposed something no pipeline render had: **creative-013 is a bridge
+typology by design** - family morph-bridge-low, program bent_bar_terrace_bridge, the bar
+touching z=0 only at one 5 m entrance pier (4 vertices), everything else with its underside
+at z=1.861. The pipeline's own views have no ground, so nobody had seen it; a first
+diagnosis of "the renderer dropped the mass" was instrumented and disproven (the mass is in
+the scene, winding consistent). Do not "fix" the float - it is the authored mass.
