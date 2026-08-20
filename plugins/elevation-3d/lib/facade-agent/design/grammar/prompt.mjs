@@ -129,6 +129,9 @@ every other part. \`index\` is in scope only at the start rule (the facet's posi
 its face) and inside a rule a repeat expands (the tile's position in the run); a rule
 reached through an ordinary split does not inherit its parent's index, so route
 facet-specific behaviour at the start rule and pass intent down through \`arg\`.
+Derivation depth is capped at 12 levels from the start symbol, so a router, a section,
+a bay and a fully nested opening fit with room to spare - but a rule that only forwards
+to another rule spends a level for nothing.
 
 Predicates: index % <n> == <m>, index == <n>, index == last, storey % <n> == <m>,
 storey == <n>, face_view == front|back|left|right, param == <value>. Two may be joined
