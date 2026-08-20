@@ -657,3 +657,27 @@ irregular candidates (cost scales linearly), give the grammar a slab-snapped z s
 model stops doing slab arithmetic (engine feature, breaks no existing grammar if additive),
 or accept that non-prism masses route through the subagent path, which costs nothing and
 has now shipped twice.
+
+## 2026-08-20 the variety round: seven designs on the stepped mass, and an arch
+
+The user's critique - one glassy language on every shipped design - is the recorded one,
+and the answer was the free path: four more blind authors on creative-013 with opposed
+intents. All seven schemes now render end to end (llm-facade-subagent-creative-013/render-*):
+skin-led T, punched A, closed vessel (three near-blank faces vs a 64% street skin), stone
+(no skin words, worst 10.6%), horizontal ribbon (poorest 11.4%, span-3 pilasters), inverted
+plinth (glass base under closed body, span-2 hero slot), and the arch demo. The sheet is
+`elevations-20260820.html` at the verification root.
+
+`0b33119` gave the grammar its arch - archGeometry, the one non-box terminal, dark role so
+it reads - and closed the recess schema/gate mismatch, named TOP_TERMINATION as gated, and
+stated index scoping. `745f3ef` raised the derivation depth to 12 and warned the brief file
+can go stale against prompt.mjs (four authors read a stale one; regenerate before every
+protocol run). The last commit names the 35% storey-span bar and the storey-predicate
+semantics the plinth author paid five attempts to reverse-engineer. Two author designs were
+revived by one-number fixes applied as -fx copies (stone recess 0.6->0.5, plinth hero slot
+'0.16->'0.14); the originals stand as protocol artifacts.
+
+Still open from the round: per-facet routing capacity (index dead below the start rule and
+8 alternatives cap the routes - the plinth author called a 14-way discrimination unroutable
+and worked around it; an engine answer would be index inheritance through single-part
+splits or a higher start-rule alternative cap).
