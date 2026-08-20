@@ -712,3 +712,15 @@ touching z=0 only at one 5 m entrance pier (4 vertices), everything else with it
 at z=1.861. The pipeline's own views have no ground, so nobody had seen it; a first
 diagnosis of "the renderer dropped the mass" was instrumented and disproven (the mass is in
 the scene, winding consistent). Do not "fix" the float - it is the authored mass.
+
+## 2026-08-20 style presets close the image-level sameness
+
+The user's third critique landed on the render, not the grammar: nine schemes were coming
+out of the showcase as one beige building because materials were mapped by KIND alone. The
+showcase now takes `--style brick|stone|sheer` - per-style material mapping (the WALL
+itself becomes brick / mottled limestone / dark spandrel behind mirror glass) plus mood
+(sun azimuth and warmth, sky, exposure, camera height). The three schemes now read as a
+red-brick block at golden hour, a dark glass office on a grey day, and a white stone
+building on a clear morning; the honest residual is that a sharp eye still sees the shared
+massing and window rhythm underneath, which is the mass's and the rectangle-grammar's
+signature, not the renderer's. No-style runs render byte-identically to before.
