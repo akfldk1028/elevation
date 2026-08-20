@@ -124,15 +124,17 @@ function deepFreeze(value) {
  */
 export function locatedCodes(validation, resolved, context) {
 	const byId = new Map((context.facade_segments ?? []).map((segment) => [segment.segment_id, segment]));
-	const worst = new Map();
+	// Up to three instances per code, worst first, with the total count when there are
+	// more. Relaying only the single worst turned a stepped-mass live run into
+	// whack-a-mole: the model fixed the named window each attempt and a sibling instance
+	// of the same code surfaced on the next, until the attempts ran out.
+	const perCode = new Map();
 	for (const measurement of validation.measurements ?? []) {
-		const previous = worst.get(measurement.code);
-		const miss = Math.abs(measurement.limit - measurement.actual);
-		if (!previous || miss > previous.miss) worst.set(measurement.code, { ...measurement, miss });
+		const list = perCode.get(measurement.code) ?? [];
+		list.push({ ...measurement, miss: Math.abs(measurement.limit - measurement.actual) });
+		perCode.set(measurement.code, list);
 	}
-	return validation.codes.map((code) => {
-		const measurement = worst.get(code);
-		if (!measurement) return code;
+	const locate = (measurement) => {
 		// SEGMENT_BOUNDS_INVALID is raised *because* the bounds are missing or unreadable, so the
 		// primitive it names is exactly the one whose local_bounds cannot be dereferenced. Naming
 		// the fault must never be what crashes the correction loop.
@@ -143,7 +145,14 @@ export function locatedCodes(validation, resolved, context) {
 			? ` on the ${segment?.face_view ?? segment?.view ?? "unknown"} elevation, at a ${primitive.kind}`
 			+ ` spanning u ${bounds.u_min}-${bounds.u_max} z ${bounds.z_min}-${bounds.z_max}`
 			: primitive ? ` on the ${segment?.face_view ?? segment?.view ?? "unknown"} elevation, at a ${primitive.kind} with unreadable bounds` : "";
-		return `${code} (measured ${measurement.actual} against ${measurement.limit}${where})`;
+		return `measured ${measurement.actual} against ${measurement.limit}${where}`;
+	};
+	return validation.codes.map((code) => {
+		const list = (perCode.get(code) ?? []).sort((left, right) => right.miss - left.miss);
+		if (!list.length) return code;
+		const shown = list.slice(0, 3).map(locate).join("; and ");
+		const remainder = list.length > 3 ? `; and ${list.length - 3} more like these` : "";
+		return `${code} (${shown}${remainder})`;
 	});
 }
 export async function runFacadeDesignAgent({ runDir, context, provider, ledger, ceilingUsd, estimateUsd, language = "grammar", signal } = {}) {
