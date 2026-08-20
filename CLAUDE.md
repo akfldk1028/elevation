@@ -724,3 +724,18 @@ red-brick block at golden hour, a dark glass office on a grey day, and a white s
 building on a clear morning; the honest residual is that a sharp eye still sees the shared
 massing and window rhythm underneath, which is the mass's and the rectangle-grammar's
 signature, not the renderer's. No-style runs render byte-identically to before.
+
+## 2026-08-20 materials become orthogonal axes
+
+The user's architectural point - choosing brick must not drag the glass treatment along;
+punched brick wants deep-set glass in frames, mirror skin belongs to curtain walls - is now
+the showcase's structure: `--wall brick|limestone|precast|darkpanel`, `--glass
+deep|clear|mirror`, `--frame bronze|iron|white`, `--mood golden|morning|overcast`, freely
+combinable, with `--style` surviving as shorthand and the no-flag default verified
+byte-identical. The proof pair on the sheet: the same running-bond brick wall wearing dark
+deep-set panes at golden hour versus pale clear panes in white surrounds on a clear
+morning. Caveats recorded by the builder: mirror under overcast reads as blue glazing (the
+procedural env has little to reflect), iron on darkpanel is legible but low-contrast. The
+next layer up is the design layer - a grammar naming its own materials via the schema's
+existing materials/material_id fields - and the paid image path is currently locked
+(no ARK_API_KEY in the env file).
