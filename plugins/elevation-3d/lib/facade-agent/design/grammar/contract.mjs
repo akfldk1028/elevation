@@ -20,7 +20,11 @@ export const BOUNDS = Object.freeze({
 	maxSymbols: 64,
 	maxAlternatives: 8,
 	maxParts: 16,
-	maxDepth: 8,
+	// 12, because 8 rejected a design the brief itself asks for: per-facet routing, a
+	// tripartite section, a bay, and the four-way opening nest is ten levels, and a blind
+	// author lost an attempt to the ceiling before anything else could be measured. The
+	// bound guards runaway recursion, not taste; 12 still does.
+	maxDepth: 12,
 	maxRepeat: 64,
 	maxInsetM: 0.5,
 	maxDepthM: 0.5,
