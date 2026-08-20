@@ -429,3 +429,28 @@ test("a curtain wall draws its own jamb, so the generated window frame stands do
 		"the curtain wall renders in materials the facade already has, so nothing downstream gains a fifth",
 	);
 });
+
+// The one detail that is not a box. Its rectangle is the arch's bounding frame: the
+// curve must live inside it, touch its top at the crown, spring from its bottom
+// corners, and carry the mesh of a ring rather than the eight corners of a prism.
+test("an arch draws a curved band inside its bounding rectangle", () => {
+	const buildTypedFacadeDetails = (punchedFacade as any).buildTypedFacadeDetails;
+	const segment = facadePlanes.facade_planes[0];
+	const [detail] = buildTypedFacadeDetails({
+		mesh, floorGuides, facadePlanes,
+		primitives: [{
+			kind: "arch", segment_id: segment.segment_id, depth_m: 0.12,
+			local_bounds: { u_min: 1, u_max: 2, z_min: 3, z_max: 3.4 },
+		}],
+	});
+	assert.equal(detail.kind, "arch");
+	assert.equal(detail.material, "precast");
+	assert.ok(detail.positions.length > 8, "a ring, not a prism");
+	assert.equal(detail.positions.length, detail.uvs.length);
+	const zs = detail.positions.map((point: number[]) => point[2]);
+	assert.ok(Math.abs(Math.max(...zs) - 3.4) < 1e-6, "the crown touches the top of the frame");
+	assert.ok(Math.min(...zs) >= 3 - 1e-6, "nothing dips below the springing line");
+	for (const [a, b, c] of detail.indices) {
+		for (const index of [a, b, c]) assert.ok(index >= 0 && index < detail.positions.length);
+	}
+});

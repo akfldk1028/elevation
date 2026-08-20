@@ -363,6 +363,51 @@ function boxGeometry(plane, tangent, grammar, bounds) {
 	};
 }
 
+// The arch band's resolution. 24 segments keeps the crown smooth at elevation scale
+// (a 2 m arch draws ~8 px per chord at 79.6 px/m) without inflating the GLB.
+const ARCH_SEGMENTS = 24;
+
+/**
+ * The one detail that is not a box: a curved band filling its bounding rectangle. The
+ * outer half-ellipse touches all three free edges (springings at the bottom corners,
+ * crown at the top), the inner one is inset by a constant band thickness, and the ring
+ * is extruded from n0 to n1 like every other detail. Same contract as boxGeometry.
+ */
+function archGeometry(plane, tangent, grammar, bounds) {
+	const { u0, u1, v0, v1, n0, n1 } = bounds;
+	if (![u0, u1, v0, v1, n0, n1].every(Number.isFinite)
+		|| u1 - u0 <= EPSILON || v1 - v0 <= EPSILON || Math.abs(n1 - n0) <= EPSILON) {
+		throw new TypeError("invalid facade geometry: arch has non-positive dimensions");
+	}
+	const a = (u1 - u0) / 2;
+	const b = v1 - v0;
+	const cu = (u0 + u1) / 2;
+	const thickness = Math.min(a, b) * 0.35;
+	const inner = { a: a - thickness, b: b - thickness };
+	const ring = Array.from({ length: ARCH_SEGMENTS + 1 }, (_, k) => Math.PI - (k * Math.PI) / ARCH_SEGMENTS);
+	const coordinates = [];
+	for (const n of [n0, n1]) {
+		for (const theta of ring) coordinates.push([cu + a * Math.cos(theta), v0 + b * Math.sin(theta), n]);
+		for (const theta of ring) coordinates.push([cu + inner.a * Math.cos(theta), v0 + inner.b * Math.sin(theta), n]);
+	}
+	const count = ring.length;
+	const [outer0, inner0, outer1, inner1] = [0, count, 2 * count, 3 * count];
+	const indices = [];
+	for (let k = 0; k < ARCH_SEGMENTS; k += 1) {
+		indices.push([outer0 + k, outer0 + k + 1, inner0 + k + 1], [outer0 + k, inner0 + k + 1, inner0 + k]);
+		indices.push([outer1 + k, inner1 + k + 1, outer1 + k + 1], [outer1 + k, inner1 + k, inner1 + k + 1]);
+		indices.push([outer0 + k, outer1 + k, outer1 + k + 1], [outer0 + k, outer1 + k + 1, outer0 + k + 1]);
+		indices.push([inner0 + k, inner1 + k + 1, inner1 + k], [inner0 + k, inner0 + k + 1, inner1 + k + 1]);
+	}
+	indices.push([outer0, inner0, inner1], [outer0, inner1, outer1]);
+	indices.push([outer0 + ARCH_SEGMENTS, inner1 + ARCH_SEGMENTS, inner0 + ARCH_SEGMENTS], [outer0 + ARCH_SEGMENTS, outer1 + ARCH_SEGMENTS, inner1 + ARCH_SEGMENTS]);
+	return {
+		positions: coordinates.map(([u, v, n]) => localPoint(plane, tangent, u, v, n)),
+		indices,
+		uvs: coordinates.map(([u, v]) => [u / grammar.brick_module_m[0], (plane.origin[2] + v) / grammar.brick_module_m[1]]),
+	};
+}
+
 function primitiveSignature(kind, material, slot, bounds) {
 	const dimensions = [bounds.u1 - bounds.u0, bounds.v1 - bounds.v0, Math.abs(bounds.n1 - bounds.n0)]
 		.map((value) => Number(value.toFixed(9)));
@@ -381,7 +426,9 @@ function pushDetail(details, plane, tangent, grammar, bounds, properties, massBa
 			mass_backing_plane_area_m2: massBacking.targetArea,
 		};
 	}
-	const geometry = boxGeometry(plane, tangent, grammar, bounds);
+	const geometry = properties.kind === "arch"
+		? archGeometry(plane, tangent, grammar, bounds)
+		: boxGeometry(plane, tangent, grammar, bounds);
 	details.push({
 		...properties,
 		...massBackingProperties,

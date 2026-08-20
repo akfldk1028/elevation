@@ -41,13 +41,19 @@ export const TERMINAL_VOCABULARY = Object.freeze([
 	//
 	// Deliberately not added. `curtainwall` as a single word: an assembly is what the
 	// split rules already are, and a terminal that expanded into a grid would be the one
-	// terminal that is not a rectangle. Louvre, balcony, canopy, projecting bay and arch:
+	// terminal that is not a rectangle. Louvre, balcony, canopy and projecting bay:
 	// every primitive here is a box no deeper than BOUNDS.maxDepthM, which is 0.5 m, so a
 	// balcony or a canopy cannot project far enough to be one and would be drawn as a
-	// thick band; an arch is not a rectangle at all. Those want geometry, not vocabulary.
+	// thick band. Those want geometry, not vocabulary. The arch wanted the same and got
+	// it: `archGeometry` in punched-facade.mjs draws the word below as a curved band, so
+	// it graduated from this list.
 	Object.freeze({ word: "mullion", kind: "mullion", material: "window-frame", purpose: "a vertical framing member of a glazed skin, running past the floors" }),
 	Object.freeze({ word: "transom", kind: "transom", material: "window-frame", purpose: "a horizontal framing member of a glazed skin, dividing one pane from the next" }),
 	Object.freeze({ word: "spandrel", kind: "spandrel", material: "precast", purpose: "the opaque panel of a glazed skin that closes the slab zone between a window head and the sill above" }),
+	// The one terminal that is not a box. Its rectangle is the arch's bounding frame: the
+	// springing line is the rectangle's bottom edge, the crown touches the top, and the
+	// geometry inside is a curved band - see archGeometry, which is what let this word in.
+	Object.freeze({ word: "arch", kind: "arch", material: "precast", purpose: "a curved head spanning an opening: the rectangle you give it is the arch's bounding frame, springing at its bottom edge, crown at its top" }),
 ]);
 
 /** Every word the grammar may write, `wall` included. */

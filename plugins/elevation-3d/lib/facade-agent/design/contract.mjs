@@ -146,6 +146,12 @@ function parseEntrance(value) {
 		door_family: id(fields.door_family, "entrance.door_family"),
 		width_m: finite(fields.width_m, "entrance.width_m", 0.8, 6),
 		height_m: finite(fields.height_m, "entrance.height_m", 1.8, 6),
+		// Deliberately wider than the exclusions' max_recess_m (0.5). Tightening this to
+		// 0.5 was tried and reverted: the contract rejecting a deep recess yields a bare
+		// "outside its finite bounds" parse error, where letting it through to the
+		// validator yields PROJECTION_LIMIT_EXCEEDED with the measurement and the door's
+		// location - the message a correcting author can act on. The schema the model is
+		// shown caps at 0.5, so an honest author never lands here.
 		recess_m: finite(fields.recess_m, "entrance.recess_m", 0, 1.5),
 	};
 }
