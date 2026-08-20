@@ -131,7 +131,10 @@ reached through an ordinary split does not inherit its parent's index, so route
 facet-specific behaviour at the start rule and pass intent down through \`arg\`.
 Derivation depth is capped at 12 levels from the start symbol, so a router, a section,
 a bay and a fully nested opening fit with room to spare - but a rule that only forwards
-to another rule spends a level for nothing.
+to another rule spends a level for nothing. \`storey\` is the storey containing the
+scope's BOTTOM edge (inherited from the parent when the bottom falls outside every
+storey) - it is not "any storey the scope touches", and at the start rule it reads the
+facet's own bottom, so a facet that begins on the third storey answers storey == 3.
 
 Predicates: index % <n> == <m>, index == <n>, index == last, storey % <n> == <m>,
 storey == <n>, face_view == front|back|left|right, param == <value>. Two may be joined
@@ -228,7 +231,10 @@ facade has no parts. Give it parts instead.
   element added against the ordinary ones, never a blank field left where they used to
   be. Emptying the facade is not a way to satisfy this - an elevation that answers it by
   deleting windows fails the opening ratio below instead, and is a worse answer than the
-  stacked cells it replaced.
+  stacked cells it replaced. This is gated as STOREY_LOCKSTEP, and "through" is measured,
+  not implied: a storey counts toward the span only when the member covers at least 35%
+  of that storey's height, so a slot that pokes a metre past a slab has crossed nothing
+  yet - reach well into the next storey, not just over its line.
 - Vary the bay rhythm across the facet. Even spacing is the default the eye discards;
   a wide-narrow-narrow-wide, or one bay held open against a tight run, gives the
   elevation a measure. A unitised skin is the exception: it is evenly spaced on purpose,
