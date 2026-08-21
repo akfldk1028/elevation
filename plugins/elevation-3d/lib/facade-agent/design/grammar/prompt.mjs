@@ -262,6 +262,13 @@ facade has no parts. Give it parts instead.
   a head and a shelf only: the reveals are the sides, and without them an opening has
   no thickness. In a glazed skin the mullion and the transom do that job instead: the
   mullion is the side, so a pane held between two mullions already has its thickness.
+- \`louvre\` is the one terminal allowed to stand IN FRONT of glass: a thin screen member
+  (40-150 mm) proud of the wall, and a repeat of them over a glazed field is a layered
+  screen - the construction that reads as slatted timber or metal brise-soleil. Give the
+  screen its own depth (0.15-0.35 m) so it separates from the glass behind, keep members
+  thin and the rhythm tight (0.1-0.3 m pitch via repeat), and let the screen skip where
+  the facade wants a clear view. A screen is one gesture per face, not decoration
+  scattered on every opening.
 - \`arch\` is the one terminal that is not a box: the rectangle you give it is the arch's
   bounding frame, drawn as a curved band whose springings sit at the bottom corners and
   whose crown touches the top edge. Use it where a lintel would go - directly over an
