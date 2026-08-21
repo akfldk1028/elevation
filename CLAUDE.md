@@ -739,3 +739,18 @@ procedural env has little to reflect), iron on darkpanel is legible but low-cont
 next layer up is the design layer - a grammar naming its own materials via the schema's
 existing materials/material_id fields - and the paid image path is currently locked
 (no ARK_API_KEY in the env file).
+
+## 2026-08-21 six material families, and the vocabulary measured against the literature
+
+`--wall zinc` (0.43 m standing seams) and `--wall wood` (0.09 m boards, per-board jitter)
+complete the six wall families - brick, limestone, precast, darkpanel, zinc, wood - all
+procedural, all on the orthogonal axes. The sheet's matrix section now carries eight
+perspective renders. Measured against the facade-taxonomy literature (UnderOneFacade/ZAHA/
+MonuMAI class sets; CityGML/IFC/AAT): the grammar says ~12 of ~20 canonical element
+classes - missing balcony/canopy (depth-budget decision), louvre/blinds, molding variety,
+pediment - and the material families are 6 against libraries of thousands (Material
+ConneXion 95k+). The gap splits by nature: projections need a depth-budget decision,
+ornament classes are arch-shaped work (one geometry each, path proven in a day). Small
+open item: the showcase camera auto-derives from the entrance face, so a scheme whose
+subject is on another face (the arch demo's arched front) shows its back - a --face flag
+is the fix.
