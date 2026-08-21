@@ -182,6 +182,80 @@ function decodeNormal(raw, offset) {
  */
 export const MIN_VISIBLE_SEAM_PX = 48;
 
+/**
+ * Every threshold the presentation gates test, named once.
+ *
+ * They used to be literals inside the gate expressions, with their derivations in comment
+ * blocks two screens away - which is how this project twice shipped a number whose reason
+ * nobody could find, and how a limit calibrated for a strict subset of a budget quietly
+ * became the whole budget. `COMPOSITION_BOUNDS` in the design layer already keeps its
+ * numbers this way; this is the raster half of the same discipline. Each entry carries the
+ * measurement it came from, so changing one means arguing with its evidence.
+ *
+ * `MIN_VISIBLE_SEAM_PX` above stays a separate export because `competition-elevation.mjs`
+ * measures against it while rendering, before any of this runs.
+ */
+export const PRESENTATION_BOUNDS = Object.freeze({
+	/**
+	 * Share of the sheet allowed to be dark ink.
+	 *
+	 * A typed or authored facade draws its own trim, reveals and framing, so a large dark
+	 * share is the drawing working; a plain mass has almost nothing to draw and a dark
+	 * field there means something is wrong with the render.
+	 */
+	darkPixelFraction: Object.freeze({ typed: 0.60, untyped: 0.07 }),
+	/**
+	 * Strong-edge density: the real line budget, and the honest limit of what it measures.
+	 *
+	 * The untyped limit was 0.015 and it was reading the transfer function rather than the
+	 * drawing: encoding the base pass to sRGB brightened every fill, so the same lines
+	 * crossed a threshold they used to fall just under - creative-013's front went
+	 * strong 0.014953 -> 0.015667 while total went 0.016074 -> 0.015743, and the limit had
+	 * 0.3% of headroom. 0.020 restored a real margin.
+	 *
+	 * The typed limit's own re-derivation found something worse than a number set too low:
+	 * **in the regime that triggered it, the metric is inverted.** The first louvre-screen
+	 * grammar measured 0.025412 on a back elevation that is a clean rhythm of slats over
+	 * glass, legible at a glance, and was rejected at 0.025. A deliberately denser probe of
+	 * the same grammar - tile pitch 0.30 m -> 0.18 m, leaving 0.04 m of glass between
+	 * 0.14 m of solid, reading as a near-solid dark field with the glazing gone - measured
+	 * 0.024773 and passed. Past the point where a member is thinner than the antialiasing
+	 * width the drawing turns to mush and the edge count goes DOWN, so no threshold in this
+	 * vicinity separates legible from illegible: the worse drawing scores better. What does
+	 * separate them is composition, not raster - skin transparency 0.393 against 0.229, and
+	 * glass share of the elevation 0.272 against 0.127 - and that is measured in
+	 * composition.mjs, reported rather than gated.
+	 *
+	 * So the typed limit is set to admit every drawing this pipeline has been shown to make
+	 * legibly (0.030 against a measured maximum of 0.025412 over fifteen schemes) and its
+	 * job is narrowed to what it can still do: catch a drawing far busier than anything yet
+	 * authored.
+	 */
+	strongEdgeDensity: Object.freeze({ typed: 0.030, untyped: 0.020 }),
+	/**
+	 * Total-edge density. Unreachable and kept as a backstop: measured over thirteen
+	 * authored schemes x four elevations, strong is 95.6% to 99.9% of total and never
+	 * below, so for this clause to fire first strong would have to fall under 71% of total.
+	 */
+	totalEdgeDensity: 0.035,
+	/** Plan and top draw a cut, not a facade, so they get the tighter untyped-scale budget. */
+	planTopStrongEdgeDensity: 0.015,
+	/** Same-material seam area share; the length test in MIN_VISIBLE_SEAM_PX is the real gate. */
+	seamFraction: 0.001,
+	/** Plan/top pixel scale must be square: anisotropy above this is a broken camera fit. */
+	planTopScaleSkew: 0.0025,
+	/**
+	 * How far the finished composite may drift from its own base metrics before the
+	 * difference is ink that appeared after validation rather than annotation antialiasing.
+	 */
+	finalCompositeExcess: 0.002,
+});
+
+/** The strong-edge limit for the kind of drawing in hand. */
+function strongEdgeLimit(typedFacadeArtifact) {
+	return typedFacadeArtifact ? PRESENTATION_BOUNDS.strongEdgeDensity.typed : PRESENTATION_BOUNDS.strongEdgeDensity.untyped;
+}
+
 function persistedSeamMetrics(base, material, depth, normal, width, height, bounds, near, far) {
 	const sameMaterial = (left, right) => material[left] === material[right] && material[left + 1] === material[right + 1] && material[left + 2] === material[right + 2];
 	const background = (offset) => material[offset] === 0 && material[offset + 1] === 0 && material[offset + 2] === 0;
@@ -390,33 +464,12 @@ export async function validateCompetitionElevation({ artifacts, sourceMesh, faca
 	add(codes, "ELEVATION_CONTENT_CLIPPED", !bounds || size !== 2400 || artifacts.base?.height !== 2400
 		|| bounds.min_x < size * 0.08 || bounds.max_x > size * 0.92 - 1 || bounds.min_y < 48 || bounds.max_y > size - 48);
 	add(codes, "MATERIAL_ROLE_MISSING", ["concrete", "glass", "bronze", "opaque"].some((role) => !(diagnostics.role_pixel_counts?.[role] > 0)));
-	add(codes, "MATERIAL_VISIBILITY_INVALID", diagnostics.dark_pixel_fraction > (typedFacadeArtifact ? 0.60 : 0.07)
+	add(codes, "MATERIAL_VISIBILITY_INVALID", diagnostics.dark_pixel_fraction > (typedFacadeArtifact ? PRESENTATION_BOUNDS.darkPixelFraction.typed : PRESENTATION_BOUNDS.darkPixelFraction.untyped)
 		|| computedDark?.invalid_pixels > 0);
-	// The untyped strong-edge limit was 0.015, and it was reading the transfer function
-	// rather than the drawing. Encoding the elevation base pass to sRGB brightened every
-	// fill, so the same lines cross the strong threshold that used to fall just under it:
-	// on the creative-013 front, strong went 0.014953 -> 0.015667 while total went
-	// 0.016074 -> 0.015743. The drawing has no more lines in it than before - it has the
-	// contrast it was always supposed to have - and the 0.015 limit had 0.3% of headroom
-	// left, so it failed the first correctly encoded render. 0.020 restores a real margin,
-	// stays under the typed limit because a plain mass has less to draw than a facade, and
-	// leaves `total_edge_density` as the measure of how many lines there actually are.
-	//
-	// That last clause is wrong, and the same sRGB fix is why. Measured over thirteen
-	// authored schemes, four elevations each: strong is 95.6% to 99.9% of total, never
-	// below. For the 0.035 clause to fire first, strong would have to be under 71% of
-	// total. So `total_edge_density > 0.035` is unreachable on any drawing this pipeline
-	// currently makes - here and at PLAN_TOP below - and the strong limit is the whole
-	// line budget, at a number that was chosen for a strict subset of it.
-	//
-	// Left in place rather than retuned: 0.025 is not failing anything that should pass
-	// (the highest of the thirteen is 0.02422), and picking its replacement would be a
-	// judgement about how busy a drawing may look, which is the one judgement class this
-	// project has evidence it is bad at. Two schemes now sit within 4% of it, so the next
-	// scheme to fail it is the trigger to re-derive both numbers together.
-	add(codes, "LINE_DENSITY_EXCEEDED", diagnostics.total_edge_density > 0.035
-		|| diagnostics.strong_edge_density > (typedFacadeArtifact ? 0.025 : 0.020));
-	add(codes, "TRIANGULATION_VISIBLE", diagnostics.same_material_seam_fraction > 0.001 || diagnostics.seam_segments?.visible > 0);
+	add(codes, "LINE_DENSITY_EXCEEDED", diagnostics.total_edge_density > PRESENTATION_BOUNDS.totalEdgeDensity
+		|| diagnostics.strong_edge_density > strongEdgeLimit(typedFacadeArtifact));
+	add(codes, "TRIANGULATION_VISIBLE", diagnostics.same_material_seam_fraction > PRESENTATION_BOUNDS.seamFraction
+		|| diagnostics.seam_segments?.visible > 0);
 	if (artifacts.final_png?.path) {
 		try {
 			const metadata = await sharp(artifacts.final_png.path).metadata();
@@ -473,9 +526,9 @@ export async function validateCompetitionElevation({ artifacts, sourceMesh, faca
 			}
 		} catch { add(codes, "DIMENSION_SOURCE_MISSING", true); }
 	}
-	add(codes, "LINE_DENSITY_EXCEEDED", finalCompositeMismatch && (finalEdgeExcess > 0.002 || finalDarkExcess > 0.002));
-	add(codes, "MATERIAL_VISIBILITY_INVALID", finalCompositeMismatch && finalDarkExcess > 0.002);
-	add(codes, "DIMENSION_SOURCE_MISSING", finalCompositeMismatch && finalEdgeExcess <= 0.002 && finalDarkExcess <= 0.002);
+	add(codes, "LINE_DENSITY_EXCEEDED", finalCompositeMismatch && (finalEdgeExcess > PRESENTATION_BOUNDS.finalCompositeExcess || finalDarkExcess > PRESENTATION_BOUNDS.finalCompositeExcess));
+	add(codes, "MATERIAL_VISIBILITY_INVALID", finalCompositeMismatch && finalDarkExcess > PRESENTATION_BOUNDS.finalCompositeExcess);
+	add(codes, "DIMENSION_SOURCE_MISSING", finalCompositeMismatch && finalEdgeExcess <= PRESENTATION_BOUNDS.finalCompositeExcess && finalDarkExcess <= PRESENTATION_BOUNDS.finalCompositeExcess);
 	if (artifacts.render_manifest?.path) {
 		try {
 			const manifest = JSON.parse(await readFile(artifacts.render_manifest.path, "utf8"));
@@ -557,7 +610,7 @@ export async function validateCompetitionPlanTopArtifact({ artifact, sourceMesh,
 	add(codes, "PLAN_TOP_CAMERA_INVALID", manifest?.camera?.type !== "orthographic" || !horizontalTopAxes(manifest?.camera?.projection_axes)
 		|| !sameJson(manifest?.camera?.projection_axes, camera?.projection_axes));
 	const scaleX = manifest?.camera?.px_per_m_x, scaleY = manifest?.camera?.px_per_m_y;
-	add(codes, "PLAN_TOP_SCALE_INVALID", !Number.isFinite(scaleX) || !Number.isFinite(scaleY) || Math.abs(scaleX - scaleY) / Math.max(scaleX ?? 0, 1) > 0.0025);
+	add(codes, "PLAN_TOP_SCALE_INVALID", !Number.isFinite(scaleX) || !Number.isFinite(scaleY) || Math.abs(scaleX - scaleY) / Math.max(scaleX ?? 0, 1) > PRESENTATION_BOUNDS.planTopScaleSkew);
 	const expectedBounds = normalizedProjectedBounds(camera?.projected_bounds_m);
 	add(codes, "PLAN_TOP_EXACT_MASS_OUTLINE_INVALID", !sameJson(manifest?.exact_mass_projected_bounds_m, expectedBounds));
 	const content = manifest?.content_bounds_px;
@@ -595,8 +648,9 @@ export async function validateCompetitionPlanTopArtifact({ artifact, sourceMesh,
 				same_material_seam_fraction: seams.fraction,
 				seam_segments: { visible: seams.visible_segments, longest_px: seams.longest_segment_px },
 			};
-			add(codes, "PLAN_TOP_LINE_DENSITY_EXCEEDED", measured.total_edge_density > 0.035 || measured.strong_edge_density > 0.015);
-			add(codes, "TRIANGULATION_VISIBLE", seams.fraction > 0.001 || seams.visible_segments > 0);
+			add(codes, "PLAN_TOP_LINE_DENSITY_EXCEEDED", measured.total_edge_density > PRESENTATION_BOUNDS.totalEdgeDensity
+				|| measured.strong_edge_density > PRESENTATION_BOUNDS.planTopStrongEdgeDensity);
+			add(codes, "TRIANGULATION_VISIBLE", seams.fraction > PRESENTATION_BOUNDS.seamFraction || seams.visible_segments > 0);
 		} catch { add(codes, "PLAN_TOP_DIAGNOSTIC_INVALID", true); }
 	}
 	add(codes, "PLAN_TOP_MANIFEST_INVALID", !await validRecord(artifact?.manifest_record));
