@@ -754,3 +754,16 @@ ornament classes are arch-shaped work (one geometry each, path proven in a day).
 open item: the showcase camera auto-derives from the entrance face, so a scheme whose
 subject is on another face (the arch demo's arched front) shows its back - a --face flag
 is the fix.
+
+## 2026-08-21 the fourth layer: photoreal, and the free lane for it
+
+The pipeline's last layer is proven twice over. grammar -> gated drawings -> showcase ->
+PHOTO: an img2img pass over the showcase render produces an architectural photograph with
+the massing, window grid, stepped form and entrance block preserved. Lane one, the OpenAI
+images API (gpt-image-1 edits, input_fidelity high): worked first try, $0.13/image,
+retired at the user's direction after one proof (photo-brick-deep.png). Lane two, FREE:
+`codex exec` (Codex CLI 0.147, the user's ChatGPT-Pro OAuth) has a built-in image
+generation tool - prompt it to read the showcase PNG and generate; its sandbox cannot
+write outside its home, so the output lands in ~/.codex/generated_images/<id>/ and must
+be copied out (photo-sheer-codex.png). All future photoreal passes go through the codex
+lane. The sheet's photo section carries both proofs.
