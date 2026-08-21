@@ -123,6 +123,11 @@ tile is drawn at an equal share of what the fixed parts leave, so tiles stretch 
 shrink to fill the scope exactly and no remainder strip is ever left. The never-zero
 matters on a small scope: a repeat cannot be used to make a rule vanish on a narrow
 facet - it will squeeze one tile into whatever is left, however badly the nominal fits.
+An absolute or fractional part that does not fit is a HARD failure, not a member that
+shrinks away: if the fixed parts of a split need more than the scope has, the whole
+derivation stops with that split named. Only floating "~n" parts absorb what is left. So
+a narrow facet cannot be handled by letting absolute members overflow into nothing - it
+has to be routed to a simpler rule.
 A repeat part must carry a floating size such as "~3.3", it is the only part in its
 split that may float, and a split may hold at most one of them. Set "repeat": null on
 every other part. \`index\` is in scope only at the start rule (the facet's position on
