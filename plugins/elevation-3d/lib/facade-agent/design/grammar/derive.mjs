@@ -194,7 +194,14 @@ export function deriveFacadePrimitives({ grammar, segment, storeys, entrance = n
 		total: segment.face_total ?? 1,
 		// Nothing calls the start symbol, so it is the one rule with no argument to read.
 		param: null,
-		storey: storeys[0]?.storey ?? 1,
+		// The facet's own storey, not the ground one. Hardcoding storey 1 here told every
+		// facet of a stepped mass it stood on the ground: a facet spanning 7.26 to 9.9 m
+		// answered `storey == 1` and could never answer `storey == 3`, so the natural way
+		// to cap the top of the building - route the top facets to a cornice at the start
+		// rule - silently produced nothing. Two repo-blind authors reached for exactly that
+		// and lost attempts to it, one of them diagnosing it precisely. Children already
+		// derive their storey from their own bottom edge; the root now does the same.
+		storey: storeyOf(segment.local_z?.[0] ?? storeys[0]?.z_min ?? 0) ?? storeys[0]?.storey ?? 1,
 		depth: 0,
 	});
 	return primitives;
