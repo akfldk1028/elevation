@@ -301,7 +301,7 @@ export function measureComposition({ context, resolved } = {}) {
 		const missing = [];
 		if (!kinds.has("window") && !hasDoor) missing.push(["glass", "a window (or the placed entrance)"]);
 		if (!["sill", "band", "transom"].some((kind) => kinds.has(kind))) missing.push(["opaque", "a sill, a band or a transom - they are the only kinds that carry it, so a pure skin needs its transom"]);
-		if (!["mullion", "reveal", "window"].some((kind) => kinds.has(kind)) && !hasDoor) missing.push(["bronze", "a mullion or a reveal (a window without a reveal grows its own bronze frame)"]);
+		if (!["mullion", "reveal", "window", "louvre"].some((kind) => kinds.has(kind)) && !hasDoor) missing.push(["bronze", "a mullion, a reveal or a louvre (a window without a reveal grows its own bronze frame)"]);
 		for (const [role, source] of missing) {
 			note("MATERIAL_ROLE_MISSING", `the ${view} elevation has no kind that can produce the ${role} role, and the render gate requires all four roles on every elevation; it needs ${source}`);
 		}

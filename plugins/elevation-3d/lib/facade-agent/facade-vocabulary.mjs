@@ -54,6 +54,11 @@ export const TERMINAL_VOCABULARY = Object.freeze([
 	// springing line is the rectangle's bottom edge, the crown touches the top, and the
 	// geometry inside is a curved band - see archGeometry, which is what let this word in.
 	Object.freeze({ word: "arch", kind: "arch", material: "precast", purpose: "a curved head spanning an opening: the rectangle you give it is the arch's bounding frame, springing at its bottom edge, crown at its top" }),
+	// The screen layer. Unlike every terminal above, a louvre is ALLOWED to stand in front
+	// of glass: it is not in the validator's collidable set, so a repeat of louvres over a
+	// window is a layered screen, not a collision - the construction Kuma-style facades are
+	// made of and the one the single-layer vocabulary could not say.
+	Object.freeze({ word: "louvre", kind: "louvre", material: "window-frame", purpose: "a thin repeated screen member standing proud of the wall, allowed to pass in front of glass; a run of them is a layered screen" }),
 ]);
 
 /** Every word the grammar may write, `wall` included. */

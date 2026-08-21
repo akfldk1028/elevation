@@ -49,6 +49,9 @@ export const KIND_ROLES = Object.freeze({
 	// invisible arch is not worth its curve. It is thin like a sill, so it takes the
 	// sill's dark role and reads as the drawn head of its opening.
 	arch: "opaque",
+	// A louvre is screen framing: thin members over glass, the bronze family like the
+	// mullion whose job it shares.
+	louvre: "bronze",
 	// curtain wall vocabulary. `mullion` is already mapped above with the procedural
 	// vocabulary and means the same member there, so the two agree on one entry.
 	//
