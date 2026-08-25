@@ -767,3 +767,62 @@ generation tool - prompt it to read the showcase PNG and generate; its sandbox c
 write outside its home, so the output lands in ~/.codex/generated_images/<id>/ and must
 be copied out (photo-sheer-codex.png). All future photoreal passes go through the codex
 lane. The sheet's photo section carries both proofs.
+
+## 2026-08-25 the master campaign, three engine defects, and the tools become modules
+
+Four masters commissioned as repo-blind intents on creative-013, all four accepted:
+Kuma's layered screen (`grammar-blind-013-screen-fx.json`, 153 louvres), Chipperfield's
+colonnade (118 piers, worst opening 32.5%), Kahn's brick arcade (17 arches at the base,
+the first blind use of the arch terminal), and Siza's white silence - which passed on
+attempt ONE with zero faults, having predicted its own four opening ratios to two
+decimals on paper before running anything. That is the clearest statement yet that the
+brief is sufficient: the arithmetic in it is simulable.
+
+`73312e7` gave the grammar `louvre`, the first terminal allowed to stand in front of
+glass (it is deliberately not in the validator's collidable set), which is the
+construction the vocabulary needed for Kuma-language facades. Nine of the thirteen master
+languages in `master-intent-library.md` are sayable today.
+
+**Three defects the campaign exposed, each found by an author failing:**
+
+- `b5876c4` the root scope hardcoded `storey: storeys[0].storey`, so at the start rule
+  every facet of a stepped mass answered `storey == 1` - including one spanning 7.26 to
+  9.9 m. Routing the top facets to a cornice therefore produced nothing, silently. Two
+  authors reached for that idiom; the plinth author diagnosed it precisely and the fix
+  turned the colonnade's rejection into an acceptance with its author's file untouched.
+  All eighteen retained grammars resolve byte-identically.
+- `4503eb8` the recorded LINE_DENSITY trigger fired, and the re-derivation found the
+  metric **inverted** in that regime: the legible louvre screen measured 0.025412 and was
+  rejected while a deliberately mushed probe of the same grammar (tile pitch 0.30 -> 0.18 m,
+  glazing gone) measured 0.024773 and passed. Past the point where a member is thinner
+  than the antialiasing width the edge count falls, so no threshold there separates good
+  from bad. Typed limit is 0.030 now, its job narrowed, and all seven presentation
+  thresholds moved into `PRESENTATION_BOUNDS` with their derivations attached - the same
+  discipline `COMPOSITION_BOUNDS` already had.
+- `7880b32` / `6ac14b3` two feedback defects: the brief never said an oversized fixed
+  split fails hard rather than shrinking away (the Kahn author paid an attempt for it),
+  and `checkAuthoredGrammar` returned bare codes while the throwaway script beside it
+  returned located ones - the library was handing authors the worse feedback. It also
+  hardcoded `competition-warm`; both now fixed upstream with a regression test.
+
+**The tools are modules.** `73acbcf` split the 881-line showcase renderer (CLI + axes +
+an entire three.js app as a String.raw literal) into `tools/facade-presentation/` -
+axes, moods, textures, sky-env, materials, geometry, camera, app, host, cli - by moving
+the bundle from a stdin string to a real entry file, which killed the no-backtick
+constraint. It gained `--face` and `photo/codex-photo.mjs`. `0c12b9a` added the catalogue:
+`catalog/manifest.json` + `build-sheet.mjs` regenerate the whole page every run and
+recompute every card's metrics through `checkAuthoredGrammar`, so a card cannot claim a
+number its grammar does not have. First build: twelve schemes, 78 images, none missing.
+Open `facade-agent-verification/llm-facade-design-agent-20260810/catalogue.html`.
+
+**For the mass merge.** A read-only survey of the whole callable surface produced a
+proposed `tools/facade-pipeline/` (normalizeMass, prepareFacadeContext, writeFacadeBrief,
+checkFacadeGrammar, renderFacadeScheme, runFacadePipeline). The finding that matters: the
+mass side needs to bring only a mass. The evidence pack renders from mesh + cameras, the
+selected GLB can be synthesised with `buildEnrichedScene({safeFallback:true})`, and the
+thumbnails come from the evidence pack's own colour pass. The one hard gate is that
+`deriveFacadeSegmentsFromMass` must succeed and be byte-canonical - a hand-built authority
+is refused by design. The one sharp friction for an in-memory mass is that
+`verifyFacadeEvidencePack` demands a non-empty on-disk `artifacts` list (evidence.mjs:144),
+relaxable in about five lines since `geometry_content_sha256` is already computed from the
+mesh. The two upstream edits that survey called for are already done (`6ac14b3`).
