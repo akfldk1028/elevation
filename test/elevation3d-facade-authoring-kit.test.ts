@@ -54,3 +54,32 @@ test("the reveal-facade presentation override resolves against the competition p
 	assert.equal(style.sun.intensity, 1.9);
 	assert.equal(style.materialResponse.bronze.tintMultiplier, "#8a5a32");
 });
+
+// A bare code leaves an author correcting blind - the defect the paid loop has now been
+// fixed for twice. The library was still handing out bare codes while the repo-blind
+// checker beside it located them, so an author using the kit got the worse feedback.
+test("a validate rejection carries its measurement and its locus", async (t) => {
+	const { context } = await createFacadeDesignFixture(t);
+	// A door recessed past max_recess_m: buildable shape, one measurable violation.
+	const grammar = {
+		schema_version: "arr.elevation3d.facade-grammar.v3",
+		concept_id: "located-fault-probe",
+		start: "Facet",
+		entrance: {
+			segment_selector: "primary_visible_ground_segment", preferred_bay: "central_focus",
+			door_family: "portal", width_m: 1.6, height_m: 2.6, recess_m: 1.2,
+		},
+		rules: [{
+			name: "Facet",
+			alternatives: [{ when: null, split: null, terminal: "wall", inset_m: 0, depth_m: 0 }],
+		}],
+		design_rationale: ["probe"],
+	};
+	const rejected = checkAuthoredGrammar({ context, grammar });
+	assert.equal(rejected.ok, false);
+	assert.equal(rejected.stage, "validate");
+	assert.ok(rejected.codes.includes("PROJECTION_LIMIT_EXCEEDED"), rejected.codes.join(","));
+	const located = rejected.faults.find((fault: string) => fault.startsWith("PROJECTION_LIMIT_EXCEEDED"));
+	assert.ok(located, "the rejection must carry located faults, not only bare codes");
+	assert.match(located, /measured [\d.]+ against [\d.]+/, located);
+});
