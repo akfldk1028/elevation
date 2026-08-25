@@ -27,6 +27,7 @@ import { resolveMaterialPalette } from "../../material-palettes.mjs";
 import { renderEmbeddedPbrViews } from "../../texturing/render-validator.mjs";
 import { composePerspectiveHero, REVEAL_FACADE_PRESENTATION_STYLE } from "../final-presentation.mjs";
 import { measureComposition } from "./composition.mjs";
+import { locatedCodes } from "./design-agent.mjs";
 import { compileFacadeDesign } from "./compiler.mjs";
 import { parseFacadeDesign } from "./contract.mjs";
 import { readVerifiedFacadeDesignContextAuthority } from "./context.mjs";
@@ -100,7 +101,13 @@ export function checkAuthoredGrammar({ context, grammar } = {}) {
 	try { resolved = resolveFacadeProgram(program, context); }
 	catch (error) { return { ok: false, stage: "resolve", error: why(error) }; }
 	const validation = validateResolvedFacadeProgram({ program, context, resolved });
-	if (!validation.accepted) return { ok: false, stage: "validate", codes: validation.codes };
+	// Located, not bare. `locatedCodes` names the elevation, the member and by how much it
+	// missed; a bare code is the defect this project has fixed twice already in the paid
+	// loop, and the library was still handing authors the worse version while the sdd
+	// checker beside it handed them the better one.
+	if (!validation.accepted) {
+		return { ok: false, stage: "validate", codes: validation.codes, faults: locatedCodes(validation, resolved, context) };
+	}
 	const composition = measureComposition({ context, resolved });
 	const kinds = {};
 	for (const primitive of resolved.primitives) kinds[primitive.kind] = (kinds[primitive.kind] ?? 0) + 1;
@@ -121,11 +128,15 @@ export function checkAuthoredGrammar({ context, grammar } = {}) {
  */
 export async function renderAuthoredFacade({
 	runDir, candidate, context, grammar, outputSize = 1600,
+	// The palette was hardcoded to competition-warm here while render-any.mjs beside it
+	// took one from argv, which is why every scheme rendered warm unless someone reached
+	// past the library. Four presets exist; the default is unchanged.
+	palette = "competition-warm",
 	renderStyleOverrides = REVEAL_FACADE_PRESENTATION_STYLE, signal,
 } = {}) {
 	const checked = checkAuthoredGrammar({ context, grammar });
 	if (!checked.ok) {
-		const detail = checked.codes?.join(", ") ?? checked.faults?.join("; ") ?? checked.error ?? "";
+		const detail = checked.faults?.join("; ") ?? checked.codes?.join(", ") ?? checked.error ?? "";
 		throw new Error(`grammar was rejected at ${checked.stage}: ${detail}`);
 	}
 	const { program, resolved, validation } = checked;
@@ -140,7 +151,7 @@ export async function renderAuthoredFacade({
 		floorGuides: candidate.floor_guides, facadePlanes: candidate.facade_planes,
 		facadeSegmentAuthority: candidate.facade_segment_authority, cameras,
 		designFacadeManifest: { path: designManifestPath, sha256: sha256(await readFile(designManifestPath)) },
-		palette: resolveMaterialPalette("competition-warm"),
+		palette: resolveMaterialPalette(palette),
 		candidateId: candidate.candidate?.candidate_id ?? candidate.candidate_id, cutElevationM: 1.2, signal,
 	});
 	const pbrRoot = join(runDir, "pbr-render");
