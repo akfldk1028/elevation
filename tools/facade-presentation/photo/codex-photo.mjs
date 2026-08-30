@@ -59,10 +59,25 @@ export async function findNewestPng(rootDir, sinceMs) {
 	return newest ? newest.path : null;
 }
 
+/**
+ * Arguments as the shell will actually receive them.
+ *
+ * The codex entry point is a .cmd shim on Windows, which spawn can only reach through a
+ * shell - and a shell re-parses the argv, so a multi-word prompt arrives as a dozen
+ * arguments and codex reads the second word as a subcommand ("error: unrecognized
+ * subcommand 'the'"). Quote for the shell we are actually handing it to rather than
+ * hoping spawn's escaping survives the round trip. Off Windows there is no shell and the
+ * argv passes through untouched.
+ */
+export function shellQuoteArgs(args, platform = process.platform) {
+	if (platform !== "win32") return args;
+	return args.map((arg) => (/^[\w.\-\/:=]+$/.test(arg) ? arg : `"${String(arg).replace(/"/g, '\\"')}"`));
+}
+
 function runCodex({ command, args }) {
 	return new Promise((resolvePromise, rejectPromise) => {
-		// shell: true so the codex .cmd shim resolves on Windows.
-		const child = spawn(command, args, { shell: process.platform === "win32", windowsVerbatimArguments: false });
+		const useShell = process.platform === "win32";
+		const child = spawn(command, shellQuoteArgs(args), { shell: useShell, windowsVerbatimArguments: false });
 		let output = "";
 		child.stdout.on("data", (chunk) => { output += chunk; });
 		child.stderr.on("data", (chunk) => { output += chunk; });
