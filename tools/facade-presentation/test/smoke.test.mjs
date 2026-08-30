@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 
 import { parseShowcaseArgs } from "../showcase/cli.mjs";
 import { AXIS_VALUES, STYLE_AXES, FACE_VALUES } from "../showcase/axes.mjs";
-import { buildCodexPrompt, buildCodexCommand, findNewestPng, NO_IMAGE_TOOL } from "../photo/codex-photo.mjs";
+import { buildCodexPrompt, buildCodexCommand, findNewestPng, NO_IMAGE_TOOL, shellQuoteArgs } from "../photo/codex-photo.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -121,4 +121,23 @@ test("codex photo: findNewestPng picks the newest post-start PNG", async () => {
 	} finally {
 		await rm(root, { recursive: true, force: true });
 	}
+});
+
+// The photo lane shipped broken because it was written and never run: on Windows the
+// codex .cmd shim needs a shell, the shell re-parsed the argv, and a 49-word prompt
+// arrived as 49 arguments - codex read the second word as a subcommand and exited 2.
+test("the codex prompt survives the shell as one argument", () => {
+	const prompt = buildCodexPrompt("D:/renders/kahn.png", "a brick arcade at golden hour");
+	const { command, args } = buildCodexCommand(prompt);
+	assert.equal(command, "codex");
+	assert.deepEqual(args.slice(0, 2), ["exec", "--skip-git-repo-check"]);
+
+	const quoted = shellQuoteArgs(args, "win32");
+	assert.equal(quoted.length, 3, "quoting must not split the prompt into more arguments");
+	assert.equal(quoted[0], "exec", "a bare flag-shaped argument needs no quotes");
+	assert.ok(quoted[2].startsWith('"') && quoted[2].endsWith('"'), quoted[2].slice(0, 40));
+	assert.ok(quoted[2].includes("NO_IMAGE_TOOL"), "the sentinel has to reach codex");
+
+	// Off Windows there is no shell in the way, so the argv is handed over untouched.
+	assert.deepEqual(shellQuoteArgs(args, "linux"), args);
 });
