@@ -826,3 +826,41 @@ is refused by design. The one sharp friction for an in-memory mass is that
 `verifyFacadeEvidencePack` demands a non-empty on-disk `artifacts` list (evidence.mjs:144),
 relaxable in about five lines since `geometry_content_sha256` is already computed from the
 mesh. The two upstream edits that survey called for are already done (`6ac14b3`).
+
+## 2026-08-31 the live director ships on a stepped mass, and what the battered one showed
+
+`aab1453`. Nine live runs on creative-013; the ninth succeeded - 455 details, scores
+100/100/97/100/88/100, $0.12, run dir `creative-013/llm-facade-live-013-h`. The paid
+director has now drawn a facade on a mass that is not a prism, which it had never done.
+
+Four changes in order, each measured, the first three moving the failure and the fourth
+ending it:
+
+- `open_zones_m` per facet (`c72e0e9`): the z bands where an opening's ends already clear
+  every slab line. The z-axis sin vanished; the failure moved to u.
+- `punched_scope_m` per facet (`91393bd`): the u width after the fold inset, 0 meaning
+  unpunchable, plus the mixed-facet trap - one skin word on a facet and its punched
+  windows lose the automatic inset. The facet-level sin vanished; the failure moved to
+  leaf scopes of a few centimetres.
+- shrink-to-fit below the facet (`f0f49b2`): a split whose fixed parts overrun is scaled
+  to fit instead of stopping the derivation, guarded three ways - the facet's own split
+  still fails hard (the author was handed that number), a collapse under quarter-scale
+  stays bare wall, and an inverted scope is never shrunk. All eighteen retained grammars
+  resolve byte-identically. Every attempt now reached validation instead of resolve.
+- repair-not-redesign in the correction (`aab1453`): the loop already returned the previous
+  grammar, but the instruction above it only listed codes, so each attempt re-derived
+  everything and traded one violation for another. It now names the member, the smallest
+  move that clears the quoted number, and which hint answers which fault. The LLM-layout
+  literature lands in the same place: constraint satisfaction is the bottleneck, not
+  design, and the loops that converge ask for an adjustment to the violating element.
+
+**creative-004's first live run failed differently, and the difference is the news.** It
+cleared every design gate on its own - no correction exhaustion - and died in the renderer
+on the plan view's TRIANGULATION_VISIBLE, 2 segments, longest 73 px. A composition-level
+guard for it was written and reverted: 020's scheme-a has eight pilasters crossing the
+1.2 m cut at exactly the same 0.22 m depth and renders clean, so the discriminator is not
+the grammar but the mass - on a battered wall a constant-depth pier meets the mass surface
+coplanar at the cut, on a vertical one it makes a depth step. Composition cannot decide it
+without the mass. The real fix is the recorded architectural gap: render faults are never
+relayed to the correction loop, so a run that authors well and renders badly dies with
+nobody able to repair it.
