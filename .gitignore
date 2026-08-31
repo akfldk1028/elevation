@@ -2,7 +2,11 @@ node_modules/
 dist/
 .worktrees/
 pi-mono/
-.claude/
+.claude/*
+# Agent definitions are source: the repo-blind author is a role this project relies on for
+# its cheapest defect-finding test, and it has to be versioned alongside the brief it reads.
+# Everything else under .claude/ - worktrees, local settings - stays ignored.
+!.claude/agents/
 .gitagent/
 .gitagent/whatsapp-auth/
 *.tgz
