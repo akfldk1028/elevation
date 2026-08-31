@@ -97,8 +97,11 @@ p.metrics.rejected{color:#a33;font-size:12.5px;margin:12px 0 0}
 `;
 
 async function buildCard(card, candidate, context, sheetDir) {
-	const runRoot = candidate.runRoot;
-	const grammarPath = join(VERIFICATION_ROOT, runRoot, card.grammar);
+	// A card may live under a different run root than the candidate's authoring dir - the
+	// live director writes into its own run - while still being one grammar over the same
+	// context. Its grammar path stays relative to the authoring root, where the file is kept.
+	const runRoot = card.runRoot ?? candidate.runRoot;
+	const grammarPath = join(VERIFICATION_ROOT, candidate.runRoot, card.grammar);
 	let check = null;
 	try {
 		check = checkAuthoredGrammar({ context, grammar: JSON.parse(await readFile(grammarPath, "utf8")) });
