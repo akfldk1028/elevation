@@ -984,8 +984,15 @@ export function buildTypedFacadeDetails({ mesh, floorGuides, facadePlanes, primi
 			v0: local.z_min - plane.origin[2], v1: local.z_max - plane.origin[2],
 			n0: 0, n1: depth,
 		};
+		// A member that named a rise datum is the one thing allowed to stand above its own
+		// plane rectangle, because that rectangle is the facet's mesh face and a parapet is by
+		// definition the wall that continues past it. Its height is still not the author's to
+		// choose: `derive.mjs` sets it to the building's top line and refuses the rise
+		// altogether when the facet sits more than one storey below that, so nothing here can
+		// grow a tower out of a low strip. Everything without the flag is held to its plane.
+		const vLimit = primitive.rises_to ? Math.max(plane.extent_m[1], bounds.v1) : plane.extent_m[1];
 		if (bounds.u0 < -EPSILON || bounds.u1 > plane.extent_m[0] + EPSILON
-			|| bounds.v0 < -EPSILON || bounds.v1 > plane.extent_m[1] + EPSILON) {
+			|| bounds.v0 < -EPSILON || bounds.v1 > vLimit + EPSILON) {
 			throw new TypeError("invalid typed facade primitive bounds");
 		}
 		pushDetail(details, plane, tangent, TYPED_FACADE_GRAMMAR, bounds, {

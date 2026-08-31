@@ -21,6 +21,23 @@ export const TERMINALS = TERMINAL_WORDS;
 // 37 facets whose bottoms sit at arbitrary heights - the arithmetic CGA does not have,
 // because `comp(f)` hands each facet a frame of its own and floors are addressed by ordinal.
 export const AXES = Object.freeze(["u", "z", "storey"]);
+/**
+ * The datums a member may be carried up to, past the top of its own facet.
+ *
+ * This is a deliberate loosening of the geometry lock and the only one: everywhere else a
+ * primitive lives strictly inside its facet. It exists because the top edge of every
+ * elevation this project has drawn is the mass's own stepped edge - a member is clamped to
+ * its facet in `derive.mjs` and rejected outright by SEGMENT_BOUNDS_INVALID if it reaches
+ * higher - so the one move real architecture uses to settle a stepped mass, a parapet run
+ * level across the steps, could not be said at all.
+ *
+ * It is a datum and not a number on purpose. The author names the line; the engine knows
+ * where it is. An arbitrary rise would be new massing authored by the facade, which is the
+ * other agent's work and is not what this opens.
+ */
+export const RISE_DATUMS = Object.freeze(["building_top"]);
+/** Terminals that cut a hole. None of them may be carried past the facet it belongs to. */
+const OPENING_TERMINALS = new Set(["glass", "door", "arch"]);
 export const BOUNDS = Object.freeze({
 	// Derivation is bounded by depth and repeat, not by how many names the grammar
 	// uses. A facade that varies by elevation, by parity and by zone needs the room.
@@ -183,7 +200,7 @@ function parseGuard(alternative, label) {
 }
 
 function parseAlternative(value, label, symbols) {
-	const alternative = record(value, label, new Set(["when", "split", "terminal", "inset_m", "depth_m", "min_u_m", "min_z_m"]));
+	const alternative = record(value, label, new Set(["when", "split", "terminal", "inset_m", "depth_m", "min_u_m", "min_z_m", "rise_to"]));
 	const when = alternative.when === undefined || alternative.when === null ? null : parsePredicate(alternative.when, `${label}.when`);
 	const guard = parseGuard(alternative, label);
 	if (alternative.terminal !== undefined && alternative.terminal !== null) {
@@ -196,7 +213,15 @@ function parseAlternative(value, label, symbols) {
 		if (!Number.isFinite(inset) || inset < 0 || inset > BOUNDS.maxInsetM) fail(`${label}.inset_m is out of range`);
 		const depth = alternative.depth_m ?? 0;
 		if (!Number.isFinite(depth) || depth < 0 || depth > BOUNDS.maxDepthM) fail(`${label}.depth_m is out of range`);
-		return Object.freeze({ when, guard, terminal: alternative.terminal, inset_m: inset, depth_m: depth });
+		const riseTo = alternative.rise_to ?? null;
+		// Only a solid may be carried past its facet. A hole above the mass is a hole in
+		// nothing, and glass there would be a window onto the sky - the loosening is for a
+		// parapet, not for openings that escape the buildability gates by leaving the facet.
+		if (riseTo !== null) {
+			if (!RISE_DATUMS.includes(riseTo)) fail(`${label}.rise_to must be one of ${RISE_DATUMS.join(", ")}`);
+			if (OPENING_TERMINALS.has(alternative.terminal)) fail(`${label}.rise_to cannot carry a ${alternative.terminal} past its facet`);
+		}
+		return Object.freeze({ when, guard, terminal: alternative.terminal, inset_m: inset, depth_m: depth, rise_to: riseTo });
 	}
 	// Strict structured output forces both fields onto a split too, where zero is the
 	// only sensible answer. Only a real offset here means the model confused the two.

@@ -84,6 +84,7 @@ export function validateResolvedFacadeProgram({ program, context, resolved } = {
 
 		const segments = new Map(context.facade_segments.map((segment) => [segment.segment_id, segment]));
 		const storeys = new Map(context.storeys.map((storey) => [storey.storey, storey]));
+		const buildingTop = Math.max(...context.storeys.map((storey) => storey.z_max));
 		const entrances = resolved.primitives.filter((primitive) => primitive.kind === "door" && primitive.role === "primary_entrance");
 		if (entrances.length !== 1) codes.add("PRIMARY_ENTRANCE_INVALID");
 
@@ -109,7 +110,19 @@ export function validateResolvedFacadeProgram({ program, context, resolved } = {
 			const bounds = primitive.local_bounds;
 			if (!segment || !bounds || ![bounds.u_min, bounds.u_max, bounds.z_min, bounds.z_max].every(Number.isFinite)
 				|| bounds.u_min < 0 || bounds.u_max > (segment?.length_m ?? 0) || bounds.u_min >= bounds.u_max
-				|| bounds.z_min < segment?.local_z?.[0] || bounds.z_max > segment?.local_z?.[1] || bounds.z_min >= bounds.z_max) {
+				// A member that named a rise datum is allowed above its facet, and only up to
+				// that line - the loosening is a parapet levelling a stepped mass, not a licence
+				// to leave the facet by an arbitrary amount. Everything without the flag is held
+				// to its facet exactly as before.
+				|| bounds.z_min < segment?.local_z?.[0]
+				// The datum is compared with an epsilon for the same reason the deriver rounds it:
+				// a storey table that sums to 9.899999999999999 must not reject a member drawn at
+				// the 9.9 the deriver emitted. Facet bounds keep their exact comparison, which is
+				// what every existing grammar is measured against.
+				|| (primitive.rises_to === "building_top"
+					? bounds.z_max > buildingTop + 1e-6
+					: bounds.z_max > segment?.local_z?.[1])
+				|| bounds.z_min >= bounds.z_max) {
 				measure("SEGMENT_BOUNDS_INVALID", index, bounds?.u_max ?? Number.MAX_SAFE_INTEGER, segment?.length_m ?? 0);
 				continue;
 			}
