@@ -332,10 +332,12 @@ clear of the fold: cutting one through a turn breaks the mass. The fault is
 FOLD_CLEARANCE_INVALID, and what it measures is the distance from the opening's nearest
 edge to the facet edge; exactly 0.3 m clears, the fault fires only short of it. On a
 punched facet the clearance is taken off BEFORE your rule runs: the u scope handed to
-your split is already inset 0.3 m at each fold, so your parts must fit the facet width
-minus 0.6 m, and budgeting the clearance again is the commonest way a split fails to
-fit. A facet that derives skin members gets the whole width instead, which is what lets
-a skin frame the fold. A glazed skin does not pierce the mass at the corner, it replaces
+your split is already inset 0.3 m at each fold, and that width is stated per facet as
+\`punched_scope_m\` - fit your parts to that number, not to \`length_m\`, and never budget
+the clearance twice. A facet whose \`punched_scope_m\` is 0 cannot be punched at all.
+A facet that derives skin members gets the whole width instead, which is what lets a skin
+frame the fold - and that cuts both ways: put one skin word on a facet and every punched
+window on that same facet loses its automatic inset and has to keep the 0.3 m itself. A glazed skin does not pierce the mass at the corner, it replaces
 it, so its glass may run right to the fold as long as the strip is framed. Framed means a
 mullion or a spandrel pier that reaches the facet edge itself - its own rectangle starting
 at the very edge of the facet, not merely near it - overlaps the glass in height, and
@@ -403,6 +405,13 @@ export function buildFacadeGrammarPrompt({ context, correctionCodes = [], attemp
 		facade_segments: context.facade_segments.map(({ view: _view, ...segment }) => ({
 			...segment,
 			open_zones_m: openingZones(segment, context.storeys, context.exclusions?.floor_band_clearance_m ?? 0),
+			// The u twin of open_zones_m. A punched facet's rule is handed a scope already
+			// inset by the fold clearance at both edges, so the width its parts must fit is
+			// not `length_m` - it is this. Two live attempts in a row wrote a bay run of
+			// 0.98 m for a facet whose scope was 0.767 m, which is `length_m` minus 0.6
+			// arithmetic the model should not have to do. Zero means the facet is narrower
+			// than the two clearances and cannot be punched at all.
+			punched_scope_m: Number(Math.max(0, (segment.length_m ?? 0) - 2 * (context.exclusions?.fold_clearance_m ?? 0)).toFixed(4)),
 		})),
 		storeys: context.storeys,
 		exclusions: context.exclusions,
