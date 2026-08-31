@@ -7,6 +7,7 @@ import {
 	predicateHolds,
 } from "../plugins/elevation-3d/lib/facade-agent/design/grammar/contract.mjs";
 import { deriveFacadePrimitives } from "../plugins/elevation-3d/lib/facade-agent/design/grammar/derive.mjs";
+import { openingZones } from "../plugins/elevation-3d/lib/facade-agent/design/grammar/prompt.mjs";
 
 const STOREYS = [1, 2, 3, 4, 5].map((storey) => ({ storey, z_min: (storey - 1) * 3.3, z_max: storey * 3.3 }));
 const SEGMENT = {
@@ -256,4 +257,28 @@ test("stops a grammar that recurses without shrinking", () => {
 		() => deriveFacadePrimitives({ grammar: parsed, segment: SEGMENT, storeys: STOREYS }),
 		(error: unknown) => error instanceof FacadeGrammarError,
 	);
+});
+
+// Every live run on the stepped mass died on the same arithmetic: an opening end landing
+// inside a slab line's 0.15 m skirt, on one of thirty-seven facets with different bottoms.
+// Repo-blind authors solve it by hand before writing; a provider seeing a prompt cannot.
+// So the prompt states the answer per facet, and these are the bands it states.
+test("each facet is handed the z bands an opening may legally end in", () => {
+	const storeys = [1, 2, 3].map((storey) => ({ storey, z_min: (storey - 1) * 3.3, z_max: storey * 3.3 }));
+
+	// A facet running the whole height gets one band per storey, inset by the clearance.
+	assert.deepEqual(openingZones({ local_z: [0, 9.9] }, storeys, 0.15),
+		[[0.15, 3.15], [3.45, 6.45], [6.75, 9.75]]);
+
+	// A facet that starts partway up - the bridge bar's underside is at 1.861 m - starts its
+	// first band at its own bottom, not at the storey's.
+	assert.deepEqual(openingZones({ local_z: [1.86, 9.3] }, storeys, 0.15),
+		[[1.86, 3.15], [3.45, 6.45], [6.75, 9.3]]);
+
+	// A parapet strip too short to hold anything legal says so with an empty list rather
+	// than offering a band a sliver would fit in.
+	assert.deepEqual(openingZones({ local_z: [7.26, 7.28] }, storeys, 0.15), []);
+
+	// Degenerate input is not an exception; it is simply no room.
+	assert.deepEqual(openingZones({ local_z: [5, 5] }, storeys, 0.15), []);
 });

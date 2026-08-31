@@ -319,8 +319,12 @@ opening may pass a slab on its way, which is how a double-height lobby and a ver
 slot are drawn. The ground line z=0 is a slab line too (only the placed entrance may sit
 on it), so glass that should read as meeting the ground stands on a thin bare-wall
 shadow gap rather than on z=0 itself. The fault is FLOOR_BAND_INTRUSION and it reports how far from the slab
-line the offending end sat. Only one primary entrance is allowed, and both the lowest
-and the highest storey must carry openings.
+line the offending end sat. You do not have to work these out: every facet in the
+technical context carries \`open_zones_m\`, the z intervals inside that facet where both
+ends of an opening are already clear of every slab line and of the ground. Put your
+openings inside those bands and this fault cannot fire; a facet whose list is empty is
+too short to hold one at all and wants bare wall. Only one primary entrance is allowed,
+and both the lowest and the highest storey must carry openings.
 
 How an opening meets a fold depends on which construction you are drawing, because the
 two are not doing the same thing there. A hole punched in a solid wall must stay 0.3 m
@@ -349,6 +353,36 @@ in height - unless a mullion stands between them, which counts as the separation
 facet may be divided into a grid of vision panes side by side, which is what a curtain
 wall is, and a punched wall still needs real pier between its holes.`;
 
+/**
+ * The z intervals inside one facet where an opening may begin and end.
+ *
+ * Every storey boundary carries a skirt of `clearance` on both sides that an opening end
+ * may not land in; the ground line and the top of the highest storey are boundaries too.
+ * What is left are the open bands. Intervals shorter than twice the clearance are dropped:
+ * nothing useful fits in them, and offering one invites a sliver.
+ */
+export function openingZones(segment, storeys = [], clearance = 0) {
+	const bottom = segment?.local_z?.[0];
+	const top = segment?.local_z?.[1];
+	if (!Number.isFinite(bottom) || !Number.isFinite(top) || top <= bottom) return [];
+	const lines = new Set();
+	for (const storey of storeys) { lines.add(storey.z_min); lines.add(storey.z_max); }
+	const blocked = [...lines].sort((left, right) => left - right)
+		.map((line) => [line - clearance, line + clearance]);
+	const zones = [];
+	let cursor = bottom;
+	for (const [from, to] of blocked) {
+		if (to <= cursor) continue;
+		if (from > cursor) zones.push([cursor, Math.min(from, top)]);
+		cursor = Math.max(cursor, to);
+		if (cursor >= top) break;
+	}
+	if (cursor < top) zones.push([cursor, top]);
+	return zones
+		.filter(([from, to]) => to - from > clearance * 2)
+		.map(([from, to]) => [Number(from.toFixed(4)), Number(Math.min(to, top).toFixed(4))]);
+}
+
 export function buildFacadeGrammarPrompt({ context, correctionCodes = [], attempt, previous = null }) {
 	const boundedContext = {
 		source: context.source,
@@ -357,7 +391,19 @@ export function buildFacadeGrammarPrompt({ context, correctionCodes = [], attemp
 		// grouped into; they disagree on every segment, and only `face_view` is what the
 		// predicate tests. Sending both invites an author to design against the wrong one,
 		// which is the same one-name-two-measurements drift this codebase keeps paying for.
-		facade_segments: context.facade_segments.map(({ view: _view, ...segment }) => segment),
+		// Each facet carries the z bands an opening may legally end in, computed here rather
+		// than left to the author. Every live run on the stepped mass died on exactly this
+		// arithmetic - an opening end landing inside the 0.15 m skirt of a slab line, on one
+		// of thirty-seven facets with different bottoms - and the model has three attempts to
+		// get all of them right. A repo-blind author solves it by hand-computing per facet
+		// before writing anything; a provider seeing a prompt cannot. So the prompt states
+		// the answer: `open_zones_m` is the list of intervals inside the facet where both
+		// ends of an opening are clear of every slab line, and anything outside them is a
+		// FLOOR_BAND_INTRUSION waiting to happen.
+		facade_segments: context.facade_segments.map(({ view: _view, ...segment }) => ({
+			...segment,
+			open_zones_m: openingZones(segment, context.storeys, context.exclusions?.floor_band_clearance_m ?? 0),
+		})),
 		storeys: context.storeys,
 		exclusions: context.exclusions,
 		existing_openings: context.existing_openings,
