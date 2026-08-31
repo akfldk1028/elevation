@@ -1,0 +1,5 @@
+{
+  "_comment": "Where the elevation agent's data lives. The agent is this folder; the masses it designs for and the drawings it produces are not, and this file is the only place that says where they are. Relative paths resolve against this folder. Environment variables ELEVATION_AGENT_DATASET_ROOT and ELEVATION_AGENT_OUTPUT_ROOT override it; an explicit argument overrides those.",
+  "dataset_root": "D:/Data/50_ELE/MAAS_ELEVATION_TEST_SET_20260730",
+  "output_root": "D:/Data/50_ELE/facade-agent-verification/llm-facade-design-agent-20260810"
+}

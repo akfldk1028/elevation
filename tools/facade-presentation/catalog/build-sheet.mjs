@@ -15,10 +15,14 @@ import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { checkAuthoredGrammar } from "../../../plugins/elevation-3d/lib/facade-agent/design/authoring-kit.mjs";
-import { prepareCandidate } from "../../../.superpowers/sdd/2026-08-10-llm-facade-design-agent/prepare-any-candidate.mjs";
+import { resolveRoots } from "../../facade-pipeline/config.mjs";
+import { prepareFacadeContext } from "../../facade-pipeline/prepare.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const VERIFICATION_ROOT = "D:/Data/50_ELE/facade-agent-verification/llm-facade-design-agent-20260810";
+// Tracked code reached into an untracked scratch script for its context, and typed the
+// output root in beside it. Both now come from the pipeline module, so the sheet builds
+// wherever the agent's data is pointed.
+const VERIFICATION_ROOT = resolveRoots().outputRoot;
 const VIEWS = [["front", "front"], ["back", "back"], ["left", "left"], ["right", "right"]];
 
 const exists = async (path) => access(path).then(() => true, () => false);
@@ -145,13 +149,7 @@ export async function buildSheet({ manifestPath, outPath } = {}) {
 	const [candidate] = manifest.candidates;
 	// One prepare per candidate: the evidence verify is the slow part, and every scheme on
 	// this page is a different grammar over the same context.
-	const runDir = join(VERIFICATION_ROOT, candidate.runRoot);
-	const { context } = await prepareCandidate({
-		candidateId: candidate.id,
-		selectedGlb: join(runDir, "selected.glb"),
-		frontPng: join(runDir, "front.png"),
-		axonPng: join(runDir, "axon.png"),
-	});
+	const { context } = await prepareFacadeContext({ candidateId: candidate.id });
 	const parts = [];
 	for (const section of manifest.sections) {
 		if (section.images) { parts.push(imageSection(section, candidate.runRoot)); continue; }
