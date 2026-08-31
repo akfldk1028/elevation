@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 
 import { parseShowcaseArgs } from "../showcase/cli.mjs";
 import { AXIS_VALUES, STYLE_AXES, FACE_VALUES } from "../showcase/axes.mjs";
-import { buildCodexPrompt, buildCodexCommand, findNewestPng, NO_IMAGE_TOOL, shellQuoteArgs } from "../photo/codex-photo.mjs";
+import { buildCodexPrompt, buildCodexCommand, CODEX_IMAGE_TOOL, findNewestPng, NO_IMAGE_TOOL, shellQuoteArgs } from "../photo/codex-photo.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -93,7 +93,14 @@ test("codex photo: prompt locks geometry and command is codex exec", () => {
 	assert.ok(prompt.includes("construction"));
 	assert.ok(prompt.includes("entrance block"));
 	assert.ok(prompt.includes("red brick block at golden hour"));
-	assert.ok(prompt.includes(NO_IMAGE_TOOL));
+	// The tool is named, because codex denies having it when asked in the abstract - a direct
+	// probe of the same build answers "image generation: image_gen__imagegen".
+	assert.ok(prompt.includes(CODEX_IMAGE_TOOL));
+	// And the prompt carries no sentinel for the caller to search the transcript for. codex
+	// echoes the prompt it was given, so any such word comes back and the detector finds its
+	// own instruction: two runs were reported as "no image tool" while the image was written.
+	// Success is the artifact, checked by findNewestPng.
+	assert.equal(prompt.includes(NO_IMAGE_TOOL), false, "a sentinel in the prompt is echoed back and read as a verdict");
 	const { command, args } = buildCodexCommand(prompt);
 	assert.equal(command, "codex");
 	assert.deepEqual(args.slice(0, 2), ["exec", "--skip-git-repo-check"]);
@@ -136,7 +143,7 @@ test("the codex prompt survives the shell as one argument", () => {
 	assert.equal(quoted.length, 3, "quoting must not split the prompt into more arguments");
 	assert.equal(quoted[0], "exec", "a bare flag-shaped argument needs no quotes");
 	assert.ok(quoted[2].startsWith('"') && quoted[2].endsWith('"'), quoted[2].slice(0, 40));
-	assert.ok(quoted[2].includes("NO_IMAGE_TOOL"), "the sentinel has to reach codex");
+	assert.ok(quoted[2].includes(CODEX_IMAGE_TOOL), "the tool name has to reach codex intact");
 
 	// Off Windows there is no shell in the way, so the argv is handed over untouched.
 	assert.deepEqual(shellQuoteArgs(args, "linux"), args);

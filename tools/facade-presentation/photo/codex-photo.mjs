@@ -20,13 +20,17 @@ export function defaultGeneratedImagesDir() {
 	return join(homedir(), ".codex", "generated_images");
 }
 
+/** The image tool codex exposes. Named in the prompt because the model denies having it. */
+export const CODEX_IMAGE_TOOL = "image_gen__imagegen";
+
 export function buildCodexPrompt(inputPng, subject) {
 	return [
+		`Use your ${CODEX_IMAGE_TOOL} tool.`,
 		`Read the render at ${resolve(inputPng).replace(/\\/g, "/")} and generate a photorealistic`,
 		"architectural photograph of the same building. Keep the same massing, window grid,",
 		"construction, entrance block - change only surface realism, lighting nuance and context.",
 		`Subject: ${subject}.`,
-		`If no image generation tool is available, print exactly ${NO_IMAGE_TOOL} and stop.`,
+		"Do not answer that you lack the tool without calling it.",
 	].join(" ");
 }
 
@@ -105,9 +109,13 @@ export async function codexPhoto({ inputPng, outputPng, subject, generatedDir = 
 	const startMs = Date.now();
 	const prompt = buildCodexPrompt(inputPng, subject);
 	const { code, output } = await runCodex(buildCodexCommand(prompt));
-	if (output.includes(NO_IMAGE_TOOL)) {
-		throw new Error("codex reported no image generation tool is available (NO_IMAGE_TOOL); the photo lane needs a codex build with the image tool enabled");
-	}
+	// Success is the file, not the model's account of itself. This used to ask codex to print a
+	// sentinel when it had no image tool, and then search the whole transcript for that word -
+	// but codex echoes the prompt it was given, so the detector kept finding its own
+	// instruction and reporting a missing tool while the image was being written. Two runs were
+	// called failures that way; a direct probe answered "image generation: image_gen__imagegen"
+	// and a third run produced the photograph. An artifact check cannot be fooled by what the
+	// model says about itself, and `findNewestPng` below was always the real signal.
 	if (code !== 0) {
 		throw new Error(`codex exec exited with code ${code}: ${output.slice(-2000)}`);
 	}

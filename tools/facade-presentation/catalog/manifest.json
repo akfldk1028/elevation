@@ -31,7 +31,8 @@
           "grammar": "grammar-blind-013-curtainwall.json",
           "renderDir": "render-curtainwall",
           "showcase": "showcase/curtainwall.png",
-          "axes": "precast / clear / iron / morning · accepted on attempt 1"
+          "photo": "showcase/photo-curtainwall.png",
+          "axes": "precast / clear / iron / morning · accepted on attempt 1 · all four layers, free lane"
         },
         {
           "id": "brisesoleil",
