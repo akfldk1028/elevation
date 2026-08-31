@@ -3,6 +3,9 @@ import { BOUNDS, FacadeGrammarError, predicateHolds } from "./contract.mjs";
 
 const MAX_PRIMITIVES = 2048;
 
+/** Below this, shrinking a split to fit would leave members the author would not recognise. */
+const MIN_SHRINK_SCALE = 0.25;
+
 /**
  * The members of a glazed skin, which are allowed to reach the corner.
  *
@@ -47,13 +50,47 @@ function familyId(symbol, param) {
  * times as its nominal size fits. That is CGA's `~` and `*`, and it is why a rule
  * written once adapts to a 2.2 m facet and a 12 m one alike.
  */
-function layout(parts, length) {
+function layout(parts, length, mayShrink = true) {
 	let fixed = 0;
 	for (const part of parts) {
 		if (part.size.kind === "absolute") fixed += part.size.value;
 		else if (part.size.kind === "relative") fixed += part.size.value * length;
 	}
 	const leftover = length - fixed;
+	// Fixed parts that do not fit are shrunk to fit rather than thrown away, which is what
+	// every author has assumed and what every layout engine does. Seven live runs died here
+	// and each brief sentence only moved the failure: first to the facet width, then to a
+	// leaf scope of a few centimetres, because a fractional nest can produce a scope no
+	// absolute member was written for. Nothing that resolves today changes - a grammar with
+	// room to spare never reaches this branch - so the shrink can only turn a hard failure
+	// into a drawing. The scale is reported on the resolution, and a member squeezed below
+	// a millimetre emits nothing rather than a sliver.
+	if (leftover < -1e-9 && mayShrink) {
+		// A scope with no room at all is not a squeeze, it is a facet the fold clearance has
+		// eaten - `placeable` inverts on anything narrower than twice the clearance - and the
+		// resolver already answers that with bare wall. Shrinking into it produced negative
+		// scales and primitives with impossible bounds, which is how this guard was found.
+		if (length <= 1e-9 || fixed <= 1e-9) return { overrun: fixed - length, fixed };
+		const scale = length / fixed;
+		// A squeeze is not a collapse. Measured on the schemes that reach this branch, the two
+		// populations are far apart: the live runs' real overruns sit at 0.37, 0.61 and 0.93 of
+		// what the author wrote, while a scope the fractional nest has cut to 3.7 mm or 30 mm
+		// wants 0.006 and 0.126 - members squeezed past recognition. Below a quarter the thing
+		// the author wrote no longer exists, so that stays a failure the resolver answers with
+		// bare wall, which is what it already did before shrinking existed.
+		if (scale < MIN_SHRINK_SCALE) return { overrun: fixed - length, fixed };
+
+		const shrunk = parts.map((part) => ({
+			...part,
+			size: part.size.kind === "float"
+				? part.size
+				: { ...part.size, kind: "absolute", value: (part.size.kind === "relative" ? part.size.value * length : part.size.value) * scale },
+		}));
+		const slots = shrunk.map((part) => ({ part, size: part.size.kind === "float" ? 0 : part.size.value, index: 0, total: 1 }))
+			.filter((slot) => slot.size > 1e-3);
+		if (!slots.length) return { overrun: fixed - length, fixed };
+		return { slots, shrunkBy: Number(scale.toFixed(6)) };
+	}
 	if (leftover < -1e-9) return { overrun: fixed - length, fixed };
 	const repeat = parts.find((part) => part.repeat);
 	const slots = [];
@@ -146,7 +183,13 @@ export function deriveFacadePrimitives({ grammar, segment, storeys, entrance = n
 		// and it would cost a paid provider the same. Writing parts that do not fit is an authoring
 		// error, so it is reported as one - the correction loop hands a PROGRAM_INVALID reason back
 		// to the author verbatim.
-		const laid = layout(parts, along);
+		// The facet's own split does not shrink. There the author was handed the exact width
+		// in `punched_scope_m`, so an overrun is an authoring error with a number attached -
+		// and letting it through would hand a punched wall the scope the fold clearance took
+		// off it, which is the one thing the inset exists to prevent. Everything below the
+		// facet is a scope the author's own fractions produced rather than one they were
+		// told, so a squeeze there is layout, not a mistake.
+		const laid = layout(parts, along, scope.depth > 0);
 		if (!laid.slots) {
 			const have = round(along);
 			fail(laid.starved

@@ -74,10 +74,22 @@ export function shellQuoteArgs(args, platform = process.platform) {
 	return args.map((arg) => (/^[\w.\-\/:=]+$/.test(arg) ? arg : `"${String(arg).replace(/"/g, '\\"')}"`));
 }
 
-function runCodex({ command, args }) {
+function runCodex({ command, args }, timeoutMs = 15 * 60 * 1000) {
 	return new Promise((resolvePromise, rejectPromise) => {
 		const useShell = process.platform === "win32";
-		const child = spawn(command, shellQuoteArgs(args), { shell: useShell, windowsVerbatimArguments: false });
+		// stdin ignored, and a deadline. With an inherited-but-empty stdin codex waits for
+		// input that never arrives: the first run through this module sat for four days and
+		// left four codex processes behind. A photo pass that cannot finish in the timeout
+		// has failed, and saying so beats hanging the caller.
+		const child = spawn(command, shellQuoteArgs(args), {
+			shell: useShell, windowsVerbatimArguments: false, stdio: ["ignore", "pipe", "pipe"],
+		});
+		const deadline = setTimeout(() => {
+			child.kill();
+			rejectPromise(new Error(`codex exec exceeded ${Math.round(timeoutMs / 1000)}s and was killed; the photo lane is not usable from this process`));
+		}, timeoutMs);
+		child.on("close", () => clearTimeout(deadline));
+		child.on("error", () => clearTimeout(deadline));
 		let output = "";
 		child.stdout.on("data", (chunk) => { output += chunk; });
 		child.stderr.on("data", (chunk) => { output += chunk; });
