@@ -25,6 +25,14 @@
           "axes": "scores 100/100/97/100/88/100 · $0.12 · ninth attempt after eight failures"
         },
         {
+          "id": "datum",
+          "title": "Held by a datum",
+          "intent": "One continuous line at each floor, running the whole building on every elevation — the first scheme here whose horizontals cross the mass's own steps",
+          "grammar": "grammar-blind-013-datum.json",
+          "renderDir": "render-datum",
+          "axes": "stone · accepted on attempt 1 · 50 bands + 45 cornices at 3.30 / 6.60 / 9.30"
+        },
+        {
           "id": "curtainwall",
           "title": "Unitised curtain wall",
           "intent": "A continuous glazed skin hung in front of the structure — 100 mm mullions running past every floor, a spandrel at each slab, glass turning the corners",
