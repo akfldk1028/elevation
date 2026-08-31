@@ -117,8 +117,27 @@ function layout(parts, length, mayShrink = true) {
 	return { slots };
 }
 
+/**
+ * Instant Architecture 5.2: an alternative that declares a size it needs is not selected on
+ * a scope smaller than that. It is a dispatch decision, not a fault - the next alternative
+ * gets its turn, and a rule whose last alternative is bare wall simply leaves the sliver bare.
+ *
+ * Before this the only way to keep a rule off a 32 mm facet was to name that facet by
+ * `index` at the start rule, the one place `index` is readable, under a cap of eight
+ * alternatives. Seven degenerate facets therefore ate six of the eight slots on this
+ * candidate and two authors reported the cap as the thing that decided their design.
+ */
+function fitsGuard(guard, scope) {
+	if (!guard) return true;
+	if (guard.u !== undefined && scope.u_max - scope.u_min < guard.u - 1e-9) return false;
+	if (guard.z !== undefined && scope.z_max - scope.z_min < guard.z - 1e-9) return false;
+	return true;
+}
+
 function chooseAlternative(alternatives, scope) {
-	for (const alternative of alternatives) if (predicateHolds(alternative.when, scope)) return alternative;
+	for (const alternative of alternatives) {
+		if (predicateHolds(alternative.when, scope) && fitsGuard(alternative.guard, scope)) return alternative;
+	}
 	return null;
 }
 
