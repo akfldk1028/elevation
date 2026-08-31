@@ -462,7 +462,21 @@ export function buildFacadeGrammarPrompt({ context, correctionCodes = [], attemp
 		`Attempt: ${attempt}.`,
 		`Technical context: ${stableJson(boundedContext)}`,
 		correctionCodes.length
-			? `Correct these unchanged deterministic validation codes: ${correctionCodes.join(", ")}.`
+			// Named, numbered, and scoped to the member that failed. The literature on
+			// LLM-driven layout finds constraint satisfaction to be the bottleneck rather
+			// than the design - top models sit near half on strict numeric constraints -
+			// and the loops that converge are the ones that ask for an adjustment to the
+			// offending element, not for another answer. Ours sends the previous grammar
+			// back below; this line says what to do with it.
+			? `Correct these unchanged deterministic validation codes: ${correctionCodes.join(", ")}.
+`
+				+ "Repair, do not redesign. Each fault names the elevation, the member and its"
+				+ " bounds: move or resize THAT member only, by the smallest amount that clears"
+				+ " the number quoted, and leave every other rule byte-identical. A fault that"
+				+ " names a z bound is asking you to put that end inside one of the facet's"
+				+ " `open_zones_m` bands; a fault that names a u bound is asking you to fit"
+				+ " within `punched_scope_m` or to keep 0.3 m off the fold. Changing a rule that"
+				+ " was not at fault is how an attempt trades one violation for another."
 			: "No prior validation failures.",
 		// Without the previous answer the model rewrites the whole grammar every attempt
 		// and each rewrite fails somewhere new. Repairing converges; reauthoring does not.
