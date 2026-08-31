@@ -864,3 +864,60 @@ coplanar at the cut, on a vertical one it makes a depth step. Composition cannot
 without the mass. The real fix is the recorded architectural gap: render faults are never
 relayed to the correction loop, so a run that authors well and renders badly dies with
 nobody able to repair it.
+
+## 2026-08-31 the agent becomes one module, and the grammar gets a datum
+
+Two changes, and the second one is the first non-patch fix this project has made.
+
+**`tools/facade-pipeline/` is the agent.** Its four steps - prepare a mass into a verified
+design context, write the brief, hold an answer to the gates, render what clears them -
+were four untracked scripts under `.superpowers/sdd/`, each with the two data locations
+typed into it: eleven copies of the dataset root, fifteen of the output root. Tracked code
+(`build-sheet.mjs`) reached into one of them for its context. The logic was already in
+`design/authoring-kit.mjs`; what was missing was a tracked place that names the four
+together and knows where the data is. `elevation-agent.json` now declares `dataset_root`
+and `output_root`, resolved argument -> environment -> file -> historical default, with the
+repo root found from `import.meta.url` so nothing depends on cwd. One CLI, one JSON object
+per step, **non-zero exit on failure** - the runners this replaces printed through
+`| tail -1`, which masked the exit code and reported two failed renders as successes on the
+day it was found. Sheet rebuilds through the module: 15 cards, 90 images, none missing.
+
+**`"axis": "storey"`** (`22f5daf`). The slab lines cut the scope and the rule is invoked
+once per storey, so the split carries no sizes of its own and a member derived inside a band
+cannot straddle a slab however its fractions land. Purely additive - all eighteen retained
+grammars resolve byte-identically, full suite 873 passing.
+
+The literature is the reason it is that and not another hint. Teboul et al. (CVPR 2010 2)
+normalise a split's parameters to its scope so that "any set of parameters leads to a valid
+split", and say outright that this property "allows us to deal with different facade
+topologies using a single rule" - our 37-irregular-facet problem, stated in advance. CGA's
+answer to slab alignment is stronger than a storey-relative coordinate: there is no world z
+in a rule at all. `comp(f)` hands each facet a frame of its own, floors are addressed by
+`split.index`, and an opening's clearance is a `~` remainder the engine computes. Muller et
+al. (SIGGRAPH 2006 3.3) snap lines are the operator: "the snap lines divide the scope into
+different parts and the repeat rule is invoked for each part separately."
+
+**The literature also refuted the plan this file was about to follow.** Relaying render
+faults into the correction loop is the wrong fix: render-closed loops went *backwards* in
+two published systems (3D-Premise compile 96.0 -> 91.0, Seek-CAD compilability 77% -> 55%),
+while a loop closed on geometry-kernel measurements converged in an average of 0.13
+iterations. So the plan-cut seam must be measured as geometry, not as pixels. Also worth
+knowing before more feedback work: repair loops saturate at round two across eight CAD
+systems (+23-32 pp at round one, ~0 after), and located faults are already the best feedback
+an oracle gives - that intervention is spent.
+
+**Four blind authors, 4/4 accepted, and a perfect split at render.** Curtain wall (skin x4,
+0.10 m mullions, 0.64-0.76 opening - the first facade here that actually is one), brise-soleil
+(42 louvres), arcade (65 arches), soaring piers (span 3). The two glazed schemes rendered; all
+three pier-bearing schemes died on the plan view's TRIANGULATION_VISIBLE, as did creative-004.
+Every masonry scheme died, every glass scheme passed. That is the mechanism behind "they all
+look alike", and it is recorded in [[plan-cut-seam-eliminates-masonry]].
+
+Open, in the order the evidence supports: the plan-cut seam as a kernel measurement inside
+the design loop; blind verification that the storey axis is actually reachable from the brief
+(the author testing it was stopped mid-run for an unrelated reason); out-of-scope `index`
+reading as 0 so an `index == 0` alternative below the start rule fires for everything (a
+silent wrong answer, same class as the `storey` hardcode fixed in `b5876c4`); the start
+rule's 8-alternative cap, which two authors reported as design-limiting on a mass with seven
+degenerate facets; and the fact that a louvre cannot actually pass in front of glass, because
+a split partitions its scope exactly once - the brief says it can.
