@@ -67,6 +67,14 @@ export const FACADE_GRAMMAR_V3_SCHEMA = Object.freeze({
 					pattern: `^${PREDICATE_TERM}(?: *&& *${PREDICATE_TERM})?$`,
 					description: "index % <n> == <m> | index == <n> | index == last | storey % <n> == <m> | storey == <n> | face_view == front|back|left|right | param == <the arg this symbol was called with>. Two may be joined with &&. Use null for the else branch.",
 				},
+				min_u_m: {
+					type: ["number", "null"],
+					description: "Decline this alternative on any scope narrower than this. Not a fault - the next alternative is tried, so end such a rule with a plain one. Use it to keep a design off the slivers instead of naming them by index.",
+				},
+				min_z_m: {
+					type: ["number", "null"],
+					description: "Decline this alternative on any scope shorter than this.",
+				},
 				split: {
 					type: ["object", "null"],
 					additionalProperties: false,
@@ -132,20 +140,39 @@ A repeat part must carry a floating size such as "~3.3", it is the only part in 
 split that may float, and a split may hold at most one of them. Set "repeat": null on
 every other part.
 
-There is a third axis, and on this building it is the one to reach for first.
+There is a third axis, and it is usually the one to reach for first.
 "axis": "storey" is not a direction - it is the floor structure. The engine cuts the
 scope at the slab lines that cross it and invokes your part once per storey, so the
 split carries no sizes at all: write exactly one part, give it any size (it is ignored),
-and set "repeat": null. Inside each of those scopes \`index\` counts the storeys from the
-bottom (0, 1, 2 ...), \`total\` is how many there are, and \`storey\` is that band's number.
+and set "repeat": null. Inside each of those scopes index counts the storeys from the
+bottom (0, 1, 2 ...) with the topmost answering index == last, and storey is that band's
+number. There is no count to read, here as anywhere else.
 Reach for it whenever a rule wants to say "per floor". The reason is arithmetic you
-otherwise have to do yourself: this candidate's facets start at arbitrary heights, so
-"one storey up from the bottom of THIS facet" is a different absolute z on every one of
-them, and every author before you spent their attempts computing it per facet and
+otherwise have to do yourself: a facet begins wherever the mass puts it, so "one storey
+up from the bottom of THIS facet" is a different absolute z on every facet that starts at
+a different height, and authors before you spent attempts computing it per facet and
 missing a slab line by centimetres. A member placed inside a storey scope is bounded by
 two lines the mass already has, so it cannot straddle a slab however its fractions land.
-Write the opening as "~1" wall, the glass, "~1" wall inside that scope and the clearance
-above and below is a remainder the engine computes, not a number you have to get right. \`index\` is in scope only at the start rule (the facet's position on
+Write the opening as wall, glass, wall down that scope, and give the two walls ABSOLUTE
+sizes of at least the floor-band clearance - that is now worth doing, because the edge of
+the scope IS the slab line, which it never was on a raw facet. A fraction will not do: on
+a facet that crosses a storey by only a few centimetres, a fraction of it is smaller than
+the clearance and the opening still intrudes.
+
+This is also how a building gets a line that runs right through it. Put a band or a
+cornice hard against the top of a storey scope and every facet draws it at the SAME
+height, because that height is the slab and not each facet's own top. Without the datum a
+facet can only place a band relative to its own bottom, so on any mass whose facets do not
+all start at the same height the bands scatter and the elevation reads as separate patches
+rather than one building. The more the facet bottoms differ, the more this matters; on a
+mass whose facets all start together it costs nothing.
+
+An alternative may also declare the smallest scope it is willing to be used on, with
+"min_u_m" and "min_z_m". Below that it is simply not selected and the next alternative is
+tried, so end such a rule with a plain one - often bare wall. This is how you keep a design
+off a facet too small to carry it. Do NOT enumerate the slivers by index instead: index is
+readable only at the start rule, there are at most 8 alternatives there, and spending them
+on slivers is what stops you routing the design itself. \`index\` is in scope only at the start rule (the facet's position on
 its face) and inside a rule a repeat expands (the tile's position in the run); a rule
 reached through an ordinary split does not inherit its parent's index, so route
 facet-specific behaviour at the start rule and pass intent down through \`arg\`.
@@ -464,7 +491,7 @@ export function buildFacadeGrammarPrompt({ context, correctionCodes = [], attemp
 	// twice did not bring the windows back.
 	const wideCount = spans.filter((span) => span.width >= 1.2).length;
 	const facetAdvisory = facetsVary
-		? `On this candidate the facets are not uniform: widths run ${widthMin.toFixed(2)} to ${widthMax.toFixed(2)} m and the shortest facet is ${heightMin.toFixed(2)} m tall against a ${buildingTop.toFixed(2)} m building, so most facets see only part of the height. The start symbol derives once per facet at ITS OWN size: a z split must fit the facet's own height, not the building's, and a fractional size scales with each facet - a fraction that draws a window on the widest facet draws a centimetre sliver on the narrowest, and slivers fail the clearance gates. Use absolute sizes for members that must not shrink, and predicates to give the narrow facets a simpler rule or bare wall - a predicate cannot test a size, so name the narrow facets by face_view and index from the technical context's segment list. That caution is for the narrow facets only: ${wideCount} of the ${spans.length} facets are 1.2 m or wider and they are where the design lives - every one of them must carry its openings and its storey split, because retreating to bare wall everywhere fails the opening-ratio floor, not the clearance gates.`
+		? `On this candidate the facets are not uniform: widths run ${widthMin.toFixed(2)} to ${widthMax.toFixed(2)} m and the shortest facet is ${heightMin.toFixed(2)} m tall against a ${buildingTop.toFixed(2)} m building, so most facets see only part of the height. The start symbol derives once per facet at ITS OWN size: a z split must fit the facet's own height, not the building's, and a fractional size scales with each facet - a fraction that draws a window on the widest facet draws a centimetre sliver on the narrowest, and slivers fail the clearance gates. Use absolute sizes for members that must not shrink, and give the narrow facets a simpler rule or bare wall by declaring the size your rule needs - put min_u_m and min_z_m on the alternative that carries the design and end the rule with a plain alternative. Do not enumerate the narrow facets by index; that spends the start rule's alternatives on slivers rather than on the design. That caution is for the narrow facets only: ${wideCount} of the ${spans.length} facets are 1.2 m or wider and they are where the design lives - every one of them must carry its openings and its storey split, because retreating to bare wall everywhere fails the opening-ratio floor, not the clearance gates.`
 		: "";
 	const prompt = [
 		"You are the architectural facade director. Return exactly one FacadeGrammarV3 object.",

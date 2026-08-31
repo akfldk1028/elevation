@@ -350,3 +350,44 @@ test("a storey split refuses sizes it would only ignore", () => {
 	});
 	assert.throws(repeated, FacadeGrammarError, "it is already a repeat over the storeys");
 });
+
+// Instant Architecture 5.2: a rule states the size it needs and is not selected below it.
+// This candidate has seven facets between 4 mm and 0.32 m; without a guard the only way to
+// keep a rule off them is to name each by `index` at the start rule, which is the one place
+// `index` is readable and caps at eight alternatives.
+test("an alternative declines a scope smaller than the size it declares", () => {
+	const parsed = grammar({
+		Facade: [
+			{ min_u_m: 1.0, min_z_m: 1.2, split: { axis: "u", parts: [{ size: "~1", symbol: "Wall" }, { size: "0.6", symbol: "Glass" }, { size: "~1", symbol: "Wall" }] } },
+			{ terminal: "wall" },
+		],
+		Wall: WALL, Glass: GLASS,
+	});
+	const wide = { ...SEGMENT, length_m: 4, local_z: [0, 3.3], placeable: { u_min: 0, u_max: 4 } };
+	assert.equal(deriveFacadePrimitives({ grammar: parsed, segment: wide, storeys: STOREY_LINES }).length, 1);
+
+	// Too narrow, and too short: each guard turns the alternative down on its own axis, and
+	// the fallback alternative - bare wall - draws nothing rather than the derivation failing.
+	const narrow = { ...wide, length_m: 0.09, placeable: { u_min: 0, u_max: 0.09 } };
+	assert.equal(deriveFacadePrimitives({ grammar: parsed, segment: narrow, storeys: STOREY_LINES }).length, 0);
+	const squat = { ...wide, local_z: [0, 0.4] };
+	assert.equal(deriveFacadePrimitives({ grammar: parsed, segment: squat, storeys: STOREY_LINES }).length, 0);
+});
+
+test("a guard is a dispatch decision, so a later alternative still runs", () => {
+	const parsed = grammar({
+		Facade: [
+			{ min_u_m: 3, split: { axis: "u", parts: [{ size: "~1", symbol: "Glass" }] } },
+			{ terminal: "band", depth_m: 0.1 },
+		],
+		Glass: GLASS,
+	});
+	const narrow = { ...SEGMENT, length_m: 1.5, local_z: [0, 3.3], placeable: { u_min: 0, u_max: 1.5 } };
+	const out = deriveFacadePrimitives({ grammar: parsed, segment: narrow, storeys: STOREY_LINES }) as any[];
+	assert.deepEqual(out.map((primitive) => primitive.kind), ["band"], "the guard passes the scope on, it does not stop it");
+});
+
+test("a guard out of range is rejected at parse", () => {
+	assert.throws(() => grammar({ Facade: [{ min_u_m: -1, terminal: "wall" }] }), FacadeGrammarError);
+	assert.throws(() => grammar({ Facade: [{ min_z_m: 100000, terminal: "wall" }] }), FacadeGrammarError);
+});

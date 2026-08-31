@@ -35,6 +35,9 @@ export const BOUNDS = Object.freeze({
 	maxRepeat: 64,
 	maxInsetM: 0.5,
 	maxDepthM: 0.5,
+	// The same ceiling `parseSize` puts on an absolute size: a guard is a size too, and one
+	// larger than any scope could be would silently disable its alternative forever.
+	maxSizeM: 1000,
 });
 
 const SYMBOL = /^[A-Za-z][A-Za-z0-9_]{0,31}$/;
@@ -154,9 +157,35 @@ function parsePart(value, label, symbols) {
 	});
 }
 
+/**
+ * The scope sizes an alternative is willing to be applied to.
+ *
+ * Wonka et al., Instant Architecture (SIGGRAPH 2003) 5.2: a rule declares the dimensional
+ * interval it is valid for, the engine computes the shape's dimensions, and "rule 5 is
+ * excluded because it requires a width larger than the shape associated with the symbol
+ * provides". The rule is not repaired or shrunk - it is simply not selected.
+ *
+ * This grammar had no way to say it. Its predicates read `index`, `storey`, `face_view` and
+ * `param`, none of which is a size, so an author facing a mass with centimetre slivers had
+ * to enumerate them by index at the start rule - and `index` is readable only there, under a
+ * cap of eight alternatives. Two authors reported that cap as the thing that decided their
+ * design, and a third spent an attempt on a facet 32 mm tall. A guard says it once.
+ */
+function parseGuard(alternative, label) {
+	const guard = {};
+	for (const [key, axis] of [["min_u_m", "u"], ["min_z_m", "z"]]) {
+		const value = alternative[key] ?? null;
+		if (value === null) continue;
+		if (!Number.isFinite(value) || value < 0 || value > BOUNDS.maxSizeM) fail(`${label}.${key} is out of range`);
+		guard[axis] = value;
+	}
+	return Object.keys(guard).length ? Object.freeze(guard) : null;
+}
+
 function parseAlternative(value, label, symbols) {
-	const alternative = record(value, label, new Set(["when", "split", "terminal", "inset_m", "depth_m"]));
+	const alternative = record(value, label, new Set(["when", "split", "terminal", "inset_m", "depth_m", "min_u_m", "min_z_m"]));
 	const when = alternative.when === undefined || alternative.when === null ? null : parsePredicate(alternative.when, `${label}.when`);
+	const guard = parseGuard(alternative, label);
 	if (alternative.terminal !== undefined && alternative.terminal !== null) {
 		// Strict structured output requires every property to be present, so the unused
 		// half of an alternative arrives as null rather than missing. Absent means
@@ -167,7 +196,7 @@ function parseAlternative(value, label, symbols) {
 		if (!Number.isFinite(inset) || inset < 0 || inset > BOUNDS.maxInsetM) fail(`${label}.inset_m is out of range`);
 		const depth = alternative.depth_m ?? 0;
 		if (!Number.isFinite(depth) || depth < 0 || depth > BOUNDS.maxDepthM) fail(`${label}.depth_m is out of range`);
-		return Object.freeze({ when, terminal: alternative.terminal, inset_m: inset, depth_m: depth });
+		return Object.freeze({ when, guard, terminal: alternative.terminal, inset_m: inset, depth_m: depth });
 	}
 	// Strict structured output forces both fields onto a split too, where zero is the
 	// only sensible answer. Only a real offset here means the model confused the two.
@@ -191,7 +220,7 @@ function parseAlternative(value, label, symbols) {
 	if (repeats.length && parts.some((part) => !part.repeat && part.size.kind === "float")) {
 		fail(`${label}.split mixes a repeat part with other floating parts`);
 	}
-	return Object.freeze({ when, split: Object.freeze({ axis: split.axis, parts: Object.freeze(parts) }) });
+	return Object.freeze({ when, guard, split: Object.freeze({ axis: split.axis, parts: Object.freeze(parts) }) });
 }
 
 export function parseFacadeGrammar(input) {
