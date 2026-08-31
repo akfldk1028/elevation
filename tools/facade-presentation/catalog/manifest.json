@@ -25,6 +25,24 @@
           "axes": "scores 100/100/97/100/88/100 · $0.12 · ninth attempt after eight failures"
         },
         {
+          "id": "curtainwall",
+          "title": "Unitised curtain wall",
+          "intent": "A continuous glazed skin hung in front of the structure — 100 mm mullions running past every floor, a spandrel at each slab, glass turning the corners",
+          "grammar": "grammar-blind-013-curtainwall.json",
+          "renderDir": "render-curtainwall",
+          "showcase": "showcase/curtainwall.png",
+          "axes": "precast / clear / iron / morning · accepted on attempt 1"
+        },
+        {
+          "id": "brisesoleil",
+          "title": "Brise-soleil",
+          "intent": "Tropical modernism — deep horizontal blades standing over the glass on three faces, the fourth left plain",
+          "grammar": "grammar-blind-013-brisesoleil.json",
+          "renderDir": "render-brisesoleil-warm",
+          "showcase": "showcase/brisesoleil.png",
+          "axes": "precast / deep / bronze / golden · accepted on attempt 1 · 42 louvres · four levels of scale"
+        },
+        {
           "id": "screen",
           "title": "Layered screen",
           "intent": "Kengo Kuma — a timber louvre screen standing in front of glass",
