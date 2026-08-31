@@ -130,7 +130,22 @@ a narrow facet cannot be handled by letting absolute members overflow into nothi
 has to be routed to a simpler rule.
 A repeat part must carry a floating size such as "~3.3", it is the only part in its
 split that may float, and a split may hold at most one of them. Set "repeat": null on
-every other part. \`index\` is in scope only at the start rule (the facet's position on
+every other part.
+
+There is a third axis, and on this building it is the one to reach for first.
+"axis": "storey" is not a direction - it is the floor structure. The engine cuts the
+scope at the slab lines that cross it and invokes your part once per storey, so the
+split carries no sizes at all: write exactly one part, give it any size (it is ignored),
+and set "repeat": null. Inside each of those scopes \`index\` counts the storeys from the
+bottom (0, 1, 2 ...), \`total\` is how many there are, and \`storey\` is that band's number.
+Reach for it whenever a rule wants to say "per floor". The reason is arithmetic you
+otherwise have to do yourself: this candidate's facets start at arbitrary heights, so
+"one storey up from the bottom of THIS facet" is a different absolute z on every one of
+them, and every author before you spent their attempts computing it per facet and
+missing a slab line by centimetres. A member placed inside a storey scope is bounded by
+two lines the mass already has, so it cannot straddle a slab however its fractions land.
+Write the opening as "~1" wall, the glass, "~1" wall inside that scope and the clearance
+above and below is a remainder the engine computes, not a number you have to get right. \`index\` is in scope only at the start rule (the facet's position on
 its face) and inside a rule a repeat expands (the tile's position in the run); a rule
 reached through an ordinary split does not inherit its parent's index, so route
 facet-specific behaviour at the start rule and pass intent down through \`arg\`.

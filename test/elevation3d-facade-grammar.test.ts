@@ -282,3 +282,71 @@ test("each facet is handed the z bands an opening may legally end in", () => {
 	// Degenerate input is not an exception; it is simply no room.
 	assert.deepEqual(openingZones({ local_z: [5, 5] }, storeys, 0.15), []);
 });
+
+// The whole point of the storey axis: a facet that begins partway up the building still gets
+// scopes bounded by the mass's own slab lines. A z repeat cannot do this - it divides the
+// facet evenly from its own bottom - which is why every author so far computed slab-relative
+// z by hand, per facet, and lost attempts to missing a line by centimetres.
+const BRIDGE = { ...SEGMENT, local_z: [1.8609, 9.9], placeable: { u_min: 0.3, u_max: 1.9060695766 } };
+const STOREY_LINES = [1, 2, 3].map((storey) => ({ storey, z_min: (storey - 1) * 3.3, z_max: storey * 3.3 }));
+
+test("a storey split cuts at the slab lines, whatever height the facet starts at", () => {
+	const parsed = grammar({
+		Facade: [{ split: { axis: "storey", parts: [{ size: "~1", symbol: "Floor" }] } }],
+		Floor: [{ split: { axis: "z", parts: [{ size: "~1", symbol: "Wall" }, { size: "'0.5", symbol: "Glass" }, { size: "~1", symbol: "Wall" }] } }],
+		Wall: WALL, Glass: GLASS,
+	});
+	const out = deriveFacadePrimitives({ grammar: parsed, segment: BRIDGE, storeys: STOREY_LINES }) as any[];
+
+	assert.equal(out.length, 3, "the facet crosses three storeys");
+	assert.deepEqual(out.map((primitive) => primitive.storey), [1, 2, 3]);
+
+	// Every pane sits strictly inside one slab-to-slab band. No fraction the author writes can
+	// put one across a line, because the line is the edge of the scope it was derived in.
+	const lines = [1.8609, 3.3, 6.6, 9.9];
+	for (const primitive of out) {
+		const { z_min: low, z_max: high } = primitive.local_bounds;
+		const band = lines.findIndex((line, index) => low >= line - 1e-9 && high <= lines[index + 1] + 1e-9);
+		assert.notEqual(band, -1, `pane ${low}-${high} straddles a slab line`);
+	}
+
+	// The same grammar written as a z repeat straddles, which is the failure this axis removes.
+	const repeated = grammar({
+		Facade: [{ split: { axis: "z", parts: [{ size: "~3.3", symbol: "Floor", repeat: true }] } }],
+		Floor: [{ split: { axis: "z", parts: [{ size: "~1", symbol: "Wall" }, { size: "'0.5", symbol: "Glass" }, { size: "~1", symbol: "Wall" }] } }],
+		Wall: WALL, Glass: GLASS,
+	});
+	const naive = deriveFacadePrimitives({ grammar: repeated, segment: BRIDGE, storeys: STOREY_LINES }) as any[];
+	assert.equal(naive.some((primitive) => {
+		const { z_min: low, z_max: high } = primitive.local_bounds;
+		return lines.some((line) => low < line - 1e-9 && high > line + 1e-9);
+	}), true, "the even division of an offset facet is expected to cross a slab line");
+});
+
+test("a storey split addresses its bands by ordinal, from the bottom", () => {
+	const parsed = grammar({
+		Facade: [{ split: { axis: "storey", parts: [{ size: "~1", symbol: "Floor" }] } }],
+		Floor: [
+			{ when: "index == 0", terminal: "door", inset_m: 0.5 },
+			{ when: "index == last", terminal: "cornice" },
+			{ terminal: "glass", inset_m: 0.04 },
+		],
+		Wall: WALL,
+	});
+	const out = deriveFacadePrimitives({ grammar: parsed, segment: BRIDGE, storeys: STOREY_LINES }) as any[];
+	assert.deepEqual(out.map((primitive) => primitive.kind), ["door", "window", "cornice"]);
+});
+
+test("a storey split refuses sizes it would only ignore", () => {
+	const two = () => grammar({
+		Facade: [{ split: { axis: "storey", parts: [{ size: "'0.5", symbol: "Wall" }, { size: "'0.5", symbol: "Wall" }] } }],
+		Wall: WALL,
+	});
+	assert.throws(two, FacadeGrammarError, "two parts would leave one of them unreachable");
+
+	const repeated = () => grammar({
+		Facade: [{ split: { axis: "storey", parts: [{ size: "~1", symbol: "Wall", repeat: true }] } }],
+		Wall: WALL,
+	});
+	assert.throws(repeated, FacadeGrammarError, "it is already a repeat over the storeys");
+});
