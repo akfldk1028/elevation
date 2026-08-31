@@ -13,12 +13,32 @@
  * `| tail -1`, which masked the exit code of the step that mattered and reported two failed
  * renders as successes.
  */
-import { readFile, writeFile } from "node:fs/promises";
+import { readdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
+import { codexPhoto } from "../facade-presentation/photo/codex-photo.mjs";
+import { runCli as runShowcase } from "../facade-presentation/showcase/cli.mjs";
 import { resolveRoots, runDirFor } from "./config.mjs";
 import { prepareFacadeContext } from "./prepare.mjs";
 import { checkFacadeGrammar, renderFacadeScheme, writeFacadeBrief } from "./index.mjs";
+
+/**
+ * The compiled GLB of a rendered scheme.
+ *
+ * The compiler writes under a content hash, so `compiled/facade.glb` does not exist and
+ * every caller that guessed it failed with ENOENT on a path that reads as if it should be
+ * right. Presentation callers should ask for the scheme by name and be handed the file.
+ */
+async function compiledGlb(runDir, name) {
+	const root = join(runDir, name, "compiled");
+	for (const entry of await readdir(root, { withFileTypes: true })) {
+		if (entry.isDirectory()) {
+			const candidate = join(root, entry.name, "facade.glb");
+			if (await readFile(candidate).then(() => true, () => false)) return candidate;
+		}
+	}
+	throw new Error(`no compiled facade.glb under ${root} - render ${name} first`);
+}
 
 function flags(argv) {
 	const out = {};
@@ -33,7 +53,9 @@ function flags(argv) {
 const say = (value) => process.stdout.write(`${JSON.stringify(value)}\n`);
 
 const USAGE = "usage: cli.mjs roots | prepare <candidate> | brief <candidate>"
-	+ " | check <candidate> <grammar.json> | render <candidate> <grammar.json> <name> [--palette p]";
+	+ " | check <candidate> <grammar.json> | render <candidate> <grammar.json> <name> [--palette p]"
+	+ " | showcase <candidate> <name> <out.png> [--wall --glass --frame --mood --face]"
+	+ " | photo <in.png> <out.png> [--subject s]";
 
 export async function runPipelineCli(argv) {
 	const { out: flag, rest } = flags(argv);
@@ -41,6 +63,17 @@ export async function runPipelineCli(argv) {
 	const roots = { datasetRoot: flag.dataset, outputRoot: flag.output };
 
 	if (command === "roots") { say(resolveRoots(roots)); return 0; }
+	// The photoreal pass takes a picture, not a mass, so it needs no context and must not pay
+	// for preparing one. It is the free lane: the user's Codex CLI, not a paid image API.
+	if (command === "photo") {
+		const [inputPng, outputPng] = [candidateId, ...args];
+		if (!inputPng || !outputPng) { say({ ok: false, error: USAGE }); return 2; }
+		const photo = await codexPhoto({
+			inputPng: resolve(inputPng), outputPng: resolve(outputPng), subject: flag.subject,
+		});
+		say({ ok: true, ...photo });
+		return 0;
+	}
 	if (!command || !candidateId) { say({ ok: false, error: USAGE }); return 2; }
 
 	const prepared = await prepareFacadeContext({
@@ -66,6 +99,22 @@ export async function runPipelineCli(argv) {
 	if (command === "brief") {
 		const brief = await writeFacadeBrief({ runDir, context });
 		say({ ok: true, candidate: candidateId, sha256: brief.promptSha256, chars: brief.prompt.length, paths: brief.paths });
+		return 0;
+	}
+
+	// Showcase reads a rendered scheme, not a grammar: it is presentation, deliberately outside
+	// the gated chain, and it takes its subject by scheme name so no caller has to know where
+	// the compiler hid the GLB.
+	if (command === "showcase") {
+		const [name, outPng] = args;
+		if (!name || !outPng) { say({ ok: false, error: USAGE }); return 2; }
+		const glb = await compiledGlb(runDir, name);
+		const showcaseArgs = [glb, resolve(outPng)];
+		for (const axis of ["style", "wall", "glass", "frame", "mood", "face"]) {
+			if (flag[axis]) showcaseArgs.push(`--${axis}`, flag[axis]);
+		}
+		await runShowcase(showcaseArgs);
+		say({ ok: true, candidate: candidateId, scheme: name, glb, out: resolve(outPng) });
 		return 0;
 	}
 
