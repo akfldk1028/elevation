@@ -176,6 +176,32 @@ export function deriveFacadePrimitives({ grammar, segment, storeys, entrance = n
 			return;
 		}
 		const { axis, parts } = alternative.split;
+		// The slab lines are the cut, not the author's arithmetic. Everything a storey split
+		// hands down is bounded by two lines the mass already has, so a member placed inside
+		// one cannot straddle a slab however its fractions land, and the author never writes
+		// an absolute z. This is the snap-line repeat of Muller 2006 3.3 and the ordinal floor
+		// addressing of CGA (`split(y){ ... : Floor(split.index) }`) in one operator: `index`
+		// counts the storeys this scope crosses, from the bottom, and `storey` is the number
+		// the storey table gives that band.
+		if (axis === "storey") {
+			const bands = [];
+			for (const storey of storeys) {
+				const zMin = Math.max(storey.z_min, scope.z_min);
+				const zMax = Math.min(storey.z_max, scope.z_max);
+				if (zMax - zMin > 1e-6) bands.push({ zMin, zMax, storey: storey.storey });
+			}
+			bands.sort((left, right) => left.zMin - right.zMin);
+			const [part] = parts;
+			bands.forEach((band, index) => {
+				walk(part.symbol, {
+					...scope,
+					z_min: band.zMin, z_max: band.zMax,
+					index, total: bands.length,
+					param: part.arg, depth: scope.depth + 1, storey: band.storey,
+				});
+			});
+			return;
+		}
 		const along = axis === "u" ? scope.u_max - scope.u_min : scope.z_max - scope.z_min;
 		// An over-subscribed split used to answer null here and the entire subtree vanished with
 		// no code, no count and no warning. A repo-blind author lost 60% of an elevation to it and

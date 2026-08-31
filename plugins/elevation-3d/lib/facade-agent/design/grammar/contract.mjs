@@ -13,7 +13,14 @@ function fail(message) {
 }
 
 export const TERMINALS = TERMINAL_WORDS;
-export const AXES = Object.freeze(["u", "z"]);
+// `storey` is not a direction, it is a datum. A split on it is cut by the slab lines that
+// cross the scope rather than by sizes the author wrote, which is Muller's snap-line repeat
+// ("the snap lines divide the scope into different parts and the repeat rule is invoked for
+// each part separately", Procedural Modeling of Buildings, SIGGRAPH 2006 3.3). It exists
+// because every author so far has had to compute slab-relative z by hand, per facet, over
+// 37 facets whose bottoms sit at arbitrary heights - the arithmetic CGA does not have,
+// because `comp(f)` hands each facet a frame of its own and floors are addressed by ordinal.
+export const AXES = Object.freeze(["u", "z", "storey"]);
 export const BOUNDS = Object.freeze({
 	// Derivation is bounded by depth and repeat, not by how many names the grammar
 	// uses. A facade that varies by elevation, by parity and by zone needs the room.
@@ -167,9 +174,17 @@ function parseAlternative(value, label, symbols) {
 	if ((alternative.inset_m ?? 0) !== 0 || (alternative.depth_m ?? 0) !== 0) fail(`${label}.inset_m and depth_m belong to a terminal`);
 	if ((alternative.split ?? null) === null) fail(`${label} is neither a split nor a terminal`);
 	const split = record(alternative.split, `${label}.split`, new Set(["axis", "parts"]));
-	if (!AXES.includes(split.axis)) fail(`${label}.split.axis must be u or z`);
+	if (!AXES.includes(split.axis)) fail(`${label}.split.axis must be u, z or storey`);
 	const parts = list(split.parts, `${label}.split.parts`, 1, BOUNDS.maxParts)
 		.map((part, index) => parsePart(part, `${label}.split.parts[${index}]`, symbols));
+	// A storey split carries no sizes of its own: the slab lines decide where the cuts fall,
+	// so there is exactly one part and it is invoked once per storey the scope crosses. A
+	// size written here would be a number the engine is about to ignore, which is worse than
+	// a rejection - the author would believe it.
+	if (split.axis === "storey") {
+		if (parts.length !== 1) fail(`${label}.split on storey takes exactly one part; the slab lines decide the cuts and that part is invoked once per storey the scope crosses`);
+		if (parts[0].repeat) fail(`${label}.split on storey is already a repeat over the storeys, so its part cannot carry one`);
+	}
 	const repeats = parts.filter((part) => part.repeat);
 	if (repeats.length > 1) fail(`${label}.split holds more than one repeat part`);
 	if (repeats.length && repeats[0].size.kind !== "float") fail(`${label}.split repeat part needs a floating size`);
