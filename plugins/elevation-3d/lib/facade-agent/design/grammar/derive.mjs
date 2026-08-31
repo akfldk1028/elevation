@@ -152,6 +152,23 @@ export function deriveFacadePrimitives({ grammar, segment, storeys, entrance = n
 	if (!grammar?.rules || !segment) fail("a parsed grammar and a segment scope are required");
 	const primitives = [];
 	const storeyOf = (zMin) => storeys.find((storey) => zMin >= storey.z_min - 1e-6 && zMin < storey.z_max - 1e-6)?.storey ?? null;
+	// The building's own top line, which is the storey table's and not any one facet's.
+	// Rounded like every other emitted coordinate: three storeys of 3.3 sum to
+	// 9.899999999999999, and an unrounded datum emitted beside rounded members is the
+	// quantise-then-compare-exact fault this project has now made five times - here it would
+	// have had the validator reject its own parapet for being a ten-billionth of a metre
+	// above a line the same code drew.
+	const buildingTop = round(Math.max(...storeys.map((storey) => storey.z_max)));
+	// How far a member may be carried above its own facet to reach that line. A parapet is a
+	// wall that settles a step; a wall standing eight metres above the mass is new massing,
+	// authored by the facade, on a candidate whose low strips top out at 1.86 m against a
+	// 9.9 m building - measured, on the first probe of this feature. One storey is the unit
+	// architecture uses for an attic, and it is the tallest one this building has rather than
+	// a number chosen here. A facet further below the line than that does not rise at all:
+	// a partial rise would only trade one ragged top edge for another.
+	const maxRise = Math.max(...storeys.map((storey) => storey.z_max - storey.z_min));
+	const risesTo = (alternative, facetTop) => alternative.rise_to === "building_top"
+		&& Number.isFinite(facetTop) && buildingTop - facetTop <= maxRise + 1e-9;
 
 	const walk = (symbol, scope) => {
 		if (primitives.length > MAX_PRIMITIVES) fail("derived facade primitive budget exceeded");
@@ -185,8 +202,15 @@ export function deriveFacadePrimitives({ grammar, segment, storeys, entrance = n
 				local_bounds: {
 					u_min: Math.max(0, round(uStart)), u_max: Math.min(segment.length_m, round(uEnd)),
 					z_min: Math.max(segment.local_z?.[0] ?? -Infinity, round(zMin)),
-					z_max: Math.min(segment.local_z?.[1] ?? Infinity, round(zMax)),
+					// The one place a member may leave its facet, and only upwards, and only as
+					// far as a datum the engine knows. Everything else here clamps: that clamp is
+					// why the top edge of every elevation drawn so far has been the mass's own
+					// stepped edge, because a parapet run level across the steps was not sayable.
+					z_max: risesTo(alternative, segment.local_z?.[1])
+						? Math.max(round(zMax), buildingTop)
+						: Math.min(segment.local_z?.[1] ?? Infinity, round(zMax)),
 				},
+				...(risesTo(alternative, segment.local_z?.[1]) ? { rises_to: alternative.rise_to } : {}),
 				depth_m: kind === "door" && entrance ? entrance.recess_m : alternative.depth_m,
 				family_id: familyId(symbol, scope.param),
 				storey: storeyOf(zMin),

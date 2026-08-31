@@ -391,3 +391,43 @@ test("a guard out of range is rejected at parse", () => {
 	assert.throws(() => grammar({ Facade: [{ min_u_m: -1, terminal: "wall" }] }), FacadeGrammarError);
 	assert.throws(() => grammar({ Facade: [{ min_z_m: 100000, terminal: "wall" }] }), FacadeGrammarError);
 });
+
+// The one place a member may leave its facet. Everywhere else the clamp holds, which is why
+// the top edge of every elevation was the mass's own stepped edge until this existed.
+const rise = (rules: Record<string, unknown>, top: number) => deriveFacadePrimitives({
+	grammar: grammar(rules),
+	segment: { ...SEGMENT, length_m: 4, local_z: [0, top], placeable: { u_min: 0, u_max: 4 } },
+	storeys: STOREY_LINES,
+}) as any[];
+
+const PARAPET = { Facade: [{ terminal: "cornice", depth_m: 0.2, rise_to: "building_top" }] };
+
+test("a solid carried to the building top stands above its own facet", () => {
+	// The facet stops at 7.0 and the building at 9.9, one storey up, so the parapet reaches it.
+	const [member] = rise(PARAPET, 7);
+	assert.equal(member.local_bounds.z_max, 9.9);
+	assert.equal(member.rises_to, "building_top");
+
+	// A facet already at the top has nothing to rise to and is unchanged.
+	const [atTop] = rise(PARAPET, 9.9);
+	assert.equal(atTop.local_bounds.z_max, 9.9);
+});
+
+test("a facet more than one storey below the line does not rise at all", () => {
+	// 3.0 m against a 9.9 m building is 6.9 m of rise - a wall standing two storeys above the
+	// mass is new massing, not a parapet, and half a rise only moves the ragged edge.
+	const [member] = rise(PARAPET, 3);
+	assert.equal(member.local_bounds.z_max, 3);
+	assert.equal(member.rises_to, undefined);
+});
+
+test("an opening cannot be carried past its facet", () => {
+	for (const terminal of ["glass", "door", "arch"]) {
+		assert.throws(
+			() => grammar({ Facade: [{ terminal, rise_to: "building_top" }] }),
+			FacadeGrammarError,
+			`${terminal} above the mass would be a hole in nothing`,
+		);
+	}
+	assert.throws(() => grammar({ Facade: [{ terminal: "band", rise_to: "the_moon" }] }), FacadeGrammarError);
+});

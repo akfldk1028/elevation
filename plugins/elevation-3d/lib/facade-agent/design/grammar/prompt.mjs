@@ -1,6 +1,6 @@
 import { sha256, stableJson } from "../../../core.mjs";
 import { TERMINAL_VOCABULARY } from "../../facade-vocabulary.mjs";
-import { AXES, BOUNDS, MAX_PARAM_INDEX, PARAM_VALUES, PARAM_WORDS, TERMINALS } from "./contract.mjs";
+import { AXES, BOUNDS, MAX_PARAM_INDEX, PARAM_VALUES, PARAM_WORDS, RISE_DATUMS, TERMINALS } from "./contract.mjs";
 
 export const FACADE_GRAMMAR_PROMPT_REVISION = "arr.elevation3d.facade-grammar-prompt.v1";
 
@@ -74,6 +74,11 @@ export const FACADE_GRAMMAR_V3_SCHEMA = Object.freeze({
 				min_z_m: {
 					type: ["number", "null"],
 					description: "Decline this alternative on any scope shorter than this.",
+				},
+				rise_to: {
+					type: ["string", "null"],
+					enum: [...RISE_DATUMS, null],
+					description: "Carry this SOLID terminal past the top of its facet, up to the building's top line, so a stepped mass ends on one level parapet. Refused for openings, and ignored on a facet more than one storey below that line. Null everywhere else.",
 				},
 				split: {
 					type: ["object", "null"],
@@ -172,7 +177,29 @@ An alternative may also declare the smallest scope it is willing to be used on, 
 tried, so end such a rule with a plain one - often bare wall. This is how you keep a design
 off a facet too small to carry it. Do NOT enumerate the slivers by index instead: index is
 readable only at the start rule, there are at most 8 alternatives there, and spending them
-on slivers is what stops you routing the design itself. \`index\` is in scope only at the start rule (the facet's position on
+on slivers is what stops you routing the design itself.
+
+Everything you draw lives inside its own facet, with one exception, and it is the only way
+the elevation can answer the shape of the mass rather than only accept it. A SOLID terminal
+may carry "rise_to": "building_top", and it then continues up to the building's top line
+instead of stopping at the top of its facet. That is a parapet: the wall that runs level
+across a mass whose roof steps, so the building ends on one line instead of on the steps.
+Put it on the member that caps the topmost storey scope of a facet.
+
+Four things bound it, and none of them is yours to set. The height is the datum, never a
+number you write. A facet sitting more than one storey below that line does not rise at
+all - a partial rise only trades one ragged top edge for another, and a wall standing
+several storeys above the mass is new massing rather than a parapet. Only solids rise: a
+window or a door carried above the mass would be a hole in nothing. And the rise is upward
+only. If the mass does not step, this changes nothing and costs nothing.
+
+One thing to get right, because the elevation will not show you the mistake: put the rise on
+a member that SPANS the facet, and never on a run of separate piers. Above the roof there is
+no wall behind anything, so spaced members rise as detached posts and the building ends in a
+fence. In an orthographic elevation that still draws as a level top edge, because the
+projection flattens the gaps against the wall below; it is only wrong when you look at the
+building. Give the parapet its own part at the top of the facet's z split, spanning the full
+width, and put the piers inside the part below it. \`index\` is in scope only at the start rule (the facet's position on
 its face) and inside a rule a repeat expands (the tile's position in the run); a rule
 reached through an ordinary split does not inherit its parent's index, so route
 facet-specific behaviour at the start rule and pass intent down through \`arg\`.
