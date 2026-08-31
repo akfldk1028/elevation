@@ -16,6 +16,15 @@
       "note": "Every one authored by a repo-blind subagent from the brief alone, then held to the same gates the paid director applies.",
       "cards": [
         {
+          "id": "live-013-h",
+          "title": "Live director",
+          "intent": "gpt-5.5 authoring unaided — the first facade a paid run has drawn on a mass that is not a prism",
+          "grammar": "grammar-live-013-h.json",
+          "runRoot": "creative-013/llm-facade-live-013-h",
+          "renderDir": "technical-render",
+          "axes": "scores 100/100/97/100/88/100 · $0.12 · ninth attempt after eight failures"
+        },
+        {
           "id": "screen",
           "title": "Layered screen",
           "intent": "Kengo Kuma — a timber louvre screen standing in front of glass",
