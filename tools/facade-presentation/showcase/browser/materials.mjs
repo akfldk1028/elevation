@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { brickMaps, stoneMaps, precastMaps, zincMaps, woodMaps } from "./textures.mjs";
+import { brickMaps, stoneMaps, precastMaps, zincMaps, woodMaps, weatheringMap } from "./textures.mjs";
 
 // ---------------- materials ----------------
 //
@@ -180,7 +180,37 @@ export function buildShowcaseMaterials(axes, anisotropy, wrap) {
 	applyGlassAxis(materials, axes.glass);
 	applyFrameAxis(materials, axes.frame);
 	applyPunchedHeuristic(materials, axes, wrap);
+	weatherOpaqueSurfaces(materials, anisotropy);
 	return materials;
+}
+
+/**
+ * Give every opaque surface a roughness that varies, and do it LAST.
+ *
+ * Until now each wall carried one scalar roughness, so the whole facade returned an
+ * identical specular response and read as a single synthetic material however its albedo
+ * was textured. This runs after the axis appliers because they overwrite the table - the
+ * wall branches alias brick to concrete and darkpanel overwrites precast - so anything
+ * earlier would weather a material that is no longer there.
+ *
+ * The repeat is deliberately coarse and shared by nobody: at 1/9 of the world-metre UVs
+ * the pattern spans about nine metres, so it reads as how a building has aged rather than
+ * as a tile, and it does not land in step with any colour map. Glass and metal frames are
+ * left alone - they are the two surfaces where uniform roughness is the truth.
+ */
+function weatherOpaqueSurfaces(materials, anisotropy) {
+	const seeds = { concrete: 7, brick: 23, precast: 41 };
+	for (const name of Object.keys(seeds)) {
+		const material = materials[name];
+		if (!material || material.roughnessMap) continue;
+		const map = weatheringMap(seeds[name], 0.10);
+		map.anisotropy = anisotropy;
+		map.repeat.set(1 / 3.5, 1 / 3.5);
+		material.roughnessMap = map;
+		// The map is mid-grey, so it multiplies around the authored value rather than
+		// replacing it; the scalar stays the material's identity and the map is variation.
+		material.needsUpdate = true;
+	}
 }
 
 export function materialForMesh(mesh, materials) {

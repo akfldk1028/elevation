@@ -238,3 +238,60 @@ export function groundMaps() {
 	}, true);
 	return { color: color };
 }
+
+/**
+ * Multi-scale roughness variation, for surfaces that would otherwise be one number.
+ *
+ * Every wall material here carried a scalar `roughness` and no map, which is the single
+ * most-named reason a PBR surface reads as synthetic: the specular response is identical
+ * across the whole facade, so the eye gets told "one synthetic material" whatever the
+ * albedo does. Benes et al. (Eurographics 2017) asked 52 people what gave a procedural
+ * building away, and the top answers were missing imperfections (58%) and large areas of
+ * uniform colour (33%); Rademacher et al. (EGRW 2001) measured that surface roughness and
+ * shadow softness change perceived realism while adding more objects does not.
+ *
+ * Three octaves on purpose, and the V-Ray guidance is the reason: broad low-contrast
+ * variation first, finer breakup on top, "imperfections should break up perfect
+ * reflections, not become the visual subject". It is deliberately drawn at a different
+ * scale from the colour maps and applied over a much larger UV repeat, because a variation
+ * map that tiles in lockstep with the albedo is the same failure wearing a second coat -
+ * "procedural texture becomes a problem when it looks like the same noise pattern has been
+ * applied everywhere".
+ *
+ * @param {number} seed so two materials in one scene do not share a pattern
+ * @param {number} strength peak deviation from mid grey, 0..0.5
+ */
+export function weatheringMap(seed, strength) {
+	const rand = mulberry32(seed);
+	const amount = Math.max(0, Math.min(0.5, strength ?? 0.10));
+	return canvasTexture(512, function (ctx, size) {
+		ctx.fillStyle = "#808080";
+		ctx.fillRect(0, 0, size, size);
+		// Octave 1: broad patches - damp walls, sheltered bays, the slow stuff.
+		for (let i = 0; i < 40; i++) {
+			const r = size * (0.05 + rand() * 0.13);
+			const g = ctx.createRadialGradient(rand() * size, rand() * size, 0, rand() * size, rand() * size, r);
+			const v = Math.round(128 + (rand() * 2 - 1) * 255 * amount);
+			g.addColorStop(0, "rgba(" + v + "," + v + "," + v + ",0.18)");
+			g.addColorStop(1, "rgba(" + v + "," + v + "," + v + ",0)");
+			ctx.fillStyle = g;
+			ctx.fillRect(0, 0, size, size);
+		}
+		// Octave 2: streaks, running down. Rain does not run sideways.
+		ctx.globalAlpha = 0.20;
+		for (let i = 0; i < 90; i++) {
+			const x = rand() * size;
+			const top = rand() * size * 0.7;
+			const v = Math.round(128 - rand() * 255 * amount * 0.8);
+			ctx.strokeStyle = "rgb(" + v + "," + v + "," + v + ")";
+			ctx.lineWidth = 1 + rand() * 3;
+			ctx.beginPath();
+			ctx.moveTo(x, top);
+			ctx.lineTo(x + (rand() * 2 - 1) * 4, top + size * (0.08 + rand() * 0.30));
+			ctx.stroke();
+		}
+		ctx.globalAlpha = 1;
+		// Octave 3: fine grain, so the highlight never resolves to a clean sheet.
+		speckle(ctx, size, 5200, 0.05, rand);
+	}, false);
+}
