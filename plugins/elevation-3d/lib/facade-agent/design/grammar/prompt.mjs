@@ -184,7 +184,8 @@ the elevation can answer the shape of the mass rather than only accept it. A SOL
 may carry "rise_to": "building_top", and it then continues up to the building's top line
 instead of stopping at the top of its facet. That is a parapet: the wall that runs level
 across a mass whose roof steps, so the building ends on one line instead of on the steps.
-Put it on the member that caps the topmost storey scope of a facet.
+Give it its own part at the top of the FACET's z split - outside the storey split, spanning
+the full width - and put everything else, piers included, in the part below it.
 
 Four things bound it, and none of them is yours to set. The height is the datum, never a
 number you write. A facet sitting more than one storey below that line does not rise at
@@ -198,8 +199,15 @@ a member that SPANS the facet, and never on a run of separate piers. Above the r
 no wall behind anything, so spaced members rise as detached posts and the building ends in a
 fence. In an orthographic elevation that still draws as a level top edge, because the
 projection flattens the gaps against the wall below; it is only wrong when you look at the
-building. Give the parapet its own part at the top of the facet's z split, spanning the full
-width, and put the piers inside the part below it. \`index\` is in scope only at the start rule (the facet's position on
+building. That is why the parapet is a part of the facet's own z split and never a member
+inside a bay.
+
+One more thing the one-storey rule does not decide for you. It admits any facet within a
+storey of the line, including one in the middle of the mass that has more building standing
+above it on another plane - a rise there is a blind wall in front of the storey above, not a
+parapet. Crown only the facets that are the top of the building where they stand. A size
+guard is the tool: on a mass whose upper facets are the tall ones, min_z_m on the crown
+alternative selects them and nothing else. \`index\` is in scope only at the start rule (the facet's position on
 its face) and inside a rule a repeat expands (the tile's position in the run); a rule
 reached through an ordinary split does not inherit its parent's index, so route
 facet-specific behaviour at the start rule and pass intent down through \`arg\`.
