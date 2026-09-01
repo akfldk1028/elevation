@@ -1,41 +1,42 @@
-# LLM Facade Design Agent v1 handoff
+# Elevation agent handoff
 
-다음 세션은 아래 위치와 흐름만 그대로 이어가면 됩니다.
+이 저장소가 elevation agent입니다. `D:\Data\50_ELE\ElevationAgent`, GitHub은
+`akfldk1028/elevation` (public). gitagent 제품 저장소에서 filter-repo로 추출했고,
+elevation을 건드린 커밋 376개의 이력이 그대로 보존되어 있습니다.
 
-작업트리:
+## 실행
 
-- `D:\Data\50_ELE\gitagent\.worktrees\geometry-locked-facade-agent`
-- 브랜치: `llm-facade-design-agent-v1`
+    node tools/facade-pipeline/cli.mjs roots                                   # 데이터 위치
+    node tools/facade-pipeline/cli.mjs prepare  creative-013                   # 매스 -> 컨텍스트
+    node tools/facade-pipeline/cli.mjs brief    creative-013                   # 저자가 답할 브리프
+    node tools/facade-pipeline/cli.mjs check    creative-013 <grammar.json>    # 게이트
+    node tools/facade-pipeline/cli.mjs render   creative-013 <grammar.json> <name> --palette competition-brick
+    node tools/facade-pipeline/cli.mjs showcase creative-013 <name> <out.png> --wall precast --glass clear --mood morning
+    node tools/facade-pipeline/cli.mjs photo    <in.png> <out.png> --subject "..."
+    node tools/facade-presentation/catalog/build-sheet.mjs                     # 카탈로그
 
-현재 상태 요약:
+각 서브커맨드는 JSON 하나를 찍고 **실패하면 non-zero로 끝납니다**. 이걸 대체한 옛 러너들은
+`| tail -1`로 출력해서 종료코드를 가렸고, 그 때문에 실패한 렌더 둘이 성공으로 보고된 적이
+있습니다.
 
-- `llm-facade-design-agent-v1`는 현재 수정 중인 작업 상태입니다.
-- 변경된 핵심 코어는 `plugins/elevation-3d/lib/facade-agent/design/` (compiler/director/resolver/validator/state/context/index 등)와 `plugins/elevation-3d/lib/punched-facade.mjs`.
-- E2E 기준 성공 산출물은 `D:\Data\50_ELE\facade-agent-verification\llm-facade-design-agent-20260810\creative-020\llm-facade-v5` 입니다.
-- 현재 v5는 `succeeded`, 재실행 재개(resume) 시 모델 호출/실서비스 호출이 0회입니다.
-- 입면/투시 일관성은 `llm-facade-v5`의 `technical-render`, `pbr-render`, `perspective-hero.png`를 기준으로 유지해야 합니다.
+데이터 위치는 저장소 루트의 `elevation-agent.json`이 선언합니다 (`dataset_root`,
+`output_root`). 해결 순서는 인자 → 환경변수 → 그 파일 → 역사적 기본값이고, 저장소 루트는
+`import.meta.url`에서 찾으므로 어떤 명령도 특정 cwd를 요구하지 않습니다. 그 두 루트는 폴더
+밖에 있는 게 맞습니다 — 컴파일러가 소스 파일을 품지 않는 것과 같습니다.
 
-다음 시작 명령:
+## 핵심 제약 (변경 전 확인)
 
-1. `Set-Location D:\Data\50_ELE\gitagent\.worktrees\geometry-locked-facade-agent`
-2. `git checkout llm-facade-design-agent-v1`
-3. `git status --short`
-4. 필요한 경우 상태별 테스트:
-   - 디자인 E2E: `npm test -- --test-concurrency=1 test/elevation3d-facade-design-e2e.test.ts --experimental-strip-types`
-   - 컴파일러/플러그인: `npm test -- --test-concurrency=1 test/elevation3d-facade-design-compiler.test.ts test/elevation3d-plugin.test.ts --experimental-strip-types`
+- 매스가 권위입니다. `selected.glb` 기반의 폴리곤·평면·카메라·아티팩트 권한은 고정입니다.
+- LLM은 설계 의도(문법)만 만들고, 최종 기하와 뷰는 검증 가능한 코드 경로로만 승인됩니다.
+- geometry lock은 딱 한 군데 열려 있습니다: `rise_to: "building_top"`. 솔리드만, 데이텀까지만,
+  한 층 이내만. 그 외 모든 부재는 자기 facet 안에 있습니다.
+- 게이트(`test/elevation3d-facade-*`)는 항상 통과 상태를 유지해야 합니다.
 
-핵심 제약(변경 전 확인):
+## 다음 시작
 
-- 핵심 폴리곤과 평면/카메라/아티팩트 권한은 `selected.glb` 기반에서 고정됩니다.
-- LLM은 설계 의도만 생성하며, 최종 기하/뷰는 검증 가능한 코드 경로로만 승인되어야 합니다.
-- 문/창문/입면 변화는 `facade-agent/design` 모듈들(`contract`, `resolver`, `validator`, `punched-facade`)로 반영하고, 렌더/검증 게이트(`test/elevation3d-facade-design-*`)는 항상 통과 상태 유지해야 합니다.
-
-참조 대상:
-
-- 스펙: `docs/superpowers/specs/2026-08-10-llm-facade-design-agent-design.md`
-- 플랜: `docs/superpowers/plans/2026-08-10-llm-facade-design-agent.md`
-- 결과 메모: `memory/elevation-3d/README.md`의 `LLM facade design agent v1 retained result` 섹션
-- 오프라인 실제 실행 스크립트(참고): `.superpowers/sdd/2026-08-10-llm-facade-design-agent/run-real-e2e.mjs` (ignored)
+1. `Set-Location D:\Data\50_ELE\ElevationAgent`
+2. `git status --short`
+3. `npm test`  (69개 파일, 796 테스트)
 
 ## 2026-08-14 live grammar status
 
