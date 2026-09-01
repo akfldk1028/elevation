@@ -964,3 +964,41 @@ lands once" and named what was missing: a level bottom edge "so the beam reads a
 not as a stack of shelves". The datum is the lowest facet bottom above grade, 1.8609 m here;
 on a mass that sits on the ground it does not exist and the operator is inert, which is what
 stops it filling in under a bridge. All pre-existing grammars byte-identical, suite 801 green.
+
+## 2026-09-01 the plan seam cannot be predicted from the grammar, and that is now measured
+
+Twelve schemes across both masses, whose render outcome is known, measured for what crosses
+the 1.2 m plan cut. Four hypotheses, all refuted:
+
+| | failing | passing |
+|---|---|---|
+| crossing count | cw2 **13** | 020-g **50** |
+| total crossing width | cw2 **1.17 m** | 020-g **7.69 m** |
+| max member depth | cw2 **0.14** | 020-g **0.45** |
+| members sharing the mass's material | 0 on most failures | 0 on every pass |
+
+The last one was the best hypothesis and it dies cleanest: `curtainwall` passes and `cw2`
+fails with **identical material profiles at the cut** - window-frame only, no precast in
+either. Same construction, same materials, opposite outcomes.
+
+So the composition-level guard is not "reverted pending a better idea", it is **excluded**.
+Nothing in the resolved primitive list separates the two populations. The seam is a property
+of the compiled geometry meeting the mass, and the only place left to measure it is the GLB
+before it is rendered - a kernel measurement, which is what the CAD literature said in the
+first place: loops closed on geometry-kernel measurements converged in 0.13 iterations while
+render-closed loops went backwards.
+
+The probe is kept at `.superpowers/sdd/2026-08-10-llm-facade-design-agent/probe-plan-cut.mjs`
+so the next person does not re-derive the four dead ends.
+
+**A warning I gave an author was wrong.** Commissioning the lifted curtain wall I told it
+"schemes carrying solid piers die on the plan view; glazed skins pass", from three samples
+that morning. The author reasoned from it and glazed the stem to avoid piers at the cut - a
+decision it defended well on its own terms - and the scheme died on the plan view anyway. The
+pattern was coincidence. Do not hand an author a rule drawn from three points.
+
+**What did land.** `grammar-blind-013-cw2` is a curtain wall on a lifted beam: skin on all
+four faces, opening ratios 0.560 to 0.648, skin transparency 0.577 to 0.686, a 0.36 m cornice
+on sixteen facets at 9.90 and a 0.30 m soffit band on eight at 1.8609, both by datum and
+neither a number in the file. It is accepted, it does not render, and it is the clearest
+statement yet of what the plan gate costs: the drawings that fail are not the bad ones.
