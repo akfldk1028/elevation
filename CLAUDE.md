@@ -1018,3 +1018,34 @@ four faces, opening ratios 0.560 to 0.648, skin transparency 0.577 to 0.686, a 0
 on sixteen facets at 9.90 and a 0.30 m soffit band on eight at 1.8609, both by datum and
 neither a number in the file. It is accepted, it does not render, and it is the clearest
 statement yet of what the plan gate costs: the drawings that fail are not the bad ones.
+
+## 2026-09-01 the seam detector reports where, and seven hypotheses are dead
+
+`persistedSeamMetrics` now returns a bounding box per visible segment, not just a count. That
+is why five hypotheses were possible: nothing said where to look. Purely additive, existing
+tests green.
+
+Run on the failing curtain wall, the five segments are:
+
+    x  236- 624   y 1281        one horizontal line in three pieces, 123/125/123 px
+    x  630        y 1479-1675   two vertical pieces at the same x, 95/93 px
+
+All five lie on the **landing stem**, none on the flying bar. Its own author had predicted
+the place in words - "a fascia stands in front of part of the ground facet's glass... the
+elevation shows only the line, not the overlap".
+
+**That prediction was wrong, and so was mine.** Correcting the underside datum so a member
+stops at whatever stands below it left the five segments **identical to the pixel**. A
+seventh hypothesis - that glazing the stem causes it - died too: the passing `curtainwall`
+draws 77 members on the ground facets and the failing `cw2` draws 61. More members, passes.
+
+Seven hypotheses, twelve schemes, coordinates in hand, and the cause is still not identified.
+**This line is closed.** What is known: the seams are on the stem, they are not the soffit,
+not the stem's glazing, not counts, widths, depths, materials, or near-coplanar folds. What
+is not known is what geometry at (236..624, 1281) produces them; answering it needs the
+compiled mesh at that pixel, not the primitive list.
+
+**The underside correction is kept anyway, on its own merits.** The datum means the line the
+building flies at, and a facet is not flying where another facet stands under it - a beam's
+fascia does not cut across its own support. Fifty-one grammars byte-identical; only the two
+that use the datum move; `own2` still renders with zero seams. Suite 801 green.

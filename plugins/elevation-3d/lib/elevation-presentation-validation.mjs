@@ -279,6 +279,11 @@ function persistedSeamMetrics(base, material, depth, normal, width, height, boun
 	}
 	const visited = new Uint8Array(candidates.length);
 	let visibleSegments = 0, longestPx = 0;
+	// Where, not just how many. Five hypotheses about what causes these seams were built and
+	// refuted from primitive lists alone, and every one of them was possible only because this
+	// function reported a count and no location. A bounding box per visible segment turns the
+	// next diagnosis into an observation.
+	const segments = [];
 	for (let y = bounds.min_y; y <= bounds.max_y; y++) for (let x = bounds.min_x; x <= bounds.max_x; x++) {
 		const start = y * width + x;
 		if (!candidates[start] || visited[start]) continue;
@@ -298,10 +303,13 @@ function persistedSeamMetrics(base, material, depth, normal, width, height, boun
 		// line when its bounding box was 11 px square.
 		const extent = Math.max(maxX - minX + 1, maxY - minY + 1);
 		if (extent > longestPx) longestPx = extent;
-		if (extent >= MIN_VISIBLE_SEAM_PX) visibleSegments++;
+		if (extent >= MIN_VISIBLE_SEAM_PX) {
+			visibleSegments++;
+			if (segments.length < 24) segments.push({ min_x: minX, min_y: minY, max_x: maxX, max_y: maxY, extent_px: extent });
+		}
 	}
 	const area = (bounds.max_x - bounds.min_x + 1) * (bounds.max_y - bounds.min_y + 1);
-	return { fraction: count / area, visible_segments: visibleSegments, longest_segment_px: longestPx };
+	return { fraction: count / area, visible_segments: visibleSegments, longest_segment_px: longestPx, segments };
 }
 
 function persistedDarkGeometry(base, material, depth, width, height, bounds) {
@@ -455,7 +463,7 @@ export async function validateCompetitionElevation({ artifacts, sourceMesh, faca
 				strong_edge_density: measured.strong_edge_density,
 				role_pixel_counts: roleCounts(materialImage.data),
 				same_material_seam_fraction: seams.fraction,
-				seam_segments: { visible: seams.visible_segments, longest_px: seams.longest_segment_px },
+				seam_segments: { visible: seams.visible_segments, longest_px: seams.longest_segment_px, boxes: seams.segments ?? [] },
 			};
 			add(codes, "DIMENSION_SOURCE_MISSING", !sameJson(bounds, artifacts.base.content_bounds_px));
 			add(codes, "MATERIAL_VISIBILITY_INVALID", !sameJson(computedDark, artifacts.presentation?.authored_dark_geometry));
@@ -646,7 +654,7 @@ export async function validateCompetitionPlanTopArtifact({ artifact, sourceMesh,
 				total_edge_density: measured.total_edge_density,
 				strong_edge_density: measured.strong_edge_density,
 				same_material_seam_fraction: seams.fraction,
-				seam_segments: { visible: seams.visible_segments, longest_px: seams.longest_segment_px },
+				seam_segments: { visible: seams.visible_segments, longest_px: seams.longest_segment_px, boxes: seams.segments ?? [] },
 			};
 			add(codes, "PLAN_TOP_LINE_DENSITY_EXCEEDED", measured.total_edge_density > PRESENTATION_BOUNDS.totalEdgeDensity
 				|| measured.strong_edge_density > PRESENTATION_BOUNDS.planTopStrongEdgeDensity);
