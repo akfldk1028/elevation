@@ -21,6 +21,14 @@
       "note": "Every one authored by a repo-blind subagent from the brief alone, then held to the same gates the paid director applies.",
       "cards": [
         {
+          "id": "beam",
+          "title": "A beam that lands once",
+          "intent": "An author given no design intent read the mass itself - four of thirty-seven facets touch the ground, three of them one stem - and drew a lifted gallery. Level at the top, level at the underside, mass between: the two datums doing the same job at both ends",
+          "grammar": "grammar-blind-013-own2.json",
+          "renderDir": "render-own2",
+          "axes": "stone · accepted attempt 1 · bottom line 1.8609 m, six facets rise to it · every tier head now lands on 6.25 m whatever its own step"
+        },
+        {
           "id": "civic2",
           "title": "Ends on one line",
           "intent": "The mass steps; the building does not. Full-height piers carry a crown that rises to the building's top line, so the elevation ends level instead of on the steps",
