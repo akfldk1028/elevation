@@ -164,6 +164,41 @@ function grammarPrimitives(program, context, entrance) {
 		.map((segment) => segment.local_z?.[0])
 		.filter((z) => Number.isFinite(z) && z > grade + 1e-6);
 	const buildingUnderside = aboveGrade.length ? Math.min(...aboveGrade) : null;
+	/**
+	 * How far a given facet may actually descend.
+	 *
+	 * The datum is the line the building flies at, but a facet is only flying where nothing
+	 * stands under it. Where another facet occupies the space below - a landing, a stem, a
+	 * lower volume - a member carried down passes IN FRONT of it, and the two coincide in
+	 * plan: same material, same depth to within the seam detector's 0.0005, a visible edge.
+	 * That is a real drawing fault and not a threshold to tune; it was observed as five seam
+	 * segments lying exactly on the stem of an accepted scheme, which its own author had
+	 * predicted in words ("a fascia stands in front of part of the ground facet's glass").
+	 *
+	 * The parapet has no equivalent because there is nothing above the top of a building. So
+	 * the floor for a drop is the highest facet top that is below this facet and overlaps it
+	 * along the face - descend to what is beneath you, never through it. A facet with a
+	 * landing directly under it therefore does not drop at all, which is also the honest
+	 * architecture: a beam's fascia does not cut across its own support.
+	 */
+	const undersideFor = (segment) => {
+		if (buildingUnderside === null) return null;
+		const bottom = segment.local_z?.[0];
+		if (!Number.isFinite(bottom)) return null;
+		const start = segment.face_offset_m ?? 0;
+		const end = start + (segment.length_m ?? 0);
+		let floor = buildingUnderside;
+		for (const other of context.facade_segments) {
+			if (other.segment_id === segment.segment_id || other.face_view !== segment.face_view) continue;
+			const top = other.local_z?.[1];
+			if (!Number.isFinite(top) || top > bottom + 1e-6 || top <= floor + 1e-6) continue;
+			const otherStart = other.face_offset_m ?? 0;
+			const otherEnd = otherStart + (other.length_m ?? 0);
+			if (Math.min(end, otherEnd) - Math.max(start, otherStart) <= 1e-6) continue;
+			floor = top;
+		}
+		return floor;
+	};
 	const primitives = [];
 	for (const segment of context.facade_segments) {
 		const derive = (inset) => deriveFacadePrimitives({
@@ -184,7 +219,7 @@ function grammarPrimitives(program, context, entrance) {
 				placeable: { u_min: inset, u_max: segment.length_m - inset },
 			},
 			storeys: context.storeys,
-			buildingUnderside,
+			buildingUnderside: undersideFor(segment),
 		});
 		// The inset pass is a probe, so it must not be the one that throws. A skin grammar whose
 		// parts fit the facet but not the inset scope would otherwise die before anything could
