@@ -988,8 +988,24 @@ before it is rendered - a kernel measurement, which is what the CAD literature s
 first place: loops closed on geometry-kernel measurements converged in 0.13 iterations while
 render-closed loops went backwards.
 
-The probe is kept at `.superpowers/sdd/2026-08-10-llm-facade-design-agent/probe-plan-cut.mjs`
-so the next person does not re-derive the four dead ends.
+A fifth hypothesis was then built and refuted too, and it was the best one. Reading the
+detector shows exactly what it looks for: same material, depth difference under 0.0005,
+normals within 2 degrees, luminance gradient over 80 - a visible edge on what is
+geometrically one plane. This mass approximates a curve in 5.5 m chords, and **eight
+adjacent facet pairs have normals under 2 degrees apart, several at 0.00**, so the mass
+itself supplies the coplanarity. The hypothesis was that a seam appears where two such
+neighbours both carry a same-material solid overlapping in z at the fold they share.
+Measured: `cw2` fails with 4 and `curtainwall` passes with 4 - the same number - and the
+highest count of all, 8, belongs to `brisesoleil`, which passes.
+
+Five hypotheses, twelve schemes, nothing separates. The probe is kept at
+`.superpowers/sdd/2026-08-10-llm-facade-design-agent/probe-plan-cut.mjs` so the next person
+does not re-derive the five dead ends.
+
+**Stop hypothesising and look.** The detector reports counts and no coordinates, which is
+why five guesses were possible. The next move is to make it report the bounding box of each
+visible segment, render one failing scheme, and see where they actually are. Everything above
+is inference from primitive lists; that would be observation.
 
 **A warning I gave an author was wrong.** Commissioning the lifted curtain wall I told it
 "schemes carrying solid piers die on the plan view; glazed skins pass", from three samples
