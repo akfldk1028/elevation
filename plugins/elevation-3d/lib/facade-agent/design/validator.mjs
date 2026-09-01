@@ -1,4 +1,5 @@
 import { sha256, stableJson } from "../../core.mjs";
+import { KIND_PROJECTION } from "../facade-vocabulary.mjs";
 import { readVerifiedFacadeDesignContextAuthority } from "./context.mjs";
 import { readVerifiedFacadeProgramAuthority } from "./contract.mjs";
 import { readVerifiedResolvedFacadeAuthority, resolveFacadeProgram } from "./resolver.mjs";
@@ -175,7 +176,13 @@ export function validateResolvedFacadeProgram({ program, context, resolved } = {
 				} else if (inBand(bounds.z_min)) measure("FLOOR_BAND_INTRUSION", index, slabDistance(bounds.z_min), clearance);
 				else if (inBand(bounds.z_max)) measure("FLOOR_BAND_INTRUSION", index, slabDistance(bounds.z_max), clearance);
 			}
-			const depthLimit = primitive.kind === "door" ? context.exclusions.max_recess_m : context.exclusions.max_projection_m;
+			// A door is recessed rather than built out, so it keeps the context's recess bound.
+			// Everything else is bounded by what it is: KIND_PROJECTION gives a cornice the
+			// overhang that makes it a cornice and denies a transom a depth that would make it a
+			// shelf, where the single max_projection_m did the opposite on both counts.
+			const depthLimit = primitive.kind === "door"
+				? context.exclusions.max_recess_m
+				: KIND_PROJECTION[primitive.kind] ?? context.exclusions.max_projection_m;
 			// A solid member needs a thickness. `boxGeometry` in punched-facade.mjs throws on
 			// `Math.abs(n1 - n0) <= EPSILON`, so a member written with `depth_m: 0` passes every
 			// gate here and then kills the compiler with "detail prism has non-positive

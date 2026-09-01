@@ -1,4 +1,4 @@
-import { TERMINAL_WORDS } from "../../facade-vocabulary.mjs";
+import { TERMINAL_PROJECTION, TERMINAL_WORDS } from "../../facade-vocabulary.mjs";
 
 export class FacadeGrammarError extends Error {
 	constructor(message) {
@@ -60,7 +60,10 @@ export const BOUNDS = Object.freeze({
 	maxDepth: 12,
 	maxRepeat: 64,
 	maxInsetM: 0.5,
-	maxDepthM: 0.5,
+	// There is deliberately no maxDepthM here any more. How far a member may stand out of
+	// the wall is a fact about the member, so it lives beside the member in
+	// facade-vocabulary.mjs; a bound in this table would have to be right for a glazing bead
+	// and for a cornice at once, and the one that was here was right for neither.
 	// The same ceiling `parseSize` puts on an absolute size: a guard is a size too, and one
 	// larger than any scope could be would silently disable its alternative forever.
 	maxSizeM: 1000,
@@ -232,7 +235,12 @@ function parseAlternative(value, label, symbols) {
 		const inset = alternative.inset_m ?? 0;
 		if (!Number.isFinite(inset) || inset < 0 || inset > BOUNDS.maxInsetM) fail(`${label}.inset_m is out of range`);
 		const depth = alternative.depth_m ?? 0;
-		if (!Number.isFinite(depth) || depth < 0 || depth > BOUNDS.maxDepthM) fail(`${label}.depth_m is out of range`);
+		if (!Number.isFinite(depth) || depth < 0 || depth > TERMINAL_PROJECTION[alternative.terminal]) {
+				// The bound is the terminal's, not one number for the whole vocabulary. A single
+				// ceiling let a transom be written half a metre deep and refused a cornice the
+				// overhang that makes it one; see the projection table in facade-vocabulary.mjs.
+				fail(`${label}.depth_m is out of range: a ${alternative.terminal} may stand at most ${TERMINAL_PROJECTION[alternative.terminal]} m out of the wall`);
+			}
 		const riseTo = alternative.rise_to ?? null;
 		// Only a solid may be carried past its facet. A hole above the mass is a hole in
 		// nothing, and glass there would be a window onto the sky - the loosening is for a

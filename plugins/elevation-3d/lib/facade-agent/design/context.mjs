@@ -4,6 +4,7 @@ import sharp from "sharp";
 
 import { sha256, stableJson } from "../../core.mjs";
 import { facadeCandidateHash } from "../candidate-authority.mjs";
+import { MAX_TERMINAL_PROJECTION } from "../facade-vocabulary.mjs";
 import { readVerifiedFacadeEvidenceAuthority } from "../evidence.mjs";
 import { containedPath, safeRead } from "../path-safety.mjs";
 import { assertCanonicalFacadeSegmentAuthority } from "../punched-facade.mjs";
@@ -224,7 +225,10 @@ export async function buildFacadeDesignContext(input) {
 			facade_faces: faceAuthority.faces.map((face) => ({ ...face, axis: [...face.axis], segment_ids: [...face.segment_ids] })),
 			storeys,
 			existing_openings: existingOpenings(document, segmentIds),
-			exclusions: { edge_clearance_m: 0.3, fold_clearance_m: 0.3, floor_band_clearance_m: 0.15, max_projection_m: 0.5, max_recess_m: 0.5 },
+			// max_projection_m is derived rather than written: it reports the deepest anything in
+			// the vocabulary may stand out of the wall, so the field stays true while the bound
+			// that actually decides a member is that member's own, in facade-vocabulary.mjs.
+			exclusions: { edge_clearance_m: 0.3, fold_clearance_m: 0.3, floor_band_clearance_m: 0.15, max_projection_m: MAX_TERMINAL_PROJECTION, max_recess_m: 0.5 },
 			technical_thumbnails: technicalThumbnails,
 			evidence: { manifest_sha256: evidenceAuthority.manifestSha256, contact_sheet_sha256: evidenceAuthority.contactSheetSha256 },
 		};

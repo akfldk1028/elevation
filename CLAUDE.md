@@ -1049,3 +1049,48 @@ compiled mesh at that pixel, not the primitive list.
 building flies at, and a facet is not flying where another facet stands under it - a beam's
 fascia does not cut across its own support. Fifty-one grammars byte-identical; only the two
 that use the datum move; `own2` still renders with zero seams. Suite 801 green.
+
+## 2026-09-01 how far a member may project is a fact about the member
+
+`max_projection_m: 0.5` was a literal on one line of `context.mjs`, the same number for every
+mass, and `BOUNDS.maxDepthM: 0.5` refused anything deeper at parse. Measuring what
+fifty-three authored grammars actually wrote showed one constant failing in **both**
+directions at once:
+
+    cornice   n=71  median 0.32  max 0.48    pressing the ceiling
+    pilaster  n=29  median 0.30  max 0.50    pressing the ceiling
+    transom   n=21  median 0.09  max 0.12    ceiling four times what it ever needs
+    spandrel  n=35  median 0.10  max 0.24
+    mullion   n=32  median 0.14  max 0.24
+
+So the bound **permitted a half-metre transom**, which is a shelf and not a transom, and
+**denied a cornice and a pilaster the projection that makes them what they are**. The two
+elements whose whole job is to project were the two it forbade.
+
+The fix is not a bigger number - that is the same mistake with a different digit.
+`projection_m` now sits in `facade-vocabulary.mjs` beside the word, the kind, the material
+and the purpose, because how far a thing stands out of a wall is a property of the thing:
+cornice 1.2, pilaster 1.0, louvre 0.8, reveal 0.6, transom 0.25, spandrel 0.35. The parser
+and the validator both key off it, the brief prints it per terminal, and `max_projection_m`
+is derived as the table's maximum so the context field stays true without deciding anything.
+Same move as the fold clearance: **the bound belongs to the construction, not to a global.**
+
+Verified against the corpus rather than asserted: all 51 grammars resolve stage-identical and
+digest-identical, measured by stashing the change and running the same sweep. The
+pre-existing failures - t1, stone, cw4 - were failing before it. A 1.2 m cornice, which used
+to die at *parse* and never reach a quality gate at all, now passes every gate and renders
+with a real overhang.
+
+**Two mistakes this change made, both kept as tests.** `wall` was set to 0, which rejected
+three accepted grammars over a depth that emits no geometry - a bound on an inert field is
+pure restriction. And two director tests wrote `0.8` to trip the old flat ceiling; a pilaster
+at 0.8 is now a legal pier, so both **passed while asserting nothing**. The overrun is
+derived from the table now (`KIND_PROJECTION.pilaster + 0.2`) so it cannot rot the same way.
+
+Suite 804, 803 pass. The one failure is the Tripo ledger's two-process lock test, which is
+untouched by this change and passes in isolation - it lost a file-lock race while a render
+and two authoring agents were running beside it.
+
+**What this does not unlock:** balcony, canopy, projecting bay. Every primitive is a box and
+a balcony is a slab plus a rail. `arch` is the only non-box terminal and it got in because
+someone wrote `archGeometry`. Those need geometry, not a word and not a bigger bound.
