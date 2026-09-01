@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { brickMaps, stoneMaps, precastMaps, zincMaps, woodMaps, weatheringMap } from "./textures.mjs";
+import { applyInteriorMapping } from "./interior.mjs";
 
 // ---------------- materials ----------------
 //
@@ -194,6 +195,12 @@ export function buildShowcaseMaterials(axes, anisotropy, wrap) {
 	applyFrameAxis(materials, axes.frame);
 	applyPunchedHeuristic(materials, axes, wrap);
 	weatherOpaqueSurfaces(materials, anisotropy);
+	// Rooms behind the glass, last, for the same reason the weathering is last: the glass
+	// axis replaces this material outright, so anything earlier would give rooms to a pane
+	// that is no longer in the table. 3.3 m is the storey this candidate set uses; when the
+	// showcase learns the real storey height it should be passed through here, because a
+	// room that straddles a spandrel reads worse than no room at all.
+	if (materials.glass) applyInteriorMapping(materials.glass, { storey: 3.3, depth: 4.5, bay: 4.0, ground: 0 });
 	return materials;
 }
 
