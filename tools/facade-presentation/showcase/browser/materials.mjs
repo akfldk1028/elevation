@@ -16,8 +16,21 @@ function defaultMaterials(anisotropy) {
 	const stone = stoneMaps("#d2cbbc");
 	const precast = precastMaps();
 	[brick.color, brick.bump, stone.color, stone.bump, precast.color].forEach(function (t) { t.anisotropy = anisotropy; });
-	brick.color.repeat.set(1, 1); brick.bump.repeat.set(1, 1);
-	stone.color.repeat.set(0.25, 0.25); stone.bump.repeat.set(0.5, 0.5);
+	// Metric, not decorative. The UVs prepareGeometry writes are world metres, so a repeat of
+	// 1/0.9 makes the tile span 0.9 m, and brickMaps draws 12 courses of 4 stretchers into it:
+	// a 75 mm course and a 225 mm stretcher, which is a standard brick plus a 10 mm joint. It
+	// was 83 x 250 mm before - a tenth over, which reads as a slightly oversized building.
+	// Getting this right is the cheapest realism there is: "keeping these details in scale
+	// with their real-life counterparts will help to sell the material later on".
+	const BRICK_TILE_M = 0.9;
+	brick.color.repeat.set(1 / BRICK_TILE_M, 1 / BRICK_TILE_M);
+	brick.bump.repeat.set(1 / BRICK_TILE_M, 1 / BRICK_TILE_M);
+	// Ashlar limestone: the tile carries roughly four courses, so 1.2 m gives a 300 mm bed
+	// height - the low end of real ashlar, and small enough that a three-storey wall reads as
+	// coursed stone rather than as one poured surface.
+	const STONE_TILE_M = 1.2;
+	stone.color.repeat.set(1 / STONE_TILE_M, 1 / STONE_TILE_M);
+	stone.bump.repeat.set(2 / STONE_TILE_M, 2 / STONE_TILE_M);
 	precast.color.repeat.set(0.5, 0.5);
 
 	return {
