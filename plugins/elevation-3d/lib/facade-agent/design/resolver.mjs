@@ -154,6 +154,16 @@ function grammarPrimitives(program, context, entrance) {
 	const gap = context.exclusions.edge_clearance_m;
 	const fold = context.exclusions.fold_clearance_m;
 	const faceTotals = new Map((context.facade_faces ?? []).map((face) => [face.face_id, face.segment_ids.length]));
+	// The line the building lifts off at: the lowest facet bottom strictly above grade. On a
+	// mass that sits on the ground there is none, and the underside datum is then unavailable
+	// rather than equal to grade - which is what stops it being used to fill in beneath a
+	// bridge. It is a property of every facet together, so the deriver cannot compute it from
+	// the one segment it is given.
+	const grade = Math.min(...context.storeys.map((storey) => storey.z_min));
+	const aboveGrade = context.facade_segments
+		.map((segment) => segment.local_z?.[0])
+		.filter((z) => Number.isFinite(z) && z > grade + 1e-6);
+	const buildingUnderside = aboveGrade.length ? Math.min(...aboveGrade) : null;
 	const primitives = [];
 	for (const segment of context.facade_segments) {
 		const derive = (inset) => deriveFacadePrimitives({
@@ -174,6 +184,7 @@ function grammarPrimitives(program, context, entrance) {
 				placeable: { u_min: inset, u_max: segment.length_m - inset },
 			},
 			storeys: context.storeys,
+			buildingUnderside,
 		});
 		// The inset pass is a probe, so it must not be the one that throws. A skin grammar whose
 		// parts fit the facet but not the inset scope would otherwise die before anything could

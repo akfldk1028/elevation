@@ -37,6 +37,7 @@ function fromFile() {
 		return {
 			datasetRoot: typeof parsed.dataset_root === "string" ? parsed.dataset_root : undefined,
 			outputRoot: typeof parsed.output_root === "string" ? parsed.output_root : undefined,
+			runDirs: parsed.run_dirs && typeof parsed.run_dirs === "object" ? parsed.run_dirs : undefined,
 		};
 	} catch {
 		// No config file is the normal case, and a malformed one must not take the agent down
@@ -73,8 +74,17 @@ export function resolveRoots(overrides = {}) {
 	};
 }
 
-/** The run directory a candidate's authored schemes live in. */
+/**
+ * The run directory a candidate's authored schemes live in.
+ *
+ * The convention is `<output>/<candidate>/llm-facade-subagent-<candidate>`. creative-020
+ * predates it and keeps a historical name, which is why `run_dirs` in the config exists:
+ * naming the exception is honest about the history, where renaming the directory would
+ * orphan every path recorded in the handoff and in twenty retained run folders.
+ */
 export function runDirFor(candidateId, overrides = {}) {
 	const { outputRoot } = resolveRoots(overrides);
+	const named = fromFile().runDirs?.[candidateId];
+	if (named) return isAbsolute(named) ? named : join(outputRoot, named);
 	return join(outputRoot, candidateId, `llm-facade-subagent-${candidateId}`);
 }

@@ -431,3 +431,81 @@ test("an opening cannot be carried past its facet", () => {
 	}
 	assert.throws(() => grammar({ Facade: [{ terminal: "band", rise_to: "the_moon" }] }), FacadeGrammarError);
 });
+
+// Every member measures from the edges of its own scope, and on a stepped mass one of those
+// edges is the step rather than a slab. `band` is how a rule tells the two apart.
+test("a storey band knows whether the mass gave it whole or the facet ended inside it", () => {
+	const parsed = grammar({
+		Facade: [{ split: { axis: "storey", parts: [{ size: "~1", symbol: "Level" }] } }],
+		Level: [
+			// A slice under a step is not a storey; drawing in it draws a shelf.
+			{ when: "band == cut", terminal: "wall" },
+			{ terminal: "glass", inset_m: 0.04 },
+		],
+		Wall: WALL,
+	});
+
+	// A facet running slab to slab across two whole floors: both bands are full.
+	const whole = { ...SEGMENT, local_z: [0, 6.6], placeable: { u_min: 0, u_max: 2 }, length_m: 2 };
+	assert.equal(deriveFacadePrimitives({ grammar: parsed, segment: whole, storeys: STOREY_LINES }).length, 2);
+
+	// A facet ending 0.6 m into its top floor: the lower band is whole and draws, the slice
+	// above it is cut and stays bare.
+	const stepped = { ...whole, local_z: [0, 3.9] };
+	const out = deriveFacadePrimitives({ grammar: parsed, segment: stepped, storeys: STOREY_LINES }) as any[];
+	assert.equal(out.length, 1, "only the full band draws");
+	assert.equal(out[0].local_bounds.z_max <= 3.3 + 1e-9, true, "and it is the one below the step");
+
+	// A facet that starts partway up is cut at its bottom, and that counts too.
+	const raised = { ...whole, local_z: [1.2, 3.3] };
+	assert.equal(deriveFacadePrimitives({ grammar: parsed, segment: raised, storeys: STOREY_LINES }).length, 0);
+});
+
+test("band is unreadable outside a storey split, so a rule cannot fire on a whole facet by accident", () => {
+	const parsed = grammar({
+		Facade: [{ when: "band == full", terminal: "glass", inset_m: 0.04 }, { terminal: "wall" }],
+	});
+	const whole = { ...SEGMENT, local_z: [0, 3.3], placeable: { u_min: 0, u_max: 2 }, length_m: 2 };
+	assert.equal(deriveFacadePrimitives({ grammar: parsed, segment: whole, storeys: STOREY_LINES }).length, 0);
+});
+
+// The parapet's mirror. A lifted mass steps at its base far more than at its head, and a
+// level bottom edge is what makes it read as a beam rather than a stack of shelves.
+const SOFFIT = { Facade: [{ terminal: "band", depth_m: 0.2, rise_to: "building_underside" }] };
+const drop = (top: number, bottom: number, underside: number | null) => deriveFacadePrimitives({
+	grammar: grammar(SOFFIT),
+	segment: { ...SEGMENT, length_m: 4, local_z: [bottom, top], placeable: { u_min: 0, u_max: 4 } },
+	storeys: STOREY_LINES,
+	buildingUnderside: underside,
+}) as any[];
+
+test("a solid carried to the underside stands below its own facet", () => {
+	// The facet starts at 4.48 and the building flies at 1.86, one storey below, so it reaches.
+	const [member] = drop(9.9, 4.48, 1.86);
+	assert.equal(member.local_bounds.z_min, 1.86);
+	assert.equal(member.rises_to, "building_underside");
+
+	// A facet already on the line has nothing to drop to.
+	const [onLine] = drop(9.9, 1.86, 1.86);
+	assert.equal(onLine.local_bounds.z_min, 1.86);
+	assert.equal(onLine.rises_to, undefined);
+});
+
+test("the drop stops at one storey, and does not exist on a mass that sits on the ground", () => {
+	// 7.28 down to 1.86 is 5.4 m - two storeys of blind wall hung under the building.
+	const [tooFar] = drop(9.9, 7.28, 1.86);
+	assert.equal(tooFar.local_bounds.z_min, 7.28);
+	assert.equal(tooFar.rises_to, undefined);
+
+	// No facet above grade means no underside, which is what stops this filling in beneath a
+	// bridge: the datum is absent rather than equal to the ground.
+	const [grounded] = drop(9.9, 4.48, null);
+	assert.equal(grounded.local_bounds.z_min, 4.48);
+	assert.equal(grounded.rises_to, undefined);
+});
+
+test("an opening cannot be carried below its facet either", () => {
+	for (const terminal of ["glass", "door", "arch"]) {
+		assert.throws(() => grammar({ Facade: [{ terminal, rise_to: "building_underside" }] }), FacadeGrammarError);
+	}
+});

@@ -148,7 +148,7 @@ function chooseAlternative(alternatives, scope) {
  * compilation, mass backing, rendering and scoring are untouched: v3 changes what the
  * model can say, not what the pipeline trusts.
  */
-export function deriveFacadePrimitives({ grammar, segment, storeys, entrance = null } = {}) {
+export function deriveFacadePrimitives({ grammar, segment, storeys, entrance = null, buildingUnderside = null } = {}) {
 	if (!grammar?.rules || !segment) fail("a parsed grammar and a segment scope are required");
 	const primitives = [];
 	const storeyOf = (zMin) => storeys.find((storey) => zMin >= storey.z_min - 1e-6 && zMin < storey.z_max - 1e-6)?.storey ?? null;
@@ -167,8 +167,17 @@ export function deriveFacadePrimitives({ grammar, segment, storeys, entrance = n
 	// a number chosen here. A facet further below the line than that does not rise at all:
 	// a partial rise would only trade one ragged top edge for another.
 	const maxRise = Math.max(...storeys.map((storey) => storey.z_max - storey.z_min));
+	// The same allowance mirrored downward. An author reading this mass unaided asked for it:
+	// a lifted bar steps far more at its base than at its head, and a level bottom edge is what
+	// makes it read as a beam rather than as a stack of shelves. The datum is passed in because
+	// it is a fact about every facet together, and it is null on a building that sits on the
+	// ground - so this cannot be used to fill in under a bridge.
+	const underside = Number.isFinite(buildingUnderside) ? round(buildingUnderside) : null;
 	const risesTo = (alternative, facetTop) => alternative.rise_to === "building_top"
 		&& Number.isFinite(facetTop) && buildingTop - facetTop <= maxRise + 1e-9;
+	const dropsTo = (alternative, facetBottom) => alternative.rise_to === "building_underside"
+		&& underside !== null && Number.isFinite(facetBottom)
+		&& facetBottom - underside > 1e-9 && facetBottom - underside <= maxRise + 1e-9;
 
 	const walk = (symbol, scope) => {
 		if (primitives.length > MAX_PRIMITIVES) fail("derived facade primitive budget exceeded");
@@ -201,7 +210,9 @@ export function deriveFacadePrimitives({ grammar, segment, storeys, entrance = n
 				// no epsilon - a fault no prism segment could ever produce.
 				local_bounds: {
 					u_min: Math.max(0, round(uStart)), u_max: Math.min(segment.length_m, round(uEnd)),
-					z_min: Math.max(segment.local_z?.[0] ?? -Infinity, round(zMin)),
+					z_min: dropsTo(alternative, segment.local_z?.[0])
+						? Math.min(round(zMin), underside)
+						: Math.max(segment.local_z?.[0] ?? -Infinity, round(zMin)),
 					// The one place a member may leave its facet, and only upwards, and only as
 					// far as a datum the engine knows. Everything else here clamps: that clamp is
 					// why the top edge of every elevation drawn so far has been the mass's own
@@ -210,7 +221,8 @@ export function deriveFacadePrimitives({ grammar, segment, storeys, entrance = n
 						? Math.max(round(zMax), buildingTop)
 						: Math.min(segment.local_z?.[1] ?? Infinity, round(zMax)),
 				},
-				...(risesTo(alternative, segment.local_z?.[1]) ? { rises_to: alternative.rise_to } : {}),
+				...(risesTo(alternative, segment.local_z?.[1]) || dropsTo(alternative, segment.local_z?.[0])
+					? { rises_to: alternative.rise_to } : {}),
 				depth_m: kind === "door" && entrance ? entrance.recess_m : alternative.depth_m,
 				family_id: familyId(symbol, scope.param),
 				storey: storeyOf(zMin),
@@ -231,7 +243,14 @@ export function deriveFacadePrimitives({ grammar, segment, storeys, entrance = n
 			for (const storey of storeys) {
 				const zMin = Math.max(storey.z_min, scope.z_min);
 				const zMax = Math.min(storey.z_max, scope.z_max);
-				if (zMax - zMin > 1e-6) bands.push({ zMin, zMax, storey: storey.storey });
+				// A band is `full` when the mass gives the whole floor and `cut` when the facet
+				// ends inside it. That distinction is the difference between a member measuring
+				// from a slab and a member measuring from a step, and it is why every scheme on
+				// a stepped mass has drawn the staircase: a head placed a fixed distance below
+				// the band top lands at a different absolute height on every facet that stops
+				// mid-floor. Two authors asked for exactly this, in the same words.
+				const cut = zMin > storey.z_min + 1e-6 || zMax < storey.z_max - 1e-6;
+				if (zMax - zMin > 1e-6) bands.push({ zMin, zMax, storey: storey.storey, band: cut ? "cut" : "full" });
 			}
 			bands.sort((left, right) => left.zMin - right.zMin);
 			const [part] = parts;
@@ -239,7 +258,7 @@ export function deriveFacadePrimitives({ grammar, segment, storeys, entrance = n
 				walk(part.symbol, {
 					...scope,
 					z_min: band.zMin, z_max: band.zMax,
-					index, total: bands.length,
+					index, total: bands.length, band: band.band,
 					param: part.arg, depth: scope.depth + 1, storey: band.storey,
 				});
 			});
