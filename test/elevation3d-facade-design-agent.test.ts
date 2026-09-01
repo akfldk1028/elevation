@@ -6,6 +6,15 @@ import test from "node:test";
 import { createPaidOperationLedger, consumePaidOperationSubmissionCapability } from "../plugins/elevation-3d/lib/facade-agent/paid-operation-ledger.mjs";
 import { isBetterFallbackComposition, runFacadeDesignAgent } from "../plugins/elevation-3d/lib/facade-agent/design/design-agent.mjs";
 import { createFacadeDesignFixture } from "./helpers/facade-design-fixture.ts";
+import { KIND_PROJECTION } from "../plugins/elevation-3d/lib/facade-agent/facade-vocabulary.mjs";
+
+// The two correction tests need a depth the validator refuses. That used to be written as
+// 0.8 against a flat 0.5 ceiling; the ceiling is per-terminal now, so a pilaster at 0.8 is
+// a legal pier and the deliberate overrun stopped overrunning - both tests passed their
+// grammar on the first attempt and asserted nothing. Deriving it from the table keeps the
+// intent ("past what this member may do") true whatever the table says later. The v2
+// contract parses depth up to 1.5, so the margin has to leave room under that.
+const OVER_PROJECTION_M = KIND_PROJECTION.pilaster + 0.2;
 
 function proposal(program: any, depth = 0.12) {
 	const { source: _source, ...raw } = structuredClone(program);
@@ -44,7 +53,7 @@ async function setup(t: any) {
 
 test("director persists prepared authority, corrects validator rejection, and returns accepted typed authorities", async (t) => {
 	const fixture = await setup(t);
-	const adapter = provider([proposal(fixture.program, 0.8), proposal(fixture.program)], async (attempt, request) => {
+	const adapter = provider([proposal(fixture.program, OVER_PROJECTION_M), proposal(fixture.program)], async (attempt, request) => {
 		await access(join(fixture.runDir, "facade-design", `attempt-${String(attempt).padStart(2, "0")}`, "prepared.json"));
 		assert.deepEqual(request.schema.properties.entrance.properties.preferred_bay.enum, ["central_or_corner_focus", "central_focus", "corner_focus"]);
 		assert.deepEqual(request.schema.properties.materials.items.properties.role.enum, ["opaque", "glass", "bronze", "concrete"]);
@@ -74,7 +83,7 @@ test("director persists prepared authority, corrects validator rejection, and re
 
 test("director caps correction at two attempts without relaxing validation", async (t) => {
 	const fixture = await setup(t);
-	const adapter = provider(Array(3).fill(proposal(fixture.program, 0.8)));
+	const adapter = provider(Array(3).fill(proposal(fixture.program, OVER_PROJECTION_M)));
 	await assert.rejects(() => runFacadeDesignAgent({
 		runDir: fixture.runDir, context: fixture.context, provider: adapter, ledger: fixture.ledger,
 		ceilingUsd: 0.1, estimateUsd: 0.05, language: "v2",

@@ -6,9 +6,11 @@ import { checkAuthoredGrammar } from "../plugins/elevation-3d/lib/facade-agent/d
 import { createFacadeDesignFixture } from "./helpers/facade-design-fixture.ts";
 
 import {
+	MAX_TERMINAL_PROJECTION,
 	TERMINAL_KINDS,
 	TERMINAL_MATERIALS,
 	TERMINAL_PRIMITIVE_KINDS,
+	TERMINAL_PROJECTION,
 	TERMINAL_VOCABULARY,
 	TERMINAL_WORDS,
 } from "../plugins/elevation-3d/lib/facade-agent/facade-vocabulary.mjs";
@@ -26,6 +28,33 @@ test("every terminal that emits geometry has a material the renderer knows", () 
 	for (const kind of TERMINAL_PRIMITIVE_KINDS) {
 		assert.ok(PUNCHED_FACADE_MATERIALS.includes(TERMINAL_MATERIALS[kind]), `${kind} has an unknown material`);
 	}
+});
+
+// The projection bound was one number in the design context, and measuring fifty-three
+// authored grammars showed it failing in both directions at once: it permitted a transom
+// half a metre deep, which is a shelf, and refused a cornice and a pilaster the projection
+// that makes them what they are. It is per-terminal now, and these hold the table honest.
+test("every terminal declares how far it may stand out of the wall", () => {
+	for (const terminal of TERMINAL_VOCABULARY) {
+		assert.equal(typeof terminal.projection_m, "number", `${terminal.word} declares no projection`);
+		assert.ok(terminal.projection_m >= 0 && terminal.projection_m <= 2, `${terminal.word} projects ${terminal.projection_m} m`);
+	}
+	assert.equal(MAX_TERMINAL_PROJECTION, Math.max(...TERMINAL_VOCABULARY.map((t) => t.projection_m)));
+});
+
+// `wall` emits nothing, so its depth is inert and bounding it at 0 only rejects grammars
+// over a number that never reaches the geometry - which is exactly what it did.
+test("the terminal that emits nothing is not rejected for the depth it was given", () => {
+	assert.ok(TERMINAL_PROJECTION.wall > 0, "a bare wall's inert depth must not fail a grammar");
+});
+
+test("the elements whose job is to project may project further than the ones that frame glass", () => {
+	// The specific failure the single bound caused, kept as an assertion so it cannot return.
+	assert.ok(TERMINAL_PROJECTION.cornice > TERMINAL_PROJECTION.band,
+		"a cornice that projects no further than a string course terminates nothing");
+	assert.ok(TERMINAL_PROJECTION.pilaster > TERMINAL_PROJECTION.transom,
+		"a pier must stand proud of the wall further than a glazing profile");
+	assert.ok(TERMINAL_PROJECTION.transom < 0.3, "a transom deep enough to be a shelf is not a transom");
 });
 
 test("wall is the only terminal that emits nothing", () => {

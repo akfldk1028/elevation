@@ -280,10 +280,17 @@ runs out of room to say anything.
 
 Terminals, and what each one is for:
 
-${TERMINAL_VOCABULARY.map((terminal) => `  ${terminal.word} - ${terminal.purpose}`).join("\n")}
+${TERMINAL_VOCABULARY.map((terminal) => `  ${terminal.word} (depth_m up to ${terminal.projection_m}) - ${terminal.purpose}`).join("\n")}
+
+How far a member may stand out of the wall is a fact about the member, so the bound is
+the one written beside each terminal above rather than one number for all of them. A
+cornice may overhang 1.2 m because overhanging is what makes it a cornice; a transom is a
+profile between two panes and 0.25 m is already generous for one. Depth is a design
+decision within that bound, not a value to max out - the corpus writes most members
+between 0.1 and 0.3 m and reserves the deep end for the elements doing the projecting.
 
 Every alternative carries inset_m and depth_m - they are required fields, not optional
-ones - and both are at most ${BOUNDS.maxInsetM} m. inset_m shrinks the member in its plane: the
+ones - and inset_m is at most ${BOUNDS.maxInsetM} m. inset_m shrinks the member in its plane: the
 drawn rectangle is the scope pulled in by inset_m on all four sides, so an inset of 0.12
 takes 0.24 m off the width AND 0.24 m off the height, and a member shorter than twice its
 inset vanishes into a sliver or into nothing. depth_m is its thickness out of the plane.
