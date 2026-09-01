@@ -161,9 +161,13 @@ export async function buildSheet({ manifestPath, outPath } = {}) {
 
 	const parts = [];
 	for (const section of manifest.sections) {
-		if (section.images) { parts.push(imageSection(section, candidate.runRoot)); continue; }
-		const cards = [];
+		// An image section names its mass the same way a card section does. It used to take the
+		// first candidate's run root unconditionally, so a section of another mass's showcases
+		// resolved every path under the wrong building and silently produced broken images -
+		// the same shape as the bug that made this page show one mass for weeks.
 		const owner = byId.get(section.candidate ?? candidate.id) ?? candidate;
+		if (section.images) { parts.push(imageSection(section, owner.runRoot)); continue; }
+		const cards = [];
 		for (const card of section.cards) {
 			const cardOwner = byId.get(card.candidate ?? owner.id) ?? owner;
 			cards.push(await buildCard(card, cardOwner, await contextFor(cardOwner.id), sheetDir));
