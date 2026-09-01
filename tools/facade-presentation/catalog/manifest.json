@@ -252,33 +252,22 @@
 		{
 			"id": "materials",
 			"title": "Material axes",
-			"note": "The same grammar under different wall / glass / frame / mood decisions. Choosing a wall does not choose the glass.",
+			"note": "The same geometry under different wall, glass, frame and light. Nothing about the grammar changes between these - the scheme is one derivation and these are four readings of it, which is the point of keeping presentation outside the gated chain.",
 			"images": [
 				{
-					"src": "showcase/matrix-brick-deep.png",
-					"caption": "brick · deep glass · iron · golden"
+					"src": "blind-020-crown/showcase/limestone-golden.png",
+					"caption": "Crown - limestone, clear glass, bronze frame, golden hour"
 				},
 				{
-					"src": "showcase/matrix-brick-clear.png",
-					"caption": "the same brick wall · clear glass · white surrounds · morning"
+					"src": "blind-020-crown/showcase/brick-overcast.png",
+					"caption": "Crown - brick, deep glass, iron frame, overcast"
 				},
 				{
-					"src": "showcase/matrix-precast-mirror.png",
-					"caption": "precast · mirror · bronze · overcast"
-				},
-				{
-					"src": "showcase/matrix-darkpanel-clear.png",
-					"caption": "dark panel · clear · iron · morning"
-				},
-				{
-					"src": "showcase/matrix-zinc-clear.png",
-					"caption": "standing-seam zinc · clear · iron · overcast"
-				},
-				{
-					"src": "showcase/matrix-wood-deep.png",
-					"caption": "timber boards · deep · bronze · golden"
+					"src": "blind-020-crown/showcase/zinc-morning.png",
+					"caption": "Crown - zinc, mirror glass, white frame, morning"
 				}
-			]
+			],
+			"candidate": "creative-020"
 		},
 		{
 			"id": "photo",
@@ -292,6 +281,21 @@
 				{
 					"src": "showcase/photo-brick-deep.png",
 					"caption": "brick ribbons — API lane, retired after one proof"
+				}
+			]
+		},
+		{
+			"title": "Material axes - bent bar",
+			"candidate": "creative-013",
+			"note": "The level-eaves scheme under two readings. Its cornice is 0.30 m, the old flat ceiling, so compare its top against the prism crown above.",
+			"images": [
+				{
+					"src": "blind-013-eaves/showcase/wood-golden.png",
+					"caption": "Level eaves - wood, clear glass, bronze frame, golden hour"
+				},
+				{
+					"src": "blind-013-eaves/showcase/precast-overcast.png",
+					"caption": "Level eaves - precast, deep glass, iron frame, overcast"
 				}
 			]
 		}
