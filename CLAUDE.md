@@ -922,3 +922,45 @@ silent wrong answer, same class as the `storey` hardcode fixed in `b5876c4`); th
 rule's 8-alternative cap, which two authors reported as design-limiting on a mass with seven
 degenerate facets; and the fact that a louvre cannot actually pass in front of glass, because
 a split partitions its scope exactly once - the brief says it can.
+
+## 2026-09-01 the catalogue was one building, and cw4 has never passed
+
+**The sheet showed seventeen schemes and one candidate.** Every elevation on it therefore had
+the same stepped silhouette, and no amount of looking at it could tell you whether a facade
+was stepped by choice or by inheritance. The user said the elevations all looked alike for
+hours before this was checked. `build-sheet.mjs` now prepares one context per candidate and a
+section or card may name which one it belongs to; creative-020 joins with six already-rendered
+schemes. 23 cards, 131 images, two masses.
+
+**`grammar-cw4` does not clear the gates and there is no commit in this history where it
+does.** It is recorded three sections above as "the best facade this project has produced",
+"zero faults", "all eight views render and pass". That claim cannot be reproduced. Measured:
+FOLD_CLEARANCE_INVALID, a window 0.05 m off a fold against 0.3 required, at HEAD and at every
+testable commit back to 2026-08-18; on 2026-08-17 the file does not parse at all, because it
+uses a terminal the vocabulary did not have yet. So either the file on disk was edited after
+that note was written, or it passed only in an uncommitted working tree. Either way the note
+is wrong and this is the correction.
+
+Two process failures worth keeping, both mine:
+
+- **The byte-identity snapshot quoted all session ran creative-013 and creative-004 only.**
+  Nineteen prism grammars were never in it, which is why cw4's state went unnoticed through a
+  dozen "all grammars byte-identical" claims. The snapshot covers all three candidates now.
+- **The first bisect was invalid.** `git bisect start HEAD 2925748` asserted a good commit
+  without testing it; the parent was broken too, so the answer it produced (`ea47906`) was
+  meaningless. Sampling the history afterwards gave the real answer. Test the good end.
+
+cw4 is deliberately left failing. The catalogue recomputes every card's metrics from its
+grammar when the page is built, so the card prints "grammar no longer clears the gates" by
+itself - the page contradicted a claim this file made about it, which is the whole reason the
+sheet was built that way.
+
+**Two operators landed, both asked for by authors rather than found in the code.** `band ==
+full | cut` inside a storey split, because every member measures from the edges of its own
+scope and on a stepped mass one of those edges is the step - seven windows on one face
+measured seven distinct head heights. And `rise_to: "building_underside"`, the parapet
+mirrored downward, after an author given no design intent read this mass as "a beam that
+lands once" and named what was missing: a level bottom edge "so the beam reads as a beam and
+not as a stack of shelves". The datum is the lowest facet bottom above grade, 1.8609 m here;
+on a mass that sits on the ground it does not exist and the operator is inert, which is what
+stops it filling in under a bridge. All pre-existing grammars byte-identical, suite 801 green.
