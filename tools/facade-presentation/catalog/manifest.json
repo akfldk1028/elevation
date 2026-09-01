@@ -16,6 +16,14 @@
       "note": "Every one authored by a repo-blind subagent from the brief alone, then held to the same gates the paid director applies.",
       "cards": [
         {
+          "id": "civic2",
+          "title": "Ends on one line",
+          "intent": "The mass steps; the building does not. Full-height piers carry a crown that rises to the building's top line, so the elevation ends level instead of on the steps",
+          "grammar": "grammar-blind-013-civic2.json",
+          "renderDir": "render-civic2",
+          "axes": "stone · accepted attempt 1 · the author found the rise datum in the brief unaided and guarded which facets may use it"
+        },
+        {
           "id": "live-013-h",
           "title": "Live director",
           "intent": "gpt-5.5 authoring unaided — the first facade a paid run has drawn on a mass that is not a prism",
