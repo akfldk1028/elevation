@@ -30,7 +30,8 @@
           "intent": "One continuous line at each floor, running the whole building on every elevation — the first scheme here whose horizontals cross the mass's own steps",
           "grammar": "grammar-blind-013-datum.json",
           "renderDir": "render-datum",
-          "axes": "stone · accepted on attempt 1 · 50 bands + 45 cornices at 3.30 / 6.60 / 9.30"
+          "axes": "limestone / deep / bronze / morning · accepted attempt 1 · 50 bands + 45 cornices at 3.30 / 6.60 / 9.30",
+          "showcase": "showcase/datum.png"
         },
         {
           "id": "curtainwall",
