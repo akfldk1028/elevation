@@ -247,10 +247,14 @@ storey) - it is not "any storey the scope touches", and at the start rule it rea
 facet's own bottom, so a facet that begins on the third storey answers storey == 3.
 
 Predicates: index % <n> == <m>, index == <n>, index == last, storey % <n> == <m>,
-storey == <n>, face_view == front|back|left|right, param == <value>. Two may be joined
-with &&. \`index\` is the position within the repeat that produced this scope, so
-"index % 2 == 0" alternates floors and, at the top level, alternates facets across
-one elevation.
+storey == <n>, band == full|cut, face_view == front|back|left|right,
+param == <value>. Two may be joined with &&. \`index\` is the position within the
+repeat that produced this scope, so "index % 2 == 0" alternates floors and, at the top
+level, alternates facets across one elevation. \`index == top\` is accepted as a synonym
+for \`index == last\`; prefer \`last\`.
+
+This list is complete - if a comparison is not on it, it is not a predicate, and
+\`band\` being on it is the point of the storey section above.
 
 Symbol arguments. Every symbol takes at most one argument. A part passes it with
 "arg", and the rule it names reads it back as \`param\`:

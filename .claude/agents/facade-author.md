@@ -34,13 +34,20 @@ You may read exactly these, in the candidate's run directory:
    per elevation and check them against the thresholds the brief states. The authors who pass
    on attempt one are the ones who do this.
 2. Write the grammar to the path you were given.
-3. Check it, with cwd at the repository root:
-   `node tools/facade-pipeline/cli.mjs check <candidate> "<grammar path>"`
-4. `"stage":"accepted"` is a pass. Any other stage names the gate that stopped you and carries
+3. Draw it, with cwd at the repository root:
+   `node tools/facade-pipeline/cli.mjs draw <candidate> "<grammar path>" <scheme name>`
+4. `"stage":"drawn"` is a pass. Any other stage names the gate that stopped you and carries
    a located fault: the elevation, the member, the bound, and by how much it missed. **Repair
    that member by the smallest amount that clears the quoted number. Do not redesign** — every
    attempt spent re-deriving a whole scheme trades one violation for another.
-5. **Three attempts at the check.** Stop and report at three whether or not you passed.
+5. **Three attempts at the draw.** Stop and report at three whether or not you passed.
+
+**Why `draw` and not `check`.** They answer different questions - `check` asks whether the
+design holds, `draw` asks whether it also survives being built and photographed. A scheme in
+this repo passed every design gate and then died in the renderer on a seam no design gate can
+see; the author who wrote it had stopped at "accepted" and could not have known. If you only
+want the numbers without waiting for a render, `check` still exists, but **you have not
+finished until it draws.**
 
 ## Report — every heading, always
 
