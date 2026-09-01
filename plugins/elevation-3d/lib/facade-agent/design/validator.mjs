@@ -85,6 +85,13 @@ export function validateResolvedFacadeProgram({ program, context, resolved } = {
 		const segments = new Map(context.facade_segments.map((segment) => [segment.segment_id, segment]));
 		const storeys = new Map(context.storeys.map((storey) => [storey.storey, storey]));
 		const buildingTop = Math.max(...context.storeys.map((storey) => storey.z_max));
+		// Mirror of the top allowance: a member that named the underside datum may stand below
+		// its own facet, and only as far as the line the building lifts off at.
+		const grade = Math.min(...context.storeys.map((storey) => storey.z_min));
+		const liftedBottoms = context.facade_segments
+			.map((segment) => segment.local_z?.[0])
+			.filter((z) => Number.isFinite(z) && z > grade + 1e-6);
+		const buildingUnderside = liftedBottoms.length ? Math.min(...liftedBottoms) : null;
 		const entrances = resolved.primitives.filter((primitive) => primitive.kind === "door" && primitive.role === "primary_entrance");
 		if (entrances.length !== 1) codes.add("PRIMARY_ENTRANCE_INVALID");
 
@@ -114,7 +121,9 @@ export function validateResolvedFacadeProgram({ program, context, resolved } = {
 				// that line - the loosening is a parapet levelling a stepped mass, not a licence
 				// to leave the facet by an arbitrary amount. Everything without the flag is held
 				// to its facet exactly as before.
-				|| bounds.z_min < segment?.local_z?.[0]
+				|| bounds.z_min < (primitive.rises_to === "building_underside" && buildingUnderside !== null
+					? buildingUnderside - 1e-6
+					: segment?.local_z?.[0])
 				// The datum is compared with an epsilon for the same reason the deriver rounds it:
 				// a storey table that sums to 9.899999999999999 must not reject a member drawn at
 				// the 9.9 the deriver emitted. Facet bounds keep their exact comparison, which is

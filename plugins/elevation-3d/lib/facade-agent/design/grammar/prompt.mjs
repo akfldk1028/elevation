@@ -8,7 +8,7 @@ const SYMBOL = { type: "string", pattern: "^[A-Za-z][A-Za-z0-9_]{0,31}$" };
 
 // Longest first, so `param == 15` cannot be read as `param == 1` with a stray 5 left over.
 const PARAM_LITERALS = [...PARAM_VALUES].sort((a, b) => b.length - a.length).join("|");
-const PREDICATE_TERM = `(?:(?:index|storey) *% *[0-9]+ *== *[0-9]+|(?:index|storey) *== *(?:[0-9]+|last|top)|face_view *== *(?:front|back|left|right)|param *== *(?:${PARAM_LITERALS}))`;
+const PREDICATE_TERM = `(?:(?:index|storey) *% *[0-9]+ *== *[0-9]+|(?:index|storey) *== *(?:[0-9]+|last|top)|band *== *(?:full|cut)|face_view *== *(?:front|back|left|right)|param *== *(?:${PARAM_LITERALS}))`;
 
 /**
  * The grammar the model answers in.
@@ -65,7 +65,7 @@ export const FACADE_GRAMMAR_V3_SCHEMA = Object.freeze({
 					// The predicate set is closed, so the schema carries it too. A provider that
 					// enforces patterns then cannot emit a malformed comparison at all.
 					pattern: `^${PREDICATE_TERM}(?: *&& *${PREDICATE_TERM})?$`,
-					description: "index % <n> == <m> | index == <n> | index == last | storey % <n> == <m> | storey == <n> | face_view == front|back|left|right | param == <the arg this symbol was called with>. Two may be joined with &&. Use null for the else branch.",
+					description: "index % <n> == <m> | index == <n> | index == last | storey % <n> == <m> | storey == <n> | band == full|cut (inside a storey split: whether the mass gave this floor whole or the facet ends inside it) | face_view == front|back|left|right | param == <the arg this symbol was called with>. Two may be joined with &&. Use null for the else branch.",
 				},
 				min_u_m: {
 					type: ["number", "null"],
@@ -78,7 +78,7 @@ export const FACADE_GRAMMAR_V3_SCHEMA = Object.freeze({
 				rise_to: {
 					type: ["string", "null"],
 					enum: [...RISE_DATUMS, null],
-					description: "Carry this SOLID terminal past the top of its facet, up to the building's top line, so a stepped mass ends on one level parapet. Refused for openings, and ignored on a facet more than one storey below that line. Null everywhere else.",
+					description: "Carry this SOLID terminal past an edge of its facet to a datum the engine knows. building_top is the building's top line, so a stepped mass ends on one level parapet. building_underside is the line a lifted building flies at, for a level bottom edge across steps in the base. Refused for openings, ignored beyond one storey, and building_underside does not exist on a mass that sits on the ground. Null everywhere else.",
 				},
 				split: {
 					type: ["object", "null"],
@@ -172,6 +172,24 @@ all start at the same height the bands scatter and the elevation reads as separa
 rather than one building. The more the facet bottoms differ, the more this matters; on a
 mass whose facets all start together it costs nothing.
 
+Inside a storey scope you can also ask HOW the band was made. "band == full" is a floor
+the mass hands you whole, slab to slab. "band == cut" is one the facet ends inside - the
+mass steps there, and what you have is a slice of a floor rather than a floor.
+
+This matters more than it sounds. Every member measures from the edges of the scope it is
+in, and on a cut band one of those edges is not a slab, it is the step. So a head placed a
+fixed distance below the band top lands at a different absolute height on every facet that
+stops mid-floor, and the elevation ends up drawing the mass's staircase instead of the
+building. Measured on an accepted scheme: seven windows on one face, seven different head
+heights, not one shared.
+
+So decide deliberately what a cut band should be. Usually the honest answer is plain wall:
+a 0.6 m slice under a step is not a storey and articulating it draws a shelf. Route it with
+"band == cut" and leave it bare, and the steps read as the mass moving rather than as rows
+of little ledges. If you do want to draw in one, put the member against the edge that IS a
+slab and let the cut edge be the one that varies. On a mass that does not step, every band
+is full and this changes nothing.
+
 An alternative may also declare the smallest scope it is willing to be used on, with
 "min_u_m" and "min_z_m". Below that it is simply not selected and the next alternative is
 tried, so end such a rule with a plain one - often bare wall. This is how you keep a design
@@ -191,8 +209,18 @@ Four things bound it, and none of them is yours to set. The height is the datum,
 number you write. A facet sitting more than one storey below that line does not rise at
 all - a partial rise only trades one ragged top edge for another, and a wall standing
 several storeys above the mass is new massing rather than a parapet. Only solids rise: a
-window or a door carried above the mass would be a hole in nothing. And the rise is upward
-only. If the mass does not step, this changes nothing and costs nothing.
+window or a door carried above the mass would be a hole in nothing.
+
+There is a second datum for the same move downward. "rise_to": "building_underside" carries
+a SOLID down to the line the building lifts off at - the lowest facet bottom above the
+ground. Use it when the mass flies: a bar that touches down in one place steps far more at
+its base than at its head, and a level bottom edge carried across those steps is what makes
+it read as a beam rather than as a stack of shelves. The same four bounds apply, and the
+same one-storey limit. On a building that sits on the ground there is no such line, the
+datum does not exist, and nothing happens - so this can never be used to fill in underneath
+a bridge.
+
+If the mass does not step, neither datum changes anything and neither costs anything.
 
 One thing to get right, because the elevation will not show you the mistake: put the rise on
 a member that SPANS the facet, and never on a run of separate piers. Above the roof there is

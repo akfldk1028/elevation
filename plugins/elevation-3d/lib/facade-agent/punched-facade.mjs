@@ -991,8 +991,13 @@ export function buildTypedFacadeDetails({ mesh, floorGuides, facadePlanes, primi
 		// altogether when the facet sits more than one storey below that, so nothing here can
 		// grow a tower out of a low strip. Everything without the flag is held to its plane.
 		const vLimit = primitive.rises_to ? Math.max(plane.extent_m[1], bounds.v1) : plane.extent_m[1];
+		// A member carried to the underside starts below its own plane rectangle, so its v0 is
+		// negative by exactly the drop. Same licence as the parapet and the same reason: the
+		// rectangle is the facet's mesh face, and a soffit line is by definition the wall that
+		// continues past it. `derive.mjs` still owns how far.
+		const vFloor = primitive.rises_to ? Math.min(0, bounds.v0) : 0;
 		if (bounds.u0 < -EPSILON || bounds.u1 > plane.extent_m[0] + EPSILON
-			|| bounds.v0 < -EPSILON || bounds.v1 > vLimit + EPSILON) {
+			|| bounds.v0 < vFloor - EPSILON || bounds.v1 > vLimit + EPSILON) {
 			throw new TypeError("invalid typed facade primitive bounds");
 		}
 		pushDetail(details, plane, tangent, TYPED_FACADE_GRAMMAR, bounds, {

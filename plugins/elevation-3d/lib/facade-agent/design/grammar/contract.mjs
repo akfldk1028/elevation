@@ -34,8 +34,17 @@ export const AXES = Object.freeze(["u", "z", "storey"]);
  * It is a datum and not a number on purpose. The author names the line; the engine knows
  * where it is. An arbitrary rise would be new massing authored by the facade, which is the
  * other agent's work and is not what this opens.
+ *
+ * `building_underside` is the same move downward, and it exists because an author reading
+ * this mass unaided asked for it in these words: "this mass steps at the BOTTOM far more
+ * than at the top... what the bar wants at its base is what it gets at its head - one
+ * continuous line, a level bottom edge carried across the steps so the beam reads as a beam
+ * and not as a stack of shelves." The datum is the lowest facet bottom strictly above grade,
+ * which on a lifted building is the line it flies at. On a building that sits on the ground
+ * there is no such line and the datum does not exist, so the operator is inert - which is
+ * correct, and is why it cannot be used to fill in the underside of a bridge down to grade.
  */
-export const RISE_DATUMS = Object.freeze(["building_top"]);
+export const RISE_DATUMS = Object.freeze(["building_top", "building_underside"]);
 /** Terminals that cut a hole. None of them may be carried past the facet it belongs to. */
 const OPENING_TERMINALS = new Set(["glass", "door", "arch"]);
 export const BOUNDS = Object.freeze({
@@ -141,6 +150,17 @@ function parsePredicate(text, label) {
 		if (match) return { field: match[1], value: Number(match[2]) };
 		match = /^(index|storey)\s*==\s*(last|top)$/.exec(term);
 		if (match) return { field: match[1], value: match[2] === "last" ? "last" : "last" };
+		// Whether a storey band is the whole floor or a slice of one. Every member can only
+		// measure from the edges of the scope it is in, and on a stepped mass those edges are
+		// the steps - so a head placed "0.28 below the band top" lands at a different absolute
+		// height on every facet that ends mid-floor, and the facade draws the staircase instead
+		// of the building. Measured on an accepted scheme: seven windows on one face, seven
+		// distinct head heights, none shared. Two authors asked for this in the same words -
+		// a way to tell a cut edge from a slab. `band == full` is a floor the mass gives whole;
+		// `band == cut` is one the facet ends inside, and the honest thing to do with it is
+		// usually to leave it plain rather than to article it.
+		match = /^band\s*==\s*(full|cut)$/.exec(term);
+		if (match) return { field: "band", value: match[1] };
 		match = /^face_view\s*==\s*(front|back|left|right)$/.exec(term);
 		if (match) return { field: "face_view", value: match[1] };
 		// A rule reads its own argument the same way it reads the scope: as a comparison
@@ -298,7 +318,10 @@ export function predicateHolds(predicate, scope) {
 	return predicate.every((term) => {
 		const actual = term.field === "face_view" ? scope.face_view
 			: term.field === "param" ? scope.param ?? null
-				: term.field === "storey" ? scope.storey : scope.index;
+				// A scope that never went through a storey split has no band to speak of, and
+				// answering `full` there would let a rule fire on a whole facet by accident.
+				: term.field === "band" ? scope.band ?? null
+					: term.field === "storey" ? scope.storey : scope.index;
 		if (term.value === "last") return actual === scope.total - 1;
 		if (term.modulus) return Number.isInteger(actual) && actual % term.modulus === term.value;
 		return actual === term.value;
