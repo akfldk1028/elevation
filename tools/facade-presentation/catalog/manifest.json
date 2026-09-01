@@ -1,12 +1,17 @@
 {
   "schema_version": "arr.facade-presentation.catalog.v1",
-  "title": "creative-013 · facade catalogue",
-  "subtitle": "One mass, every scheme the grammar can say. Each card is a drawing set, not a picture: the elevations are dimensioned to the millimetre and every metric below is recomputed from the grammar when this page is built.",
+  "title": "facade catalogue - two masses",
+  "subtitle": "Every scheme the grammar can say, on more than one building. Each card is a drawing set, not a picture: the elevations are dimensioned to the millimetre and every metric below is recomputed from the grammar when this page is built.",
   "candidates": [
     {
       "id": "creative-013",
       "runRoot": "creative-013/llm-facade-subagent-creative-013",
       "note": "A bent-bar terrace bridge: the bar touches the ground at one entrance pier only, everything else cantilevers from z=1.861. 37 facets, widths 0.02 to 5.5 m."
+    },
+    {
+      "id": "creative-020",
+      "runRoot": "creative-020/llm-facade-subagent-v1",
+      "note": "A plain extruded prism: 35 vertices, two z levels, every vertical face a full rectangle, five storeys, sixteen facets. It sits on the ground and it does not step."
     }
   ],
   "sections": [
@@ -161,6 +166,56 @@
           "renderDir": "render-arch-demo",
           "showcase": "showcase/arch-heads.png",
           "axes": "brick / deep / bronze / golden · --face right (the arched face)"
+        }
+      ]
+    },
+    {
+      "id": "prism",
+      "title": "The same grammar on a prism",
+      "candidate": "creative-020",
+      "note": "A mass that does not step. Nothing here is a new idea - these are schemes the same engine drew on a plain extruded block, and they are on this page because a catalogue of one building cannot tell you whether a facade is stepped by choice or by inheritance.",
+      "cards": [
+        {
+          "id": "cw4",
+          "title": "Light frame",
+          "intent": "The best facade this project produced on the prism: a 0.3 m fold pier in bright precast with only a 40 mm mullion at the glass edge",
+          "grammar": "grammar-cw4.json",
+          "renderDir": "cw4"
+        },
+        {
+          "id": "cw3",
+          "title": "Glazed skin",
+          "intent": "Glass running five storeys, mullions unbroken grade to cornice, a spandrel at every slab",
+          "grammar": "grammar-cw3.json",
+          "renderDir": "cw3"
+        },
+        {
+          "id": "prism-g",
+          "title": "Prism G",
+          "intent": "The scheme that reads best by eye of the eight first-round blind designs",
+          "grammar": "grammar-g.json",
+          "renderDir": "render-g"
+        },
+        {
+          "id": "prism-h",
+          "title": "Prism H",
+          "intent": "Mixed construction on a prism - skin backs against a punched front",
+          "grammar": "grammar-h.json",
+          "renderDir": "render-h"
+        },
+        {
+          "id": "prism-c",
+          "title": "Prism C",
+          "intent": "A deeply glazed frame; punched openings that happen to be large",
+          "grammar": "grammar-c.json",
+          "renderDir": "render-c"
+        },
+        {
+          "id": "prism-p",
+          "title": "Transparent base",
+          "intent": "Weight inverted: a glazed ground storey under a closed body",
+          "grammar": "grammar-p.json",
+          "renderDir": "render-p"
         }
       ]
     },

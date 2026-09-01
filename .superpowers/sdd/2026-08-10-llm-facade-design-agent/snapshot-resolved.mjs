@@ -10,7 +10,7 @@ import { readVerifiedFacadeDesignContextAuthority } from "../../../plugins/eleva
 import { prepareFacadeContext } from "../../../tools/facade-pipeline/prepare.mjs";
 import { runDirFor } from "../../../tools/facade-pipeline/config.mjs";
 
-for (const candidateId of ["creative-013", "creative-004"]) {
+for (const candidateId of ["creative-013", "creative-004", "creative-020"]) {
 	const dir = runDirFor(candidateId);
 	const { context } = await prepareFacadeContext({ candidateId });
 	const authority = readVerifiedFacadeDesignContextAuthority(context);

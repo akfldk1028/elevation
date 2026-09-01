@@ -146,22 +146,36 @@ function imageSection(section, runRoot) {
 export async function buildSheet({ manifestPath, outPath } = {}) {
 	const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
 	const sheetDir = dirname(resolve(outPath));
+	// One context per candidate, prepared once and shared by every card that names it. The
+	// sheet showed a single mass and seventeen schemes of it for weeks, which made every
+	// elevation look stepped in the same way - the schemes were not alike, the building was.
+	const byId = new Map(manifest.candidates.map((entry) => [entry.id, entry]));
+	const contexts = new Map();
+	const contextFor = async (id) => {
+		if (!contexts.has(id)) contexts.set(id, (await prepareFacadeContext({ candidateId: id })).context);
+		return contexts.get(id);
+	};
 	const [candidate] = manifest.candidates;
 	// One prepare per candidate: the evidence verify is the slow part, and every scheme on
 	// this page is a different grammar over the same context.
-	const { context } = await prepareFacadeContext({ candidateId: candidate.id });
+
 	const parts = [];
 	for (const section of manifest.sections) {
 		if (section.images) { parts.push(imageSection(section, candidate.runRoot)); continue; }
 		const cards = [];
-		for (const card of section.cards) cards.push(await buildCard(card, candidate, context, sheetDir));
+		const owner = byId.get(section.candidate ?? candidate.id) ?? candidate;
+		for (const card of section.cards) {
+			const cardOwner = byId.get(card.candidate ?? owner.id) ?? owner;
+			cards.push(await buildCard(card, cardOwner, await contextFor(cardOwner.id), sheetDir));
+		}
 		parts.push(`<section class="group" id="${escape(section.id)}"><h2>${escape(section.title)}</h2><p class="note">${escape(section.note)}</p>${cards.join("\n")}</section>`);
 	}
+	const notes = manifest.candidates.map((entry) => `<p class="sub">${escape(entry.id)} - ${escape(entry.note)}</p>`).join("");
 	const html = `<!doctype html><meta charset="utf-8">
 <title>${escape(manifest.title)}</title>
 <style>${STYLE}</style>
 <h1>${escape(manifest.title)}</h1>
-<p class="sub">${escape(manifest.subtitle)}<br>${escape(candidate.note)}</p>
+<p class="sub">${escape(manifest.subtitle)}</p>${notes}
 ${parts.join("\n")}
 `;
 	await writeFile(outPath, html, "utf8");
