@@ -53,7 +53,8 @@ function flags(argv) {
 const say = (value) => process.stdout.write(`${JSON.stringify(value)}\n`);
 
 const USAGE = "usage: cli.mjs roots | prepare <candidate> | brief <candidate>"
-	+ " | check <candidate> <grammar.json> | render <candidate> <grammar.json> <name> [--palette p]"
+	+ " | check <candidate> <grammar.json> | draw <candidate> <grammar.json> <name> [--palette p]"
+	+ " | render <candidate> <grammar.json> <name> [--palette p]"
 	+ " | showcase <candidate> <name> <out.png> [--wall --glass --frame --mood --face]"
 	+ " | photo <in.png> <out.png> [--subject s]";
 
@@ -129,6 +130,31 @@ export async function runPipelineCli(argv) {
 		const { program, resolved, validation, ...report } = checked;
 		say(report);
 		return checked.ok ? 0 : 1;
+	}
+
+	// `check` answers "does this design hold" and `render` answers "does it draw", and they are
+	// not the same question - a scheme has passed every design gate here and then died in the
+	// renderer on a seam the design gates cannot see. An author whose loop ended at "accepted"
+	// could not find that out, so it was found days later by someone building a sheet. `draw`
+	// is the two in one, and it is what the authoring role stops on.
+	if (command === "draw") {
+		if (!name) { say({ ok: false, error: USAGE }); return 2; }
+		const checked = checkFacadeGrammar({ context, grammar });
+		if (!checked.ok) {
+			const { program, resolved, validation, ...report } = checked;
+			say({ ...report, drew: false });
+			return 1;
+		}
+		const drawn = await renderFacadeScheme({
+			runDir: join(runDir, name), candidate, context, grammar,
+			palette: flag.palette ?? "competition-warm",
+		});
+		await writeFile(join(runDir, name, "composition.json"), `${JSON.stringify(drawn.composition, null, 2)}\n`, "utf8");
+		say({
+			ok: true, stage: "drawn", drew: true, candidate: candidateId, out: join(runDir, name),
+			hero: drawn.hero.path, metrics: checked.metrics, composition: drawn.composition,
+		});
+		return 0;
 	}
 
 	if (command === "render") {

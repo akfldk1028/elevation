@@ -1,277 +1,299 @@
 {
-  "schema_version": "arr.facade-presentation.catalog.v1",
-  "title": "facade catalogue - two masses",
-  "subtitle": "Every scheme the grammar can say, on more than one building. Each card is a drawing set, not a picture: the elevations are dimensioned to the millimetre and every metric below is recomputed from the grammar when this page is built.",
-  "candidates": [
-    {
-      "id": "creative-013",
-      "runRoot": "creative-013/llm-facade-subagent-creative-013",
-      "note": "A bent-bar terrace bridge: the bar touches the ground at one entrance pier only, everything else cantilevers from z=1.861. 37 facets, widths 0.02 to 5.5 m."
-    },
-    {
-      "id": "creative-020",
-      "runRoot": "creative-020/llm-facade-subagent-v1",
-      "note": "A plain extruded prism: 35 vertices, two z levels, every vertical face a full rectangle, five storeys, sixteen facets. It sits on the ground and it does not step."
-    }
-  ],
-  "sections": [
-    {
-      "id": "schemes",
-      "title": "Schemes",
-      "note": "Every one authored by a repo-blind subagent from the brief alone, then held to the same gates the paid director applies.",
-      "cards": [
-        {
-          "id": "beam",
-          "title": "A beam that lands once",
-          "intent": "An author given no design intent read the mass itself - four of thirty-seven facets touch the ground, three of them one stem - and drew a lifted gallery. Level at the top, level at the underside, mass between: the two datums doing the same job at both ends",
-          "grammar": "grammar-blind-013-own2.json",
-          "renderDir": "render-own2",
-          "axes": "stone · accepted attempt 1 · bottom line 1.8609 m, six facets rise to it · every tier head now lands on 6.25 m whatever its own step"
-        },
-        {
-          "id": "civic2",
-          "title": "Ends on one line",
-          "intent": "The mass steps; the building does not. Full-height piers carry a crown that rises to the building's top line, so the elevation ends level instead of on the steps",
-          "grammar": "grammar-blind-013-civic2.json",
-          "renderDir": "render-civic2",
-          "axes": "stone · accepted attempt 1 · the author found the rise datum in the brief unaided and guarded which facets may use it"
-        },
-        {
-          "id": "live-013-h",
-          "title": "Live director",
-          "intent": "gpt-5.5 authoring unaided — the first facade a paid run has drawn on a mass that is not a prism",
-          "grammar": "grammar-live-013-h.json",
-          "runRoot": "creative-013/llm-facade-live-013-h",
-          "renderDir": "technical-render",
-          "axes": "scores 100/100/97/100/88/100 · $0.12 · ninth attempt after eight failures"
-        },
-        {
-          "id": "datum",
-          "title": "Held by a datum",
-          "intent": "One continuous line at each floor, running the whole building on every elevation — the first scheme here whose horizontals cross the mass's own steps",
-          "grammar": "grammar-blind-013-datum.json",
-          "renderDir": "render-datum",
-          "axes": "limestone / deep / bronze / morning · accepted attempt 1 · 50 bands + 45 cornices at 3.30 / 6.60 / 9.30",
-          "showcase": "showcase/datum.png"
-        },
-        {
-          "id": "curtainwall",
-          "title": "Unitised curtain wall",
-          "intent": "A continuous glazed skin hung in front of the structure — 100 mm mullions running past every floor, a spandrel at each slab, glass turning the corners",
-          "grammar": "grammar-blind-013-curtainwall.json",
-          "renderDir": "render-curtainwall",
-          "showcase": "showcase/curtainwall.png",
-          "photo": "showcase/photo-curtainwall.png",
-          "axes": "precast / clear / iron / morning · accepted on attempt 1 · all four layers, free lane"
-        },
-        {
-          "id": "brisesoleil",
-          "title": "Brise-soleil",
-          "intent": "Tropical modernism — deep horizontal blades standing over the glass on three faces, the fourth left plain",
-          "grammar": "grammar-blind-013-brisesoleil.json",
-          "renderDir": "render-brisesoleil-warm",
-          "showcase": "showcase/brisesoleil.png",
-          "axes": "precast / deep / bronze / golden · accepted on attempt 1 · 42 louvres · four levels of scale"
-        },
-        {
-          "id": "screen",
-          "title": "Layered screen",
-          "intent": "Kengo Kuma — a timber louvre screen standing in front of glass",
-          "grammar": "grammar-blind-013-screen-fx.json",
-          "renderDir": "render-screen",
-          "showcase": "showcase/screen.png",
-          "axes": "wood / deep / bronze / golden"
-        },
-        {
-          "id": "colonnade",
-          "title": "Colonnade",
-          "intent": "David Chipperfield — tall slender piers at a solemn rhythm, deep reveals",
-          "grammar": "grammar-blind-013-colonnade.json",
-          "renderDir": "render-colonnade",
-          "showcase": "showcase/colonnade.png",
-          "axes": "limestone / clear / white / morning"
-        },
-        {
-          "id": "kahn",
-          "title": "Brick arcade",
-          "intent": "Louis Kahn — load-bearing brick, deep openings crowned with arches",
-          "grammar": "grammar-blind-013-kahn.json",
-          "renderDir": "render-kahn",
-          "showcase": "showcase/kahn.png",
-          "axes": "brick / deep / iron / golden"
-        },
-        {
-          "id": "siza",
-          "title": "White silence",
-          "intent": "Álvaro Siza — few openings placed with precision, deep shadowed reveals",
-          "grammar": "grammar-blind-013-siza.json",
-          "renderDir": "render-siza",
-          "showcase": "showcase/siza.png",
-          "axes": "limestone / deep / white / morning"
-        },
-        {
-          "id": "sheer",
-          "title": "Sheer glass",
-          "intent": "SANAA — uninflected unitised glass, no plinth",
-          "grammar": "grammar-blind-013-sheer.json",
-          "renderDir": "render-sheer",
-          "showcase": "showcase/sheer.png",
-          "photo": "showcase/photo-sheer-codex.png",
-          "axes": "darkpanel / mirror / iron / overcast"
-        },
-        {
-          "id": "vessel",
-          "title": "Closed vessel",
-          "intent": "Three near-blank masonry faces against one fully glazed street face",
-          "grammar": "grammar-blind-013-vessel.json",
-          "renderDir": "render-vessel"
-        },
-        {
-          "id": "stone",
-          "title": "Building of stone",
-          "intent": "No curtain-wall word anywhere; shadow pockets cut in mass",
-          "grammar": "grammar-blind-013-stone-fx.json",
-          "renderDir": "render-stone",
-          "showcase": "showcase/stone.png",
-          "axes": "limestone / deep / bronze / morning"
-        },
-        {
-          "id": "ribbon",
-          "title": "Horizontal ribbons",
-          "intent": "Length wins over height: banded window ribbons tracing each terrace",
-          "grammar": "grammar-blind-013-ribbon.json",
-          "renderDir": "render-ribbon",
-          "showcase": "showcase/ribbon-brick.png",
-          "photo": "showcase/photo-brick-deep.png",
-          "axes": "brick / deep / iron / golden"
-        },
-        {
-          "id": "plinth",
-          "title": "Transparent base",
-          "intent": "Weight inverted: a glazed ground storey under a closed body",
-          "grammar": "grammar-blind-013-plinth-fx.json",
-          "renderDir": "render-plinth"
-        },
-        {
-          "id": "skin-t",
-          "title": "Terraced skin",
-          "intent": "The terracing read as one composition, glass tracing the steps",
-          "grammar": "grammar-blind-013-t.json",
-          "renderDir": "render-blind-013-t"
-        },
-        {
-          "id": "punched-a",
-          "title": "Mixed construction",
-          "intent": "The first scheme this mass ever carried: skin backs, punched front",
-          "grammar": "grammar-013-a.json",
-          "renderDir": "render-a"
-        },
-        {
-          "id": "arch",
-          "title": "Arched heads",
-          "intent": "The same terraced skin with every window head turned to an arch",
-          "grammar": "grammar-blind-013-arch.json",
-          "renderDir": "render-arch-demo",
-          "showcase": "showcase/arch-heads.png",
-          "axes": "brick / deep / bronze / golden · --face right (the arched face)"
-        }
-      ]
-    },
-    {
-      "id": "prism",
-      "title": "The same grammar on a prism",
-      "candidate": "creative-020",
-      "note": "A mass that does not step. Nothing here is a new idea - these are schemes the same engine drew on a plain extruded block, and they are on this page because a catalogue of one building cannot tell you whether a facade is stepped by choice or by inheritance.",
-      "cards": [
-        {
-          "id": "cw4",
-          "title": "Light frame",
-          "intent": "The best facade this project produced on the prism: a 0.3 m fold pier in bright precast with only a 40 mm mullion at the glass edge",
-          "grammar": "grammar-cw4.json",
-          "renderDir": "cw4"
-        },
-        {
-          "id": "cw3",
-          "title": "Glazed skin",
-          "intent": "Glass running five storeys, mullions unbroken grade to cornice, a spandrel at every slab",
-          "grammar": "grammar-cw3.json",
-          "renderDir": "cw3"
-        },
-        {
-          "id": "prism-g",
-          "title": "Prism G",
-          "intent": "The scheme that reads best by eye of the eight first-round blind designs",
-          "grammar": "grammar-g.json",
-          "renderDir": "render-g"
-        },
-        {
-          "id": "prism-h",
-          "title": "Prism H",
-          "intent": "Mixed construction on a prism - skin backs against a punched front",
-          "grammar": "grammar-h.json",
-          "renderDir": "render-h"
-        },
-        {
-          "id": "prism-c",
-          "title": "Prism C",
-          "intent": "A deeply glazed frame; punched openings that happen to be large",
-          "grammar": "grammar-c.json",
-          "renderDir": "render-c"
-        },
-        {
-          "id": "prism-p",
-          "title": "Transparent base",
-          "intent": "Weight inverted: a glazed ground storey under a closed body",
-          "grammar": "grammar-p.json",
-          "renderDir": "render-p"
-        }
-      ]
-    },
-    {
-      "id": "materials",
-      "title": "Material axes",
-      "note": "The same grammar under different wall / glass / frame / mood decisions. Choosing a wall does not choose the glass.",
-      "images": [
-        {
-          "src": "showcase/matrix-brick-deep.png",
-          "caption": "brick · deep glass · iron · golden"
-        },
-        {
-          "src": "showcase/matrix-brick-clear.png",
-          "caption": "the same brick wall · clear glass · white surrounds · morning"
-        },
-        {
-          "src": "showcase/matrix-precast-mirror.png",
-          "caption": "precast · mirror · bronze · overcast"
-        },
-        {
-          "src": "showcase/matrix-darkpanel-clear.png",
-          "caption": "dark panel · clear · iron · morning"
-        },
-        {
-          "src": "showcase/matrix-zinc-clear.png",
-          "caption": "standing-seam zinc · clear · iron · overcast"
-        },
-        {
-          "src": "showcase/matrix-wood-deep.png",
-          "caption": "timber boards · deep · bronze · golden"
-        }
-      ]
-    },
-    {
-      "id": "photo",
-      "title": "Photoreal",
-      "note": "An image-to-image pass over the showcase render, massing and window grid held. Free lane: the user's Codex CLI.",
-      "images": [
-        {
-          "src": "showcase/photo-sheer-codex.png",
-          "caption": "sheer glass — codex lane"
-        },
-        {
-          "src": "showcase/photo-brick-deep.png",
-          "caption": "brick ribbons — API lane, retired after one proof"
-        }
-      ]
-    }
-  ]
+	"schema_version": "arr.facade-presentation.catalog.v1",
+	"title": "facade catalogue - two masses",
+	"subtitle": "Every scheme the grammar can say, on more than one building. Each card is a drawing set, not a picture: the elevations are dimensioned to the millimetre and every metric below is recomputed from the grammar when this page is built.",
+	"candidates": [
+		{
+			"id": "creative-013",
+			"runRoot": "creative-013/llm-facade-subagent-creative-013",
+			"note": "A bent-bar terrace bridge: the bar touches the ground at one entrance pier only, everything else cantilevers from z=1.861. 37 facets, widths 0.02 to 5.5 m."
+		},
+		{
+			"id": "creative-020",
+			"runRoot": "creative-020/llm-facade-subagent-v1",
+			"note": "A plain extruded prism: 35 vertices, two z levels, every vertical face a full rectangle, five storeys, sixteen facets. It sits on the ground and it does not step."
+		}
+	],
+	"sections": [
+		{
+			"title": "Authored under the per-terminal depth table",
+			"note": "Two blind authors, one mass each, both accepted on attempt one with zero faults. The prism author read the new brief, which states a maximum depth per terminal; the bent-bar author read a stale one that still said 0.5 m for everything. The difference is the crown.",
+			"cards": [
+				{
+					"id": "blind-020-crown",
+					"title": "Crown",
+					"candidate": "creative-020",
+					"intent": "A giant order of 13.22 m pilasters under a three-part termination - string course, arched arcade, five modillions, and a cornice projecting 0.70 m. The author wrote 0.70 because the brief said a cornice may reach 1.2; the bracket course exists to justify the overhang.",
+					"grammar": "grammar-blind-020-crown.json",
+					"renderDir": "blind-020-crown"
+				},
+				{
+					"id": "blind-013-eaves",
+					"title": "Level eaves",
+					"candidate": "creative-013",
+					"intent": "Every horizontal hung off the storey axis rather than off the facet it lands on, so the cornice holds one line at 9.90 across a mass whose facets start at seven different heights. Its cornice is 0.30 m - the old flat ceiling - because this author was handed the stale brief.",
+					"grammar": "grammar-blind-013-eaves.json",
+					"renderDir": "blind-013-eaves"
+				}
+			]
+		},
+		{
+			"id": "schemes",
+			"title": "Schemes",
+			"note": "Every one authored by a repo-blind subagent from the brief alone, then held to the same gates the paid director applies.",
+			"cards": [
+				{
+					"id": "beam",
+					"title": "A beam that lands once",
+					"intent": "An author given no design intent read the mass itself - four of thirty-seven facets touch the ground, three of them one stem - and drew a lifted gallery. Level at the top, level at the underside, mass between: the two datums doing the same job at both ends",
+					"grammar": "grammar-blind-013-own2.json",
+					"renderDir": "render-own2",
+					"axes": "stone · accepted attempt 1 · bottom line 1.8609 m, six facets rise to it · every tier head now lands on 6.25 m whatever its own step"
+				},
+				{
+					"id": "civic2",
+					"title": "Ends on one line",
+					"intent": "The mass steps; the building does not. Full-height piers carry a crown that rises to the building's top line, so the elevation ends level instead of on the steps",
+					"grammar": "grammar-blind-013-civic2.json",
+					"renderDir": "render-civic2",
+					"axes": "stone · accepted attempt 1 · the author found the rise datum in the brief unaided and guarded which facets may use it"
+				},
+				{
+					"id": "live-013-h",
+					"title": "Live director",
+					"intent": "gpt-5.5 authoring unaided — the first facade a paid run has drawn on a mass that is not a prism",
+					"grammar": "grammar-live-013-h.json",
+					"runRoot": "creative-013/llm-facade-live-013-h",
+					"renderDir": "technical-render",
+					"axes": "scores 100/100/97/100/88/100 · $0.12 · ninth attempt after eight failures"
+				},
+				{
+					"id": "datum",
+					"title": "Held by a datum",
+					"intent": "One continuous line at each floor, running the whole building on every elevation — the first scheme here whose horizontals cross the mass's own steps",
+					"grammar": "grammar-blind-013-datum.json",
+					"renderDir": "render-datum",
+					"axes": "limestone / deep / bronze / morning · accepted attempt 1 · 50 bands + 45 cornices at 3.30 / 6.60 / 9.30",
+					"showcase": "showcase/datum.png"
+				},
+				{
+					"id": "curtainwall",
+					"title": "Unitised curtain wall",
+					"intent": "A continuous glazed skin hung in front of the structure — 100 mm mullions running past every floor, a spandrel at each slab, glass turning the corners",
+					"grammar": "grammar-blind-013-curtainwall.json",
+					"renderDir": "render-curtainwall",
+					"showcase": "showcase/curtainwall.png",
+					"photo": "showcase/photo-curtainwall.png",
+					"axes": "precast / clear / iron / morning · accepted on attempt 1 · all four layers, free lane"
+				},
+				{
+					"id": "brisesoleil",
+					"title": "Brise-soleil",
+					"intent": "Tropical modernism — deep horizontal blades standing over the glass on three faces, the fourth left plain",
+					"grammar": "grammar-blind-013-brisesoleil.json",
+					"renderDir": "render-brisesoleil-warm",
+					"showcase": "showcase/brisesoleil.png",
+					"axes": "precast / deep / bronze / golden · accepted on attempt 1 · 42 louvres · four levels of scale"
+				},
+				{
+					"id": "screen",
+					"title": "Layered screen",
+					"intent": "Kengo Kuma — a timber louvre screen standing in front of glass",
+					"grammar": "grammar-blind-013-screen-fx.json",
+					"renderDir": "render-screen",
+					"showcase": "showcase/screen.png",
+					"axes": "wood / deep / bronze / golden"
+				},
+				{
+					"id": "colonnade",
+					"title": "Colonnade",
+					"intent": "David Chipperfield — tall slender piers at a solemn rhythm, deep reveals",
+					"grammar": "grammar-blind-013-colonnade.json",
+					"renderDir": "render-colonnade",
+					"showcase": "showcase/colonnade.png",
+					"axes": "limestone / clear / white / morning"
+				},
+				{
+					"id": "kahn",
+					"title": "Brick arcade",
+					"intent": "Louis Kahn — load-bearing brick, deep openings crowned with arches",
+					"grammar": "grammar-blind-013-kahn.json",
+					"renderDir": "render-kahn",
+					"showcase": "showcase/kahn.png",
+					"axes": "brick / deep / iron / golden"
+				},
+				{
+					"id": "siza",
+					"title": "White silence",
+					"intent": "Álvaro Siza — few openings placed with precision, deep shadowed reveals",
+					"grammar": "grammar-blind-013-siza.json",
+					"renderDir": "render-siza",
+					"showcase": "showcase/siza.png",
+					"axes": "limestone / deep / white / morning"
+				},
+				{
+					"id": "sheer",
+					"title": "Sheer glass",
+					"intent": "SANAA — uninflected unitised glass, no plinth",
+					"grammar": "grammar-blind-013-sheer.json",
+					"renderDir": "render-sheer",
+					"showcase": "showcase/sheer.png",
+					"photo": "showcase/photo-sheer-codex.png",
+					"axes": "darkpanel / mirror / iron / overcast"
+				},
+				{
+					"id": "vessel",
+					"title": "Closed vessel",
+					"intent": "Three near-blank masonry faces against one fully glazed street face",
+					"grammar": "grammar-blind-013-vessel.json",
+					"renderDir": "render-vessel"
+				},
+				{
+					"id": "stone",
+					"title": "Building of stone",
+					"intent": "No curtain-wall word anywhere; shadow pockets cut in mass",
+					"grammar": "grammar-blind-013-stone-fx.json",
+					"renderDir": "render-stone",
+					"showcase": "showcase/stone.png",
+					"axes": "limestone / deep / bronze / morning"
+				},
+				{
+					"id": "ribbon",
+					"title": "Horizontal ribbons",
+					"intent": "Length wins over height: banded window ribbons tracing each terrace",
+					"grammar": "grammar-blind-013-ribbon.json",
+					"renderDir": "render-ribbon",
+					"showcase": "showcase/ribbon-brick.png",
+					"photo": "showcase/photo-brick-deep.png",
+					"axes": "brick / deep / iron / golden"
+				},
+				{
+					"id": "plinth",
+					"title": "Transparent base",
+					"intent": "Weight inverted: a glazed ground storey under a closed body",
+					"grammar": "grammar-blind-013-plinth-fx.json",
+					"renderDir": "render-plinth"
+				},
+				{
+					"id": "skin-t",
+					"title": "Terraced skin",
+					"intent": "The terracing read as one composition, glass tracing the steps",
+					"grammar": "grammar-blind-013-t.json",
+					"renderDir": "render-blind-013-t"
+				},
+				{
+					"id": "punched-a",
+					"title": "Mixed construction",
+					"intent": "The first scheme this mass ever carried: skin backs, punched front",
+					"grammar": "grammar-013-a.json",
+					"renderDir": "render-a"
+				},
+				{
+					"id": "arch",
+					"title": "Arched heads",
+					"intent": "The same terraced skin with every window head turned to an arch",
+					"grammar": "grammar-blind-013-arch.json",
+					"renderDir": "render-arch-demo",
+					"showcase": "showcase/arch-heads.png",
+					"axes": "brick / deep / bronze / golden · --face right (the arched face)"
+				}
+			]
+		},
+		{
+			"id": "prism",
+			"title": "The same grammar on a prism",
+			"candidate": "creative-020",
+			"note": "A mass that does not step. Nothing here is a new idea - these are schemes the same engine drew on a plain extruded block, and they are on this page because a catalogue of one building cannot tell you whether a facade is stepped by choice or by inheritance.",
+			"cards": [
+				{
+					"id": "cw4",
+					"title": "Light frame",
+					"intent": "The best facade this project produced on the prism: a 0.3 m fold pier in bright precast with only a 40 mm mullion at the glass edge",
+					"grammar": "grammar-cw4.json",
+					"renderDir": "cw4"
+				},
+				{
+					"id": "cw3",
+					"title": "Glazed skin",
+					"intent": "Glass running five storeys, mullions unbroken grade to cornice, a spandrel at every slab",
+					"grammar": "grammar-cw3.json",
+					"renderDir": "cw3"
+				},
+				{
+					"id": "prism-g",
+					"title": "Prism G",
+					"intent": "The scheme that reads best by eye of the eight first-round blind designs",
+					"grammar": "grammar-g.json",
+					"renderDir": "render-g"
+				},
+				{
+					"id": "prism-h",
+					"title": "Prism H",
+					"intent": "Mixed construction on a prism - skin backs against a punched front",
+					"grammar": "grammar-h.json",
+					"renderDir": "render-h"
+				},
+				{
+					"id": "prism-c",
+					"title": "Prism C",
+					"intent": "A deeply glazed frame; punched openings that happen to be large",
+					"grammar": "grammar-c.json",
+					"renderDir": "render-c"
+				},
+				{
+					"id": "prism-p",
+					"title": "Transparent base",
+					"intent": "Weight inverted: a glazed ground storey under a closed body",
+					"grammar": "grammar-p.json",
+					"renderDir": "render-p"
+				}
+			]
+		},
+		{
+			"id": "materials",
+			"title": "Material axes",
+			"note": "The same grammar under different wall / glass / frame / mood decisions. Choosing a wall does not choose the glass.",
+			"images": [
+				{
+					"src": "showcase/matrix-brick-deep.png",
+					"caption": "brick · deep glass · iron · golden"
+				},
+				{
+					"src": "showcase/matrix-brick-clear.png",
+					"caption": "the same brick wall · clear glass · white surrounds · morning"
+				},
+				{
+					"src": "showcase/matrix-precast-mirror.png",
+					"caption": "precast · mirror · bronze · overcast"
+				},
+				{
+					"src": "showcase/matrix-darkpanel-clear.png",
+					"caption": "dark panel · clear · iron · morning"
+				},
+				{
+					"src": "showcase/matrix-zinc-clear.png",
+					"caption": "standing-seam zinc · clear · iron · overcast"
+				},
+				{
+					"src": "showcase/matrix-wood-deep.png",
+					"caption": "timber boards · deep · bronze · golden"
+				}
+			]
+		},
+		{
+			"id": "photo",
+			"title": "Photoreal",
+			"note": "An image-to-image pass over the showcase render, massing and window grid held. Free lane: the user's Codex CLI.",
+			"images": [
+				{
+					"src": "showcase/photo-sheer-codex.png",
+					"caption": "sheer glass — codex lane"
+				},
+				{
+					"src": "showcase/photo-brick-deep.png",
+					"caption": "brick ribbons — API lane, retired after one proof"
+				}
+			]
+		}
+	]
 }
