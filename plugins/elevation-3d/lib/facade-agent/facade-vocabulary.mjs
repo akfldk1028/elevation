@@ -103,6 +103,26 @@ export const TERMINAL_MATERIALS = Object.freeze(Object.fromEntries(
 /** Every primitive kind a derived grammar can produce. */
 export const TERMINAL_PRIMITIVE_KINDS = Object.freeze(Object.values(TERMINAL_KINDS));
 
+/**
+ * Every material a member may be made of. The table above gives each terminal the one it
+ * is usually made of, and until now that was the only answer available: a pilaster was
+ * brick because pilasters are brick, a cornice was precast because cornices are precast.
+ * An author could not say a precast pier or a brick cornice, so a rusticated base and an
+ * ashlar shaft were the same wall and every scheme in the corpus carried the same four
+ * materials in the same places. The word says what a member IS; it should not also decide
+ * what it is MADE OF.
+ *
+ * This is also, unexpectedly, the plan seam's repair made sayable. `pilaster` is the only
+ * terminal whose default material is the mass's own, so a pier standing proud of the wall
+ * shares a material with the wall behind it and the plan cut draws no line between them -
+ * which is what a blind author found by sampling the material-id raster at the seam
+ * coordinates. Being able to write that pier as precast fixes it in the grammar rather
+ * than by removing the pier.
+ */
+export const TERMINAL_MATERIAL_CHOICES = Object.freeze(
+	[...new Set(TERMINAL_VOCABULARY.filter((terminal) => terminal.material).map((terminal) => terminal.material))].sort(),
+);
+
 /** Grammar word to how far it may stand out of the wall, in metres. */
 export const TERMINAL_PROJECTION = Object.freeze(Object.fromEntries(
 	TERMINAL_VOCABULARY.map((terminal) => [terminal.word, terminal.projection_m]),

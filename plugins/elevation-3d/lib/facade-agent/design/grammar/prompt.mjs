@@ -1,5 +1,5 @@
 import { sha256, stableJson } from "../../../core.mjs";
-import { TERMINAL_VOCABULARY } from "../../facade-vocabulary.mjs";
+import { TERMINAL_MATERIAL_CHOICES, TERMINAL_VOCABULARY } from "../../facade-vocabulary.mjs";
 import { AXES, BOUNDS, MAX_PARAM_INDEX, PARAM_VALUES, PARAM_WORDS, RISE_DATUMS, TERMINALS } from "./contract.mjs";
 
 export const FACADE_GRAMMAR_PROMPT_REVISION = "arr.elevation3d.facade-grammar-prompt.v1";
@@ -8,7 +8,11 @@ const SYMBOL = { type: "string", pattern: "^[A-Za-z][A-Za-z0-9_]{0,31}$" };
 
 // Longest first, so `param == 15` cannot be read as `param == 1` with a stray 5 left over.
 const PARAM_LITERALS = [...PARAM_VALUES].sort((a, b) => b.length - a.length).join("|");
-const PREDICATE_TERM = `(?:(?:index|storey) *% *[0-9]+ *== *[0-9]+|(?:index|storey) *== *(?:[0-9]+|last|top)|band *== *(?:full|cut)|face_view *== *(?:front|back|left|right)|param *== *(?:${PARAM_LITERALS}))`;
+// Longest alternatives first inside the band group, or `cut` matches and leaves `_below`
+// stranded. The schema and the parser have drifted apart here once already - an author
+// found `band` absent from the prose list while the schema admitted it - so the two are
+// written to the same set deliberately.
+const PREDICATE_TERM = `(?:(?:index|storey) *% *[0-9]+ *== *[0-9]+|(?:index|storey) *== *(?:[0-9]+|last|top)|band *== *(?:cut_below|cut_above|cut_both|full|cut)|face_view *== *(?:front|back|left|right)|param *== *(?:${PARAM_LITERALS}))`;
 
 /**
  * The grammar the model answers in.
@@ -65,7 +69,7 @@ export const FACADE_GRAMMAR_V3_SCHEMA = Object.freeze({
 					// The predicate set is closed, so the schema carries it too. A provider that
 					// enforces patterns then cannot emit a malformed comparison at all.
 					pattern: `^${PREDICATE_TERM}(?: *&& *${PREDICATE_TERM})?$`,
-					description: "index % <n> == <m> | index == <n> | index == last | storey % <n> == <m> | storey == <n> | band == full|cut (inside a storey split: whether the mass gave this floor whole or the facet ends inside it) | face_view == front|back|left|right | param == <the arg this symbol was called with>. Two may be joined with &&. Use null for the else branch.",
+					description: "index % <n> == <m> | index == <n> | index == last | storey % <n> == <m> | storey == <n> | band == full|cut|cut_below|cut_above|cut_both (inside a storey split: full means the mass gave this floor whole; cut_below means the facet begins inside it so its BOTTOM edge is a step and its top is a slab; cut_above means the facet ends inside it so its TOP edge is a step and its bottom is a slab; cut matches any of the three) | face_view == front|back|left|right | param == <the arg this symbol was called with>. Two may be joined with &&. Use null for the else branch.",
 				},
 				min_u_m: {
 					type: ["number", "null"],
@@ -109,6 +113,11 @@ export const FACADE_GRAMMAR_V3_SCHEMA = Object.freeze({
 					},
 				},
 				terminal: { type: ["string", "null"], enum: [...TERMINALS, null] },
+				material: {
+					type: ["string", "null"],
+					enum: [...TERMINAL_MATERIAL_CHOICES, null],
+					description: "What this member is made of, when it should not be what that terminal is usually made of. Null takes the terminal's own. A pilaster's default is the mass's own material, so a pier left at default shares a material with the wall behind it and the plan cut draws no line between them; writing it precast is both a design choice and the repair.",
+				},
 				inset_m: { type: ["number", "null"] },
 				depth_m: { type: ["number", "null"] },
 			},
@@ -247,7 +256,8 @@ storey) - it is not "any storey the scope touches", and at the start rule it rea
 facet's own bottom, so a facet that begins on the third storey answers storey == 3.
 
 Predicates: index % <n> == <m>, index == <n>, index == last, storey % <n> == <m>,
-storey == <n>, band == full|cut, face_view == front|back|left|right,
+storey == <n>, band == full|cut|cut_below|cut_above|cut_both,
+face_view == front|back|left|right,
 param == <value>. Two may be joined with &&. \`index\` is the position within the
 repeat that produced this scope, so "index % 2 == 0" alternates floors and, at the top
 level, alternates facets across one elevation. \`index == top\` is accepted as a synonym
@@ -286,6 +296,19 @@ Terminals, and what each one is for:
 
 ${TERMINAL_VOCABULARY.map((terminal) => `  ${terminal.word} (depth_m up to ${terminal.projection_m}) - ${terminal.purpose}`).join("\n")}
 
+What a member is MADE OF is yours to choose, and it is separate from what it is. The
+word above gives each terminal the material it is usually made of; write "material" on
+an alternative to say otherwise, from: ${TERMINAL_MATERIAL_CHOICES.join(", ")}. Omit it
+and you get the usual one. A precast pier against a brick wall, a brick cornice over a
+precast band, a base and a shaft that differ in substance and not only in what is cut
+into them - none of those were sayable until now, which is why every scheme in this
+project's corpus carries the same four materials in the same places.
+
+One consequence worth knowing: pilaster is the only terminal whose usual material is the
+mass's own, so a pier left at its default shares a material with the wall behind it. In
+the plan cut that draws no line between pier and wall, and that has failed real schemes.
+Writing a pier as precast is both an architectural choice and the repair.
+
 How far a member may stand out of the wall is a fact about the member, so the bound is
 the one written beside each terminal above rather than one number for all of them. A
 cornice may overhang 1.2 m because overhanging is what makes it a cornice; a transom is a
@@ -302,6 +325,24 @@ Use inset_m: 0 where a member wants its whole scope. depth_m: 0 is legal only fo
 and the door, which are cut rather than built; every other terminal needs a thickness
 (the rule and its reason are below). On a split alternative set terminal to null and both
 inset_m and depth_m to 0; on a terminal alternative set split to null.
+
+What gets drawn, and the drawing that is not an elevation. Your grammar is compiled and
+then rendered as eight views: the four elevations, an axonometric from each side, a roof
+plan, and a PLAN CUT through the building. Every one of them is checked, and a scheme
+that satisfies every rule above can still be rejected by the plan. Its fault reads
+TRIANGULATION_VISIBLE, and unlike every other fault in this system it names no member,
+no elevation and no number - it reports that two surfaces of the same material met in
+the plan raster and left a visible line.
+
+Be told plainly what is and is not known about it. It fires where members on two
+different facets meet at a fold. Halving the depth of those members does not move it: two
+separate authors have now cut the projections at the seam by more than half and got back
+seam boxes identical to the pixel, so it is NOT a depth you can tune down, and spending
+an attempt reducing depth_m at a corner is an attempt wasted. It does not fire on every
+fold - on one sixteen-fold mass exactly three folds produced it. Nobody has yet
+identified what distinguishes those three. If you hit it, say so in your report and
+spend your remaining attempts on the rest of the design rather than on this; a scheme
+that fails only the plan is a more useful result to us than one redesigned blind.
 
 The start symbol is derived once per facet, not once per elevation. A folded elevation
 is several facets side by side, so a pilaster at the two edges of the start rule puts a

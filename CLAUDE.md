@@ -1094,3 +1094,56 @@ and two authoring agents were running beside it.
 **What this does not unlock:** balcony, canopy, projecting bay. Every primitive is a box and
 a balcony is a slab plus a rail. `arch` is the only non-box terminal and it got in because
 someone wrote `archGeometry`. Those need geometry, not a word and not a bigger bound.
+
+## 2026-09-02 what a member is, and what it is made of, are two questions
+
+Six blind authors were given six different architectures on the two masses - a glazed skin,
+arched masonry, one great opening, a layered screen, inverted weight, ribbons - and told
+nothing else. Five drew. Between them they found more in one afternoon than the last week of
+reading the code did.
+
+**The v3 grammar had no material field at all.** Material came entirely from the terminal
+word: a pilaster was brick, a cornice was precast, and an author could not say otherwise. So
+every scheme in the corpus carried the same four materials in the same places, and the
+material variety on the sheet was a showcase re-skin of the whole building applied after the
+fact - a presentation choice standing in for a design one. The arch author named it exactly:
+"a rusticated base and an ashlar shaft are the same wall; the base and the shaft can differ
+in what is cut into them but never in what they are made of." An alternative now carries
+`material`, defaulting to the terminal's own, so nothing already written moves - 50 grammars
+resolve digest-identical - and a probe that writes `material: "precast"` on a pilaster
+resolves ten piers as precast.
+
+**The same field is the plan seam's repair.** `pilaster` is the only terminal whose default
+material is the mass's own, so a pier standing proud of the wall shares a material with the
+wall behind it and the plan cut draws no line between them. That is TRIANGULATION_VISIBLE,
+and it is what the arch author found by converting the seam boxes through the plan manifest
+to world coordinates and sampling `plan-material-id.png`: pilaster and mass wall both
+`(255,0,0)`, reveals `(255,255,0)`. They repaired it and got `visible: 0`. **Seven
+hypotheses were refuted from this side of the code and the answer came from reading the
+raster the gate actually looks at.**
+
+Honest limit on that: it explains `arcade`, which uses pilasters. It does not explain `cw2`
+or the failed `skin`, neither of which writes one. The general form - two same-material
+surfaces meeting with near-parallel normals - covers all three, but only the pilaster case
+has been demonstrated with a repair.
+
+**`band == cut` never said which edge was the step.** Three authors said so independently and
+one named the words it wanted. The deriver already knew and threw it away; it now reports
+`cut_below` (facet begins inside, so the top is the slab), `cut_above` (facet ends inside, so
+the bottom is the slab) and `cut_both`, with `cut` still matching all three so older grammars
+keep meaning what they meant. The brief's own advice - "put the member against the edge that
+IS a slab" - was unwritable before this, and the ribbon author's remaining staircase is
+exactly the cut-at-bottom bands.
+
+**The schema and the parser had drifted again.** `band` was missing from the prose predicate
+list while the schema admitted it, and after adding the two new values the schema regex would
+have rejected them. Both are now written from the same set.
+
+**A brief that never mentions the drawing that rejects you.** `TRIANGULATION_VISIBLE`, the
+plan cut, and `same_material_seam_fraction` appear nowhere in 37,000 characters, and the
+skin author spent all three attempts on it - halving the mullion projections and getting back
+seam boxes identical to the pixel, which is the second independent demonstration that this is
+not a depth anyone can tune. The brief now says the plan exists, what the fault means, and
+that reducing depth at a corner is an attempt wasted.
+
+Suite 804 green.

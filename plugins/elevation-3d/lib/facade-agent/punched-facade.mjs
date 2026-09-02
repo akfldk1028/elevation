@@ -969,7 +969,11 @@ export function buildTypedFacadeDetails({ mesh, floorGuides, facadePlanes, primi
 	for (let index = 0; index < primitives.length; index += 1) {
 		const primitive = primitives[index];
 		const plane = planes.get(primitive?.segment_id);
-		const material = TYPED_MATERIAL[primitive?.kind];
+		// The terminal's default is what a member is usually made of, not what it must be.
+		// An author who writes `material` on the alternative overrides it - which is how a
+		// precast pier or a brick cornice becomes sayable, and how a pilaster stops being
+		// forced to share the mass's own material.
+		const material = primitive?.material ?? TYPED_MATERIAL[primitive?.kind];
 		const local = primitive?.local_bounds;
 		if (!plane || !material || !local) throw new TypeError("invalid typed facade primitive authority");
 		const tangent = wallTangent(plane.normal);
