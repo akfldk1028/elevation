@@ -1,81 +1,119 @@
 {
-	"schema_version": "arr.facade-presentation.catalog.v1",
-	"title": "Seven architectures, one engine",
-	"subtitle": "Every facade here was written by an author who could not read the engine - only a brief, a schema, a facet list and two photographs of the mass. Each was given a different architecture to pursue and nothing else. All of them had to pass the design gates AND render before they counted, which is a stricter bar than this project used until today.",
-	"candidates": [
-		{
-			"id": "creative-013",
-			"runRoot": "creative-013/llm-facade-subagent-creative-013",
-			"note": "A bent-bar terrace bridge: the bar touches the ground at one entrance pier only, everything else cantilevers from z=1.861. 37 facets, widths 0.02 to 5.5 m."
-		},
-		{
-			"id": "creative-020",
-			"runRoot": "creative-020/llm-facade-subagent-v1",
-			"note": "A plain extruded prism: 35 vertices, two z levels, every vertical face a full rectangle, five storeys, sixteen facets. It sits on the ground and it does not step."
-		}
-	],
-	"sections": [
-		{
-			"title": "Seven architectures",
-			"note": "Not material treatments of one building - different buildings. The engine, the two masses and the gates are identical across all of them; what differs is what the author was asked to make, and latterly what the grammar was able to say. One scheme is missing: an all-glass skin on the star prism cleared every design gate and every elevation and was rejected three times by the plan cut alone. Its author left the most useful result of that day - halving the depth of the members at the seam changed the seam by not one pixel.",
-			"cards": [
-				{
-					"id": "mat-013-level",
-					"title": "Level",
-					"candidate": "creative-013",
-					"intent": "Two constructions on a stepped bar: a unitised skin on the street, a brick wall carrying a precast order on the other three faces. Its spandrel course holds 3.3 and 6.6 across fourteen facets that begin at seven different heights, and the parapet ends the building on one line at 9.90. The crown is selected by asking whether a band's top edge is the building's own top slab - a question three earlier authors reported as unanswerable, because the facets that must crown are shorter than the facets that must not.",
-					"grammar": "grammar-mat-013-level.json",
-					"renderDir": "mat-013-level"
-				},
-				{
-					"id": "mat-020-strata",
-					"title": "Strata",
-					"candidate": "creative-020",
-					"intent": "The first facade written after an author could choose what a member is made of. A brick arcade at the ground, a precast frame above it, a metal attic under a metal cornice - the same terminals throughout, changing only in substance, with relief tracking material so the strata survive a grey render. Its author also named the limit: `wall` emits no geometry, so the field between the openings is the mass's own material at every height. You can trim a base in brick; you cannot yet make one of it.",
-					"grammar": "grammar-mat-020-strata.json",
-					"renderDir": "mat-020-strata"
-				},
-				{
-					"id": "div-020-arch",
-					"title": "Arched masonry",
-					"candidate": "creative-020",
-					"intent": "Load-bearing wall where the arch is structural rather than ornamental - thick wall, deep reveal, openings that change as the load changes up the building.",
-					"grammar": "grammar-div-020-arch.json",
-					"renderDir": "div-020-arch"
-				},
-				{
-					"id": "div-020-singular",
-					"title": "One great opening",
-					"candidate": "creative-020",
-					"intent": "The first scheme in this project with two constructions on one building: a unitised curtain wall on the street face, punched masonry behind it, and on the masonry one window 1.2 by 11.85 m - eleven times the area of anything beside it - cutting through four floors.",
-					"grammar": "grammar-div-020-singular.json",
-					"renderDir": "div-020-singular"
-				},
-				{
-					"id": "div-013-screen",
-					"title": "Layered screen",
-					"candidate": "creative-013",
-					"intent": "Depth as the whole subject. Glass at 0, transom at 0.08, spandrel at 0.14, mullion at 0.18, fins at 0.32, cornice at 0.85 - a facade that is a section rather than a pattern. Its author found a contradiction in the brief getting here.",
-					"grammar": "grammar-div-013-screen.json",
-					"renderDir": "div-013-screen"
-				},
-				{
-					"id": "div-013-inverted",
-					"title": "Inverted weight",
-					"candidate": "creative-013",
-					"intent": "Open at the ground and denser as it rises, so the mass is carried above the street. The one scheme where the underside datum is live: a single level soffit line runs under a base that steps four times.",
-					"grammar": "grammar-div-013-inverted.json",
-					"renderDir": "div-013-inverted"
-				},
-				{
-					"id": "div-013-ribbon",
-					"title": "Ribbon",
-					"candidate": "creative-013",
-					"intent": "Horizontal and nothing else - continuous bands of opening against continuous bands of solid, with no vertical member permitted to read, held level across a mass whose facets begin at seven different heights.",
-					"grammar": "grammar-div-013-ribbon.json",
-					"renderDir": "div-013-ribbon"
-				}
-			]
-		}
-	]
+ "schema_version": "arr.facade-presentation.catalog.v1",
+ "title": "Seven architectures, one engine",
+ "subtitle": "Every facade here was written by an author who could not read the engine - only a brief, a schema, a facet list and two photographs of the mass. Each was given a different architecture to pursue and nothing else. All of them had to pass the design gates AND render before they counted, which is a stricter bar than this project used until today.",
+ "candidates": [
+  {
+   "id": "creative-013",
+   "runRoot": "creative-013/llm-facade-subagent-creative-013",
+   "note": "A bent-bar terrace bridge: the bar touches the ground at one entrance pier only, everything else cantilevers from z=1.861. 37 facets, widths 0.02 to 5.5 m."
+  },
+  {
+   "id": "creative-020",
+   "runRoot": "creative-020/llm-facade-subagent-v1",
+   "note": "A plain extruded prism: 35 vertices, two z levels, every vertical face a full rectangle, five storeys, sixteen facets. It sits on the ground and it does not step."
+  }
+ ],
+ "sections": [
+  {
+   "title": "Seven architectures",
+   "note": "Not material treatments of one building - different buildings. The engine, the two masses and the gates are identical across all of them; what differs is what the author was asked to make, and latterly what the grammar was able to say. One scheme is missing: an all-glass skin on the star prism cleared every design gate and every elevation and was rejected three times by the plan cut alone. Its author left the most useful result of that day - halving the depth of the members at the seam changed the seam by not one pixel.",
+   "cards": [
+    {
+     "id": "mat-013-level",
+     "title": "Level",
+     "candidate": "creative-013",
+     "intent": "Two constructions on a stepped bar: a unitised skin on the street, a brick wall carrying a precast order on the other three faces. Its spandrel course holds 3.3 and 6.6 across fourteen facets that begin at seven different heights, and the parapet ends the building on one line at 9.90. The crown is selected by asking whether a band's top edge is the building's own top slab - a question three earlier authors reported as unanswerable, because the facets that must crown are shorter than the facets that must not.",
+     "grammar": "grammar-mat-013-level.json",
+     "renderDir": "mat-013-level"
+    },
+    {
+     "id": "mat-020-strata",
+     "title": "Strata",
+     "candidate": "creative-020",
+     "intent": "The first facade written after an author could choose what a member is made of. A brick arcade at the ground, a precast frame above it, a metal attic under a metal cornice - the same terminals throughout, changing only in substance, with relief tracking material so the strata survive a grey render. Its author also named the limit: `wall` emits no geometry, so the field between the openings is the mass's own material at every height. You can trim a base in brick; you cannot yet make one of it.",
+     "grammar": "grammar-mat-020-strata.json",
+     "renderDir": "mat-020-strata"
+    },
+    {
+     "id": "div-020-arch",
+     "title": "Arched masonry",
+     "candidate": "creative-020",
+     "intent": "Load-bearing wall where the arch is structural rather than ornamental - thick wall, deep reveal, openings that change as the load changes up the building.",
+     "grammar": "grammar-div-020-arch.json",
+     "renderDir": "div-020-arch"
+    },
+    {
+     "id": "div-020-singular",
+     "title": "One great opening",
+     "candidate": "creative-020",
+     "intent": "The first scheme in this project with two constructions on one building: a unitised curtain wall on the street face, punched masonry behind it, and on the masonry one window 1.2 by 11.85 m - eleven times the area of anything beside it - cutting through four floors.",
+     "grammar": "grammar-div-020-singular.json",
+     "renderDir": "div-020-singular"
+    },
+    {
+     "id": "div-013-screen",
+     "title": "Layered screen",
+     "candidate": "creative-013",
+     "intent": "Depth as the whole subject. Glass at 0, transom at 0.08, spandrel at 0.14, mullion at 0.18, fins at 0.32, cornice at 0.85 - a facade that is a section rather than a pattern. Its author found a contradiction in the brief getting here.",
+     "grammar": "grammar-div-013-screen.json",
+     "renderDir": "div-013-screen"
+    },
+    {
+     "id": "div-013-inverted",
+     "title": "Inverted weight",
+     "candidate": "creative-013",
+     "intent": "Open at the ground and denser as it rises, so the mass is carried above the street. The one scheme where the underside datum is live: a single level soffit line runs under a base that steps four times.",
+     "grammar": "grammar-div-013-inverted.json",
+     "renderDir": "div-013-inverted"
+    },
+    {
+     "id": "div-013-ribbon",
+     "title": "Ribbon",
+     "candidate": "creative-013",
+     "intent": "Horizontal and nothing else - continuous bands of opening against continuous bands of solid, with no vertical member permitted to read, held level across a mass whose facets begin at seven different heights.",
+     "grammar": "grammar-div-013-ribbon.json",
+     "renderDir": "div-013-ribbon"
+    }
+   ]
+  },
+  {
+   "title": "The reversed loop",
+   "note": "One day, one mass, four languages - and the last one was designed by an image. crest2 answers the stepped mass with a level crown selected by the band's own edge; crest3 adds reach so the crown course meets its corner instead of pausing 0.3 m short; the colonnade is the first pier scheme through the plan gate since a member could say what it is made of; and imagefirst was transcribed by a vision author from a GPT-Image-2 concept - fin pitch, floor bands and the portal measured off the picture, the twist recorded as the loss the grammar cannot yet say.",
+   "cards": [
+    {
+     "id": "crest2",
+     "title": "Crestline",
+     "candidate": "creative-013",
+     "intent": "A level crown over a terraced bar: every facet within one storey of the building top rises to 9.90, the steps stay legible in the punched body below.",
+     "grammar": "grammar-blind-013-crest2.json",
+     "renderDir": "render-crest2"
+    },
+    {
+     "id": "crest3",
+     "title": "Crestline, cornered",
+     "candidate": "creative-013",
+     "intent": "The same design with reach: all 24 crown cornices run to their facet edges, so the cap reads as one course turning the building instead of 24 lintels.",
+     "grammar": "grammar-blind-013-crest3.json",
+     "renderDir": "render-crest3"
+    },
+    {
+     "id": "colonnade-retest",
+     "title": "Colonnade",
+     "candidate": "creative-013",
+     "intent": "Chipperfield-language piers, 118 of them - the scheme the plan gate used to kill, rendered end to end under the material field.",
+     "grammar": "grammar-blind-013-colonnade.json",
+     "renderDir": "render-colonnade-retest"
+    },
+    {
+     "id": "imagefirst",
+     "title": "Image-first",
+     "candidate": "creative-013",
+     "intent": "Transcribed from a free GPT-Image-2 concept: 0.72 m fin modules over a glazed skin, a precast band reaching every facet edge at every floor, dark full-height slots, the fins written precast because the picture's fins are light metal.",
+     "grammar": "grammar-blind-013-imagefirst-fx.json",
+     "renderDir": "render-imagefirst-fx"
+    }
+   ]
+  }
+ ]
 }
