@@ -67,7 +67,7 @@ export const FACADE_GRAMMAR_V3_SCHEMA = Object.freeze({
 			// 400 from the provider before any model output. min_u_m and min_z_m drifted out
 			// of this list on 2026-08-31 and rise_to, material and reach followed - no live
 			// call ran in between, which is the only reason it never fired.
-			required: ["when", "split", "terminal", "inset_m", "depth_m", "min_u_m", "min_z_m", "rise_to", "reach", "material"],
+			required: ["when", "split", "terminal", "inset_m", "depth_m", "min_u_m", "min_z_m", "rise_to", "reach", "material", "grade"],
 			properties: {
 				when: {
 					type: ["string", "null"],
@@ -93,6 +93,17 @@ export const FACADE_GRAMMAR_V3_SCHEMA = Object.freeze({
 					type: ["string", "null"],
 					enum: [...REACH_EDGES, null],
 					description: "Carry this SOLID terminal sideways through the fold clearance to its facet's own edge - but only the side(s) where it already stands flush with its scope. A full-width course (a cornice, a band, a lintel run) then meets the corner instead of pausing 0.3 m short of every fold; two facets writing it meet there. Skin members (mullion/transom/spandrel) already do this without asking. Refused for openings: the clearance exists to keep a hole off the turn. Null everywhere else.",
+				},
+				grade: {
+					type: ["object", "null"],
+					additionalProperties: false,
+					required: ["attr", "from", "to"],
+					properties: {
+						attr: { type: "string", enum: ["depth_m", "inset_m"] },
+						from: { type: "number" },
+						to: { type: "number" },
+					},
+					description: "Vary this terminal's attribute along the run it is laid out by, instead of repeating one number: the value interpolates linearly from `from` at the first instance of its split to `to` at the last (a single member reads `from`). Grade depth_m on a fin repeat and the fins deepen along the facade; grade inset_m on a storey split's window and the openings shrink as they rise. At the start rule the run is the face's facets, so a grade there varies facet to facet. Both endpoints obey the same bounds as the plain field. Null for a constant attribute.",
 				},
 				split: {
 					type: ["object", "null"],
@@ -262,6 +273,16 @@ are then carried the rest of the way to the facet's own edge, where the neighbou
 course meets it. Openings are refused - keeping a hole off the turn is the clearance's whole
 job - and a member you deliberately held back from the edge stays where you put it. Skin
 members already reach without asking.
+
+A repeated member need not repeat its numbers. A terminal may carry "grade": { "attr":
+"depth_m" | "inset_m", "from": a, "to": b }, and the attribute then interpolates linearly
+along the run its split laid out - "from" at the first instance, "to" at the last, a single
+member reading "from". Grade depth_m on a fin and the fins deepen across the facade; grade
+inset_m on a window inside a storey split and the openings tighten as they rise. Written at
+the start rule, the run is the face's own facets, so the grade varies facet to facet across
+one elevation. Both endpoints obey exactly the bounds the plain field obeys - a grade never
+reaches a number you could not have written by hand; it removes the hand-enumeration, not
+the bound.
 
 One thing to get right, because the elevation will not show you the mistake: put the rise on
 a member that SPANS the facet, and never on a run of separate piers. Above the roof there is
