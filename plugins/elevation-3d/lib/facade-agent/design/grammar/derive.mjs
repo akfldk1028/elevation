@@ -188,7 +188,17 @@ export function deriveFacadePrimitives({ grammar, segment, storeys, entrance = n
 		if (!alternative) return;
 		if (alternative.terminal) {
 			if (alternative.terminal === "wall") return;
-			const inset = alternative.inset_m;
+			// A graded attribute interpolates along THE RUN - the nearest enclosing repeat
+			// (or the storey stack, or failing both, the face's own facets), whose position
+			// travels down the scope as `runT` and survives the member's own fixed split.
+			// Without the inheritance a fin inside a [fin, pane] module always read index 0
+			// of its two-part split and every instance came out at `from` - measured on the
+			// first probe of this operator.
+			const gradeT = alternative.grade ? scope.runT ?? 0 : 0;
+			const graded = (attr, base) => alternative.grade?.attr === attr
+				? round(alternative.grade.from + (alternative.grade.to - alternative.grade.from) * gradeT)
+				: base;
+			const inset = graded("inset_m", alternative.inset_m);
 			const uMin = scope.u_min + inset, uMax = scope.u_max - inset;
 			const zMin = scope.z_min + inset, zMax = scope.z_max - inset;
 			if (uMax - uMin <= 1e-6 || zMax - zMin <= 1e-6) return;
@@ -225,7 +235,7 @@ export function deriveFacadePrimitives({ grammar, segment, storeys, entrance = n
 				},
 				...(risesTo(alternative, segment.local_z?.[1]) || dropsTo(alternative, segment.local_z?.[0])
 					? { rises_to: alternative.rise_to } : {}),
-				depth_m: kind === "door" && entrance ? entrance.recess_m : alternative.depth_m,
+				depth_m: kind === "door" && entrance ? entrance.recess_m : graded("depth_m", alternative.depth_m),
 				// Only when the author named one. Absent leaves the primitive exactly as every
 				// grammar written before this field produced it, so the geometry builder's
 				// terminal default stays the answer and nothing already drawn moves.
@@ -274,6 +284,8 @@ export function deriveFacadePrimitives({ grammar, segment, storeys, entrance = n
 					...scope,
 					z_min: band.zMin, z_max: band.zMax,
 					index, total: bands.length, band: band.band,
+					// The storey stack is a run: a graded attribute climbs it floor by floor.
+					runT: bands.length > 1 ? index / (bands.length - 1) : scope.runT,
 					param: part.arg, depth: scope.depth + 1, storey: band.storey,
 				});
 			});
@@ -310,6 +322,10 @@ export function deriveFacadePrimitives({ grammar, segment, storeys, entrance = n
 				: { ...scope, z_min: cursor, z_max: next };
 			child.index = slot.index;
 			child.total = slot.total;
+			// Only a repeat's instances advance the run; a fixed split (a fin beside its
+			// pane) passes the position through unchanged, so a member keeps the place of
+			// the module that carries it.
+			child.runT = slot.part.repeat && slot.total > 1 ? slot.index / (slot.total - 1) : scope.runT;
 			// The argument binds to the invoked symbol and stops there; it is an argument,
 			// not an ambient mode. A part that passes nothing rebinds `param` to null, so a
 			// nested reveal cannot silently inherit the `top` its grandparent was given and
@@ -338,6 +354,8 @@ export function deriveFacadePrimitives({ grammar, segment, storeys, entrance = n
 		// between elevations, so every bay across one face comes out identical.
 		index: segment.face_index ?? 0,
 		total: segment.face_total ?? 1,
+		// With no repeat and no storey stack, the run is the face's own facets.
+		runT: (segment.face_total ?? 1) > 1 ? (segment.face_index ?? 0) / ((segment.face_total ?? 1) - 1) : 0,
 		// Nothing calls the start symbol, so it is the one rule with no argument to read.
 		param: null,
 		// The facet's own storey, not the ground one. Hardcoding storey 1 here told every

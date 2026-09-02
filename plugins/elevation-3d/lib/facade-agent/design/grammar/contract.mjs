@@ -224,7 +224,7 @@ function parseGuard(alternative, label) {
 }
 
 function parseAlternative(value, label, symbols) {
-	const alternative = record(value, label, new Set(["when", "split", "terminal", "inset_m", "depth_m", "min_u_m", "min_z_m", "rise_to", "reach", "material"]));
+	const alternative = record(value, label, new Set(["when", "split", "terminal", "inset_m", "depth_m", "min_u_m", "min_z_m", "rise_to", "reach", "material", "grade"]));
 	const when = alternative.when === undefined || alternative.when === null ? null : parsePredicate(alternative.when, `${label}.when`);
 	const guard = parseGuard(alternative, label);
 	if (alternative.terminal !== undefined && alternative.terminal !== null) {
@@ -262,21 +262,43 @@ function parseAlternative(value, label, symbols) {
 			// wall emits no geometry, so a reach on it would be a request the engine ignores.
 			if (alternative.terminal === "wall") fail(`${label}.reach on a wall reaches with nothing: wall emits no geometry`);
 		}
+		// A parameter that varies along the run instead of repeating one number. This is the
+		// field-sampled-attribute idiom the parametric literature converged on (Infinigen's
+		// distribution-valued parameters; the panelization practice of attractor fields):
+		// the value interpolates linearly from `from` at the first instance of the split
+		// this terminal was laid out by to `to` at its last, on the instance's own
+		// index/(total-1). One member alone reads `from`. Both endpoints obey exactly the
+		// bounds the static field obeys, so nothing a grade can produce is outside what an
+		// author could already write by enumerating instances by hand - the operator removes
+		// the enumeration, not the bound.
+		const grade = alternative.grade === undefined || alternative.grade === null ? null : (() => {
+			const fields = record(alternative.grade, `${label}.grade`, new Set(["attr", "from", "to"]));
+			const attr = fields.attr;
+			if (attr !== "depth_m" && attr !== "inset_m") fail(`${label}.grade.attr must be depth_m or inset_m`);
+			for (const key of ["from", "to"]) {
+				const bound = attr === "depth_m" ? TERMINAL_PROJECTION[alternative.terminal] : BOUNDS.maxInsetM;
+				if (!Number.isFinite(fields[key]) || fields[key] < 0 || fields[key] > bound) {
+					fail(`${label}.grade.${key} is out of range: a ${alternative.terminal} ${attr} stays within 0..${bound}`);
+				}
+			}
+			return Object.freeze({ attr, from: fields.from, to: fields.to });
+		})();
 		// Absent means "whatever this member is usually made of", which is what every grammar
 		// written before this field existed means, so the default has to stay the table's.
 		const material = alternative.material ?? null;
 		if (material !== null && !TERMINAL_MATERIAL_CHOICES.includes(material)) {
 			fail(`${label}.material must be one of ${TERMINAL_MATERIAL_CHOICES.join(", ")}`);
 		}
-		return Object.freeze({ when, guard, terminal: alternative.terminal, inset_m: inset, depth_m: depth, rise_to: riseTo, reach, material });
+		return Object.freeze({ when, guard, terminal: alternative.terminal, inset_m: inset, depth_m: depth, rise_to: riseTo, reach, material, grade });
 	}
 	// Strict structured output forces both fields onto a split too, where zero is the
 	// only sensible answer. Only a real offset here means the model confused the two.
 	if ((alternative.inset_m ?? 0) !== 0 || (alternative.depth_m ?? 0) !== 0) fail(`${label}.inset_m and depth_m belong to a terminal`);
-	// A reach on a split would be a request the engine silently ignores, which is the
-	// silent-wrong-answer class this grammar keeps paying for; refuse it loudly instead.
+	// A reach or a grade on a split would be a request the engine silently ignores, which is
+	// the silent-wrong-answer class this grammar keeps paying for; refuse both loudly.
 	// (rise_to and material predate this rule and keep their old tolerance.)
 	if ((alternative.reach ?? null) !== null) fail(`${label}.reach belongs to a terminal`);
+	if ((alternative.grade ?? null) !== null) fail(`${label}.grade belongs to a terminal`);
 	if ((alternative.split ?? null) === null) fail(`${label} is neither a split nor a terminal`);
 	const split = record(alternative.split, `${label}.split`, new Set(["axis", "parts"]));
 	if (!AXES.includes(split.axis)) fail(`${label}.split.axis must be u, z or storey`);

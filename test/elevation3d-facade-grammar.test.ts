@@ -471,6 +471,52 @@ test("reach carries only the side that stands flush with its scope", () => {
 	assert.equal(course.local_bounds.u_max, Math.min(SEGMENT.length_m, Number(SEGMENT.length_m.toFixed(8))), "carried right");
 });
 
+// The field-sampled attribute of the parametric literature, in its smallest form: a value
+// interpolated along the run a split laid out, bounded exactly like the plain field.
+test("a graded depth deepens along the run", () => {
+	const out = deriveFacadePrimitives({
+		grammar: grammar({
+			Facade: [{ split: { axis: "u", parts: [{ size: "~0.3212", symbol: "Fin", repeat: true }] } }],
+			Fin: [{ terminal: "pilaster", depth_m: 0.1, grade: { attr: "depth_m", from: 0.1, to: 0.5 } }],
+		}),
+		segment: SEGMENT, storeys: STOREYS,
+	}) as any[];
+	assert.equal(out.length, 5, "five fins tile the 1.606 m placeable run");
+	assert.deepEqual(out.map((p) => p.depth_m), [0.1, 0.2, 0.3, 0.4, 0.5], "from at the first, to at the last, linear between");
+});
+
+test("a graded inset resizes instances and a lone member reads from", () => {
+	const out = deriveFacadePrimitives({
+		grammar: grammar({
+			Facade: [{ split: { axis: "z", parts: [{ size: "~3.3", symbol: "Level", repeat: true }] } }],
+			Level: [{ terminal: "band", depth_m: 0.1, grade: { attr: "inset_m", from: 0, to: 0.4 } }],
+		}),
+		segment: { ...SEGMENT, local_z: [0, 9.9] }, storeys: STOREYS,
+	}) as any[];
+	assert.equal(out.length, 3);
+	const heights = out.map((p) => Number((p.local_bounds.z_max - p.local_bounds.z_min).toFixed(4)));
+	assert.deepEqual(heights, [3.3, 2.9, 2.5], "inset 0 / 0.2 / 0.4 tightens each instance");
+
+	const [lone] = deriveFacadePrimitives({
+		grammar: grammar({ Facade: [{ terminal: "band", depth_m: 0.1, grade: { attr: "depth_m", from: 0.15, to: 0.5 } }] }),
+		segment: SEGMENT, storeys: STOREYS,
+	}) as any[];
+	assert.equal(lone.depth_m, 0.15, "one member alone is the start of its own run");
+});
+
+test("a grade is bounded and belongs to a terminal", () => {
+	// A transom may stand 0.25 m out of the wall; a grade cannot buy it more.
+	assert.throws(() => grammar({ Facade: [{ terminal: "transom", depth_m: 0.1, grade: { attr: "depth_m", from: 0.1, to: 0.5 } }] }), FacadeGrammarError);
+	assert.throws(() => grammar({ Facade: [{ terminal: "band", depth_m: 0.1, grade: { attr: "width_m", from: 0.1, to: 0.2 } }] }), FacadeGrammarError);
+	assert.throws(
+		() => grammar({
+			Facade: [{ grade: { attr: "depth_m", from: 0.1, to: 0.2 }, split: { axis: "u", parts: [{ size: "~1", symbol: "Wall" }] } }],
+			Wall: WALL,
+		}),
+		FacadeGrammarError,
+	);
+});
+
 test("reach refuses openings and unknown edges", () => {
 	for (const terminal of ["glass", "door", "arch"]) {
 		assert.throws(
