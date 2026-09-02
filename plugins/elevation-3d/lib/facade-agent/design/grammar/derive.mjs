@@ -224,6 +224,10 @@ export function deriveFacadePrimitives({ grammar, segment, storeys, entrance = n
 				...(risesTo(alternative, segment.local_z?.[1]) || dropsTo(alternative, segment.local_z?.[0])
 					? { rises_to: alternative.rise_to } : {}),
 				depth_m: kind === "door" && entrance ? entrance.recess_m : alternative.depth_m,
+				// Only when the author named one. Absent leaves the primitive exactly as every
+				// grammar written before this field produced it, so the geometry builder's
+				// terminal default stays the answer and nothing already drawn moves.
+				...(alternative.material ? { material: alternative.material } : {}),
 				family_id: familyId(symbol, scope.param),
 				storey: storeyOf(zMin),
 				...(kind === "door" ? { role: "primary_entrance" } : {}),
@@ -249,8 +253,17 @@ export function deriveFacadePrimitives({ grammar, segment, storeys, entrance = n
 				// a stepped mass has drawn the staircase: a head placed a fixed distance below
 				// the band top lands at a different absolute height on every facet that stops
 				// mid-floor. Two authors asked for exactly this, in the same words.
-				const cut = zMin > storey.z_min + 1e-6 || zMax < storey.z_max - 1e-6;
-				if (zMax - zMin > 1e-6) bands.push({ zMin, zMax, storey: storey.storey, band: cut ? "cut" : "full" });
+				// Which edge is the step is the part that matters and the part this used to
+				// discard. `cut` alone says a band is not whole; it does not say whether the
+				// facet ended at its top or began at its bottom, and those want opposite
+				// treatment - a member is absolute when it measures from the slab edge and
+				// staircases when it measures from the step. The brief's own advice, "put the
+				// member against the edge that IS a slab", was unwritable without this, and
+				// three blind authors said so independently, one of them naming these two words.
+				const cutBelow = zMin > storey.z_min + 1e-6;
+				const cutAbove = zMax < storey.z_max - 1e-6;
+				const band = cutBelow && cutAbove ? "cut_both" : cutBelow ? "cut_below" : cutAbove ? "cut_above" : "full";
+				if (zMax - zMin > 1e-6) bands.push({ zMin, zMax, storey: storey.storey, band });
 			}
 			bands.sort((left, right) => left.zMin - right.zMin);
 			const [part] = parts;

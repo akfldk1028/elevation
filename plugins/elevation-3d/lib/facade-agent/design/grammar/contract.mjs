@@ -1,4 +1,4 @@
-import { TERMINAL_PROJECTION, TERMINAL_WORDS } from "../../facade-vocabulary.mjs";
+import { TERMINAL_MATERIAL_CHOICES, TERMINAL_PROJECTION, TERMINAL_WORDS } from "../../facade-vocabulary.mjs";
 
 export class FacadeGrammarError extends Error {
 	constructor(message) {
@@ -162,7 +162,7 @@ function parsePredicate(text, label) {
 		// a way to tell a cut edge from a slab. `band == full` is a floor the mass gives whole;
 		// `band == cut` is one the facet ends inside, and the honest thing to do with it is
 		// usually to leave it plain rather than to article it.
-		match = /^band\s*==\s*(full|cut)$/.exec(term);
+		match = /^band\s*==\s*(full|cut|cut_below|cut_above|cut_both)$/.exec(term);
 		if (match) return { field: "band", value: match[1] };
 		match = /^face_view\s*==\s*(front|back|left|right)$/.exec(term);
 		if (match) return { field: "face_view", value: match[1] };
@@ -223,7 +223,7 @@ function parseGuard(alternative, label) {
 }
 
 function parseAlternative(value, label, symbols) {
-	const alternative = record(value, label, new Set(["when", "split", "terminal", "inset_m", "depth_m", "min_u_m", "min_z_m", "rise_to"]));
+	const alternative = record(value, label, new Set(["when", "split", "terminal", "inset_m", "depth_m", "min_u_m", "min_z_m", "rise_to", "material"]));
 	const when = alternative.when === undefined || alternative.when === null ? null : parsePredicate(alternative.when, `${label}.when`);
 	const guard = parseGuard(alternative, label);
 	if (alternative.terminal !== undefined && alternative.terminal !== null) {
@@ -249,7 +249,13 @@ function parseAlternative(value, label, symbols) {
 			if (!RISE_DATUMS.includes(riseTo)) fail(`${label}.rise_to must be one of ${RISE_DATUMS.join(", ")}`);
 			if (OPENING_TERMINALS.has(alternative.terminal)) fail(`${label}.rise_to cannot carry a ${alternative.terminal} past its facet`);
 		}
-		return Object.freeze({ when, guard, terminal: alternative.terminal, inset_m: inset, depth_m: depth, rise_to: riseTo });
+		// Absent means "whatever this member is usually made of", which is what every grammar
+		// written before this field existed means, so the default has to stay the table's.
+		const material = alternative.material ?? null;
+		if (material !== null && !TERMINAL_MATERIAL_CHOICES.includes(material)) {
+			fail(`${label}.material must be one of ${TERMINAL_MATERIAL_CHOICES.join(", ")}`);
+		}
+		return Object.freeze({ when, guard, terminal: alternative.terminal, inset_m: inset, depth_m: depth, rise_to: riseTo, material });
 	}
 	// Strict structured output forces both fields onto a split too, where zero is the
 	// only sensible answer. Only a real offset here means the model confused the two.
@@ -332,6 +338,10 @@ export function predicateHolds(predicate, scope) {
 					: term.field === "storey" ? scope.storey : scope.index;
 		if (term.value === "last") return actual === scope.total - 1;
 		if (term.modulus) return Number.isInteger(actual) && actual % term.modulus === term.value;
+		// `cut` is the family, not a fourth member of it: a band cut below, cut above or cut at
+		// both ends is cut. Grammars written before the edge was distinguishable ask for `cut`
+		// and must keep meaning what they meant, so the general word still matches all three.
+		if (term.field === "band" && term.value === "cut") return typeof actual === "string" && actual.startsWith("cut");
 		return actual === term.value;
 	});
 }
