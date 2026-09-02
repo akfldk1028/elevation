@@ -1147,3 +1147,53 @@ not a depth anyone can tune. The brief now says the plan exists, what the fault 
 that reducing depth at a corner is an attempt wasted.
 
 Suite 804 green.
+
+## 2026-09-02 the loop runs backwards, and image-first is now the standard lane
+
+The user's question - "why are we coding every lintel by hand when the image model draws
+better facades than we do?" - got its answer measured, surveyed, and then decided.
+
+**The reverse loop closed end to end, $0.** GPT-Image-2 (codex lane) drew a free concept
+over creative-013's mass - twisting champagne fins over glass, a band sweeping every floor
+(`concept-free-001.png`). A repo-blind VISION author read it like an engineer reads a
+render: fin pitch 0.72 m, band 24% of the storey, portal dimensions, all measured by eye,
+then transcribed into the grammar. Attempt 1: FOLD_CLEARANCE_INVALID x37 (a 0.12 m strip
+between edge fin and pane broke framed-to-fold); one located-fault repair; attempt 2
+accepted - 506 primitives, four skin faces, ratios predicted to the second decimal again.
+The render then died once at PBR (right view P05 9.9 vs 10): all 237 fins sat on the
+default bronze, but the concept's fins are LIGHT metal - a transcription miss of material,
+not a gate problem - fixed as `-fx` with `material: "precast"` on the field fins. Full
+render, all eight sheets accepted, photo pass over the top. Artifacts under
+`creative-013/.../render-imagefirst-fx/`. Protocol upgrade for the next transcription:
+the author must read MATERIALS off the image, not just geometry.
+
+**The workflow decision (user's call):** perspective -> elevation is the standard lane.
+Freedom lives in the image model (the freshest language of the day came from the concept,
+not from a text intent); the grammar transcribes and verifies; elevation -> perspective
+survives as the delivery tail (render/showcase/photo). Text-intent direct authoring stays
+as the special tool for programme-led briefs. The vocabulary now grows on demand - when an
+image asks for a word - which also answers the piecemeal-operator complaint: the
+transcription loss list (fin twist, per-storey phase, portal depth, plan curve) IS the
+measured backlog.
+
+**The survey behind the decision** (2023-26, SIGGRAPH/CVPR/ICML; full annotated page at
+https://claude.ai/code/artifact/7a7ef2d4-828e-4827-a994-9f25ba99dc56): three converged
+representation moves - (1) primitive algebra + LLM-grown function library instead of
+hand-plumbed terminals (SceneCraft, ShapeCoder, SIGGRAPH Asia 2025's repair-by-local-search),
+(2) parameters as distributions/fields, `repeat(n, attrs=f(u))` (Infinigen + the
+panelization literature; no top-venue first-class operator exists - the idiom is from
+practice), (3) image<->program closed by a fine-tune our own executor can train (FacAID -
+our exact split-grammar lineage - and VLMaterial), with Pro-DG showing the grammar
+hierarchy conditions diffusion better than depth/normal, and MVPainter/MeSS putting
+appearance in UV space for view consistency.
+
+**Also this session** (`cb1a75a`): `reach: "facet_edge"` - the sideways rise_to, a solid
+course carried through the fold clearance to the facet edge (crest3: 0 of 24 cornices met
+their corner before, 24 of 24 after; the vision author then used the field from the schema
+alone on first sight). The review of that change surfaced something older: the alternative
+schema's `required` had drifted to 5 of 10 keys since 2026-08-31, which under strict
+structured output 400s every live call before any model output - no live call ran in
+between, the only reason it never fired. All ten keys required now. And the colonnade
+(118 piers) rendered end to end - the first pier scheme through the plan gate since the
+material field landed, confirming "the gate picks the architecture" is over. Suite 807
+green throughout.
