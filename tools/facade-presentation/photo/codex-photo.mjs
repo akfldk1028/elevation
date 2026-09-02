@@ -31,6 +31,10 @@ export function buildCodexPrompt(inputPng, subject) {
 		"construction, entrance block - change only surface realism, lighting nuance and context.",
 		`Subject: ${subject}.`,
 		"Do not answer that you lack the tool without calling it.",
+		// Left to itself the model sometimes reaches for an image_gen.py script instead,
+		// which needs an OPENAI_API_KEY this environment does not have - it then exits 1
+		// without generating. The built-in tool is the only lane that works here.
+		"Call the tool DIRECTLY; never run image_gen.py, python, or any script to generate.",
 	].join(" ");
 }
 
