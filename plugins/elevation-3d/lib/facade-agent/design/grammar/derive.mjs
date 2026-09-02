@@ -196,8 +196,10 @@ export function deriveFacadePrimitives({ grammar, segment, storeys, entrance = n
 			// A skin member flush with the edge of the placeable field is carried out to the
 			// facet itself, so the framing runs past the structure and turns the corner the way
 			// a curtain wall does. It has to be flush already: a member the grammar deliberately
-			// held back stays where it was put.
-			const reach = SKIN_KINDS.has(kind) && !inset;
+			// held back stays where it was put. A solid course may ask for the same carry with
+			// `reach: "facet_edge"` - the clearance keeps OPENINGS off the fold, and a cornice
+			// pausing 0.6 m at every corner was the gap its author named on first use.
+			const reach = !inset && (SKIN_KINDS.has(kind) || alternative.reach === "facet_edge");
 			const uStart = reach && Math.abs(uMin - placeable.u_min) <= 1e-8 ? 0 : uMin;
 			const uEnd = reach && Math.abs(uMax - placeable.u_max) <= 1e-8 ? segment.length_m : uMax;
 			primitives.push({

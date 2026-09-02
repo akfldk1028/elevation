@@ -1,6 +1,6 @@
 import { sha256, stableJson } from "../../../core.mjs";
 import { TERMINAL_MATERIAL_CHOICES, TERMINAL_VOCABULARY } from "../../facade-vocabulary.mjs";
-import { AXES, BOUNDS, MAX_PARAM_INDEX, PARAM_VALUES, PARAM_WORDS, RISE_DATUMS, TERMINALS } from "./contract.mjs";
+import { AXES, BOUNDS, MAX_PARAM_INDEX, PARAM_VALUES, PARAM_WORDS, REACH_EDGES, RISE_DATUMS, TERMINALS } from "./contract.mjs";
 
 export const FACADE_GRAMMAR_PROMPT_REVISION = "arr.elevation3d.facade-grammar-prompt.v1";
 
@@ -62,7 +62,12 @@ export const FACADE_GRAMMAR_V3_SCHEMA = Object.freeze({
 		alternative: {
 			type: "object",
 			additionalProperties: false,
-			required: ["when", "split", "terminal", "inset_m", "depth_m"],
+			// Strict structured output demands EVERY property be required (nullable types
+			// carry the "absent" case), and a key listed under properties but not here is a
+			// 400 from the provider before any model output. min_u_m and min_z_m drifted out
+			// of this list on 2026-08-31 and rise_to, material and reach followed - no live
+			// call ran in between, which is the only reason it never fired.
+			required: ["when", "split", "terminal", "inset_m", "depth_m", "min_u_m", "min_z_m", "rise_to", "reach", "material"],
 			properties: {
 				when: {
 					type: ["string", "null"],
@@ -83,6 +88,11 @@ export const FACADE_GRAMMAR_V3_SCHEMA = Object.freeze({
 					type: ["string", "null"],
 					enum: [...RISE_DATUMS, null],
 					description: "Carry this SOLID terminal past an edge of its facet to a datum the engine knows. building_top is the building's top line, so a stepped mass ends on one level parapet. building_underside is the line a lifted building flies at, for a level bottom edge across steps in the base. Refused for openings, ignored beyond one storey, and building_underside does not exist on a mass that sits on the ground. Null everywhere else.",
+				},
+				reach: {
+					type: ["string", "null"],
+					enum: [...REACH_EDGES, null],
+					description: "Carry this SOLID terminal sideways through the fold clearance to its facet's own edge - but only the side(s) where it already stands flush with its scope. A full-width course (a cornice, a band, a lintel run) then meets the corner instead of pausing 0.3 m short of every fold; two facets writing it meet there. Skin members (mullion/transom/spandrel) already do this without asking. Refused for openings: the clearance exists to keep a hole off the turn. Null everywhere else.",
 				},
 				split: {
 					type: ["object", "null"],
@@ -195,9 +205,22 @@ heights, not one shared.
 So decide deliberately what a cut band should be. Usually the honest answer is plain wall:
 a 0.6 m slice under a step is not a storey and articulating it draws a shelf. Route it with
 "band == cut" and leave it bare, and the steps read as the mass moving rather than as rows
-of little ledges. If you do want to draw in one, put the member against the edge that IS a
-slab and let the cut edge be the one that varies. On a mass that does not step, every band
-is full and this changes nothing.
+of little ledges. On a mass that does not step, every band is full and this changes nothing.
+
+If you do want to draw in one, put the member against the edge that IS a slab and let the
+cut edge be the one that varies - and the grammar tells you which edge that is. "band ==
+cut_below" is a band the facet BEGINS inside: its bottom edge is the step and its TOP edge
+is a slab, so measure downward from the top. "band == cut_above" is a band the facet ENDS
+inside: its bottom edge is a slab and its top is the step, so stack upward from the bottom.
+"band == cut_both" has no slab edge at all and is honest only as bare wall. Plain "band ==
+cut" still matches all three when you do not care which.
+
+This is not only how a head holds its line. It is also the only way to ask whether a facet
+is the top of the building WHERE IT STANDS: a band whose top edge is the building's own top
+slab answers "cut_below" there, and a facet with more building above it on the next plane
+does not. A size guard cannot substitute - on a stepped mass the facets that crown are
+routinely SHORTER than the facets that must not, so min_z_m selects the wrong set. Three
+authors reported that as unsolvable before these two words existed.
 
 An alternative may also declare the smallest scope it is willing to be used on, with
 "min_u_m" and "min_z_m". Below that it is simply not selected and the next alternative is
@@ -230,6 +253,15 @@ datum does not exist, and nothing happens - so this can never be used to fill in
 a bridge.
 
 If the mass does not step, neither datum changes anything and neither costs anything.
+
+The same idea runs sideways. On a punched wall the derivation scope is pre-inset by the
+fold clearance, so a course written across the full scope still pauses 0.3 m short of every
+fold - a cornice crossing six facets reads as six lintels. A SOLID terminal may carry
+"reach": "facet_edge", and the side(s) of it that stand flush with the edge of their scope
+are then carried the rest of the way to the facet's own edge, where the neighbouring facet's
+course meets it. Openings are refused - keeping a hole off the turn is the clearance's whole
+job - and a member you deliberately held back from the edge stays where you put it. Skin
+members already reach without asking.
 
 One thing to get right, because the elevation will not show you the mistake: put the rise on
 a member that SPANS the facet, and never on a run of separate piers. Above the roof there is
