@@ -432,6 +432,67 @@ test("an opening cannot be carried past its facet", () => {
 	assert.throws(() => grammar({ Facade: [{ terminal: "band", rise_to: "the_moon" }] }), FacadeGrammarError);
 });
 
+// The sideways twin of rise_to. The fold clearance pre-insets a punched scope, so a course
+// written across the full width still paused 0.3 m short of every fold and a cornice
+// crossing six facets read as six lintels - the gap its first author named on first use.
+test("a solid course with reach runs through the fold clearance to the facet edge", () => {
+	const [course] = deriveFacadePrimitives({
+		grammar: grammar({ Facade: [{ terminal: "cornice", depth_m: 0.2, reach: "facet_edge" }] }),
+		segment: SEGMENT, storeys: STOREYS,
+	}) as any[];
+	// The carried edge is clamped to the segment the way skin members always were: the
+	// rounded value when rounding stays inside the facet, the exact length when it does not.
+	const facetEdge = Math.min(SEGMENT.length_m, Number(SEGMENT.length_m.toFixed(8)));
+	assert.equal(course.local_bounds.u_min, 0, "flush at the left scope edge, so carried to the facet edge");
+	assert.equal(course.local_bounds.u_max, facetEdge, "and to the right one");
+
+	// Without the field the same course keeps the inset scope - nothing already written moves.
+	const [held] = deriveFacadePrimitives({
+		grammar: grammar({ Facade: [{ terminal: "cornice", depth_m: 0.2 }] }),
+		segment: SEGMENT, storeys: STOREYS,
+	}) as any[];
+	assert.equal(held.local_bounds.u_min, 0.3);
+	assert.equal(held.local_bounds.u_max, Number(SEGMENT.placeable.u_max.toFixed(8)));
+});
+
+test("reach carries only the side that stands flush with its scope", () => {
+	// A 0.5 m pier holds the course off the left edge; only the right side is flush, so only
+	// the right side is carried. A member the grammar deliberately held back stays put.
+	const out = deriveFacadePrimitives({
+		grammar: grammar({
+			Facade: [{ split: { axis: "u", parts: [{ size: "0.5", symbol: "Pier" }, { size: "~1", symbol: "Course" }] } }],
+			Pier: [{ terminal: "pilaster", depth_m: 0.2 }],
+			Course: [{ terminal: "band", depth_m: 0.1, reach: "facet_edge" }],
+		}),
+		segment: SEGMENT, storeys: STOREYS,
+	}) as any[];
+	const course = out.find((primitive) => primitive.kind === "band");
+	assert.equal(course.local_bounds.u_min, 0.8, "held back by the pier, not carried left");
+	assert.equal(course.local_bounds.u_max, Math.min(SEGMENT.length_m, Number(SEGMENT.length_m.toFixed(8))), "carried right");
+});
+
+test("reach refuses openings and unknown edges", () => {
+	for (const terminal of ["glass", "door", "arch"]) {
+		assert.throws(
+			() => grammar({ Facade: [{ terminal, reach: "facet_edge" }] }),
+			FacadeGrammarError,
+			`carrying a ${terminal} into the fold is what the clearance exists to prevent`,
+		);
+	}
+	assert.throws(() => grammar({ Facade: [{ terminal: "band", reach: "next_facet" }] }), FacadeGrammarError);
+	// wall emits no geometry, and a split has nothing to carry: both would be requests the
+	// engine silently ignores, which is the silent-wrong-answer class this grammar keeps
+	// paying for - so both are refused loudly at parse instead.
+	assert.throws(() => grammar({ Facade: [{ terminal: "wall", reach: "facet_edge" }] }), FacadeGrammarError);
+	assert.throws(
+		() => grammar({
+			Facade: [{ reach: "facet_edge", split: { axis: "u", parts: [{ size: "~1", symbol: "Wall" }] } }],
+			Wall: WALL,
+		}),
+		FacadeGrammarError,
+	);
+});
+
 // Every member measures from the edges of its own scope, and on a stepped mass one of those
 // edges is the step rather than a slab. `band` is how a rule tells the two apart.
 test("a storey band knows whether the mass gave it whole or the facet ended inside it", () => {

@@ -45,6 +45,7 @@ export const AXES = Object.freeze(["u", "z", "storey"]);
  * correct, and is why it cannot be used to fill in the underside of a bridge down to grade.
  */
 export const RISE_DATUMS = Object.freeze(["building_top", "building_underside"]);
+export const REACH_EDGES = Object.freeze(["facet_edge"]);
 /** Terminals that cut a hole. None of them may be carried past the facet it belongs to. */
 const OPENING_TERMINALS = new Set(["glass", "door", "arch"]);
 export const BOUNDS = Object.freeze({
@@ -223,7 +224,7 @@ function parseGuard(alternative, label) {
 }
 
 function parseAlternative(value, label, symbols) {
-	const alternative = record(value, label, new Set(["when", "split", "terminal", "inset_m", "depth_m", "min_u_m", "min_z_m", "rise_to", "material"]));
+	const alternative = record(value, label, new Set(["when", "split", "terminal", "inset_m", "depth_m", "min_u_m", "min_z_m", "rise_to", "reach", "material"]));
 	const when = alternative.when === undefined || alternative.when === null ? null : parsePredicate(alternative.when, `${label}.when`);
 	const guard = parseGuard(alternative, label);
 	if (alternative.terminal !== undefined && alternative.terminal !== null) {
@@ -249,17 +250,33 @@ function parseAlternative(value, label, symbols) {
 			if (!RISE_DATUMS.includes(riseTo)) fail(`${label}.rise_to must be one of ${RISE_DATUMS.join(", ")}`);
 			if (OPENING_TERMINALS.has(alternative.terminal)) fail(`${label}.rise_to cannot carry a ${alternative.terminal} past its facet`);
 		}
+		// The sideways twin of rise_to: carry a solid course through the fold clearance to
+		// the facet's own edge, so a cornice or a band runs to the corner instead of pausing
+		// 0.6 m at every fold. Skin members already do this without asking (derive.mjs); the
+		// clearance exists to keep an OPENING off the turn, so openings are refused here for
+		// the same reason they are refused a rise.
+		const reach = alternative.reach ?? null;
+		if (reach !== null) {
+			if (!REACH_EDGES.includes(reach)) fail(`${label}.reach must be one of ${REACH_EDGES.join(", ")}`);
+			if (OPENING_TERMINALS.has(alternative.terminal)) fail(`${label}.reach cannot carry a ${alternative.terminal} into the fold: the clearance exists to keep an opening off the turn`);
+			// wall emits no geometry, so a reach on it would be a request the engine ignores.
+			if (alternative.terminal === "wall") fail(`${label}.reach on a wall reaches with nothing: wall emits no geometry`);
+		}
 		// Absent means "whatever this member is usually made of", which is what every grammar
 		// written before this field existed means, so the default has to stay the table's.
 		const material = alternative.material ?? null;
 		if (material !== null && !TERMINAL_MATERIAL_CHOICES.includes(material)) {
 			fail(`${label}.material must be one of ${TERMINAL_MATERIAL_CHOICES.join(", ")}`);
 		}
-		return Object.freeze({ when, guard, terminal: alternative.terminal, inset_m: inset, depth_m: depth, rise_to: riseTo, material });
+		return Object.freeze({ when, guard, terminal: alternative.terminal, inset_m: inset, depth_m: depth, rise_to: riseTo, reach, material });
 	}
 	// Strict structured output forces both fields onto a split too, where zero is the
 	// only sensible answer. Only a real offset here means the model confused the two.
 	if ((alternative.inset_m ?? 0) !== 0 || (alternative.depth_m ?? 0) !== 0) fail(`${label}.inset_m and depth_m belong to a terminal`);
+	// A reach on a split would be a request the engine silently ignores, which is the
+	// silent-wrong-answer class this grammar keeps paying for; refuse it loudly instead.
+	// (rise_to and material predate this rule and keep their old tolerance.)
+	if ((alternative.reach ?? null) !== null) fail(`${label}.reach belongs to a terminal`);
 	if ((alternative.split ?? null) === null) fail(`${label} is neither a split nor a terminal`);
 	const split = record(alternative.split, `${label}.split`, new Set(["axis", "parts"]));
 	if (!AXES.includes(split.axis)) fail(`${label}.split.axis must be u, z or storey`);

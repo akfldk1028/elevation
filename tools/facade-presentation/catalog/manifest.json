@@ -1,6 +1,6 @@
 {
 	"schema_version": "arr.facade-presentation.catalog.v1",
-	"title": "Six architectures, one engine",
+	"title": "Seven architectures, one engine",
 	"subtitle": "Every facade here was written by an author who could not read the engine - only a brief, a schema, a facet list and two photographs of the mass. Each was given a different architecture to pursue and nothing else. All of them had to pass the design gates AND render before they counted, which is a stricter bar than this project used until today.",
 	"candidates": [
 		{
@@ -16,9 +16,25 @@
 	],
 	"sections": [
 		{
-			"title": "Six architectures",
-			"note": "Not six material treatments of one building - six different buildings. The engine, the two masses and the gates are identical across all of them; what differs is what the author was asked to make. Five of the six drew. The sixth, an all-glass skin on the star prism, is not on this page because it never rendered: it cleared every design gate and every elevation and was rejected three times by the plan cut alone. Its author left the most useful result of the day - halving the depth of the members at the seam changed the seam by not one pixel, which is the second independent demonstration that this fault is not a depth anyone can tune.",
+			"title": "Seven architectures",
+			"note": "Not material treatments of one building - different buildings. The engine, the two masses and the gates are identical across all of them; what differs is what the author was asked to make, and latterly what the grammar was able to say. One scheme is missing: an all-glass skin on the star prism cleared every design gate and every elevation and was rejected three times by the plan cut alone. Its author left the most useful result of that day - halving the depth of the members at the seam changed the seam by not one pixel.",
 			"cards": [
+				{
+					"id": "mat-013-level",
+					"title": "Level",
+					"candidate": "creative-013",
+					"intent": "Two constructions on a stepped bar: a unitised skin on the street, a brick wall carrying a precast order on the other three faces. Its spandrel course holds 3.3 and 6.6 across fourteen facets that begin at seven different heights, and the parapet ends the building on one line at 9.90. The crown is selected by asking whether a band's top edge is the building's own top slab - a question three earlier authors reported as unanswerable, because the facets that must crown are shorter than the facets that must not.",
+					"grammar": "grammar-mat-013-level.json",
+					"renderDir": "mat-013-level"
+				},
+				{
+					"id": "mat-020-strata",
+					"title": "Strata",
+					"candidate": "creative-020",
+					"intent": "The first facade written after an author could choose what a member is made of. A brick arcade at the ground, a precast frame above it, a metal attic under a metal cornice - the same terminals throughout, changing only in substance, with relief tracking material so the strata survive a grey render. Its author also named the limit: `wall` emits no geometry, so the field between the openings is the mass's own material at every height. You can trim a base in brick; you cannot yet make one of it.",
+					"grammar": "grammar-mat-020-strata.json",
+					"renderDir": "mat-020-strata"
+				},
 				{
 					"id": "div-020-arch",
 					"title": "Arched masonry",
