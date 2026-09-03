@@ -1258,3 +1258,16 @@ Still deliberately untouched, still open: the P05>=10 floor pinning on glass ton
 way measured yesterday; needs a population sweep and someone else's eyes), and the brief
 ambiguities four authors quoted (entrance-in-ratio, lockstep per-elevation-or-building,
 min_u_m's scope, grade of split sizes).
+
+## 2026-09-03 the revival ledger: six of seven, and the seventh moved
+
+Under the ink mask, every scheme the plan canyon had killed was re-rendered: colonnade,
+cw2, streamline, soaring piers, arcade and div-020-skin all pass end to end. "Every
+masonry scheme died, every glass scheme passed" is now a historical sentence. The seventh,
+live-004 (gpt-5.5's pleated-street-skin on the battered mass, extracted from its run's
+attempt-03 and re-accepted by today's gates at 520 primitives across twelve kinds),
+cleared the plan for the first time and stopped at a new surface: its back view measures
+materialSeparation lumSpread 4.9 / chroma 1 against the 15 floor, plus
+PBR_SEMANTIC_ROLE_MISSING - the nearly monochrome service wall it deliberately drew. That
+is a legibility judgement about a quiet facade, not a mechanical artifact; it goes on the
+same review pile as the P05 glass-tone floor.
