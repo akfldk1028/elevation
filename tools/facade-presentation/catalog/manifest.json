@@ -152,6 +152,44 @@
      "renderDir": "render-bronzegrid3"
     }
    ]
+  },
+  {
+   "title": "The revival",
+   "note": "Six schemes the plan cut had killed, re-rendered untouched the day the seam detector stopped prosecuting the drawing's own ink. The seams were never in these designs: a thin member crossing the 1.2 m cut leaves two parallel ribbon strokes, and the pixel canyon between them measured as a same-material seam on one plane - eight hypotheses and one controlled A/B died on that canyon before a mesh probe at the failing pixels named it. Every card here is byte-identical to the grammar that was rejected.",
+   "cards": [
+    {
+     "id": "cw2-revived",
+     "title": "Flying curtain wall",
+     "candidate": "creative-013",
+     "intent": "Skin on all four faces of a lifted beam, a datum cornice at 9.90 and a soffit band at the underside line, neither a number in the file. Accepted 09-01 with the ledger note 'it does not render'; it renders.",
+     "grammar": "grammar-blind-013-cw2.json",
+     "renderDir": "render-cw2-revived"
+    },
+    {
+     "id": "soaring-revived",
+     "title": "Soaring piers",
+     "candidate": "creative-013",
+     "intent": "Piers through three storeys - the vertical order the lockstep gate asks for, on the mass that kept killing piers at the cut.",
+     "grammar": "grammar-blind-013-soaring.json",
+     "renderDir": "render-soaring-revived"
+    },
+    {
+     "id": "arcade-revived",
+     "title": "Arcade",
+     "candidate": "creative-013",
+     "intent": "Sixty-five arches - the Kahn language, first blind use of the arch terminal, dead at the plan since August.",
+     "grammar": "grammar-blind-013-arcade.json",
+     "renderDir": "render-arcade-revived"
+    },
+    {
+     "id": "skin-020-revived",
+     "title": "Sheer skin",
+     "candidate": "creative-020",
+     "intent": "The all-glass skin on the prism that cleared every design gate and every elevation and was rejected three times by the plan cut alone; its author's parting measurement - halving member depth changed the seam by not one pixel - was the first proof the seams were not theirs.",
+     "grammar": "grammar-div-020-skin.json",
+     "renderDir": "render-skin-revived"
+    }
+   ]
   }
  ]
 }
