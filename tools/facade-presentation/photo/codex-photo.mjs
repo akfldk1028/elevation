@@ -42,6 +42,21 @@ export function buildCodexCommand(prompt) {
 	return { command: "codex", args: ["exec", "--skip-git-repo-check", prompt] };
 }
 
+/**
+ * The session id codex prints on stderr, which is also the directory it writes its
+ * generated images into.
+ *
+ * Without it the image was found by scanning the whole shared generated_images tree for
+ * the newest file, and two photo runs started together both claimed whichever image
+ * landed first: two concepts for two different masses came back byte-identical, one of
+ * them a building that had nothing to do with the mass it was supposed to dress. Nothing
+ * in either run's output said so. Binding the search to the session makes an invocation
+ * able to find only its own image.
+ */
+export function parseCodexSessionId(output) {
+	return /^\s*session id:\s*([0-9a-f-]{36})\s*$/im.exec(String(output ?? ""))?.[1] ?? null;
+}
+
 // Newest PNG under rootDir (recursive) whose mtime is after sinceMs, or null.
 export async function findNewestPng(rootDir, sinceMs) {
 	let newest = null;
@@ -123,13 +138,18 @@ export async function codexPhoto({ inputPng, outputPng, subject, generatedDir = 
 	if (code !== 0) {
 		throw new Error(`codex exec exited with code ${code}: ${output.slice(-2000)}`);
 	}
-	const generated = await findNewestPng(generatedDir, startMs);
+	// Only this session's own directory. A run that cannot name its session falls back to
+	// the whole tree, which is the racing search, so it says which one answered rather than
+	// leaving the caller unable to tell a bound result from a borrowed one.
+	const session = parseCodexSessionId(output);
+	const searchDir = session ? join(generatedDir, session) : generatedDir;
+	const generated = await findNewestPng(searchDir, startMs);
 	if (!generated) {
-		throw new Error(`codex exec finished but no new PNG appeared under ${generatedDir}; output tail: ${output.slice(-2000)}`);
+		throw new Error(`codex exec finished but no new PNG appeared under ${searchDir}; output tail: ${output.slice(-2000)}`);
 	}
 	await mkdir(dirname(resolve(outputPng)), { recursive: true });
 	await copyFile(generated, resolve(outputPng));
-	return { source: generated, output: resolve(outputPng) };
+	return { source: generated, output: resolve(outputPng), session, bound: Boolean(session) };
 }
 
 if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) {
