@@ -22,7 +22,9 @@ const REQUIRED_ROLES = ["concrete", "glass", "bronze", "opaque"];
 // back-face glass at grazing incidence washes toward the wall tone, which is the same
 // legitimate drawing the 14.2 was, not two roles becoming one. 10 keeps a 2x margin over
 // anything that could be called collapsed.
-const MIN_ROLE_COLOR_DISTANCE = 10;
+// Exported so the brief can print it beside the PBR gate's own number; the two differ
+// and an author designing to the wrong one has no way to tell.
+export const MIN_ROLE_COLOR_DISTANCE = 10;
 const BUILDING_MARGIN_LIMITS = { minimum: 0.12, relevant_maximum: 0.21, letterbox_maximum: 0.35 };
 
 function finiteVector(value) {

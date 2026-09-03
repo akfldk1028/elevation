@@ -225,6 +225,13 @@ export async function analyzeSemanticRolePng({ finalPng, roleMaskPng, geometry =
 	return { roles, pairwise };
 }
 
+/**
+ * How far apart two semantic roles must read in a PBR view. Exported because the brief has
+ * to print it: an author designing against a number it guessed asked which of the two
+ * role-separation gates it was answering, and the two carry different numbers.
+ */
+export const PBR_MIN_ROLE_COLOR_DISTANCE = 5;
+
 export function validateSemanticRoleEvidence({ views }) {
 	const codes = [];
 	const requiredViews = ["front", "back", "left", "right", "axon", "opposite-axon"];
@@ -243,10 +250,10 @@ export function validateSemanticRoleEvidence({ views }) {
 		for (let left = 0; left < visible.length; left++) for (let right = left + 1; right < visible.length; right++) {
 			const direct = `${visible[left]}:${visible[right]}`, reverse = `${visible[right]}:${visible[left]}`;
 			const separation = evidence.pairwise?.[direct] ?? evidence.pairwise?.[reverse];
-			if (!separation || !(separation.colorDistance >= 5)) codes.push("PBR_SEMANTIC_ROLE_COLLAPSED");
+			if (!separation || !(separation.colorDistance >= PBR_MIN_ROLE_COLOR_DISTANCE)) codes.push("PBR_SEMANTIC_ROLE_COLLAPSED");
 		}
 	}
-	return { accepted: codes.length === 0, codes: [...new Set(codes)], thresholds: { minimumPixels, minimumCoverageFraction, minimumColorDistance: 5 }, requiredRoles };
+	return { accepted: codes.length === 0, codes: [...new Set(codes)], thresholds: { minimumPixels, minimumCoverageFraction, minimumColorDistance: PBR_MIN_ROLE_COLOR_DISTANCE }, requiredRoles };
 }
 
 function semanticMaterialScore(view) {

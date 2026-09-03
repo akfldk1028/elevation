@@ -1,7 +1,9 @@
 import { sha256, stableJson } from "../../../core.mjs";
 import { TERMINAL_MATERIAL_CHOICES, TERMINAL_VOCABULARY } from "../../facade-vocabulary.mjs";
 import { AXES, BOUNDS, MAX_PARAM_INDEX, PARAM_VALUES, PARAM_WORDS, REACH_EDGES, RISE_DATUMS, TERMINALS } from "./contract.mjs";
-import { DECLARED_MATERIAL_AXES } from "../../declared-material.mjs";
+import { DECLARED_MATERIAL_AXES, DECLARED_MATERIAL_ID_PATTERN } from "../../declared-material.mjs";
+import { PBR_MIN_ROLE_COLOR_DISTANCE } from "../../../texturing/render-style-evidence.mjs";
+import { MIN_ROLE_COLOR_DISTANCE as AXON_MIN_ROLE_COLOR_DISTANCE } from "../../../competition-axon.mjs";
 
 export const FACADE_GRAMMAR_PROMPT_REVISION = "arr.elevation3d.facade-grammar-prompt.v1";
 
@@ -66,7 +68,7 @@ export const FACADE_GRAMMAR_V3_SCHEMA = Object.freeze({
 				type: "object", additionalProperties: false,
 				required: ["id", "substance", "lightness", "hue", "finish", "joint_m", "reads_as"],
 				properties: {
-					id: { type: "string", pattern: "^[a-z][a-z0-9-]{1,39}$", description: "Your own name for it. Not from any list." },
+					id: { type: "string", pattern: DECLARED_MATERIAL_ID_PATTERN, description: "Your own name for it. Not from any list." },
 					substance: { type: "string", enum: [...DECLARED_MATERIAL_AXES.substance], description: "What it IS. This is the axis the gates read: it carries the semantic role." },
 					lightness: { type: "string", enum: [...DECLARED_MATERIAL_AXES.lightness] },
 					hue: { type: "string", enum: [...DECLARED_MATERIAL_AXES.hue] },
@@ -154,8 +156,13 @@ export const FACADE_GRAMMAR_V3_SCHEMA = Object.freeze({
 				},
 				terminal: { type: ["string", "null"], enum: [...TERMINALS, null] },
 				material: {
+					// An enum here listed only the four legacy words while the description told the
+					// author to name a declared id, so the schema forbade the thing it asked for -
+					// and under strict structured output that makes a declared material unreachable
+					// for a live call. A declared id is the author's own word, so no enum can hold
+					// it; the pattern the parser already uses is the constraint.
 					type: ["string", "null"],
-					enum: [...TERMINAL_MATERIAL_CHOICES, null],
+					pattern: DECLARED_MATERIAL_ID_PATTERN,
 					description: "What this member is made of. Name one of the materials this grammar declares in its top-level `materials` list - that is the free way to say it - or one of the legacy words when a declaration would add nothing. Null takes the terminal's own. A pilaster's default is the mass's own material, so a pier left at default shares a material with the wall behind it and the plan cut draws no line between them.",
 				},
 				inset_m: { type: ["number", "null"] },
@@ -394,11 +401,37 @@ ${TERMINAL_VOCABULARY.map((terminal) => `  ${terminal.word} (depth_m up to ${ter
 
 What a member is MADE OF is yours to choose, and it is separate from what it is. The
 word above gives each terminal the material it is usually made of; write "material" on
-an alternative to say otherwise, from: ${TERMINAL_MATERIAL_CHOICES.join(", ")}. Omit it
-and you get the usual one. A precast pier against a brick wall, a brick cornice over a
-precast band, a base and a shaft that differ in substance and not only in what is cut
-into them - none of those were sayable until now, which is why every scheme in this
-project's corpus carries the same four materials in the same places.
+an alternative to say otherwise, and omit it to get the usual one. A precast pier against
+a brick wall, a base and a shaft that differ in substance and not only in what is cut into
+them - none of those were sayable until recently, which is why the older schemes in this
+project's corpus all carry the same four materials in the same places.
+
+NAME ONE OF THE MATERIALS YOU DECLARE in the top-level "materials" list. That is the
+free way to say it and it is the one to reach for: you invent the name and say what the
+thing is, and the engine derives its colour, how it takes light, the joint it comes in and
+the role the gates count. The four legacy words - ${TERMINAL_MATERIAL_CHOICES.join(", ")} -
+still work and are there for the case where a declaration would add nothing, but they are a
+fallback, not the menu. An author transcribing a bronze rainscreen with only those four
+wrote "brick" to borrow its hue and called it "a lie on a construction document"; that is
+the situation the declaration exists to end, so do not settle for the nearest legacy word.
+
+Two things to know before you declare, because between them they have cost two renders.
+
+TWO gates compare materials, they measure different things, and their numbers differ.
+PBR_SEMANTIC_ROLE_COLLAPSED wants every pair of roles visible in a PBR view at least
+${PBR_MIN_ROLE_COLOR_DISTANCE} apart in colour distance; MATERIAL_ROLE_COLLAPSE wants the
+closest pair on an axon at least ${AXON_MIN_ROLE_COLOR_DISTANCE} apart on a 10 percent trimmed
+mean. Design to the larger one.
+
+And DEEP SHADE COMPRESSES THE DIFFERENCE BY ROUGHLY FIVE. Measured: two materials whose
+derived tints were 24 apart in RGB arrived at 4.76 on the elevation that faces away from the
+sun. Hue does not survive that at all - a stone declared warm-neutral, R-B = 17 in its
+tint, rendered at chroma 0.09 on a shaded face - and neither finish nor metalness is visible
+to either metric. If two materials must be told apart, put a full LIGHTNESS step between
+them; nothing else reliably survives. The corollary is worth having as design advice rather
+than as a gate note: a material that lives in permanent self-shadow - a deep reveal liner, a
+soffit - has to be specified brighter than the same alloy on an open wall, or it stops being
+a material and becomes the shadow it stands in.
 
 One consequence worth knowing: pilaster is the only terminal whose usual material is the
 mass's own, so a pier left at its default shares a material with the wall behind it. In
