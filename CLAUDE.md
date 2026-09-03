@@ -1271,3 +1271,19 @@ materialSeparation lumSpread 4.9 / chroma 1 against the 15 floor, plus
 PBR_SEMANTIC_ROLE_MISSING - the nearly monochrome service wall it deliberately drew. That
 is a legibility judgement about a quiet facade, not a mechanical artifact; it goes on the
 same review pile as the P05 glass-tone floor.
+
+## 2026-09-03 the layer axis: the split that does not divide
+
+`4c0e1fc`. The user's charge - "설계가 중요한데, 땜빵이 아니라" - named the pattern: every
+composed element became an engineer's terminal because a split partitions its scope exactly
+once. "axis": "layer" ends the treadmill: every part receives the WHOLE scope, stacked in
+depth; cross-layer overlap is declared, within-layer rules unchanged, untagged old
+grammars byte-identical (the layer field is simply absent). The louvre-over-glass claim in
+the brief is finally true - probe on creative-013: 248 louvres over 24 panes in the same
+scopes, zero validation codes, compiled GLB, four elevations + plan + top + one axon
+through the render gates. The opposite axon failed MATERIAL_ROLE_COLLAPSE because the
+probe put its glazing only on wide facets and that diagonal sees none - design geography,
+recorded in the brief as author guidance (porous screens, glazing spread across facets)
+rather than as a porosity number that one probe happened to clear. A balcony is now a
+layer split away; the palazzo commission (rate-limited mid-flight) restarts with that
+freedom in hand. Suite 813 green.
