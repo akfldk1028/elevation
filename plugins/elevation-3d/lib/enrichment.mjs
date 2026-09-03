@@ -288,7 +288,7 @@ function facadeDetails(mesh, floorGuides, facadePlanes, grammar) {
 	return details;
 }
 
-export function buildEnrichedScene({ mesh, floorGuides, facadePlanes, grammar, typedPrimitives, safeFallback }) {
+export function buildEnrichedScene({ mesh, floorGuides, facadePlanes, grammar, typedPrimitives, declaredMaterials, safeFallback }) {
 	const sceneGrammar = typedPrimitives ? TYPED_FACADE_GRAMMAR : grammar;
 	return {
 		base: { positions: mesh.vertices, indices: mesh.triangles },
@@ -298,7 +298,18 @@ export function buildEnrichedScene({ mesh, floorGuides, facadePlanes, grammar, t
 			? buildPunchedFacadeDetails({ mesh, floorGuides, facadePlanes, grammar })
 			: facadeDetails(mesh, floorGuides, facadePlanes, grammar),
 		grammar: sceneGrammar,
+		// Absent unless the design declared any, so a scene built from a grammar written before
+		// declarations existed is the same object it always was.
+		...(declaredMaterials?.length ? { declared_materials: declaredMaterials } : {}),
 	};
+}
+
+/** glTF factors are linear; a declared material's tint is derived as sRGB. */
+function hexToLinear(hex) {
+	return [1, 3, 5].map((offset) => {
+		const channel = parseInt(hex.slice(offset, offset + 2), 16) / 255;
+		return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+	});
 }
 
 const MATERIAL_FACTORS = {
@@ -311,8 +322,16 @@ const MATERIAL_FACTORS = {
 	"window-frame": { color: [0.12, 0.09, 0.07, 1], metallic: 0.72, roughness: 0.28 },
 };
 
-function createMaterial(document, name, textures) {
-	const factors = MATERIAL_FACTORS[name];
+// A declared material brings its own factors: an author writes what the substance is and how
+// it takes light, and declared-material.mjs turns those words into numbers. The table above
+// is the legacy four plus the role names, kept because every grammar written before
+// declarations existed still names them.
+function createMaterial(document, name, textures, declared) {
+	const factors = declared ? {
+		color: [...hexToLinear(declared.axon_pbr), declared.opacity],
+		metallic: declared.metalness,
+		roughness: declared.roughness,
+	} : MATERIAL_FACTORS[name];
 	if (!factors) throw new TypeError(`unsupported facade material: ${name}`);
 	const material = document.createMaterial(name)
 		.setBaseColorFactor(factors.color)
@@ -322,7 +341,13 @@ function createMaterial(document, name, textures) {
 		.setBaseColorTexture(textures.baseColor)
 		.setNormalTexture(textures.normal)
 		.setMetallicRoughnessTexture(textures.metallicRoughness);
-	if (name === "glass") material.setAlphaMode(Material.AlphaMode.BLEND).setDoubleSided(true);
+	// A declared material's NAME is the author's, so the renderer cannot read a role out of
+	// it the way it can out of `brick` or `glass`. The role its substance implies rides along
+	// in the material's extras, which the loader hands back as userData - the first place
+	// resolveSemanticRole looks. Without it every declared member fell through to the kind
+	// table and a whole elevation could lose a role it plainly draws.
+	if (declared) material.setExtras({ semantic_role: declared.role, declared_material: declared.id, joint_family: declared.joint_family });
+	if (name === "glass" || declared?.role === "glass") material.setAlphaMode(Material.AlphaMode.BLEND).setDoubleSided(true);
 	return material;
 }
 
@@ -439,9 +464,15 @@ export async function writeEnrichedGlb(scene, outputPath, { approvedRoot } = {})
 	const document = new Document();
 	const buffer = document.createBuffer("geometry");
 	const punched = scene.details.length > 0 && scene.grammar?.system === PUNCHED_FACADE_SYSTEM;
-	const usedMaterialNames = punched
-		? ["concrete", "brick", "precast", "window-frame", "glass"]
-		: scene.details.length ? ["concrete", "glass", "bronze", "opaque"] : ["concrete"];
+	// Whatever the design declared, plus the names the legacy vocabulary uses. A grammar that
+	// declares nothing produces exactly the set it always did.
+	const declaredMaterials = new Map((scene.declared_materials ?? []).map((material) => [material.id, material]));
+	const usedMaterialNames = [...new Set([
+		...(punched
+			? ["concrete", "brick", "precast", "window-frame", "glass"]
+			: scene.details.length ? ["concrete", "glass", "bronze", "opaque"] : ["concrete"]),
+		...declaredMaterials.keys(),
+	])];
 	const pbrMaps = punched ? createFacadePbrMaps({ grammar: scene.grammar, resolution: 2048 }) : null;
 	const pbrTextures = {};
 	const textureProvenance = [];
@@ -456,7 +487,7 @@ export async function writeEnrichedGlb(scene, outputPath, { approvedRoot } = {})
 			textureProvenance.push({ material: materialName, channel, width: map.width, height: map.height, sha256: map.sha256, grammar_sha256: map.grammar_sha256 });
 		}
 	}
-	const materials = Object.fromEntries(usedMaterialNames.map((name) => [name, createMaterial(document, name, pbrTextures[name])]));
+	const materials = Object.fromEntries(usedMaterialNames.map((name) => [name, createMaterial(document, name, pbrTextures[name], declaredMaterials.get(name))]));
 	const gltfScene = document.createScene("enriched-scene");
 	document.getRoot().setDefaultScene(gltfScene);
 

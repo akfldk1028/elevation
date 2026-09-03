@@ -1,4 +1,5 @@
 import { TERMINAL_MATERIAL_CHOICES, TERMINAL_PROJECTION, TERMINAL_WORDS } from "../../facade-vocabulary.mjs";
+import { deriveDeclaredMaterials } from "../../declared-material.mjs";
 
 export class FacadeGrammarError extends Error {
 	constructor(message) {
@@ -104,6 +105,11 @@ function parseParamValue(text, label) {
 	if (!PARAM_SET.has(text)) fail(`${label} is not a supported symbol argument: ${text}`);
 	return /^\d+$/.test(text) ? Number(text) : text;
 }
+
+// The ids this grammar declares, set for the length of one parse. Parsing is synchronous
+// and single-pass, so a module-scoped set is honest here and threading one lookup through
+// parseRule and parseAlternative would be noise.
+let declaredMaterialIds = new Set();
 
 function record(value, label, allowed) {
 	if (!value || typeof value !== "object" || Array.isArray(value)
@@ -286,8 +292,8 @@ function parseAlternative(value, label, symbols) {
 		// Absent means "whatever this member is usually made of", which is what every grammar
 		// written before this field existed means, so the default has to stay the table's.
 		const material = alternative.material ?? null;
-		if (material !== null && !TERMINAL_MATERIAL_CHOICES.includes(material)) {
-			fail(`${label}.material must be one of ${TERMINAL_MATERIAL_CHOICES.join(", ")}`);
+		if (material !== null && !TERMINAL_MATERIAL_CHOICES.includes(material) && !declaredMaterialIds.has(material)) {
+			fail(`${label}.material must be one of ${TERMINAL_MATERIAL_CHOICES.join(", ")} or a material this grammar declares`);
 		}
 		return Object.freeze({ when, guard, terminal: alternative.terminal, inset_m: inset, depth_m: depth, rise_to: riseTo, reach, material, grade });
 	}
@@ -337,10 +343,20 @@ function parseAlternative(value, label, symbols) {
 }
 
 export function parseFacadeGrammar(input) {
-	const program = record(input, "facade grammar", new Set(["schema_version", "concept_id", "start", "rules", "design_rationale"]));
+	const program = record(input, "facade grammar", new Set(["schema_version", "concept_id", "start", "rules", "design_rationale", "materials"]));
 	if (program.schema_version !== "arr.elevation3d.facade-grammar.v3") fail("schema_version is unsupported");
 	if (typeof program.concept_id !== "string" || !ID.test(program.concept_id)) fail("concept_id is not a safe identifier");
 	if (typeof program.start !== "string" || !SYMBOL.test(program.start)) fail("start is not a symbol name");
+	// The material list was four words an author could only choose among; one copying a bronze
+	// rainscreen wrote `brick` to borrow its hue and said so. A grammar may now DECLARE its
+	// materials in an architect's terms - substance, lightness, hue, finish, joint - and every
+	// number the pipeline needs is derived from those words in declared-material.mjs.
+	let declaredMaterials = [];
+	if (program.materials !== undefined && program.materials !== null) {
+		try { declaredMaterials = deriveDeclaredMaterials(program.materials); }
+		catch (error) { fail(error.message); }
+	}
+	declaredMaterialIds = new Set(declaredMaterials.map((material) => material.id));
 	// A provider that enforces strict structured output cannot describe an open map,
 	// so a grammar may arrive as a list of named rules. Both shapes mean the same graph.
 	const rules = Array.isArray(program.rules)
@@ -378,6 +394,9 @@ export function parseFacadeGrammar(input) {
 		start: program.start,
 		rules: Object.freeze(parsed),
 		design_rationale: Object.freeze(rationale),
+		// Absent unless the author declared any, so a grammar written before this exists is
+		// the same frozen object it always was.
+		...(declaredMaterials.length ? { materials: Object.freeze(declaredMaterials) } : {}),
 	});
 }
 

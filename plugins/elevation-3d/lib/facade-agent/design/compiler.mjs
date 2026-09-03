@@ -65,6 +65,12 @@ export async function compileFacadeDesign({ outputRoot, candidate, context, prog
 			mesh: candidate.mesh, floorGuides: candidate.floor_guides,
 			facadePlanes: candidate.facade_segment_authority,
 			typedPrimitives: resolved.primitives,
+			// The materials this design declared, so a member made of one gets a glTF material
+			// with the substance's own factors instead of dying on a lookup in a fixed table.
+			// Narrowed on shape, not on schema version: a v2 program carries a `materials` field
+			// of its own with an entirely different meaning, and reading it as declarations threw
+			// inside the GLB writer with no hint of where it came from.
+			declaredMaterials: (program.materials ?? []).filter((material) => typeof material?.id === "string" && typeof material?.axon_pbr === "string"),
 		});
 		const glb = await writeEnrichedGlb(scene, join(versionDir, "facade.glb"), { approvedRoot: root });
 		const manifestBase = {

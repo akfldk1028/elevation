@@ -404,9 +404,15 @@ function competitionMaterials(root, palette, options = {}) {
 		const originals = Array.isArray(object.material) ? object.material : [object.material];
 		const roles = originals.map((material) => semanticRole(object, material));
 		for (const role of roles) counts[role] += object.geometry.getAttribute("position")?.count ?? 0;
-		const fills = roles.map((role) => new THREE.MeshBasicMaterial({
+		// A member is painted by its MATERIAL when the palette names one, and by its role
+		// otherwise. Four roles cannot separate two materials that share one - a brick field
+		// and the mass behind it are both `opaque` and print as one tone, which is how a
+		// scheme's material story stayed invisible on the sheet. Presets written before this
+		// carry no `materials`, so they paint exactly as they did.
+		const fills = roles.map((role, index) => new THREE.MeshBasicMaterial({
 			name: role,
-			color: palette.roles[role].elevation_fill,
+			color: palette.materials?.[String(originals[index]?.name ?? "").toLowerCase()]?.elevation_fill
+				?? palette.roles[role].elevation_fill,
 			side: THREE.DoubleSide,
 			depthWrite: true,
 			transparent: false,
