@@ -163,3 +163,23 @@ test("rejects a dimension manifest for a different named elevation before starti
 		view: "right",
 	}), /right dimension manifest required/);
 });
+
+// The plan's cut line is deliberate ink, and the seam detector was prosecuting the canyon
+// between the two ribbon strokes a thin member leaves - the mechanism behind cw2, the
+// failed skin and the streamline scheme, refuted-eight-hypotheses deep before a mesh probe
+// at the seam pixels named it. The mask is the pen's own footprint.
+test("cut-line ink mask covers the stroke and its canyon, and nothing far away", async () => {
+	const { cutLineInkMask } = await import("../plugins/elevation-3d/lib/elevation-presentation-validation.mjs");
+	// Two parallel vertical strokes 6 px apart, like the twin edges of an 0.08 m member.
+	const mask = cutLineInkMask([[100, 10, 100, 90], [106, 10, 106, 90]], 4, 200, 100);
+	assert.ok(mask, "segments produce a mask");
+	const at = (x: number, y: number) => mask![y * 200 + x];
+	assert.equal(at(100, 50), 1, "on the stroke");
+	assert.equal(at(103, 50), 1, "the canyon between the strokes is covered");
+	assert.equal(at(110, 50), 1, "the stroke's fringe is covered");
+	assert.equal(at(120, 50), 0, "ten pixels clear of the ink is not");
+	assert.equal(at(100, 5), 0, "beyond the segment ends is not");
+	assert.equal(cutLineInkMask(null, 4, 10, 10), null, "no segments, no mask - old manifests unchanged");
+	assert.equal(cutLineInkMask([], 4, 10, 10), null);
+	assert.equal(cutLineInkMask([[1, 1, 2, 2]], 0, 10, 10), null, "zero-width ink masks nothing");
+});

@@ -256,7 +256,39 @@ function strongEdgeLimit(typedFacadeArtifact) {
 	return typedFacadeArtifact ? PRESENTATION_BOUNDS.strongEdgeDensity.typed : PRESENTATION_BOUNDS.strongEdgeDensity.untyped;
 }
 
-function persistedSeamMetrics(base, material, depth, normal, width, height, bounds, near, far) {
+/**
+ * Pixels the plan's own pen covered. The cut line is deliberate ink - 4 px ribbons drawn
+ * along every triangle/plane intersection - and a thin member crossing the cut leaves two
+ * such strokes a pixel-canyon apart. The canyon satisfies every seam condition (ink beside
+ * it is the gradient, the cut plane is the "one plane", the glass either side is the "same
+ * material"), which is how cw2, the failed skin and the streamline scheme all died on
+ * seams that eight hypotheses and a controlled member-material A/B could not move: the
+ * defect being measured was the drawing. A stroke the renderer drew on purpose cannot be a
+ * triangulation defect, and anything under it is hidden from a human reader anyway - so
+ * the detector skips the ink's footprint and keeps firing everywhere else.
+ */
+export function cutLineInkMask(segmentsPx, widthPx, width, height) {
+	if (!Array.isArray(segmentsPx) || !segmentsPx.length || !(widthPx > 0)) return null;
+	const mask = new Uint8Array(width * height);
+	// Half the stroke, plus the Sobel radius and the antialiased fringe the stroke bleeds.
+	const radius = widthPx / 2 + 2;
+	for (const segment of segmentsPx) {
+		if (!Array.isArray(segment) || segment.length !== 4 || segment.some((value) => !Number.isFinite(value))) continue;
+		const [x0, y0, x1, y1] = segment;
+		const steps = Math.max(1, Math.ceil(Math.hypot(x1 - x0, y1 - y0)));
+		for (let step = 0; step <= steps; step += 1) {
+			const x = x0 + ((x1 - x0) * step) / steps, y = y0 + ((y1 - y0) * step) / steps;
+			for (let dy = -Math.ceil(radius); dy <= radius; dy += 1) for (let dx = -Math.ceil(radius); dx <= radius; dx += 1) {
+				if (dx * dx + dy * dy > radius * radius) continue;
+				const px = Math.round(x + dx), py = Math.round(y + dy);
+				if (px >= 0 && px < width && py >= 0 && py < height) mask[py * width + px] = 1;
+			}
+		}
+	}
+	return mask;
+}
+
+function persistedSeamMetrics(base, material, depth, normal, width, height, bounds, near, far, inkMask = null) {
 	const sameMaterial = (left, right) => material[left] === material[right] && material[left + 1] === material[right + 1] && material[left + 2] === material[right + 2];
 	const background = (offset) => material[offset] === 0 && material[offset + 1] === 0 && material[offset + 2] === 0;
 	const luminance = (offset) => 0.2126 * base[offset] + 0.7152 * base[offset + 1] + 0.0722 * base[offset + 2];
@@ -264,6 +296,7 @@ function persistedSeamMetrics(base, material, depth, normal, width, height, boun
 	let count = 0;
 	for (let y = bounds.min_y + 7; y <= bounds.max_y - 7; y += 2) for (let x = bounds.min_x + 7; x <= bounds.max_x - 7; x += 2) {
 		const offset = (y * width + x) * 3;
+		if (inkMask && inkMask[y * width + x]) continue;
 		if (background(offset)) continue;
 		if (![[-6, 0], [6, 0], [0, -6], [0, 6]].every(([dx, dy]) => sameMaterial(offset, ((y + dy) * width + x + dx) * 3))) continue;
 		const at = (dx, dy) => luminance(offset + (dy * width + dx) * 3);
@@ -649,7 +682,8 @@ export async function validateCompetitionPlanTopArtifact({ artifact, sourceMesh,
 			]);
 			const measured = rasterMetrics(baseImage.data, baseImage.info.width, baseImage.info.height);
 			const seams = persistedSeamMetrics(baseImage.data, materialImage.data, depthImage.data, normalImage.data,
-				baseImage.info.width, baseImage.info.height, measured.bounds, manifest.camera.frustum.near, manifest.camera.frustum.far);
+				baseImage.info.width, baseImage.info.height, measured.bounds, manifest.camera.frustum.near, manifest.camera.frustum.far,
+				cutLineInkMask(manifest?.cut_line?.segments_px, manifest?.cut_line?.width_px, baseImage.info.width, baseImage.info.height));
 			rasterDiagnostics = {
 				total_edge_density: measured.total_edge_density,
 				strong_edge_density: measured.strong_edge_density,
