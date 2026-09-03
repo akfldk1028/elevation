@@ -146,3 +146,57 @@ export function createFacadePbrMaps({ grammar, resolution }) {
 		},
 	};
 }
+
+/**
+ * Maps for a material an author DECLARED.
+ *
+ * The generator above knows two substances by name because they were the only two the
+ * vocabulary had. A declared material has no name the code knows - that is the point of
+ * declaring it - so its surface is derived from the same words the rest of its numbers come
+ * from: the tint and finish give the grain, and `joint_m` draws the module it comes in.
+ *
+ * Two things depended on this. A facade of only declared materials carried no maps at all,
+ * so the PBR pass rendered identically with them switched off and PBR_EVIDENCE_MISSING fired
+ * on a design that was not at fault. And the joint an author declares was, until now, a
+ * number nothing drew - the very distinction one of them argued carries a building in
+ * greyscale: "the difference between sheet metal and cast concrete in a drawing has never
+ * been hue, it is joint frequency."
+ */
+export function createDeclaredMaterialMaps({ material, resolution = 512, metresAcross = 6 }) {
+	if (!Number.isSafeInteger(resolution) || resolution < 8) throw new TypeError("declared material texture resolution invalid");
+	const hash = sha256(JSON.stringify(material));
+	const tint = [1, 3, 5].map((offset) => parseInt(material.elevation_fill.slice(offset, offset + 2), 16));
+	// The joint in pixels, and how wide its shadow is. A monolithic material draws none.
+	const pitch = material.joint?.pitch_m ? Math.max(8, Math.round((material.joint.pitch_m / metresAcross) * resolution)) : 0;
+	const jointWidth = pitch ? Math.max(1, Math.round(resolution / 512)) : 0;
+	const onJoint = (x, y) => pitch > 0 && (x % pitch < jointWidth || y % pitch < jointWidth);
+	// Deterministic grain: the same declaration always produces the same surface, which is
+	// what lets a render be compared with its own baseline.
+	const grain = (x, y) => {
+		const value = Math.sin((x * 12.9898 + y * 78.233) * 0.017) * 43758.5453;
+		return value - Math.floor(value);
+	};
+	const amplitude = material.texture_intensity;
+	const base = encodePng(resolution, resolution, (x, y) => {
+		if (onJoint(x, y)) return [...tint.map((channel) => Math.round(channel * 0.55)), 255];
+		const mix = 1 + (grain(x, y) - 0.5) * amplitude * 2;
+		return [...tint.map((channel) => Math.max(0, Math.min(255, Math.round(channel * mix)))), 255];
+	});
+	const relief = material.normal_intensity;
+	const normal = encodePng(resolution, resolution, (x, y) => {
+		if (onJoint(x, y)) return [128, Math.round(128 - 90 * relief * 4), 255, 255];
+		const slope = (grain(x, y) - 0.5) * relief * 2;
+		return [Math.round(128 + slope * 60), Math.round(128 - slope * 60), 255, 255];
+	});
+	const metallicRoughness = encodePng(resolution, resolution, (x, y) => [
+		0,
+		Math.round(255 * Math.max(0, Math.min(1, material.roughness + (onJoint(x, y) ? 0.1 : (grain(x, y) - 0.5) * amplitude)))),
+		Math.round(255 * material.metalness),
+		255,
+	]);
+	return {
+		baseColor: mapRecord(`${material.id}-base-color`, resolution, hash, base),
+		normal: mapRecord(`${material.id}-normal`, resolution, hash, normal),
+		metallicRoughness: mapRecord(`${material.id}-metallic-roughness`, resolution, hash, metallicRoughness),
+	};
+}

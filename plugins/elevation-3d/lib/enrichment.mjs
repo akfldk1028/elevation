@@ -5,7 +5,7 @@ import { Document, Material, NodeIO } from "@gltf-transform/core";
 import { PUNCHED_FACADE_SYSTEM } from "./facade-grammar.mjs";
 import { atomicWrite } from "./facade-agent/path-safety.mjs";
 import { buildPunchedFacadeDetails, buildTypedFacadeDetails, PUNCHED_FACADE_BUDGETS, TYPED_FACADE_GRAMMAR } from "./facade-agent/punched-facade.mjs";
-import { createFacadePbrMaps } from "./facade-agent/procedural-materials.mjs";
+import { createDeclaredMaterialMaps, createFacadePbrMaps } from "./facade-agent/procedural-materials.mjs";
 
 const DETAIL_LIMITS = {
 	frame_depth_m: [0.05, 0.25],
@@ -485,6 +485,23 @@ export async function writeEnrichedGlb(scene, outputPath, { approvedRoot } = {})
 				.setMimeType(map.mimeType)
 				.setExtras({ sha256: map.sha256, grammar_sha256: map.grammar_sha256, generator: map.generator });
 			textureProvenance.push({ material: materialName, channel, width: map.width, height: map.height, sha256: map.sha256, grammar_sha256: map.grammar_sha256 });
+		}
+	}
+	// A declared material carries no name the texture generator knows, so its surface is
+	// derived from the same words its numbers are: tint and finish give the grain, `joint_m`
+	// draws the module. Without this a facade of only declared materials had no maps at all,
+	// the PBR pass rendered identically with maps off, and PBR_EVIDENCE_MISSING fired on a
+	// design that was not at fault.
+	for (const [name, declared] of declaredMaterials) {
+		const maps = createDeclaredMaterialMaps({ material: declared });
+		pbrTextures[name] = {};
+		for (const channel of ["baseColor", "normal", "metallicRoughness"]) {
+			const map = maps[channel];
+			pbrTextures[name][channel] = document.createTexture(map.name)
+				.setImage(map.data)
+				.setMimeType(map.mimeType)
+				.setExtras({ sha256: map.sha256, grammar_sha256: map.grammar_sha256, generator: map.generator });
+			textureProvenance.push({ material: name, channel, width: map.width, height: map.height, sha256: map.sha256, grammar_sha256: map.grammar_sha256 });
 		}
 	}
 	const materials = Object.fromEntries(usedMaterialNames.map((name) => [name, createMaterial(document, name, pbrTextures[name], declaredMaterials.get(name))]));
