@@ -20,7 +20,7 @@ export const TERMINALS = TERMINAL_WORDS;
 // because every author so far has had to compute slab-relative z by hand, per facet, over
 // 37 facets whose bottoms sit at arbitrary heights - the arithmetic CGA does not have,
 // because `comp(f)` hands each facet a frame of its own and floors are addressed by ordinal.
-export const AXES = Object.freeze(["u", "z", "storey"]);
+export const AXES = Object.freeze(["u", "z", "storey", "layer"]);
 /**
  * The datums a member may be carried up to, past the top of its own facet.
  *
@@ -301,7 +301,7 @@ function parseAlternative(value, label, symbols) {
 	if ((alternative.grade ?? null) !== null) fail(`${label}.grade belongs to a terminal`);
 	if ((alternative.split ?? null) === null) fail(`${label} is neither a split nor a terminal`);
 	const split = record(alternative.split, `${label}.split`, new Set(["axis", "parts"]));
-	if (!AXES.includes(split.axis)) fail(`${label}.split.axis must be u, z or storey`);
+	if (!AXES.includes(split.axis)) fail(`${label}.split.axis must be u, z, storey or layer`);
 	const parts = list(split.parts, `${label}.split.parts`, 1, BOUNDS.maxParts)
 		.map((part, index) => parsePart(part, `${label}.split.parts[${index}]`, symbols));
 	// A storey split carries no sizes of its own: the slab lines decide where the cuts fall,
@@ -311,6 +311,21 @@ function parseAlternative(value, label, symbols) {
 	if (split.axis === "storey") {
 		if (parts.length !== 1) fail(`${label}.split on storey takes exactly one part; the slab lines decide the cuts and that part is invoked once per storey the scope crosses`);
 		if (parts[0].repeat) fail(`${label}.split on storey is already a repeat over the storeys, so its part cannot carry one`);
+	}
+	// A layer split does not divide the scope at all: every part receives the WHOLE scope
+	// and derives its own construction over it, stacked in depth by the members' own
+	// depth_m. This is the operator the vocabulary was missing every time an element was a
+	// composition rather than a word - a louvre screen standing in front of glazing, a
+	// balcony that is a slab plus a rail over an opening - and every one of those was
+	// answered until now by an engineer hand-plumbing a new terminal. Sizes carry no
+	// meaning across layers, so only the floating "~" form is accepted; an absolute or
+	// fractional size here would be a number the engine ignores, which is the
+	// silent-wrong-answer class this grammar keeps paying for.
+	if (split.axis === "layer") {
+		for (const part of parts) {
+			if (part.size.kind !== "float") fail(`${label}.split on layer takes only floating "~" sizes: every layer receives the whole scope, so a sized layer would be a number the engine ignores`);
+			if (part.repeat) fail(`${label}.split on layer cannot repeat a layer`);
+		}
 	}
 	const repeats = parts.filter((part) => part.repeat);
 	if (repeats.length > 1) fail(`${label}.split holds more than one repeat part`);

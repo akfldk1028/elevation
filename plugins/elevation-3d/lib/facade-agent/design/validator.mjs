@@ -227,6 +227,11 @@ export function validateResolvedFacadeProgram({ program, context, resolved } = {
 			for (let rightIndex = leftIndex + 1; rightIndex < resolved.primitives.length; rightIndex += 1) {
 				const right = resolved.primitives[rightIndex];
 				if (right.segment_id !== left.segment_id || !collidable.has(right.kind)) continue;
+				// Members of different layers overlap by declaration - a layer split stacks
+				// whole constructions in depth, the way a curtain wall's framing already sits
+				// over its glass. Within one layer everything collides exactly as before, and
+				// a grammar without layer splits tags nothing, so nothing already written moves.
+				if ((left.layer ?? 0) !== (right.layer ?? 0)) continue;
 				const overlap = rectanglesOverlap(left.local_bounds, right.local_bounds);
 				if (overlap > 0) measure("PRIMITIVE_OVERLAP", rightIndex, overlap, 0);
 				else if ((left.kind === "door" || left.kind === "window") && (right.kind === "door" || right.kind === "window")) {

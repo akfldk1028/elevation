@@ -151,6 +151,7 @@ function chooseAlternative(alternatives, scope) {
 export function deriveFacadePrimitives({ grammar, segment, storeys, entrance = null, buildingUnderside = null } = {}) {
 	if (!grammar?.rules || !segment) fail("a parsed grammar and a segment scope are required");
 	const primitives = [];
+	let layerCount = 0;
 	const storeyOf = (zMin) => storeys.find((storey) => zMin >= storey.z_min - 1e-6 && zMin < storey.z_max - 1e-6)?.storey ?? null;
 	// The building's own top line, which is the storey table's and not any one facet's.
 	// Rounded like every other emitted coordinate: three storeys of 3.3 sum to
@@ -242,11 +243,24 @@ export function deriveFacadePrimitives({ grammar, segment, storeys, entrance = n
 				...(alternative.material ? { material: alternative.material } : {}),
 				family_id: familyId(symbol, scope.param),
 				storey: storeyOf(zMin),
+				...(scope.layer ? { layer: scope.layer } : {}),
 				...(kind === "door" ? { role: "primary_entrance" } : {}),
 			});
 			return;
 		}
 		const { axis, parts } = alternative.split;
+		// A layer split hands EVERY part the whole scope: constructions stacked in depth,
+		// not regions divided in the plane. Each part gets its own tag so the validator
+		// knows the overlap is declared - members within one layer still collide as they
+		// always did, and a grammar with no layer splits emits primitives with no tag at
+		// all, byte-identical to what it emitted before this axis existed.
+		if (axis === "layer") {
+			for (const part of parts) {
+				layerCount += 1;
+				walk(part.symbol, { ...scope, layer: layerCount, param: part.arg, depth: scope.depth + 1 });
+			}
+			return;
+		}
 		// The slab lines are the cut, not the author's arithmetic. Everything a storey split
 		// hands down is bounded by two lines the mass already has, so a member placed inside
 		// one cannot straddle a slab however its fractions land, and the author never writes

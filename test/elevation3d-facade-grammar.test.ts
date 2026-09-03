@@ -616,3 +616,43 @@ test("an opening cannot be carried below its facet either", () => {
 		assert.throws(() => grammar({ Facade: [{ terminal, rise_to: "building_underside" }] }), FacadeGrammarError);
 	}
 });
+
+// The axis that does not divide: every part of a layer split receives the whole scope,
+// stacked in depth - the operator that lets a composition (screen over glazing, slab plus
+// rail) be said without an engineer plumbing a new terminal for it.
+test("a layer split hands every part the whole scope, tagged", () => {
+	const out = deriveFacadePrimitives({
+		grammar: grammar({
+			Facade: [{ split: { axis: "layer", parts: [{ size: "~1", symbol: "Glazing" }, { size: "~1", symbol: "Screen" }] } }],
+			Glazing: [{ terminal: "glass", inset_m: 0.04 }],
+			Screen: [{ split: { axis: "u", parts: [{ size: "~0.3", symbol: "Fin", repeat: true }] } }],
+			Fin: [{ terminal: "louvre", depth_m: 0.3 }],
+		}),
+		segment: SEGMENT, storeys: STOREYS,
+	}) as any[];
+	const glass = out.filter((p) => p.kind === "window");
+	const fins = out.filter((p) => p.kind === "louvre");
+	assert.equal(glass.length, 1);
+	assert.ok(fins.length >= 4, "the screen tiles the same width the glass occupies");
+	// Both layers span the same placeable field - the glass was not narrowed by the screen.
+	assert.ok(Math.abs(glass[0].local_bounds.u_min - 0.34) < 1e-6, "glass inset from the shared scope, not from a half");
+	assert.equal(glass[0].layer, 1);
+	assert.ok(fins.every((p) => p.layer === 2), "each layer part carries its own tag");
+
+	// A grammar with no layer split emits primitives with NO layer field at all, so every
+	// retained resolution digest stays byte-identical.
+	const [plain] = deriveFacadePrimitives({
+		grammar: grammar({ Facade: [{ terminal: "band", depth_m: 0.1 }] }),
+		segment: SEGMENT, storeys: STOREYS,
+	}) as any[];
+	assert.equal("layer" in plain, false);
+});
+
+test("a layer split refuses sized or repeated layers", () => {
+	assert.throws(() => grammar({
+		Facade: [{ split: { axis: "layer", parts: [{ size: "1.0", symbol: "Wall" }] } }], Wall: WALL,
+	}), FacadeGrammarError, "an absolute size on a layer is a number the engine ignores");
+	assert.throws(() => grammar({
+		Facade: [{ split: { axis: "layer", parts: [{ size: "~1", symbol: "Wall", repeat: true }] } }], Wall: WALL,
+	}), FacadeGrammarError);
+});

@@ -194,6 +194,27 @@ the scope IS the slab line, which it never was on a raw facet. A fraction will n
 a facet that crosses a storey by only a few centimetres, a fraction of it is smaller than
 the clearance and the opening still intrudes.
 
+There is a fourth axis, and it does not divide the scope at all. "axis": "layer" hands
+EVERY part the WHOLE scope: constructions stacked in depth, not regions side by side.
+Write two or more parts, give each a floating "~" size (any other size is refused - a
+layer has no width to take), and each part derives its own full composition over the same
+rectangle; members of different layers are allowed to overlap by declaration, while
+everything inside one layer still obeys every collision and clearance rule it always did.
+This is how an element that is a COMPOSITION gets said without waiting for a new word: a
+screen of louvres standing in front of a glazed wall is a layer split of [Glazing, Screen];
+a balcony is a slab band and a rail layered over the opening behind it. Depth is yours to
+separate - give the front layer's members the projection that puts them in front, because
+two members at the same depth in the same place will fight in the drawing, and the render
+gates will show it. And glass belongs to ONE layer: the opening ratio sums every pane you
+draw, so glazing repeated in two layers counts twice and reports a ratio the elevation
+does not have. Keep a front layer POROUS, and keep the glass it covers spread across the
+building: the render gates check that every material role shows pixels in EVERY view,
+including both diagonal axons, and a screen dense enough to hide the glass behind it - or
+glazing confined to the faces one diagonal cannot see - fails as a solid wall from that
+angle. Measured: 0.30 m pitch with 0.30 m deep fins showed no glass at all in one axon,
+and thinning the screen alone did not save a scheme whose glazing sat only on the wide
+facets.
+
 This is also how a building gets a line that runs right through it. Put a band or a
 cornice hard against the top of a storey scope and every facet draws it at the SAME
 height, because that height is the slab and not each facet's own top. Without the datum a
@@ -483,7 +504,10 @@ facade has no parts. Give it parts instead.
   screen its own depth (0.15-0.35 m) so it separates from the glass behind, keep members
   thin and the rhythm tight (0.1-0.3 m pitch via repeat), and let the screen skip where
   the facade wants a clear view. A screen is one gesture per face, not decoration
-  scattered on every opening.
+  scattered on every opening. To actually put the screen IN FRONT of a glazed field -
+  both occupying the same scope - use the layer axis: a split partitions its scope
+  exactly once, so without a layer the screen and the glazing would have to share the
+  width, which is a striped wall and not a screen over glass.
 - \`arch\` is the one terminal that is not a box: the rectangle you give it is the arch's
   bounding frame, drawn as a curved band whose springings sit at the bottom corners and
   whose crown touches the top edge. Use it where a lintel would go - directly over an
