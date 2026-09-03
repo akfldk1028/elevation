@@ -224,6 +224,14 @@
 					"intent": "Transcribed from a freely generated perspective by an author told only that the massing was fixed and everything else was theirs. Five declared materials: ink-panel (pressed aluminium tray, powder-coated red iron oxide), bronze-surround, oak-reveal, warm-vision-glass and dark-coping. The author corrected its own coping mid-run - a folded zinc cap IS thin folded sheet, not solid metal - and refused a joint course I proposed to satisfy a gate, on the grounds that the render's joints are open joints and five projecting string courses per facet would draw lines the elevation does not have.",
 					"grammar": "grammar-image-020-open2.json",
 					"renderDir": "render-020-zinc2"
+				},
+				{
+					"id": "stone-monolith-004",
+					"title": "Stone monolith",
+					"candidate": "creative-004",
+					"intent": "Five declared materials on the cleft block: fold-precast and core-cast (two concretes the author refused to merge), plinth-stone, slot-glass and reveal-bronze. It failed one render gate on one pair in one view - the bronze reveals and the stone plinth read as a single material on the elevation that faces away from the sun - and the author repaired it by changing a single word, mid-dark to mid, on the argument that a reveal is the darkest place on a building and a dark metal put there is not a material but the shadow it stands in. Role separation on that face 4.76 to 31.53, geometry untouched.",
+					"grammar": "grammar-image-004-open3.json",
+					"renderDir": "render-004-open3"
 				}
 			]
 		}

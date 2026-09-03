@@ -1350,3 +1350,38 @@ the output before commissioning a transcription.
 
 Suite 816 green (11/11 in the presentation smoke tests, which now hold the session binding).
 Catalogue has a sixth section, "Materials the author named".
+
+**The monolith's collapse, closed by its author in one word.** Handed the measurement rather
+than a fix, the author moved `reveal-bronze` from `mid-dark` to `mid` and changed nothing
+else - role pixel counts and triangle counts identical across all eight views, so a
+controlled A/B on one declaration. right `bronze:opaque` 4.76 -> **31.53**, every view's P05
+rose, full render accepted at `render-004-open3` (591 primitives, zero design faults). Its
+argument is the part to keep: *a reveal is the darkest place on a building - 180 mm deep,
+facing sideways, never rain-washed - so a dark metal put there is not a material, it is the
+shadow it stands in.* It moved the bronze rather than the stone because the stone is the
+universal neighbour (ground course AND every cill, touching all four roles) with no free step.
+
+Its measurements sharpen the shade rule: hue is not merely compressed on a shaded face, it is
+annihilated - `plinth-stone`, declared `warm-neutral` with R-B = 17 in its tint, renders there
+as (38.39, 38.39, 38.30), chroma 0.09 - and the whole 6.6x repair landed in one channel
+(R +73%, G +10%, B +4%). Against this gate `finish` contributes nothing, `hue` nothing in
+shade, `substance` only picks the role, and lightness is the whole of it.
+
+**And a scare about `6e98fd9` that checked out clean.** The author flagged that the same
+grammar with identical declarations measured `bronze:opaque` 16.82 in `render-004-monolith`
+and 4.76 in `render-004-mono2` five minutes apart, the difference being the declared-material
+texture maps (6 images vs 21). Checked: monolith had already FAILED `PBR_EVIDENCE_MISSING`,
+for exactly those missing surfaces, so its 16.82 was measured on a building with no material
+surfaces and was never an alternative verdict. The texture pass did not invent a failure; it
+made the render honest enough to be judged. Only schemes authored since today are affected,
+because legacy four-word materials always had maps.
+
+**Two authoring-time gaps this cost a full render to find.** `elevation_fill` is the declared
+lightness verbatim, so two materials on the same lightness stop are the same grey in a drawing
+this project says is read in value first - and nothing measures it; a free authoring check
+would have caught this before any render was spent. And the five lightness stops
+(0.16 / 0.34 / 0.55 / 0.78 / 0.90) put two below mid and three at or above it, which is
+backwards for architecture: the author had five materials, four usable stops, and the
+collision landed on the two it cared most about. A stop near 0.24 and one near 0.44 before
+anything above 0.55. Also raised: `design_rationale[i]` is capped at 512 characters while
+`reads_as` gets 1200, and the rationale is the only field where an author explains a decision.
