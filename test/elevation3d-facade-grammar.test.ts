@@ -7,7 +7,9 @@ import {
 	predicateHolds,
 } from "../plugins/elevation-3d/lib/facade-agent/design/grammar/contract.mjs";
 import { deriveFacadePrimitives } from "../plugins/elevation-3d/lib/facade-agent/design/grammar/derive.mjs";
-import { openingZones } from "../plugins/elevation-3d/lib/facade-agent/design/grammar/prompt.mjs";
+import { FACADE_GRAMMAR_V3_SCHEMA, openingZones } from "../plugins/elevation-3d/lib/facade-agent/design/grammar/prompt.mjs";
+import { DECLARED_MATERIAL_ID_PATTERN } from "../plugins/elevation-3d/lib/facade-agent/declared-material.mjs";
+import { TERMINAL_MATERIAL_CHOICES } from "../plugins/elevation-3d/lib/facade-agent/facade-vocabulary.mjs";
 
 const STOREYS = [1, 2, 3, 4, 5].map((storey) => ({ storey, z_min: (storey - 1) * 3.3, z_max: storey * 3.3 }));
 const SEGMENT = {
@@ -716,4 +718,28 @@ test("a declared material is refused unless its axes are the ones a specificatio
 	assert.throws(() => withMaterials([{ id: "Oxide Panel", substance: "metal", lightness: "mid", hue: "warm", finish: "matte" }]), FacadeGrammarError);
 	// A member may not name a material the grammar never declared.
 	assert.throws(() => grammar({ Fin: [{ terminal: "pilaster", depth_m: 0.2, material: "invented-here" }] }, "Fin"), FacadeGrammarError);
+});
+
+// The schema and the parser drift apart, repeatedly and silently: `band` was once absent
+// from the prose list while the schema admitted it, and the alternative's `required` list
+// lost five of its ten keys for two days. This is the same failure on `material`. The
+// description was updated to tell an author to name a declared id and the enum beside it
+// was not, so the schema forbade the one thing it asked for - and because a declared id is
+// the author's own word, no enum can ever hold it. Under strict structured output that made
+// a declared material unreachable for a live provider call; nothing caught it because no
+// live call ran, and a blind author found it by reading the schema.
+test("the schema lets a terminal name a declared material, not just the legacy four", () => {
+	const material = FACADE_GRAMMAR_V3_SCHEMA.$defs.alternative.properties.material as Record<string, unknown>;
+	assert.equal(material.enum, undefined, "an enum cannot hold a name the author invents");
+	assert.equal(material.pattern, DECLARED_MATERIAL_ID_PATTERN, "the schema must state the rule the parser applies, not a copy of it");
+	assert.deepEqual(material.type, ["string", "null"]);
+
+	// The one pattern has to admit both, because both are legal in that field.
+	const admits = new RegExp(material.pattern as string);
+	for (const id of ["ink-panel", "warm-vision-glass", "blackened-bronze"]) {
+		assert.ok(admits.test(id), `a declared id must satisfy the schema: ${id}`);
+	}
+	for (const legacy of TERMINAL_MATERIAL_CHOICES) {
+		assert.ok(admits.test(legacy), `a legacy word must still satisfy the schema: ${legacy}`);
+	}
 });

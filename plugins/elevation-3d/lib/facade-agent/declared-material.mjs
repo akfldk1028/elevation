@@ -60,6 +60,13 @@ export const DECLARED_MATERIAL_AXES = Object.freeze({
 
 const ID = /^[a-z][a-z0-9-]{1,39}$/;
 
+/**
+ * The same rule as a JSON Schema string, because the emitted schema has to state it and a
+ * second copy of a regex is how the schema drifts from the parser. The legacy words match
+ * it too, so one pattern admits both a declared id and `precast`.
+ */
+export const DECLARED_MATERIAL_ID_PATTERN = ID.source;
+
 function hex(h, s, l) {
 	const f = (n) => {
 		const k = (n + h / 30) % 12;
