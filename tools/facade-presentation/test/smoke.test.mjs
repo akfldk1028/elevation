@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 
 import { parseShowcaseArgs } from "../showcase/cli.mjs";
 import { AXIS_VALUES, STYLE_AXES, FACE_VALUES } from "../showcase/axes.mjs";
-import { buildCodexPrompt, buildCodexCommand, CODEX_IMAGE_TOOL, findNewestPng, NO_IMAGE_TOOL, shellQuoteArgs } from "../photo/codex-photo.mjs";
+import { buildCodexPrompt, buildCodexCommand, CODEX_IMAGE_TOOL, findNewestPng, NO_IMAGE_TOOL, parseCodexSessionId, shellQuoteArgs } from "../photo/codex-photo.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -128,6 +128,33 @@ test("codex photo: findNewestPng picks the newest post-start PNG", async () => {
 	} finally {
 		await rm(root, { recursive: true, force: true });
 	}
+});
+
+// Two photo runs started together both claimed whichever image landed first, because the
+// image was found as the newest PNG anywhere under the shared generated_images tree. Two
+// concepts for two different masses came back byte-identical from the same source path,
+// and one of them showed a building that had nothing to do with the mass it was meant to
+// dress. Codex prints a session id and writes its images into a directory of that name, so
+// an invocation can find its own image instead of the newest one.
+test("codex photo: the session id binds an invocation to its own image directory", async () => {
+	const real = [
+		"Reading additional input from stdin...",
+		"OpenAI Codex v0.147.0",
+		"--------",
+		"workdir: D:\\Data\\50_ELE\\ElevationAgent",
+		"model: gpt-5.6-sol",
+		"session id: 01a066a0-0074-70f1-8f91-fd7122fc1118",
+		"--------",
+	].join("\n");
+	assert.equal(parseCodexSessionId(real), "01a066a0-0074-70f1-8f91-fd7122fc1118");
+
+	// The prompt is echoed back in the transcript, so a session id quoted inside it must not
+	// be mistaken for this run's - that is the same shape of bug as the NO_IMAGE_TOOL
+	// sentinel the module already carries a warning about.
+	assert.equal(parseCodexSessionId("user\nwhat did session id: 01a066a0-0074-70f1-8f91-fd7122fc1118 do?"), null);
+	assert.equal(parseCodexSessionId("no session here"), null);
+	assert.equal(parseCodexSessionId(""), null);
+	assert.equal(parseCodexSessionId(undefined), null);
 });
 
 // The photo lane shipped broken because it was written and never run: on Windows the
