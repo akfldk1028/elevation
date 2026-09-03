@@ -1287,3 +1287,66 @@ recorded in the brief as author guidance (porous screens, glazing spread across 
 rather than as a porosity number that one probe happened to clear. A balcony is now a
 layer split away; the palazzo commission (rate-limited mid-flight) restarts with that
 freedom in hand. Suite 813 green.
+
+## 2026-09-03 the first declared-material building, and the photo lane was lying
+
+**`grammar-image-020-open2` is the first facade in this project built out of materials its
+author named.** A vision author, given an open brief over a freely generated perspective of
+the star prism ("this massing is fixed, everything else is yours"), declared five materials -
+`ink-panel` (pressed aluminium tray, powder-coated red iron oxide), `bronze-surround`,
+`oak-reveal`, `warm-vision-glass`, `dark-coping` - and the engine derived every colour,
+roughness, metalness, gate role and joint module from those words. 356 primitives, all eight
+views through the gates, and it clears with real margin rather than scraping: worst building
+luminance P05 21.9 against a floor of 10, worst semantic role separation 15.56 against 5.
+Rendered at `creative-020/llm-facade-subagent-v1/render-020-zinc2/`, `--palette
+competition-material`.
+
+Two author moves worth keeping. It corrected its own declaration mid-run (`dark-coping`
+metal -> sheet: "a folded zinc coping IS thin folded sheet, the same product family as the
+panel beside it"), and it REFUSED a repair I proposed - a joint course per storey to populate
+an empty role - because "the render's joints are OPEN joints, absence of material, and `band`
+is a projecting string course; five projecting courses per facet would draw horizontal lines
+the elevation does not have. Trading a gate failure for a false building is the wrong trade."
+It fixed the role the honest way instead, with a base course and the coping correction.
+
+`6e98fd9` gave a declared material its own texture maps. Colour, roughness and metalness were
+derived from the words but nothing drew a SURFACE, so every declared-material scheme failed
+PBR_EVIDENCE_MISSING - the flat-vs-textured pixel delta had nothing to deliver. Grain now
+scales with the finish and the declared `joint_m` is drawn as the module the material comes
+in; a monolithic declaration draws grain and no lines, which is what monolithic means.
+
+**The monolith (creative-004) failed PBR_SEMANTIC_ROLE_COLLAPSED, and the mechanism is new:
+shade compresses a declared separation about 5x.** One pair, one view - right,
+bronze:opaque, colorDistance 4.759 against a floor of 5. Its `reveal-bronze` (metal /
+mid-dark / warm / satin) and `plinth-stone` (masonry / mid-dark / warm-neutral / honed)
+derive tints 24 apart in RGB and clear every other view comfortably (front: 82.1 vs 108.1
+mean luminance). The right elevation faces away from the sun, both roles sit at 36.5 / 38.4,
+and 24 arrives at the metric as 4.76. Metalness 0.72 vs 0 and roughness 0.42 vs 0.68 are a
+large physical difference that a colour-distance metric on a shaded face cannot see, so on a
+dark elevation only LIGHTNESS separates - and these two shared it. Handed to the author with
+the measurement rather than fixed here; unlike the P05 glass floor this one is reachable by a
+declaration edit and the gate is telling the truth about the drawing.
+
+**`b1d3336` the photo lane was returning another run's image and reporting success.** Two
+concepts launched together for two different masses came back byte-identical - same md5,
+same `source` path in both results, both `ok: true` - because the generated image was located
+as the newest PNG anywhere under the shared `~/.codex/generated_images` tree. One of the two
+showed a building with nothing to do with the mass it was commissioned for, and only looking
+at the picture caught it. Codex prints `session id: <uuid>` on stderr and writes its images
+into a directory of that name, so the search is now bound to that directory;
+`parseCodexSessionId` anchors on a whole line because codex echoes its prompt back - the same
+echo that once made the `NO_IMAGE_TOOL` sentinel read its own instruction as a verdict. A run
+that cannot name its session falls back to the old scan and returns `bound: false` rather
+than leaving the caller unable to ask.
+
+**Two input traps in the same lane, both mine.** The bare mass is
+`<run_dir>/evidence/color/axon.png`; the `axon.png` at the run root is a RENDERED SCHEME, and
+feeding that to the image model closes the brief through the back door - the concept comes
+back wearing the last design. And my own prose beat the picture: I described creative-004 as
+"a battered, faceted rock that leans inward", carried from an old note, and the model drew a
+star-plan tower instead. **creative-004 is a squat, roughly cubic faceted block with a deep
+V-shaped cleft cut down into its top.** Look at the input before writing the subject, and at
+the output before commissioning a transcription.
+
+Suite 816 green (11/11 in the presentation smoke tests, which now hold the session binding).
+Catalogue has a sixth section, "Materials the author named".
