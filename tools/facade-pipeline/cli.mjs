@@ -5,7 +5,7 @@
  *   node tools/facade-pipeline/cli.mjs prepare <candidate> [--glb p --front p --axon p]
  *   node tools/facade-pipeline/cli.mjs brief   <candidate>
  *   node tools/facade-pipeline/cli.mjs check   <candidate> <grammar.json>
- *   node tools/facade-pipeline/cli.mjs render  <candidate> <grammar.json> <name> [--palette p]
+ *   node tools/facade-pipeline/cli.mjs render  <candidate> <grammar.json> <name> [--palette preset|palette.json]
  *
  * Every subcommand prints one JSON object on stdout and exits non-zero when the step did not
  * succeed - so a caller can pipe it, and a failed check cannot be mistaken for a pass by a
@@ -53,10 +53,21 @@ function flags(argv) {
 const say = (value) => process.stdout.write(`${JSON.stringify(value)}\n`);
 
 const USAGE = "usage: cli.mjs roots | prepare <candidate> | brief <candidate>"
-	+ " | check <candidate> <grammar.json> | draw <candidate> <grammar.json> <name> [--palette p]"
-	+ " | render <candidate> <grammar.json> <name> [--palette p]"
+	+ " | check <candidate> <grammar.json> | draw <candidate> <grammar.json> <name> [--palette preset|palette.json]"
+	+ " | render <candidate> <grammar.json> <name> [--palette preset|palette.json]"
 	+ " | showcase <candidate> <name> <out.png> [--wall --glass --frame --mood --face]"
 	+ " | photo <in.png> <out.png> [--subject s]";
+
+// A palette is a design decision, and until now this CLI could only pass one of four preset
+// NAMES - so an author could say which member is brick but never what brick looks like, and
+// one of them wrote `brick` on a metal rainscreen purely to borrow its hue. The palette
+// module has always accepted an object ({ preset, roles, materials }); this makes that
+// reachable: --palette may be a preset name OR a path to a JSON file the author wrote.
+async function resolvePaletteFlag(value) {
+	const requested = value ?? "competition-warm";
+	if (!/[\/.]/.test(requested)) return requested;
+	return JSON.parse(await readFile(requested, "utf8"));
+}
 
 export async function runPipelineCli(argv) {
 	const { out: flag, rest } = flags(argv);
@@ -147,7 +158,7 @@ export async function runPipelineCli(argv) {
 		}
 		const drawn = await renderFacadeScheme({
 			runDir: join(runDir, name), candidate, context, grammar,
-			palette: flag.palette ?? "competition-warm",
+			palette: await resolvePaletteFlag(flag.palette),
 		});
 		await writeFile(join(runDir, name, "composition.json"), `${JSON.stringify(drawn.composition, null, 2)}\n`, "utf8");
 		say({
@@ -161,7 +172,7 @@ export async function runPipelineCli(argv) {
 		if (!name) { say({ ok: false, error: USAGE }); return 2; }
 		const rendered = await renderFacadeScheme({
 			runDir: join(runDir, name), candidate, context, grammar,
-			palette: flag.palette ?? "competition-warm",
+			palette: await resolvePaletteFlag(flag.palette),
 		});
 		await writeFile(join(runDir, name, "composition.json"), `${JSON.stringify(rendered.composition, null, 2)}\n`, "utf8");
 		say({

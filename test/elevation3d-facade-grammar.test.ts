@@ -16,10 +16,10 @@ const SEGMENT = {
 	placeable: { u_min: 0.3, u_max: 1.9060695766 },
 };
 
-function grammar(rules: Record<string, unknown>, start = "Facade") {
+function grammar(rules: Record<string, unknown>, start = "Facade", extra: Record<string, unknown> = {}) {
 	return parseFacadeGrammar({
 		schema_version: "arr.elevation3d.facade-grammar.v3",
-		concept_id: "test-grammar", start, rules,
+		concept_id: "test-grammar", start, rules, ...extra,
 	});
 }
 
@@ -680,4 +680,40 @@ test("a grade at the start rule interpolates across the face's facets", () => {
 	assert.equal(alone.depth_m, 0.2);
 	const [untotalled] = deriveFacadePrimitives({ grammar: parsed, segment: SEGMENT, storeys: STOREYS }) as any[];
 	assert.equal(untotalled.depth_m, 0.2);
+});
+
+// The material list was four words an author could only choose among, and one copying a
+// bronze rainscreen wrote `brick` to borrow its hue - "a lie on a construction document",
+// in its own words. A grammar declares its materials now, in an architect's terms, and the
+// engine derives every number from them.
+test("a grammar declares its own materials and the engine derives their numbers", () => {
+	const parsed = grammar({ Fin: [{ terminal: "pilaster", depth_m: 0.3, material: "oxide-metal-panel" }] }, "Fin", {
+		materials: [
+			{ id: "oxide-metal-panel", substance: "metal", lightness: "mid-dark", hue: "warm", finish: "satin", joint_m: 1.1 },
+			{ id: "pale-cast-blade", substance: "cast", lightness: "pale", hue: "cool-neutral", finish: "matte", joint_m: null },
+		],
+	});
+	const [metal, cast] = parsed.materials as any[];
+	assert.equal(metal.id, "oxide-metal-panel");
+	assert.equal(metal.role, "bronze", "substance carries the gate role and nothing else in the declaration moves it");
+	assert.equal(metal.metalness > 0.5 && cast.metalness === 0, true);
+	assert.equal(metal.roughness < cast.roughness, true, "satin takes light differently from matte");
+	assert.match(metal.elevation_fill, /^#[0-9a-f]{6}$/);
+	assert.deepEqual(metal.joint, { pitch_m: 1.1 });
+	assert.equal(cast.joint, null, "a monolithic material draws no module");
+	// Value, not hue, is what a greyscale print keeps: a pale material must read lighter.
+	const luminance = (fill: string) => [1, 3, 5].reduce((sum, i) => sum + parseInt(fill.slice(i, i + 2), 16), 0);
+	assert.equal(luminance(cast.elevation_fill) > luminance(metal.elevation_fill), true);
+
+	// A grammar that declares nothing is the object it always was.
+	assert.equal("materials" in grammar({ Fin: [{ terminal: "wall" }] }, "Fin"), false);
+});
+
+test("a declared material is refused unless its axes are the ones a specification has", () => {
+	const withMaterials = (materials: unknown) => grammar({ Fin: [{ terminal: "wall" }] }, "Fin", { materials });
+	assert.throws(() => withMaterials([{ id: "x", substance: "unobtanium", lightness: "mid", hue: "warm", finish: "matte" }]), FacadeGrammarError);
+	assert.throws(() => withMaterials([{ id: "x", substance: "metal", lightness: "glowing", hue: "warm", finish: "matte" }]), FacadeGrammarError);
+	assert.throws(() => withMaterials([{ id: "Oxide Panel", substance: "metal", lightness: "mid", hue: "warm", finish: "matte" }]), FacadeGrammarError);
+	// A member may not name a material the grammar never declared.
+	assert.throws(() => grammar({ Fin: [{ terminal: "pilaster", depth_m: 0.2, material: "invented-here" }] }, "Fin"), FacadeGrammarError);
 });
