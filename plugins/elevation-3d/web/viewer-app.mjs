@@ -640,7 +640,21 @@ function renderCompetitionPlan(root, view) {
 		camera: fitted.manifest,
 		projected_bounds_m: { min: [fitted.bounds.minH, fitted.bounds.minV], max: [fitted.bounds.maxH, fitted.bounds.maxV] },
 		cut: { enabled: isPlan, elevation_m: isPlan ? settings.cut_elevation_m : null, plane_world: isPlan ? [0, 0, 1, -settings.cut_elevation_m] : null },
-		cut_line: { segment_count: cutSegments.length, width_px: cutLineWidthPx, source: isPlan ? "selected-glb-triangle-plane-intersections" : null },
+		cut_line: {
+			segment_count: cutSegments.length, width_px: cutLineWidthPx, source: isPlan ? "selected-glb-triangle-plane-intersections" : null,
+			// Where the pen actually drew, in pixels, so the seam detector can stop
+			// prosecuting its own ink: a thin member crossing the cut leaves two parallel
+			// ribbon strokes a canyon apart, and the canyon between them measures as a
+			// same-material seam on one plane - it took eight refuted hypotheses and a
+			// mesh probe at the seam coordinates to see that the "defect" was the drawing.
+			segments_px: isPlan ? cutSegments.map(([start, end]) => {
+				const project = (point) => {
+					const v = point.clone().project(fitted.camera);
+					return [Number(((v.x * 0.5 + 0.5) * outputSize).toFixed(1)), Number(((0.5 - v.y * 0.5) * outputSize).toFixed(1))];
+				};
+				return [...project(start), ...project(end)];
+			}) : null,
+		},
 		overhead_context: isPlan ? { enabled: true, source: "selected-glb-uncut-projection" } : { enabled: false, source: null },
 		depth_priority: { roof_over_facade_details: !isPlan, facade_detail_polygon_offset_factor: isPlan ? -4 : 8, selected_glb_altered: false },
 		material_roles: Object.keys(semantic.counts),
