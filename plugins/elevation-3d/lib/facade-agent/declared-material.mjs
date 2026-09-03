@@ -95,7 +95,12 @@ export function deriveDeclaredMaterial(declaration) {
 	// that deriving the module here "will draw sill joints across my blades and destroy the
 	// one distinction that carries this building in greyscale."
 	if (joint_m !== null && !(Number.isFinite(joint_m) && joint_m > 0.05 && joint_m <= 12)) fail(`${id}.joint_m`);
-	if (reads_as !== null && (typeof reads_as !== "string" || reads_as.length > 240)) fail(`${id}.reads_as`);
+	// The specification prose. It was capped at 240 characters and the first author to write
+	// a real one - "pressed aluminium tray, powder-coated red iron oxide, matte-satin; the
+	// colour lives in the coating..." - was rejected by it. Asking for a specification and
+	// then truncating it is the same closing move this field exists to undo; 1200 is a
+	// paragraph, which is what a material entry in a real schedule gets.
+	if (reads_as !== null && (typeof reads_as !== "string" || reads_as.length > 1200)) fail(`${id}.reads_as must be prose under 1200 characters`);
 	const { role, metalness, opacity } = SUBSTANCE[substance];
 	const { h, s } = HUE[hue];
 	const light = LIGHTNESS[lightness];

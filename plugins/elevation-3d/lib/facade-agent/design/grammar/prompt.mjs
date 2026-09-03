@@ -1,6 +1,7 @@
 import { sha256, stableJson } from "../../../core.mjs";
 import { TERMINAL_MATERIAL_CHOICES, TERMINAL_VOCABULARY } from "../../facade-vocabulary.mjs";
 import { AXES, BOUNDS, MAX_PARAM_INDEX, PARAM_VALUES, PARAM_WORDS, REACH_EDGES, RISE_DATUMS, TERMINALS } from "./contract.mjs";
+import { DECLARED_MATERIAL_AXES } from "../../declared-material.mjs";
 
 export const FACADE_GRAMMAR_PROMPT_REVISION = "arr.elevation3d.facade-grammar-prompt.v1";
 
@@ -23,7 +24,7 @@ const PREDICATE_TERM = `(?:(?:index|storey) *% *[0-9]+ *== *[0-9]+|(?:index|stor
 export const FACADE_GRAMMAR_V3_SCHEMA = Object.freeze({
 	type: "object",
 	additionalProperties: false,
-	required: ["schema_version", "concept_id", "start", "entrance", "rules", "design_rationale"],
+	required: ["schema_version", "concept_id", "start", "entrance", "rules", "design_rationale", "materials"],
 	properties: {
 		schema_version: { type: "string", const: "arr.elevation3d.facade-grammar.v3" },
 		concept_id: { type: "string", pattern: "^[a-z0-9](?:[a-z0-9._-]{0,126}[a-z0-9])?$" },
@@ -57,6 +58,24 @@ export const FACADE_GRAMMAR_V3_SCHEMA = Object.freeze({
 			},
 		},
 		design_rationale: { type: "array", maxItems: 16, items: { type: "string", minLength: 1, maxLength: 512 } },
+		materials: {
+			type: ["array", "null"],
+			maxItems: 8,
+			description: "The materials this facade is built of, DECLARED rather than chosen: you name each one and say what it is, and the engine derives its colour, how it takes light, the joint it comes in and the role the gates count. Four substances plus at most one accent is a facade; past six a schedule stops being a design. A terminal then names one in its `material` field.",
+			items: {
+				type: "object", additionalProperties: false,
+				required: ["id", "substance", "lightness", "hue", "finish", "joint_m", "reads_as"],
+				properties: {
+					id: { type: "string", pattern: "^[a-z][a-z0-9-]{1,39}$", description: "Your own name for it. Not from any list." },
+					substance: { type: "string", enum: [...DECLARED_MATERIAL_AXES.substance], description: "What it IS. This is the axis the gates read: it carries the semantic role." },
+					lightness: { type: "string", enum: [...DECLARED_MATERIAL_AXES.lightness] },
+					hue: { type: "string", enum: [...DECLARED_MATERIAL_AXES.hue] },
+					finish: { type: "string", enum: [...DECLARED_MATERIAL_AXES.finish], description: "How it takes light." },
+					joint_m: { type: ["number", "null"], description: "The module it comes in, in metres, or null for monolithic. Joint frequency, not hue, is what separates sheet metal from cast concrete in a drawing." },
+					reads_as: { type: ["string", "null"], description: "One line of specification prose, as you would write it for a contractor." },
+				},
+			},
+		},
 	},
 	$defs: {
 		alternative: {
@@ -103,7 +122,7 @@ export const FACADE_GRAMMAR_V3_SCHEMA = Object.freeze({
 						from: { type: "number" },
 						to: { type: "number" },
 					},
-					description: "Vary this terminal's attribute along the run it is laid out by, instead of repeating one number: the value interpolates linearly from `from` at the first instance of its split to `to` at the last (a single member reads `from`). Grade depth_m on a fin repeat and the fins deepen along the facade; grade inset_m on a storey split's window and the openings shrink as they rise. At the start rule the run is the face's facets, so a grade there varies facet to facet. Both endpoints obey the same bounds as the plain field. Null for a constant attribute.",
+					description: "Vary this terminal's attribute along the run it is laid out by, instead of repeating one number: the value interpolates linearly from `from` at the first instance of its split to `to` at the last (a single member reads `from`). Grade depth_m on a fin repeat and the fins deepen along the facade; grade inset_m on a storey split's window and the openings shrink as they rise. A terminal that no repeat stands between and the facet itself takes the FACE as its run - it varies facet to facet across one elevation, wherever in the rule graph it sits. Both endpoints obey the same bounds as the plain field. Null for a constant attribute.",
 				},
 				split: {
 					type: ["object", "null"],
@@ -137,7 +156,7 @@ export const FACADE_GRAMMAR_V3_SCHEMA = Object.freeze({
 				material: {
 					type: ["string", "null"],
 					enum: [...TERMINAL_MATERIAL_CHOICES, null],
-					description: "What this member is made of, when it should not be what that terminal is usually made of. Null takes the terminal's own. A pilaster's default is the mass's own material, so a pier left at default shares a material with the wall behind it and the plan cut draws no line between them; writing it precast is both a design choice and the repair.",
+					description: "What this member is made of. Name one of the materials this grammar declares in its top-level `materials` list - that is the free way to say it - or one of the legacy words when a declaration would add nothing. Null takes the terminal's own. A pilaster's default is the mass's own material, so a pier left at default shares a material with the wall behind it and the plan cut draws no line between them.",
 				},
 				inset_m: { type: ["number", "null"] },
 				depth_m: { type: ["number", "null"] },
@@ -300,8 +319,11 @@ A repeated member need not repeat its numbers. A terminal may carry "grade": { "
 along the run its split laid out - "from" at the first instance, "to" at the last, a single
 member reading "from". Grade depth_m on a fin and the fins deepen across the facade; grade
 inset_m on a window inside a storey split and the openings tighten as they rise. Written at
-the start rule, the run is the face's own facets, so the grade varies facet to facet across
-one elevation. Both endpoints obey exactly the bounds the plain field obeys - a grade never
+no repeat between a terminal and the facet, the run is the face's own
+facets and the attribute varies facet to facet across one elevation - the terminal does not
+have to sit at the start rule to get that, it only has to be reached without passing through
+a repeat (a grade cannot be written on a split, and at the start rule every useful
+alternative is one). Both endpoints obey exactly the bounds the plain field obeys - a grade never
 reaches a number you could not have written by hand; it removes the hand-enumeration, not
 the bound.
 
