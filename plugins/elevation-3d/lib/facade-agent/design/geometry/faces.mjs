@@ -120,6 +120,12 @@ export function deriveFacadeFaces(facadePlanes, elevationDepths) {
 				face_id: faceId,
 				face_view: view,
 				face_index: index,
+				// How many facets this face has. Without it a facet knows its place in the
+				// run but not the length of the run, so an attribute graded at the start rule
+				// - the one place a rule sees the whole face - read position 0 on every facet
+				// and came out uniform, silently. An author asked for a pier swell across a
+				// street face and got a flat one; the fault was here.
+				face_total: spans.length,
 				face_offset_m: round(span.min - origin),
 				projected_length_m: round(span.max - span.min),
 			});

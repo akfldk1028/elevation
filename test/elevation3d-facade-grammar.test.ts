@@ -656,3 +656,28 @@ test("a layer split refuses sized or repeated layers", () => {
 		Facade: [{ split: { axis: "layer", parts: [{ size: "~1", symbol: "Wall", repeat: true }] } }], Wall: WALL,
 	}), FacadeGrammarError);
 });
+
+// A grade at the start rule runs across the FACE, which is the one place a rule sees more
+// than its own facet. It read position 0 everywhere until the segment carried the length of
+// the run: an author asked for a pier swell along a street and got a flat one, silently.
+test("a grade at the start rule interpolates across the face's facets", () => {
+	const parsed = grammar({ Facade: [{ terminal: "pilaster", depth_m: 0.2, grade: { attr: "depth_m", from: 0.2, to: 0.6 } }] });
+	const depths = [0, 1, 2, 3, 4].map((face_index) => {
+		const [member] = deriveFacadePrimitives({
+			grammar: parsed,
+			segment: { ...SEGMENT, face_index, face_total: 5 },
+			storeys: STOREYS,
+		}) as any[];
+		return member.depth_m;
+	});
+	assert.deepEqual(depths, [0.2, 0.3, 0.4, 0.5, 0.6], "first facet reads from, last reads to");
+
+	// A face of one facet has no run to travel, and a segment that never learned its face
+	// total behaves as it always did: the start of its own grade.
+	const [alone] = deriveFacadePrimitives({
+		grammar: parsed, segment: { ...SEGMENT, face_index: 0, face_total: 1 }, storeys: STOREYS,
+	}) as any[];
+	assert.equal(alone.depth_m, 0.2);
+	const [untotalled] = deriveFacadePrimitives({ grammar: parsed, segment: SEGMENT, storeys: STOREYS }) as any[];
+	assert.equal(untotalled.depth_m, 0.2);
+});

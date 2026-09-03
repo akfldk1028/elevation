@@ -190,6 +190,28 @@
      "renderDir": "render-skin-revived"
     }
    ]
+  },
+  {
+   "title": "Composed, not plumbed",
+   "note": "The afternoon the grammar stopped needing an engineer for every element. A split partitioned its scope exactly once, so two constructions could never share a rectangle and each composed element - a screen in front of glass, a balcony - had to arrive as new hand-written code. The layer axis hands every part the whole scope instead, stacked in depth, and these are the first designs to use it: the palazzo's balcony is a precast slab course and a baluster rail layered over the window bay behind, composed by its author out of words the grammar already had.",
+   "cards": [
+    {
+     "id": "palazzo",
+     "title": "Brick palazzo",
+     "candidate": "creative-013",
+     "intent": "Fifty-six brick piers, seventeen arches at the ground, deep reveals and a precast crown - the masonry language that could not render at all until the plan cut stopped prosecuting its own ink this morning.",
+     "grammar": "grammar-blind-013-palazzo-v1.json",
+     "renderDir": "render-palazzo"
+    },
+    {
+     "id": "palazzo-balcony",
+     "title": "Palazzo with balconies",
+     "candidate": "creative-013",
+     "intent": "The same intent written after the layer axis existed: a 0.35 m slab course and eleven balusters standing in front of the window bay, and piers whose depth swells 0.5 to 0.35 toward the entrance. No new terminal was added for either move.",
+     "grammar": "grammar-blind-013-palazzo.json",
+     "renderDir": "render-palazzo-balcony"
+    }
+   ]
   }
  ]
 }
