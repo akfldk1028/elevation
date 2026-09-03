@@ -1237,3 +1237,24 @@ would allow - unverified, worth a probe.
 Sheet: three sections now - the seven architectures, the reversed loop (with the graded
 parametric card), and these three alternatives with the blocked pair's mechanisms stated
 on their cards.
+
+## 2026-09-03 the cw2 family is closed: the seams were the pen's own ink
+
+`392dc8e`. The kernel measurement the 09-01 session said was the only move left ran today:
+back-project the seam pixels to world, query the compiled GLB there. The answer - a thin
+member crossing the 1.2 m cut leaves two parallel 4 px cut-ribbon strokes, and the one-to-
+two-pixel canyon between them is ink-lit, cut-plane-flat and same-material-flanked, so the
+detector prosecuted the renderer's own deliberate line work. Eight refuted hypotheses,
+including today's member-material A/B that left the boxes identical to the pixel, all
+failed for the same reason: the candidates were never on the members anyone edited.
+
+The plan artifact now records where the pen drew (`cut_line.segments_px`) and the seam
+detector skips that footprint (`cutLineInkMask`, exported and unit-tested; old manifests
+validate unchanged). Streamline: seams 2 -> 0, full pass. cw2 - accepted 09-01, "it does
+not render" - renders end to end. Suite 811 green. Revival candidates for a spare
+afternoon: soaring piers, arcade, the failed skin, and creative-004's live-run scheme.
+
+Still deliberately untouched, still open: the P05>=10 floor pinning on glass tone (three-
+way measured yesterday; needs a population sweep and someone else's eyes), and the brief
+ambiguities four authors quoted (entrance-in-ratio, lockstep per-elevation-or-building,
+min_u_m's scope, grade of split sizes).
