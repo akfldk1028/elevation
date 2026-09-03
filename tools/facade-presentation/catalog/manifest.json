@@ -112,6 +112,44 @@
      "intent": "Transcribed from a free GPT-Image-2 concept: 0.72 m fin modules over a glazed skin, a precast band reaching every facet edge at every floor, dark full-height slots, the fins written precast because the picture's fins are light metal.",
      "grammar": "grammar-blind-013-imagefirst-fx.json",
      "renderDir": "render-imagefirst-fx"
+    },
+    {
+     "id": "imagefirst-g",
+     "title": "Image-first, graded",
+     "candidate": "creative-013",
+     "intent": "The same transcription with one added line - grade: depth_m 0.12 to 0.45 - so the 237 fins deepen along every glazing run and the screen reads as a field, not a stamp. The first scheme through the gates with the field-sampled attribute the parametric literature converged on.",
+     "grammar": "grammar-blind-013-imagefirst-g.json",
+     "renderDir": "render-imagefirst-g"
+    }
+   ]
+  },
+  {
+   "title": "Three alternatives, one morning",
+   "note": "Opposed intents commissioned as alternatives after the image lane went down: a stone monolith, streamline horizontals, a Miesian bronze grid. All three accepted; the monolith passed attempt one, zero faults, and rendered clean end to end. The other two are the morning's real finding: both render all four elevations and are then blocked by gates whose measurements no longer respond to what an author can write - the bronze grid's right face pins at luminance P05 9.69 through three different grammars (the darkest pixels are the glass itself), and the streamline's two plan seams sit at the same coordinates through a controlled A/B on the member the diagnosis blamed. The gate files carry both measurements.",
+   "cards": [
+    {
+     "id": "monolith",
+     "title": "Monolith",
+     "candidate": "creative-013",
+     "intent": "Excavated, not assembled: one substance, arches in four sizes cut into a thick wall, 0.5 m reveals carrying the shadow, the poorest face at 14.1% claimed as the closed-wall decision the intent demands.",
+     "grammar": "grammar-blind-013-monolith.json",
+     "renderDir": "render-monolith"
+    },
+    {
+     "id": "streamline",
+     "title": "Streamline",
+     "candidate": "creative-013",
+     "intent": "Horizontals and nothing else: dark window bands against light metal decks reaching every corner, relief graded 0.14 to 0.30 up the storeys, hairline corner piers that vanish into the bands. Elevations accepted; the plan cut holds two grammar-invariant seams.",
+     "grammar": "grammar-blind-013-streamline.json",
+     "renderDir": "render-streamline2"
+    },
+    {
+     "id": "bronzegrid",
+     "title": "Bronze grid",
+     "candidate": "creative-013",
+     "intent": "A strict 1.35 m Miesian module, sombre bronze on amber, precast spandrels holding the luminance range. Elevations accepted; the right face's darkest 5% is the glass, and no member edit moves it.",
+     "grammar": "grammar-blind-013-bronzegrid.json",
+     "renderDir": "render-bronzegrid3"
     }
    ]
   }

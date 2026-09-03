@@ -1197,3 +1197,43 @@ between, the only reason it never fired. All ten keys required now. And the colo
 (118 piers) rendered end to end - the first pier scheme through the plan gate since the
 material field landed, confirming "the gate picks the architecture" is over. Suite 807
 green throughout.
+
+## 2026-09-03 three alternatives, and two gates that stopped answering authors
+
+The user asked for alternatives, plural, and the image lane went down (codex's built-in
+image tool stopped being exposed to `exec` sessions - version and config unchanged, the
+failure is server-side and intermittent; `0eded6b` at least stops the model detouring into
+an image_gen.py that wants a key we don't have). So the three opposed intents ran as
+text-intent blind authors instead: stone monolith, streamline horizontals, bronze grid.
+
+**Monolith: attempt one, zero faults, renders end to end** - 143 primitives, no skin words,
+arches in four sizes, 0.5 m reveals, the poorest face at 14.1% claimed in writing as the
+closed-wall decision. Its cornice reaches across the back's eight shallow folds and the
+plan cut did not object. The pattern holds: the more closed the language, the less gate
+friction.
+
+**Streamline and bronze grid: both accepted (rounds 3 and 1), both render all four
+elevations, both blocked by gates whose measurements no longer respond to authorship.**
+The bronze grid's right elevation measured luminance P05 = 9.69 against the floor of 10
+in three renders whose grammars differed exactly in what an author can touch (0.35 dark,
+0.22 dark, 0.35 precast on both member families) while the plan view's P05 moved 90->156:
+the darkest 5% on that narrow face at grazing light is the GLASS, engine-tinted, and no
+member edit reaches it. The streamline's two plan seams (x=234 389px, x=632 181px - the
+second at cw2's stem x) survived a controlled A/B on the pier material THE DIAGNOSIS
+blamed, identical to the pixel - an eighth refuted hypothesis for the cw2 family, and the
+strongest evidence yet that the remaining seams are not a property of the primitive list.
+Both measurements are in the gate memories; neither gate was touched, per the rule that
+moving a gate to admit your own work needs someone else's eyes.
+
+Authors' quoted ambiguities worth folding into the brief when it is next edited: whether
+the placed entrance counts toward the opening ratio; whether STOREY_LOCKSTEP is judged per
+elevation or per building (three faces of this mass physically cannot carry a three-storey
+member); whether min_u_m reads punched_scope_m or length_m; and grade cannot vary split
+SIZES (heights) - the streamline author wanted band heights to breathe and depth was the
+only sayable breath (grade v2 candidate). The bronze author also flagged open_zones_m
+omitting an interval ([3.45, 3.72] on the entrance segment) that the clearance arithmetic
+would allow - unverified, worth a probe.
+
+Sheet: three sections now - the seven architectures, the reversed loop (with the graded
+parametric card), and these three alternatives with the blocked pair's mechanisms stated
+on their cards.
