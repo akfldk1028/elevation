@@ -63,13 +63,13 @@ export const FACADE_GRAMMAR_V3_SCHEMA = Object.freeze({
 		materials: {
 			type: ["array", "null"],
 			maxItems: 8,
-			description: "The materials this facade is built of, DECLARED rather than chosen: you name each one and say what it is, and the engine derives its colour, how it takes light, the joint it comes in and the role the gates count. Four substances plus at most one accent is a facade; past six a schedule stops being a design. A terminal then names one in its `material` field.",
+			description: "The materials this facade is built of, DECLARED rather than chosen: you name each one and say what it is, and the engine derives its colour, how it takes light, its metalness and the joint it comes in. Four substances plus at most one accent is a facade; past six a schedule stops being a design. A terminal then names one in its `material` field.",
 			items: {
 				type: "object", additionalProperties: false,
 				required: ["id", "substance", "lightness", "hue", "finish", "joint_m", "reads_as"],
 				properties: {
 					id: { type: "string", pattern: DECLARED_MATERIAL_ID_PATTERN, description: "Your own name for it. Not from any list." },
-					substance: { type: "string", enum: [...DECLARED_MATERIAL_AXES.substance], description: "What it IS. This is the axis the gates read: it carries the semantic role." },
+					substance: { type: "string", enum: [...DECLARED_MATERIAL_AXES.substance], description: "What it IS. It sets METALNESS and opacity, which is what most changes how the material renders: a metal loses about half its luminance on an elevation with no sun, where a dielectric loses a sixth. It also supplies a semantic role and a joint family, but the presentation gates read the role off the TERMINAL first - see the brief." },
 					lightness: { type: "string", enum: [...DECLARED_MATERIAL_AXES.lightness] },
 					hue: { type: "string", enum: [...DECLARED_MATERIAL_AXES.hue] },
 					finish: { type: "string", enum: [...DECLARED_MATERIAL_AXES.finish], description: "How it takes light." },
@@ -408,14 +408,47 @@ project's corpus all carry the same four materials in the same places.
 
 NAME ONE OF THE MATERIALS YOU DECLARE in the top-level "materials" list. That is the
 free way to say it and it is the one to reach for: you invent the name and say what the
-thing is, and the engine derives its colour, how it takes light, the joint it comes in and
-the role the gates count. The four legacy words - ${TERMINAL_MATERIAL_CHOICES.join(", ")} -
+thing is, and the engine derives its colour, how it takes light, its metalness and the
+joint it comes in. The four legacy words - ${TERMINAL_MATERIAL_CHOICES.join(", ")} -
 still work and are there for the case where a declaration would add nothing, but they are a
 fallback, not the menu. An author transcribing a bronze rainscreen with only those four
 wrote "brick" to borrow its hue and called it "a lie on a construction document"; that is
 the situation the declaration exists to end, so do not settle for the nearest legacy word.
 
-Two things to know before you declare, because between them they have cost two renders.
+WHERE THE SEMANTIC ROLE ACTUALLY COMES FROM, because the obvious reading is wrong and it
+has cost a render. A substance does map to a role, but the presentation resolver does not
+reach for it first: it reads the PRIMITIVE, and on a primitive the terminal word wins. So a
+spandrel is counted as concrete however you declare it, a mullion as bronze, a sill or a
+transom or a band as opaque, a window or a door as glass. Your declaration changes what the
+member LOOKS like; the terminal you chose decides which role it is COUNTED as. If a gate
+tells you a role is missing or two roles collapsed, look at your terminals, not only at
+your materials.
+
+One consequence to know rather than to rely on: a declared id that happens to contain a
+role word is matched by that word before anything else is consulted, so naming a material
+warm-vision-glass lands it on glass and blackened-bronze on bronze. Do not use this to
+steer a gate. Name the material for what it is.
+
+Two more things to know before you declare, because between them they have cost two renders.
+
+WHAT SUBSTANCE REALLY CONTROLS IS METALNESS, and metalness is the single biggest lever on
+how a facade renders:
+
+    masonry 0.00   cast 0.00   stone 0.00   timber 0.00   glazing 0.00
+    sheet 0.55     metal 0.72  extrusion 0.72
+
+Metalness deletes the diffuse term, so on the elevation that gets no sun a metal renders a
+dim environment reflection instead of the lightness you declared. Measured across one
+building's four faces: the two dielectrics lost 16-19% of their luminance from the sunlit
+face to the shaded one, and the two metals lost 49% each. That inverted an author's whole
+value ladder - a panel declared a full step LIGHTER than the glass beside it rendered three
+times darker on the shaded face - and failed the luminance floor. If you want a mid-grey
+field to stay mid-grey where there is no sun, declare it masonry or cast, not sheet.
+
+The luminance gate has a CEILING as well as a floor: the building's P05 must be at least 10
+and its P95 at most 248. A pale metal at a satin finish has overrun the ceiling; the same
+pale material matte has cleared it. Both ends are steered by the same five lightness steps,
+so a very pale building and a very dark one are equally constrained.
 
 TWO gates compare materials, they measure different things, and their numbers differ.
 PBR_SEMANTIC_ROLE_COLLAPSED wants every pair of roles visible in a PBR view at least

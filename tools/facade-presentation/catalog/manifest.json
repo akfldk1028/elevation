@@ -232,6 +232,22 @@
 					"intent": "Five declared materials on the cleft block: fold-precast and core-cast (two concretes the author refused to merge), plinth-stone, slot-glass and reveal-bronze. It failed one render gate on one pair in one view - the bronze reveals and the stone plinth read as a single material on the elevation that faces away from the sun - and the author repaired it by changing a single word, mid-dark to mid, on the argument that a reveal is the darkest place on a building and a dark metal put there is not a material but the shadow it stands in. Role separation on that face 4.76 to 31.53, geometry untouched.",
 					"grammar": "grammar-image-004-open3.json",
 					"renderDir": "render-004-open3"
+				},
+				{
+					"id": "diagrid-004",
+					"title": "Diagrid block",
+					"candidate": "creative-004",
+					"intent": "A triangulated skin transcribed onto the cleft block. Accepted at attempt one with zero faults, then failed the luminance floor at P05 7.00 on the elevation with no sun. The author's own evidence overturned my diagnosis: the glass was never the dark population - its two METALLIC materials lost 49% of their luminance on the shaded face where the dielectrics lost 16-19%, so a panel it had declared a full step lighter than the glass rendered three times darker. One substance change, sheet to masonry, took the face to 30.72; one finish change, satin to matte, cleared a specular blow-out on the top view. Both fixes were the axes I had told it were invisible.",
+					"grammar": "grammar-image-004-diagrid-v2.json",
+					"renderDir": "render-004-diagrid-v3"
+				},
+				{
+					"id": "seam-tower-020",
+					"title": "Seam metal tower",
+					"candidate": "creative-020",
+					"intent": "Champagne standing-seam alloy on the flat facets, full-height glass on the angled ones, wrapping every fold - the mullions written outside the storey split so they run grade to fascia unbroken, which answers the storey lockstep with the construction itself rather than by removing openings. The author declared its basalt portal masonry rather than stone specifically to keep it off the mass's own concrete role, and the plan reports zero seam segments with 46 piers crossing the cut. It predicted all four opening ratios to six decimal places before writing any JSON.",
+					"grammar": "grammar-image-020-seam.json",
+					"renderDir": "render-020-seam"
 				}
 			]
 		}
