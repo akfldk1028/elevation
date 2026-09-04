@@ -656,6 +656,24 @@ function cornerId(point) {
 	return `facade-corner-${sha256(JSON.stringify(roundedPoint(point))).slice(0, 20)}`;
 }
 
+/**
+ * Which elevation a facet leans toward, by dominant axis.
+ *
+ * This is the SEGMENT AUTHORITY's own classifier and it is deliberately crude. The drawings
+ * are grouped by a different one - `deriveFacadeFaces` scores each plane's normal against
+ * every elevation's actual outward frame and takes the best - and on an oblique facet the
+ * two can disagree. A 16-facet star prism produced exactly that: a facet tagged `front`
+ * here whose `face_view` in the context is `back`, so the entrance appeared on the back
+ * elevation while this field said front, and a reader tracing a missing door was sent to
+ * the wrong drawing.
+ *
+ * Everything that decides anything already prefers `face_view` - `composition.mjs` reads
+ * `segment.face_view ?? segment.view` in all six places it needs a view - so the metrics
+ * and the gates are attributed correctly and only the diagnostic misleads. It is left as it
+ * is rather than corrected here because this value is part of the byte-canonical authority
+ * that every retained grammar resolves against; changing it is a migration, not a fix. When
+ * reading a primitive's `view` extra, treat the segment's `face_view` as the truth.
+ */
 function facadeView(normal) {
 	if (Math.abs(normal[0]) > Math.abs(normal[1])) return normal[0] > 0 ? "right" : "left";
 	return normal[1] > 0 ? "back" : "front";
