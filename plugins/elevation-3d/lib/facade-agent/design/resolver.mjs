@@ -32,7 +32,14 @@ function round(value) {
 	return Number(value.toFixed(8));
 }
 
-function rankedSegments(context, minimumWidth, groundOnly = false) {
+/**
+ * The order the entrance is placed in: most visible first, longest to break a tie, then the
+ * segment id so it is deterministic. Exported because the BRIEF has to name the face the door
+ * will land on, and a second copy of this ordering there had already drifted - it filtered on
+ * the minimum door width while this filters on the declared one, so the two could disagree and
+ * the brief stated its answer as fact.
+ */
+export function rankedSegments(context, minimumWidth, groundOnly = false) {
 	const fold = context.exclusions.fold_clearance_m;
 	return context.facade_segments
 		.filter((segment) => (!groundOnly || segment.ground_access) && segment.length_m >= minimumWidth + fold * 2)
