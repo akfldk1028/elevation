@@ -237,11 +237,20 @@ export async function loadVerifiedProceduralBaseline({ runDir, manifestRecord, s
 	catch (error) { baselineFail("PROCEDURAL_BASELINE_PATH_INVALID", "technical delivery root contains a link or reparse point", error); }
 	const durable = await readBaselineRecord(root, manifestRecord, "technical all-views manifest");
 	const manifest = durable.value;
-	if (manifest?.schema_version !== "arr.elevation3d.all-views.v1"
-		|| manifest?.validation?.accepted !== true
-		|| selectedGlbHash(manifest) !== selectedGlbSha256
-		|| Object.keys(manifest.views ?? {}).sort().join("|") !== [...VIEW_NAMES].sort().join("|")) {
-		baselineFail("PROCEDURAL_BASELINE_BINDING_INVALID", "technical all-views manifest is not an accepted selected-GLB authority");
+	// Say WHICH of the four it is. Undifferentiated, this message described a run the author
+	// was no longer making: after a rejected render, re-running into the same directory finds
+	// the PREVIOUS run's unaccepted manifest and reports it as a binding failure, which reads
+	// as a fault in the grammar just written. Two authors independently lost a cycle to it and
+	// both reported the same workaround - use a fresh run name - without knowing why.
+	const reasons = [];
+	if (manifest?.schema_version !== "arr.elevation3d.all-views.v1") reasons.push(`schema_version is ${JSON.stringify(manifest?.schema_version)}`);
+	if (manifest?.validation?.accepted !== true) {
+		reasons.push("the technical render in this directory was NOT accepted - this is a LEFTOVER from an earlier failed run in the same output directory, not a fault in the grammar being rendered now; render to a fresh run name, or delete this directory first");
+	}
+	if (selectedGlbHash(manifest) !== selectedGlbSha256) reasons.push("it was built from a different selected GLB");
+	if (Object.keys(manifest.views ?? {}).sort().join("|") !== [...VIEW_NAMES].sort().join("|")) reasons.push("it does not carry all eight views");
+	if (reasons.length) {
+		baselineFail("PROCEDURAL_BASELINE_BINDING_INVALID", `technical all-views manifest is not an accepted selected-GLB authority: ${reasons.join("; ")}`);
 	}
 	const views = {};
 	for (const name of VIEW_NAMES) {
