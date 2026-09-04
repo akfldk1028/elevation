@@ -168,7 +168,7 @@ export const FACADE_GRAMMAR_V3_SCHEMA = Object.freeze({
 				diagonal: {
 					type: ["string", "null"],
 					enum: [...DIAGONALS, null],
-					description: "Cut this member's rectangle in half on a diagonal and keep one half, instead of drawing a box. rising keeps the half below the diagonal from the bottom-left corner to the top-right; falling keeps the half below the one from top-left to bottom-right. Two members in ONE scope with opposite diagonals tile that scope exactly and share the cut edge - a layer split is how you put both in the same scope. Null draws the usual box. Refused on wall, which emits nothing, and on arch, whose rectangle is already the frame its curve is drawn inside.",
+					description: "Cut this member's rectangle in half on a diagonal and keep one half, instead of drawing a box. Four halves: rising is below the cut from bottom-left to top-right and rising_upper is above it; falling is below the cut from top-left to bottom-right and falling_upper above. A member and ITS OWN COMPLEMENT tile the scope and share only the cut - rising with rising_upper, falling with falling_upper. rising and falling do NOT tile: both keep the bottom edge, so they overlap below and leave the top bare. A layer split is how you put two members in one scope. Null draws the usual box. Refused on wall, which emits nothing, and on arch, whose rectangle is already the frame its curve is drawn inside.",
 				},
 				inset_m: { type: ["number", "null"] },
 				depth_m: { type: ["number", "null"] },
@@ -420,12 +420,23 @@ fallback, not the menu. An author transcribing a bronze rainscreen with only tho
 wrote "brick" to borrow its hue and called it "a lie on a construction document"; that is
 the situation the declaration exists to end, so do not settle for the nearest legacy word.
 
-A MEMBER MAY BE A TRIANGLE. Write "diagonal": "rising" or "falling" on a terminal and its
-rectangle is cut in half on that diagonal, keeping the lower half; rising cuts from the
-bottom-left corner to the top-right, falling from the top-left to the bottom-right. Two
-members in ONE scope with opposite diagonals tile that scope exactly and share the cut
-edge, and the layer axis is what puts two members in one scope - so a diagrid, a folded or
-faceted panel field, a chevron, a gable, a sawtooth are all sayable now. It is an attribute
+A MEMBER MAY BE A TRIANGLE. Write "diagonal" on a terminal and its rectangle is cut in half
+on a diagonal. There are four halves, because there are two diagonals and each has two
+sides: "rising" is the half BELOW the cut from the bottom-left corner to the top-right and
+"rising_upper" is the half above it; "falling" is the half below the cut from top-left to
+bottom-right and "falling_upper" the half above.
+
+A member and ITS OWN COMPLEMENT tile the scope exactly and share only the cut - rising with
+rising_upper, falling with falling_upper - and the layer axis is what puts two members in
+one scope. **"rising" and "falling" do NOT tile**: both keep the bottom edge whole, so they
+overlap below and leave the top of the cell bare. Their areas do sum to the rectangle, which
+is exactly why this is worth stating - an author who assumed they tiled drew bowties with a
+gap at the top of every cell and had to read the geometry to find out why. The other way to
+fill a cell is a whole rectangle behind and one diagonal member in front, which is also
+sayable and is what that author shipped.
+
+So a diagrid, a folded or faceted panel field, a chevron, a gable, a sawtooth are all
+sayable now. It is an attribute
 and not a word, so the member keeps being whatever terminal it is: a glazed triangle is
 still a window and counts as glass, a stone one is still a panel. Refused on wall, which
 emits nothing to cut, and on arch, whose rectangle is already the frame its curve sits in.
@@ -517,15 +528,24 @@ TRIANGULATION_VISIBLE, and unlike every other fault in this system it names no m
 no elevation and no number - it reports that two surfaces of the same material met in
 the plan raster and left a visible line.
 
-Be told plainly what is and is not known about it. It fires where members on two
-different facets meet at a fold. Halving the depth of those members does not move it: two
-separate authors have now cut the projections at the seam by more than half and got back
-seam boxes identical to the pixel, so it is NOT a depth you can tune down, and spending
-an attempt reducing depth_m at a corner is an attempt wasted. It does not fire on every
-fold - on one sixteen-fold mass exactly three folds produced it. Nobody has yet
-identified what distinguishes those three. If you hit it, say so in your report and
-spend your remaining attempts on the rest of the design rather than on this; a scheme
-that fails only the plan is a more useful result to us than one redesigned blind.
+Be told plainly what is and is not known about it, INCLUDING which half of it depth
+reaches, because a flat claim here cost an author an attempt by telling them not to try
+the thing that worked.
+
+ON THE PLAN, depth is not the lever. It fires where members on two different facets meet
+at a fold, and two separate authors have cut the projections at the seam by more than half
+and got back seam boxes identical to the pixel. It does not fire on every fold - on one
+sixteen-fold mass exactly three folds produced it - and nobody has identified what
+distinguishes those three. If you hit it on the plan, say so in your report and spend your
+remaining attempts on the rest of the design; a scheme that fails only the plan is a more
+useful result to us than one redesigned blind.
+
+ON THE TOP VIEW, depth IS the lever, and the mechanism is different. A course carried to
+the facet edges oversails the roof at every fold, and two slabs projecting along different
+normals cannot mitre at a star point - they leave a notch that scales with the projection.
+Measured: the same continuous cornice failed at 0.75 m and passed at 0.10 m with everything
+else unchanged. So if the fault is on the top view rather than the plan, reducing the
+oversail is the first thing to try, not the last.
 
 The start symbol is derived once per facet, not once per elevation. A folded elevation
 is several facets side by side, so a pilaster at the two edges of the start rule puts a
