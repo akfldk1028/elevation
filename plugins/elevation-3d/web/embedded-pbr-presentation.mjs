@@ -359,7 +359,17 @@ export function createEmbeddedPbrPresentation({
 			// does not raise a fault - it throws where nothing is listening and the run dies as a
 			// 60 s timeout. Adding the fifth role cost exactly that before the entry existed.
 			const response = style.materialResponse[role];
-			if (response?.tintMultiplier) material.color?.multiply?.(new THREE.Color(response.tintMultiplier));
+			// A DECLARED material is not role-tinted. The tint multipliers give the four legacy
+			// words their character, and against an authored colour they are an undeclared
+			// override: `opaque` multiplies by #454b52, which is 0.27-0.32, so a declared dark
+			// panel was crushed to a third of what its author specified, and `bronze` multiplies
+			// by a saturated #8a5a32, which turned a declared warm-neutral GREY liner brown. The
+			// elevation drawing honoured the same declarations exactly, so one building came out
+			// two different colours in its two drawings - measured by the author who wrote it.
+			// The response deltas below stay: roughness, metalness and env intensity are how a
+			// role behaves under this light, not what the architect said the thing is.
+			const declared = Boolean(material?.userData?.declared_material);
+			if (response?.tintMultiplier && !declared) material.color?.multiply?.(new THREE.Color(response.tintMultiplier));
 			if (role === "concrete" && Number.isFinite(material.roughness)) {
 				material.roughness = clamp(material.roughness + style.materialResponse.concrete.maxRoughnessDelta, 0, 1);
 			} else if (role === "bronze" && Number.isFinite(material.metalness)) {
