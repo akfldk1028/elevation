@@ -451,11 +451,24 @@ diagonal in it, you can now draw it - do not flatten it to squares.
 WHERE THE SEMANTIC ROLE ACTUALLY COMES FROM, because the obvious reading is wrong and it
 has cost a render. A substance does map to a role, but the presentation resolver does not
 reach for it first: it reads the PRIMITIVE, and on a primitive the terminal word wins. So a
-spandrel is counted as concrete however you declare it, a mullion as bronze, a sill or a
-transom or a band as opaque, a window or a door as glass. Your declaration changes what the
-member LOOKS like; the terminal you chose decides which role it is COUNTED as. If a gate
-tells you a role is missing or two roles collapsed, look at your terminals, not only at
-your materials.
+member LOOKS like; the terminal you chose decides which role it is COUNTED as. The whole
+table, because a partial one cost an author its only rejected render - it gave one material
+to a reveal and to a sill and could not see why they collapsed:
+
+    glass      window, door
+    bronze     mullion, REVEAL, louvre
+    opaque     sill, band, transom
+    concrete   spandrel, lintel, cornice, pilaster - and the mass itself
+
+Two things follow that are not obvious. A reveal and a sill are DIFFERENT roles, so one
+declared material on both puts one material in two roles and collapses the pair; that is what
+cost the render. And a cornice is counted in the mass's own role, which makes the coping
+and the roof one material id in the seam raster - so a cornice declared a lightness step away
+from the shell is a same-material seam BY CONSTRUCTION and the roof plan will reject it. A
+cornice takes the mass's material. Two authors paid two renders each learning that one.
+
+If a gate tells you a role is missing or two roles collapsed, look at your terminals, not
+only at your materials.
 
 One consequence to know rather than to rely on: a declared id that happens to contain a
 role word is matched by that word before anything else is consulted, so naming a material
@@ -494,7 +507,10 @@ derived tints were 24 apart in RGB arrived at 4.76 on the elevation that faces a
 sun. Hue does not survive that at all - a stone declared warm-neutral, R-B = 17 in its
 tint, rendered at chroma 0.09 on a shaded face - and neither finish nor metalness is visible
 to either metric. If two materials must be told apart, put a full LIGHTNESS step between
-them; nothing else reliably survives. The corollary is worth having as design advice rather
+them - and ONE STEP IS NOT ALWAYS ENOUGH when the role covers a small area. Measured: a
+pale wall against a mid cill gave a role colour distance of 2.27 on the axon, against a
+threshold of 5 there and 10 for the axon gate; the same wall against a dark cill gave 31 to
+79. A large field can hold its own on one step; a thin line under every window cannot. The corollary is worth having as design advice rather
 than as a gate note: a material that lives in permanent self-shadow - a deep reveal liner, a
 soffit - has to be specified brighter than the same alloy on an open wall, or it stops being
 a material and becomes the shadow it stands in.
