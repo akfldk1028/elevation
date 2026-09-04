@@ -62,12 +62,20 @@ export const REACH_EDGES = Object.freeze(["facet_edge"]);
  * all of them. A diagonal on the existing words lets a glazed triangle stay a window and a
  * stone one stay a panel, so material, role and every gate keep working unchanged.
  *
- * `rising` keeps the half below the diagonal that runs from the member's bottom-left corner
- * to its top-right; `falling` keeps the half below the one from top-left to bottom-right.
- * Two members in one scope with opposite diagonals tile it exactly - which is what the
- * layer axis is for.
+ * Four halves, because a diagonal cuts a rectangle into two and there are two diagonals.
+ * `rising` is the half BELOW the diagonal from the bottom-left corner to the top-right and
+ * `rising_upper` is the half above it; `falling` is the half below the one from top-left to
+ * bottom-right and `falling_upper` the half above. A member and ITS OWN complement tile the
+ * scope exactly and share only the cut - `rising` with `rising_upper`, `falling` with
+ * `falling_upper`.
+ *
+ * The complements were missing at first, and the brief claimed instead that `rising` and
+ * `falling` tile. They do not: both keep the bottom edge whole, so they overlap over the
+ * lower-middle triangle and leave the upper-middle bare. Their areas sum to the rectangle,
+ * which is what hid it. The author who followed that sentence drew bowties with a gap at the
+ * top of every cell, measured it, and read the geometry to prove it.
  */
-export const DIAGONALS = Object.freeze(["rising", "falling"]);
+export const DIAGONALS = Object.freeze(["rising", "rising_upper", "falling", "falling_upper"]);
 /** Terminals that cut a hole. None of them may be carried past the facet it belongs to. */
 const OPENING_TERMINALS = new Set(["glass", "door", "arch"]);
 export const BOUNDS = Object.freeze({

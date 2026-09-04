@@ -415,10 +415,9 @@ function archGeometry(plane, tangent, grammar, bounds) {
  * an author transcribing a diagrid had to write one rectangle per facet and said so: "the
  * alternation happens ACROSS the diagonal; the diagonal is the building's entire signature."
  *
- * `rising` keeps the half below the diagonal from the bottom-left corner to the top-right;
- * `falling` keeps the half below the one from top-left to bottom-right. Two members in one
- * scope with opposite diagonals tile that scope exactly and share the cut edge, which is
- * what makes a diagrid sayable at all.
+ * Four halves: a member and its OWN complement tile the scope and share only the cut -
+ * `rising` with `rising_upper`, `falling` with `falling_upper`. `rising` and `falling` do
+ * NOT tile: both keep the bottom edge, so they overlap below and leave the top bare.
  */
 function diagonalGeometry(plane, tangent, grammar, bounds, diagonal) {
 	const { u0, u1, v0, v1, n0, n1 } = bounds;
@@ -426,10 +425,13 @@ function diagonalGeometry(plane, tangent, grammar, bounds, diagonal) {
 		|| u1 - u0 <= EPSILON || v1 - v0 <= EPSILON || Math.abs(n1 - n0) <= EPSILON) {
 		throw new TypeError("invalid facade geometry: a diagonal member has non-positive dimensions");
 	}
-	// Both keep the bottom edge whole; they differ in which top corner the third point is.
-	const corners = diagonal === "rising"
-		? [[u0, v0], [u1, v0], [u1, v1]]
-		: [[u0, v0], [u1, v0], [u0, v1]];
+	const corners = {
+		rising: [[u0, v0], [u1, v0], [u1, v1]],        // below BL->TR
+		rising_upper: [[u0, v0], [u1, v1], [u0, v1]],  // above BL->TR
+		falling: [[u0, v0], [u1, v0], [u0, v1]],       // below TL->BR
+		falling_upper: [[u1, v0], [u1, v1], [u0, v1]], // above TL->BR
+	}[diagonal];
+	if (!corners) throw new TypeError(`invalid facade geometry: unknown diagonal ${diagonal}`);
 	const coordinates = [];
 	for (const n of [n0, n1]) for (const [u, v] of corners) coordinates.push([u, v, n]);
 	// 0,1,2 at n0 and 3,4,5 at n1; the two caps wind opposite ways so the solid is closed.

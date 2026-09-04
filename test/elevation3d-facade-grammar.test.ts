@@ -774,3 +774,40 @@ test("a terminal may be cut on a diagonal, and only a terminal", () => {
 
 	assert.throws(() => grammar({ Facet: [{ terminal: "spandrel", depth_m: 0.1, diagonal: "sideways" }] }, "Facet"), /must be one of/);
 });
+
+// The brief claimed for a day that `rising` and `falling` tile a scope between them. They do
+// not: both keep the bottom edge whole, so they overlap over the lower-middle triangle and
+// leave the upper-middle bare. Their AREAS sum to the rectangle, which is exactly what hid
+// it - an author followed the sentence, drew bowties with a gap at the top of every cell,
+// and read the geometry to find out why. A pair tiles when it shares only the cut, so that
+// is what this asserts rather than an area sum.
+test("a diagonal and its complement tile the scope; the two lower halves do not", () => {
+	const corner = (name: string) => ({
+		rising: [[0, 0], [1, 0], [1, 1]],
+		rising_upper: [[0, 0], [1, 1], [0, 1]],
+		falling: [[0, 0], [1, 0], [0, 1]],
+		falling_upper: [[1, 0], [1, 1], [0, 1]],
+	} as Record<string, number[][]>)[name];
+	const area = (t: number[][]) =>
+		Math.abs((t[1][0] - t[0][0]) * (t[2][1] - t[0][1]) - (t[2][0] - t[0][0]) * (t[1][1] - t[0][1])) / 2;
+	// Shared points: a tiling pair meets on the cut, which is exactly two corners.
+	const shared = (a: number[][], b: number[][]) =>
+		a.filter((p) => b.some((q) => q[0] === p[0] && q[1] === p[1])).length;
+
+	for (const [low, high] of [["rising", "rising_upper"], ["falling", "falling_upper"]]) {
+		assert.equal(area(corner(low)) + area(corner(high)), 1, `${low}+${high} must cover the scope`);
+		assert.equal(shared(corner(low), corner(high)), 2, `${low}+${high} must meet only on the cut`);
+	}
+	// The pair that does not tile: areas still sum to 1, and that is the trap.
+	assert.equal(area(corner("rising")) + area(corner("falling")), 1);
+	assert.equal(shared(corner("rising"), corner("falling")), 2 + 0, "rising and falling share the whole bottom edge");
+	// Both contain the bottom-right corner, which no tiling pair does on top of sharing a cut.
+	assert.ok(corner("rising").some((p) => p[0] === 1 && p[1] === 0));
+	assert.ok(corner("falling").some((p) => p[0] === 1 && p[1] === 0));
+
+	// And every one of the four is reachable from the grammar.
+	for (const value of ["rising", "rising_upper", "falling", "falling_upper"]) {
+		const parsed = grammar({ Facet: [{ terminal: "spandrel", depth_m: 0.1, diagonal: value }] }, "Facet");
+		assert.equal(parsed.rules.Facet[0].diagonal, value);
+	}
+});

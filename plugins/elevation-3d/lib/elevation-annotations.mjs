@@ -22,7 +22,28 @@ function text(value, x, y, attributes = "") {
 	return `<text x="${x.toFixed(1)}" y="${y.toFixed(1)}" ${attributes}>${escapeXml(value)}</text>`;
 }
 
-export function buildElevationAnnotations({ dimensions, camera, contentBounds, canvas = [2400, 2400], candidateId = "unknown" }) {
+/**
+ * The palette named in the title block.
+ *
+ * It was the literal string COMPETITION WARM whatever palette rendered the sheet, so every
+ * drawing this project has produced under `competition-brick`, `competition-material` and
+ * the rest has been mislabelled - two authors reported it independently after passing
+ * `--palette competition-material` and reading COMPETITION WARM back off their own sheets.
+ * A drawing that misnames its own materials is a bad construction document however right
+ * the geometry is.
+ *
+ * It cannot ride inside the dimensions record: the presentation validator recomputes those
+ * from the geometry and compares them to the persisted file, so any field added there fails
+ * DIMENSION_MISMATCH by construction. Both sides pass it separately instead - the generator
+ * from the palette it rendered with, the validator from the same preset recorded in the base
+ * manifest - and an absent label falls back to the historical string so older runs still
+ * recompute byte-identically.
+ */
+function presetTitle(preset) {
+	return typeof preset === "string" && preset ? preset.replace(/[-_]+/g, " ").toUpperCase() : "COMPETITION WARM";
+}
+
+export function buildElevationAnnotations({ dimensions, camera, contentBounds, canvas = [2400, 2400], candidateId = "unknown", paletteLabel = null }) {
 	const [width, height] = canvas;
 	if (width !== 2400 || height !== 2400 || camera?.type !== "orthographic") throw new Error("annotation layout unavailable: invalid canvas or camera");
 	if (!["front", "back", "left", "right"].includes(dimensions?.view)) throw new Error("annotation layout unavailable: invalid elevation view");
@@ -97,7 +118,7 @@ export function buildElevationAnnotations({ dimensions, camera, contentBounds, c
 	if (overlapsContent || overlapsAnnotations || outsidePage) throw new Error("annotation layout unavailable: collision or page clearance");
 	const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
 <style>.dimension,.overall,.level{fill:none;stroke:#2c3032;stroke-width:1.4}.overall{stroke-width:2}.level{stroke:#596166;stroke-width:1}.dimension-label,.level-label,.note,.subtitle{font-family:Arial,sans-serif;fill:#25292b;font-size:20px}.title{font-family:Arial,sans-serif;fill:#202426;font-size:34px;font-weight:600;letter-spacing:4px}.subtitle,.note{font-size:18px;letter-spacing:1px}.halo{paint-order:stroke;stroke:#fafaf7;stroke-width:7px;stroke-linejoin:round}.ground{stroke:#1f2325;stroke-width:2.4}</style>
-<g id="title">${text(`${dimensions.view.toUpperCase()} ELEVATION`, 120, 120, `class="title" text-anchor="start"`)}${text(`CANDIDATE ${String(candidateId).toUpperCase()} · COMPETITION WARM`, 120, 164, `class="subtitle" text-anchor="start"`)}</g>
+<g id="title">${text(`${dimensions.view.toUpperCase()} ELEVATION`, 120, 120, `class="title" text-anchor="start"`)}${text(`CANDIDATE ${String(candidateId).toUpperCase()} · ${presetTitle(paletteLabel)}`, 120, 164, `class="subtitle" text-anchor="start"`)}</g>
 <g id="ground-datum">${line(contentBounds.min_x - 36, groundY, contentBounds.max_x + 36, groundY, "ground")}</g>
 <g id="levels">${levelLines.join("")}</g>
 <g id="floor-intervals">${intervalParts.join("")}</g>

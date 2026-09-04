@@ -27,6 +27,36 @@ function deepFreeze(value) {
 	return Object.freeze(value);
 }
 
+
+/**
+ * The declared material a grammar names for the mass itself, read off any `wall` terminal.
+ *
+ * `wall` is the one terminal that draws nothing - it is how a grammar says "leave this part
+ * of the building as it is" - so the material on it was never carried anywhere. It is also
+ * the only place an author can say what the building is MADE of rather than what is hung on
+ * it, and every author who declared a shell material wrote it exactly there.
+ *
+ * One shell per building, because the mass is one body: the first declared id wins and the
+ * rest are the author's own to reconcile. A grammar that names none keeps the palette role
+ * it always had, so nothing already rendered moves.
+ */
+function shellMaterialId(program) {
+	const declared = new Set((program?.materials ?? []).map((material) => material?.id).filter(Boolean));
+	if (declared.size === 0) return null;
+	// The authored program lists its rules; the parsed one keys them by symbol. Accept either,
+	// because reading the wrong shape here threw inside the compiler and surfaced only as
+	// "facade design compilation failed" with the cause dropped.
+	const rules = Array.isArray(program?.rules)
+		? program.rules.map((rule) => rule?.alternatives)
+		: Object.values(program?.rules ?? {});
+	for (const alternatives of rules) {
+		for (const alternative of alternatives ?? []) {
+			if (alternative?.terminal === "wall" && declared.has(alternative?.material)) return alternative.material;
+		}
+	}
+	return null;
+}
+
 export async function compileFacadeDesign({ outputRoot, candidate, context, program, resolved, validation } = {}) {
 	let versionDir;
 	try {
@@ -71,6 +101,15 @@ export async function compileFacadeDesign({ outputRoot, candidate, context, prog
 			// of its own with an entirely different meaning, and reading it as declarations threw
 			// inside the GLB writer with no hint of where it came from.
 			declaredMaterials: (program.materials ?? []).filter((material) => typeof material?.id === "string" && typeof material?.axon_pbr === "string"),
+			// What the BUILDING is made of, as opposed to what is applied to it. `wall` emits no
+			// geometry, so a material written on one was inert prose - and the mass is the largest
+			// surface in every drawing, so every scheme printed the palette's concrete role
+			// whatever its author specified. Measured across five buildings with five different
+			// declared shells: the same #ddd3c3 covered 32-77% of each front elevation, and a
+			// reviewer comparing them with their concepts named it the single most damaging
+			// difference in the set - the value structure came out inverted every time, light wall
+			// with dark openings where four of the five concepts are dark wall with bright ones.
+			shellMaterial: shellMaterialId(program),
 		});
 		const glb = await writeEnrichedGlb(scene, join(versionDir, "facade.glb"), { approvedRoot: root });
 		const manifestBase = {

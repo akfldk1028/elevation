@@ -288,7 +288,7 @@ function facadeDetails(mesh, floorGuides, facadePlanes, grammar) {
 	return details;
 }
 
-export function buildEnrichedScene({ mesh, floorGuides, facadePlanes, grammar, typedPrimitives, declaredMaterials, safeFallback }) {
+export function buildEnrichedScene({ mesh, floorGuides, facadePlanes, grammar, typedPrimitives, declaredMaterials, shellMaterial, safeFallback }) {
 	const sceneGrammar = typedPrimitives ? TYPED_FACADE_GRAMMAR : grammar;
 	return {
 		base: { positions: mesh.vertices, indices: mesh.triangles },
@@ -301,6 +301,7 @@ export function buildEnrichedScene({ mesh, floorGuides, facadePlanes, grammar, t
 		// Absent unless the design declared any, so a scene built from a grammar written before
 		// declarations existed is the same object it always was.
 		...(declaredMaterials?.length ? { declared_materials: declaredMaterials } : {}),
+		...(shellMaterial ? { shell_material: shellMaterial } : {}),
 	};
 }
 
@@ -522,7 +523,13 @@ export async function writeEnrichedGlb(scene, outputPath, { approvedRoot } = {})
 	document.getRoot().setDefaultScene(gltfScene);
 
 	const baseMesh = document.createMesh("exact-mass");
-	addPrimitive(document, buffer, baseMesh, "exact-mass", scene.base, materials.concrete);
+	// The mass wears the material the grammar declared for it, when it declared one. Without
+	// this the largest surface in the drawing was always the palette's concrete role, so five
+	// buildings with five different declared shells came out the same cream - the difference a
+	// reviewer called the most damaging in the set. A grammar that names no shell keeps the
+	// role it always had, so nothing already rendered moves.
+	const shell = (scene.shell_material && materials[scene.shell_material]) || materials.concrete;
+	addPrimitive(document, buffer, baseMesh, "exact-mass", scene.base, shell);
 	gltfScene.addChild(document.createNode("exact-mass").setMesh(baseMesh));
 
 	if (scene.details.length) {

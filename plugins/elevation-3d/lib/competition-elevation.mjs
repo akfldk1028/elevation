@@ -325,6 +325,11 @@ export async function renderCompetitionElevationBase({
 			content_bounds_px: measured.bounds,
 			annotation_lanes: browserArtifact.annotation_lanes,
 			palette_sha256: palette.sha256,
+			// The preset NAME, not only its hash, because the title block prints it and the
+			// presentation validator rebuilds that title block from this manifest. A hash cannot
+			// be turned back into "competition-material", so without this the validator fell back
+			// to the historical label and every fresh sheet mismatched its own recomputation.
+			palette_preset: palette.preset,
 			selected_glb_sha256: selectedGlbSha256,
 			viewer_config_sha256: viewerConfigSha256,
 			material_roles: browserArtifact.material_roles,
@@ -441,7 +446,12 @@ export async function renderCompetitionElevation({
 }) {
 	const base = await renderCompetitionElevationBase({ runDir, glbPath, sourceMesh, camera, palette, dimensions, view, pixelsPerMetre, signal, lifecycle });
 	const outputDir = join(resolve(runDir), "competition-elevation", view);
-	const annotation = buildElevationAnnotations({ dimensions, camera: base.camera, contentBounds: base.content_bounds_px, canvas: [base.width, base.height], candidateId });
+	// The title block names the palette that actually rendered the sheet. It travels beside the
+	// dimensions and NOT inside them: the presentation validator recomputes the dimensions from
+	// the geometry and compares them to the persisted file, so a field added there can never
+	// match and every drawing fails against its own recomputation (measured: DIMENSION_MISMATCH
+	// on the first attempt). The validator reads the same preset out of the base manifest.
+	const annotation = buildElevationAnnotations({ dimensions, camera: base.camera, contentBounds: base.content_bounds_px, canvas: [base.width, base.height], candidateId, paletteLabel: palette.preset });
 	const dimensionsPath = join(outputDir, `${view}-dimensions.json`);
 	const svgPath = join(outputDir, `${view}-annotations.svg`);
 	await atomicWrite(dimensionsPath, Buffer.from(JSON.stringify(dimensions, null, 2)), outputDir);

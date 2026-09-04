@@ -521,6 +521,15 @@ export async function validateCompetitionElevation({ artifacts, sourceMesh, faca
 	add(codes, "DIMENSION_SOURCE_MISSING", !selectedBytes || artifacts.base?.selected_glb_sha256 !== sha256(selectedBytes));
 	const records = [artifacts.final_png, artifacts.presentation_base_png, artifacts.annotations_svg, artifacts.dimensions_json, artifacts.base_manifest, artifacts.render_manifest, ...Object.values(artifacts.diagnostics ?? {})].filter(Boolean);
 	if (records.length) add(codes, "DIMENSION_SOURCE_MISSING", !(await Promise.all(records.map(validRecord))).every(Boolean));
+	// The palette the sheet was rendered with, for the title block. The generator names it from
+	// the palette it used; the validator has to name the SAME one or its recomputed SVG differs
+	// from the drawing on disk. The base manifest is where both can see it.
+	let paletteLabel = null;
+	if (artifacts.base_manifest?.path) {
+		try {
+			paletteLabel = JSON.parse(await readFile(artifacts.base_manifest.path, "utf8"))?.palette_preset ?? null;
+		} catch { paletteLabel = null; }
+	}
 	if (artifacts.base_manifest?.path) {
 		try {
 			const manifest = JSON.parse(await readFile(artifacts.base_manifest.path, "utf8"));
@@ -547,6 +556,7 @@ export async function validateCompetitionElevation({ artifacts, sourceMesh, faca
 					contentBounds: bounds,
 					canvas: [2400, 2400],
 					candidateId: sourceMesh?.identity?.candidate_id ?? "unknown",
+					paletteLabel,
 				}).svg;
 				canonicalSvgMismatch = Buffer.byteLength(svg) !== Buffer.byteLength(canonicalSvg) || svg !== canonicalSvg;
 				add(codes, "DIMENSION_MISMATCH", canonicalSvgMismatch);
