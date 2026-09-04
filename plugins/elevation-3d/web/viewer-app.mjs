@@ -411,7 +411,12 @@ function competitionMaterials(root, palette, options = {}) {
 		// carry no `materials`, so they paint exactly as they did.
 		const fills = roles.map((role, index) => new THREE.MeshBasicMaterial({
 			name: role,
-			color: palette.materials?.[String(originals[index]?.name ?? "").toLowerCase()]?.elevation_fill
+			// A DECLARED material carries its own fill and wins: the author said what the
+			// thing is, and four palette roles cannot repeat that. Without this the drawing
+			// paints by role, the role comes from the terminal, and three declared panel
+			// tones written as spandrels all print as one cream field.
+			color: originals[index]?.userData?.elevation_fill
+				?? palette.materials?.[String(originals[index]?.name ?? "").toLowerCase()]?.elevation_fill
 				?? palette.roles[role].elevation_fill,
 			side: THREE.DoubleSide,
 			depthWrite: true,

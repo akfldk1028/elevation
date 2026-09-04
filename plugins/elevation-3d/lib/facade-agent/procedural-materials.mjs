@@ -153,7 +153,8 @@ export function createFacadePbrMaps({ grammar, resolution }) {
  * The generator above knows two substances by name because they were the only two the
  * vocabulary had. A declared material has no name the code knows - that is the point of
  * declaring it - so its surface is derived from the same words the rest of its numbers come
- * from: the tint and finish give the grain, and `joint_m` draws the module it comes in.
+ * from: the finish gives the grain, and `joint_m` draws the module it comes in. The colour
+ * itself stays on the material's baseColorFactor, never in the map - see the note below.
  *
  * Two things depended on this. A facade of only declared materials carried no maps at all,
  * so the PBR pass rendered identically with them switched off and PBR_EVIDENCE_MISSING fired
@@ -165,7 +166,6 @@ export function createFacadePbrMaps({ grammar, resolution }) {
 export function createDeclaredMaterialMaps({ material, resolution = 512, metresAcross = 6 }) {
 	if (!Number.isSafeInteger(resolution) || resolution < 8) throw new TypeError("declared material texture resolution invalid");
 	const hash = sha256(JSON.stringify(material));
-	const tint = [1, 3, 5].map((offset) => parseInt(material.elevation_fill.slice(offset, offset + 2), 16));
 	// The joint in pixels, and how wide its shadow is. A monolithic material draws none.
 	const pitch = material.joint?.pitch_m ? Math.max(8, Math.round((material.joint.pitch_m / metresAcross) * resolution)) : 0;
 	const jointWidth = pitch ? Math.max(1, Math.round(resolution / 512)) : 0;
@@ -177,10 +177,18 @@ export function createDeclaredMaterialMaps({ material, resolution = 512, metresA
 		return value - Math.floor(value);
 	};
 	const amplitude = material.texture_intensity;
+	// The base map carries the MODULATION ONLY, around white - never the tint. glTF multiplies
+	// baseColorFactor by baseColorTexture, and the factor already carries the declared colour,
+	// so a tinted map applies it twice. Measured when it did: a mid-dark glass squared itself
+	// to near-black, and at its 0.42 opacity over a pale wall the composite was 58% wall -
+	// a flat neutral grey. Every declared glazing in the corpus rendered at chroma 1-5 while
+	// legacy glass rendered at 16-19, so no declared window read as a window in any render
+	// while the drawing painted it as one. A reader spotted it by holding the two side by side.
 	const base = encodePng(resolution, resolution, (x, y) => {
-		if (onJoint(x, y)) return [...tint.map((channel) => Math.round(channel * 0.55)), 255];
+		if (onJoint(x, y)) return [140, 140, 140, 255];
 		const mix = 1 + (grain(x, y) - 0.5) * amplitude * 2;
-		return [...tint.map((channel) => Math.max(0, Math.min(255, Math.round(channel * mix)))), 255];
+		const level = Math.max(0, Math.min(255, Math.round(255 * mix)));
+		return [level, level, level, 255];
 	});
 	const relief = material.normal_intensity;
 	const normal = encodePng(resolution, resolution, (x, y) => {
