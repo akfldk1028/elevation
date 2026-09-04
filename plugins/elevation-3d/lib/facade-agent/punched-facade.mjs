@@ -909,9 +909,15 @@ export function buildTypedFacadeDetails({ mesh, floorGuides, facadePlanes, primi
 		if (!backing.has(plane.segment_id)) backing.set(
 			plane.segment_id, validateMassBacking(mesh, plane, tangent, componentOrientations),
 		);
-		const depth = primitive.kind === "door" || primitive.kind === "window"
-			? Math.max(0.015, primitive.depth_m || 0.015)
-			: primitive.depth_m;
+		// An opening needs a thickness to be a solid at all, but the SIGN is the author's: a
+		// pane set back into the wall is the commonest detail there is and this clamp forced
+		// every one of them proud. Three authors reported it as three different missing
+		// features. A recess keeps the same minimum thickness, measured inward.
+		const authored = primitive.depth_m;
+		const opening = primitive.kind === "door" || primitive.kind === "window";
+		const depth = !opening ? authored
+			: authored < 0 ? Math.min(-0.015, authored)
+				: Math.max(0.015, authored || 0.015);
 		const bounds = {
 			u0: local.u_min, u1: local.u_max,
 			v0: local.z_min - plane.origin[2], v1: local.z_max - plane.origin[2],

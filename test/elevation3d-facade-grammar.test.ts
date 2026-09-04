@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+	BOUNDS,
 	FacadeGrammarError,
 	parseFacadeGrammar,
 	predicateHolds,
@@ -9,7 +10,7 @@ import {
 import { deriveFacadePrimitives } from "../plugins/elevation-3d/lib/facade-agent/design/grammar/derive.mjs";
 import { FACADE_GRAMMAR_V3_SCHEMA, openingZones } from "../plugins/elevation-3d/lib/facade-agent/design/grammar/prompt.mjs";
 import { DECLARED_MATERIAL_ID_PATTERN } from "../plugins/elevation-3d/lib/facade-agent/declared-material.mjs";
-import { TERMINAL_MATERIAL_CHOICES } from "../plugins/elevation-3d/lib/facade-agent/facade-vocabulary.mjs";
+import { TERMINAL_MATERIAL_CHOICES, TERMINAL_PROJECTION } from "../plugins/elevation-3d/lib/facade-agent/facade-vocabulary.mjs";
 
 const STOREYS = [1, 2, 3, 4, 5].map((storey) => ({ storey, z_min: (storey - 1) * 3.3, z_max: storey * 3.3 }));
 const SEGMENT = {
@@ -836,4 +837,32 @@ test("storey_line carries a solid past its facet, and only a solid", () => {
 	}
 	// And it is one of the datums, not a free-text field.
 	assert.throws(() => grammar({ Facet: [{ terminal: "spandrel", depth_m: 0.1, rise_to: "next_facet" }] }, "Facet"), /rise_to must be one of/);
+});
+
+// A member's whole relationship to the wall was one UNSIGNED number, so nothing could be set
+// back into it. Three authors on three different masses each reported that as a different
+// missing feature - "there is no way to push an opening into the wall", "my reveals stand
+// proud instead of returning in", "the black frame stands proud where the photograph's is set
+// in" - and `max_recess_m` had been declared in the exclusions the whole time with nothing
+// able to spend it. Negative is inward, bounded by the wall; positive is outward, bounded by
+// the terminal, because how far a thing may be buried is a property of the wall and how far
+// it may stand out is a property of the thing.
+test("depth is signed: outward is the terminal's bound, inward is the wall's", () => {
+	const at = (depth: number) => grammar({ Facet: [{ terminal: "glass", inset_m: 0.05, depth_m: depth }] }, "Facet");
+	assert.equal(at(-0.18).rules.Facet[0].depth_m, -0.18, "a pane may be set back into the wall");
+	assert.equal(at(-BOUNDS.maxRecessM).rules.Facet[0].depth_m, -BOUNDS.maxRecessM);
+	assert.throws(() => at(-BOUNDS.maxRecessM - 0.01), /out of range/, "and no further than the wall allows");
+
+	// The outward bound is still the terminal's own, which is what stopped a single ceiling
+	// permitting a half-metre transom while denying a cornice its overhang.
+	const cornice = TERMINAL_PROJECTION.cornice;
+	const transom = TERMINAL_PROJECTION.transom;
+	assert.ok(cornice > transom, "the table must still differ per terminal for this to mean anything");
+	assert.doesNotThrow(() => grammar({ Facet: [{ terminal: "cornice", depth_m: cornice }] }, "Facet"));
+	assert.throws(() => grammar({ Facet: [{ terminal: "transom", depth_m: cornice }] }, "Facet"), /out of range/);
+
+	// Zero is accepted HERE and refused by the validator, which is the layer that knows a
+	// solid must have thickness. Asserting it at this layer was my own mistake and the test
+	// caught it: the parser bounds the range, the validator decides what a member must be.
+	assert.doesNotThrow(() => grammar({ Facet: [{ terminal: "band", depth_m: 0 }] }, "Facet"));
 });

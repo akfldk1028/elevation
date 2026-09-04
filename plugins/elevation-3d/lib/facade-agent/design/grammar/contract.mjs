@@ -111,6 +111,9 @@ export const BOUNDS = Object.freeze({
 	maxDepth: 12,
 	maxRepeat: 64,
 	maxInsetM: 0.5,
+	// How far a member may be set back INTO the wall. The same number the context has
+	// published as `max_recess_m` since before anything could spend it.
+	maxRecessM: 0.5,
 	// There is deliberately no maxDepthM here any more. How far a member may stand out of
 	// the wall is a fact about the member, so it lives beside the member in
 	// facade-vocabulary.mjs; a bound in this table would have to be right for a glazing bead
@@ -291,11 +294,21 @@ function parseAlternative(value, label, symbols) {
 		const inset = alternative.inset_m ?? 0;
 		if (!Number.isFinite(inset) || inset < 0 || inset > BOUNDS.maxInsetM) fail(`${label}.inset_m is out of range`);
 		const depth = alternative.depth_m ?? 0;
-		if (!Number.isFinite(depth) || depth < 0 || depth > TERMINAL_PROJECTION[alternative.terminal]) {
-				// The bound is the terminal's, not one number for the whole vocabulary. A single
-				// ceiling let a transom be written half a metre deep and refused a cornice the
-				// overhang that makes it one; see the projection table in facade-vocabulary.mjs.
-				fail(`${label}.depth_m is out of range: a ${alternative.terminal} may stand at most ${TERMINAL_PROJECTION[alternative.terminal]} m out of the wall`);
+		// NEGATIVE IS INWARD. A member's whole relationship to the wall was one unsigned
+		// number, so nothing could be set back into it: three authors on three different
+		// masses each reported the same thing in their own words - "there is no way to push
+		// an opening into the wall", "my reveals stand proud instead of returning in", "the
+		// black frame stands proud where the photograph's is set in". They were not asking
+		// for three features. `max_recess_m` has been declared in the exclusions all along
+		// and nothing could spend it.
+		//
+		// The bound is still the terminal's on the way out - a single ceiling once let a
+		// transom be written half a metre deep and refused a cornice the overhang that makes
+		// it one; see the projection table in facade-vocabulary.mjs - and the recess bound on
+		// the way in, because how far a thing may be buried is a property of the wall rather
+		// than of the thing.
+		if (!Number.isFinite(depth) || depth < -BOUNDS.maxRecessM || depth > TERMINAL_PROJECTION[alternative.terminal]) {
+				fail(`${label}.depth_m is out of range: a ${alternative.terminal} may stand at most ${TERMINAL_PROJECTION[alternative.terminal]} m out of the wall, or be set back at most ${BOUNDS.maxRecessM} m into it (negative depth is inward)`);
 			}
 		const riseTo = alternative.rise_to ?? null;
 		// Only a solid may be carried past its facet. A hole above the mass is a hole in

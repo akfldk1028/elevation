@@ -197,8 +197,15 @@ export function validateResolvedFacadeProgram({ program, context, resolved } = {
 			// take their depth from the reveal around them and several accepted grammars leave
 			// them at zero.
 			const mustHaveThickness = primitive.kind !== "glass" && primitive.kind !== "window" && primitive.kind !== "door";
-			if (!Number.isFinite(primitive.depth_m) || primitive.depth_m < 0 || primitive.depth_m > depthLimit
-				|| (mustHaveThickness && primitive.depth_m <= 0)) {
+			// Negative is INWARD, and it is bounded by the wall rather than by the terminal:
+			// how far a thing may be buried is a property of the wall it is buried in. The
+			// outward limit stays the terminal's. This check used to refuse every negative
+			// depth outright, which is why `max_recess_m` sat in the exclusions with nothing
+			// able to spend it while three authors each asked for a different feature that
+			// was really this one.
+			const recessLimit = context.exclusions?.max_recess_m ?? 0.5;
+			if (!Number.isFinite(primitive.depth_m) || primitive.depth_m < -recessLimit || primitive.depth_m > depthLimit
+				|| (mustHaveThickness && primitive.depth_m === 0)) {
 				measure("PROJECTION_LIMIT_EXCEEDED", index, primitive.depth_m ?? Number.MAX_SAFE_INTEGER, depthLimit);
 			}
 		}
