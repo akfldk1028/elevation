@@ -237,9 +237,9 @@
 					"id": "diagrid-004",
 					"title": "Diagrid block",
 					"candidate": "creative-004",
-					"intent": "A triangulated skin transcribed onto the cleft block. Accepted at attempt one with zero faults, then failed the luminance floor at P05 7.00 on the elevation with no sun. The author's own evidence overturned my diagnosis: the glass was never the dark population - its two METALLIC materials lost 49% of their luminance on the shaded face where the dielectrics lost 16-19%, so a panel it had declared a full step lighter than the glass rendered three times darker. One substance change, sheet to masonry, took the face to 30.72; one finish change, satin to matte, cleared a specular blow-out on the top view. Both fixes were the axes I had told it were invisible.",
-					"grammar": "grammar-image-004-diagrid-v2.json",
-					"renderDir": "render-004-diagrid-v5"
+					"intent": "A triangulated skin on the cleft block, re-transcribed once the grammar had a diagonal. The first attempt had no triangles in it at all: every module came out a box, because a diagonal attribute travelled three of the four links it needed and was dropped by a whitelist one step before the geometry, with 799 primitives reported accepted and no warning anywhere. The author then found that the two halves as first written did not tile - both kept the bottom edge, so they overlapped below and left the top of every cell bare, and their areas summed to the rectangle, which is what hid it. Four halves now, and a member tiles with its own complement. 681 primitives, 244 triangles, plan seams zero.",
+					"grammar": "grammar-image-004-diagrid-tri.json",
+					"renderDir": "render-004-tri"
 				},
 				{
 					"id": "seam-tower-020",
