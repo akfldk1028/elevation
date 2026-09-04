@@ -6,7 +6,6 @@ import { buildPunchedFacadeDetails } from "../plugins/elevation-3d/lib/facade-ag
 import * as punchedFacade from "../plugins/elevation-3d/lib/facade-agent/punched-facade.mjs";
 import { createDeclaredMaterialMaps, createFacadePbrMaps } from "../plugins/elevation-3d/lib/facade-agent/procedural-materials.mjs";
 import { deriveDeclaredMaterial } from "../plugins/elevation-3d/lib/facade-agent/declared-material.mjs";
-import sharp from "sharp";
 import { buildEnrichedScene } from "../plugins/elevation-3d/lib/enrichment.mjs";
 
 const mesh = {
