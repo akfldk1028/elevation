@@ -176,6 +176,18 @@ export function deriveFacadePrimitives({ grammar, segment, storeys, entrance = n
 	const underside = Number.isFinite(buildingUnderside) ? round(buildingUnderside) : null;
 	const risesTo = (alternative, facetTop) => alternative.rise_to === "building_top"
 		&& Number.isFinite(facetTop) && buildingTop - facetTop <= maxRise + 1e-9;
+	// The next slab line strictly above a facet's own top, or null when the facet already ends
+	// on one. Only a line the storeys already declare - this invents no datum of its own.
+	const storeyLineAbove = (facetTop) => {
+		if (!Number.isFinite(facetTop)) return null;
+		const lines = storeys.map((storey) => round(storey.z_max)).filter((z) => z > facetTop + 1e-9);
+		return lines.length ? Math.min(...lines) : null;
+	};
+	const risesToStoreyLine = (alternative, facetTop) => {
+		if (alternative.rise_to !== "storey_line") return null;
+		const line = storeyLineAbove(facetTop);
+		return line !== null && line - facetTop <= maxRise + 1e-9 ? line : null;
+	};
 	const dropsTo = (alternative, facetBottom) => alternative.rise_to === "building_underside"
 		&& underside !== null && Number.isFinite(facetBottom)
 		&& facetBottom - underside > 1e-9 && facetBottom - underside <= maxRise + 1e-9;
@@ -230,11 +242,16 @@ export function deriveFacadePrimitives({ grammar, segment, storeys, entrance = n
 					// far as a datum the engine knows. Everything else here clamps: that clamp is
 					// why the top edge of every elevation drawn so far has been the mass's own
 					// stepped edge, because a parapet run level across the steps was not sayable.
+					// building_top wins where both could apply: it is the building's own head, and
+					// a member asking for one of the two is asking to stop being ragged.
 					z_max: risesTo(alternative, segment.local_z?.[1])
 						? Math.max(round(zMax), buildingTop)
-						: Math.min(segment.local_z?.[1] ?? Infinity, round(zMax)),
+						: risesToStoreyLine(alternative, segment.local_z?.[1]) !== null
+							? Math.max(round(zMax), risesToStoreyLine(alternative, segment.local_z?.[1]))
+							: Math.min(segment.local_z?.[1] ?? Infinity, round(zMax)),
 				},
 				...(risesTo(alternative, segment.local_z?.[1]) || dropsTo(alternative, segment.local_z?.[0])
+					|| risesToStoreyLine(alternative, segment.local_z?.[1]) !== null
 					? { rises_to: alternative.rise_to } : {}),
 				depth_m: kind === "door" && entrance ? entrance.recess_m : graded("depth_m", alternative.depth_m),
 				// Only when the author named one. Absent leaves the primitive exactly as every

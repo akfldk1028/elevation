@@ -45,7 +45,27 @@ export const AXES = Object.freeze(["u", "z", "storey", "layer"]);
  * there is no such line and the datum does not exist, so the operator is inert - which is
  * correct, and is why it cannot be used to fill in the underside of a bridge down to grade.
  */
-export const RISE_DATUMS = Object.freeze(["building_top", "building_underside"]);
+/**
+ * The lines a solid may be carried up to, past the top of its own facet.
+ *
+ * `storey_line` is the third and it exists because the mass's own tessellation was setting
+ * the design's cadence. On one candidate 94 of 113 facets are exactly 2.062 m tall and
+ * stacked in eight courses, while the building it was transcribed from reads as five courses
+ * of 3.3 m - so every author drew eight, not by choice but because a member cannot leave its
+ * facet and the facet is 2.062 m. Measured on that mass: a member at z 0.20 and one at z 1.90
+ * in the same column sit 10 mm apart in plan. The courses are the same wall, cut horizontally
+ * by the extractor; the cadence limit was never geometry.
+ *
+ * This is what CGA calls a snap line and this language had made a boundary: Muller's rule is
+ * that "the snap lines divide the scope into different parts and the repeat rule is invoked
+ * for each part separately" - divide, not confine. A facet cut is a place a rule may notice,
+ * not a wall it cannot cross.
+ *
+ * Guarded exactly as the other two are, and no further: solids only, so no opening is ever
+ * carried through; at most one storey, the same `maxRise` a parapet gets; and inert when the
+ * facet already ends on a slab line, so it can only ever close a gap the extractor opened.
+ */
+export const RISE_DATUMS = Object.freeze(["building_top", "building_underside", "storey_line"]);
 export const REACH_EDGES = Object.freeze(["facet_edge"]);
 /**
  * Which way a member's rectangle is cut in half.

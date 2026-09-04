@@ -811,3 +811,29 @@ test("a diagonal and its complement tile the scope; the two lower halves do not"
 		assert.equal(parsed.rules.Facet[0].diagonal, value);
 	}
 });
+
+// The mass's own tessellation was setting the design's cadence. On creative-004, 94 of 113
+// facets are exactly 2.062 m tall and stacked in eight courses, while the building being
+// transcribed reads as five courses of 3.3 m - so every author drew eight, not by choice but
+// because a member cannot leave its facet. Measured on that mass: a member at z 0.20 and one
+// at z 1.90 in the same column sit 10 mm apart in plan, so the courses are one wall cut
+// horizontally by the extractor and the limit was never geometry. `storey_line` carries a
+// SOLID to the next slab line the storeys already declare, under the same guards a parapet
+// gets - never an opening, never more than one storey, inert when the facet already ends on
+// a line.
+test("storey_line carries a solid past its facet, and only a solid", () => {
+	const parsed = grammar({ Facet: [{ terminal: "spandrel", depth_m: 0.1, rise_to: "storey_line" }] }, "Facet");
+	assert.equal(parsed.rules.Facet[0].rise_to, "storey_line");
+
+	// The refusal openings already had applies unchanged: a hole carried past its facet is
+	// the case the fold clearance exists to prevent.
+	for (const terminal of ["glass", "door"]) {
+		assert.throws(
+			() => grammar({ Facet: [{ terminal, inset_m: 0.05, rise_to: "storey_line" }] }, "Facet"),
+			new RegExp(`cannot carry a ${terminal} past its facet`),
+			`${terminal} must not reach a storey line`,
+		);
+	}
+	// And it is one of the datums, not a free-text field.
+	assert.throws(() => grammar({ Facet: [{ terminal: "spandrel", depth_m: 0.1, rise_to: "next_facet" }] }, "Facet"), /rise_to must be one of/);
+});
