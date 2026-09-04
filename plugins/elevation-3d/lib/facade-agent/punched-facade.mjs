@@ -408,6 +408,40 @@ function archGeometry(plane, tangent, grammar, bounds) {
 	};
 }
 
+/**
+ * A member's rectangle cut in half on a diagonal, extruded to its own depth.
+ *
+ * Every primitive in this language was a box, so a facade of triangles could not be drawn -
+ * an author transcribing a diagrid had to write one rectangle per facet and said so: "the
+ * alternation happens ACROSS the diagonal; the diagonal is the building's entire signature."
+ *
+ * `rising` keeps the half below the diagonal from the bottom-left corner to the top-right;
+ * `falling` keeps the half below the one from top-left to bottom-right. Two members in one
+ * scope with opposite diagonals tile that scope exactly and share the cut edge, which is
+ * what makes a diagrid sayable at all.
+ */
+function diagonalGeometry(plane, tangent, grammar, bounds, diagonal) {
+	const { u0, u1, v0, v1, n0, n1 } = bounds;
+	if (![u0, u1, v0, v1, n0, n1].every(Number.isFinite)
+		|| u1 - u0 <= EPSILON || v1 - v0 <= EPSILON || Math.abs(n1 - n0) <= EPSILON) {
+		throw new TypeError("invalid facade geometry: a diagonal member has non-positive dimensions");
+	}
+	// Both keep the bottom edge whole; they differ in which top corner the third point is.
+	const corners = diagonal === "rising"
+		? [[u0, v0], [u1, v0], [u1, v1]]
+		: [[u0, v0], [u1, v0], [u0, v1]];
+	const coordinates = [];
+	for (const n of [n0, n1]) for (const [u, v] of corners) coordinates.push([u, v, n]);
+	// 0,1,2 at n0 and 3,4,5 at n1; the two caps wind opposite ways so the solid is closed.
+	const indices = [[0, 2, 1], [3, 4, 5]];
+	for (const [a, b] of [[0, 1], [1, 2], [2, 0]]) indices.push([a, b, b + 3], [a, b + 3, a + 3]);
+	return {
+		positions: coordinates.map(([u, v, n]) => localPoint(plane, tangent, u, v, n)),
+		indices,
+		uvs: coordinates.map(([u, v]) => [u / grammar.brick_module_m[0], (plane.origin[2] + v) / grammar.brick_module_m[1]]),
+	};
+}
+
 function primitiveSignature(kind, material, slot, bounds) {
 	const dimensions = [bounds.u1 - bounds.u0, bounds.v1 - bounds.v0, Math.abs(bounds.n1 - bounds.n0)]
 		.map((value) => Number(value.toFixed(9)));
@@ -428,7 +462,9 @@ function pushDetail(details, plane, tangent, grammar, bounds, properties, massBa
 	}
 	const geometry = properties.kind === "arch"
 		? archGeometry(plane, tangent, grammar, bounds)
-		: boxGeometry(plane, tangent, grammar, bounds);
+		: properties.diagonal
+			? diagonalGeometry(plane, tangent, grammar, bounds, properties.diagonal)
+			: boxGeometry(plane, tangent, grammar, bounds);
 	details.push({
 		...properties,
 		...massBackingProperties,
@@ -1008,6 +1044,12 @@ export function buildTypedFacadeDetails({ mesh, floorGuides, facadePlanes, primi
 			kind: primitive.kind, material, slot: `typed-${index}`,
 			design_primitive_index: index,
 			...(primitive.role ? { role: primitive.role } : {}),
+			// The cut that makes a member a triangle. This list is a whitelist, so a field the
+			// deriver sets and this line does not name is silently dropped - which is exactly
+			// what happened the first time: the grammar parsed the diagonal, the deriver carried
+			// it, the geometry builder had the code to draw it, and 312 spandrels still came out
+			// as boxes because the property never travelled the last step.
+			...(primitive.diagonal ? { diagonal: primitive.diagonal } : {}),
 			...(primitive.family_id ? { family_id: primitive.family_id } : {}),
 			...(primitive.zone_id ? { zone_id: primitive.zone_id } : {}),
 			...(primitive.material_id ? { material_id: primitive.material_id } : {}),

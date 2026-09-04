@@ -241,6 +241,10 @@ export function deriveFacadePrimitives({ grammar, segment, storeys, entrance = n
 				// grammar written before this field produced it, so the geometry builder's
 				// terminal default stays the answer and nothing already drawn moves.
 				...(alternative.material ? { material: alternative.material } : {}),
+				// Same rule as material: only when the author named one, so a grammar written
+				// before diagonals existed emits exactly the record it always did and the
+				// geometry builder keeps drawing it as a box.
+				...(alternative.diagonal ? { diagonal: alternative.diagonal } : {}),
 				family_id: familyId(symbol, scope.param),
 				storey: storeyOf(zMin),
 				...(scope.layer ? { layer: scope.layer } : {}),

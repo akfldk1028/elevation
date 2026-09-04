@@ -47,6 +47,27 @@ export const AXES = Object.freeze(["u", "z", "storey", "layer"]);
  */
 export const RISE_DATUMS = Object.freeze(["building_top", "building_underside"]);
 export const REACH_EDGES = Object.freeze(["facet_edge"]);
+/**
+ * Which way a member's rectangle is cut in half.
+ *
+ * Every primitive in this language was a box, so a facade of triangles - the commonest
+ * cladding pattern there is - could not be said at all. A transcribing author reading a
+ * diagrid wrote one rectangle per facet and reported the loss plainly: "the photograph's
+ * unit is a triangle and the alternation happens ACROSS the diagonal; the diagonal is the
+ * building's entire signature." The reader put the concept beside the drawing and said the
+ * same thing in fewer words.
+ *
+ * It is an ATTRIBUTE rather than two new terminals, for the reason `reach` and `grade` are:
+ * a new word needs a role, a material and a purpose, and would have forced one answer for
+ * all of them. A diagonal on the existing words lets a glazed triangle stay a window and a
+ * stone one stay a panel, so material, role and every gate keep working unchanged.
+ *
+ * `rising` keeps the half below the diagonal that runs from the member's bottom-left corner
+ * to its top-right; `falling` keeps the half below the one from top-left to bottom-right.
+ * Two members in one scope with opposite diagonals tile it exactly - which is what the
+ * layer axis is for.
+ */
+export const DIAGONALS = Object.freeze(["rising", "falling"]);
 /** Terminals that cut a hole. None of them may be carried past the facet it belongs to. */
 const OPENING_TERMINALS = new Set(["glass", "door", "arch"]);
 export const BOUNDS = Object.freeze({
@@ -230,7 +251,7 @@ function parseGuard(alternative, label) {
 }
 
 function parseAlternative(value, label, symbols) {
-	const alternative = record(value, label, new Set(["when", "split", "terminal", "inset_m", "depth_m", "min_u_m", "min_z_m", "rise_to", "reach", "material", "grade"]));
+	const alternative = record(value, label, new Set(["when", "split", "terminal", "inset_m", "depth_m", "min_u_m", "min_z_m", "rise_to", "reach", "material", "grade", "diagonal"]));
 	const when = alternative.when === undefined || alternative.when === null ? null : parsePredicate(alternative.when, `${label}.when`);
 	const guard = parseGuard(alternative, label);
 	if (alternative.terminal !== undefined && alternative.terminal !== null) {
@@ -289,13 +310,22 @@ function parseAlternative(value, label, symbols) {
 			}
 			return Object.freeze({ attr, from: fields.from, to: fields.to });
 		})();
+		// Cut this member's rectangle on a diagonal and keep one half. `wall` emits nothing so
+		// there is nothing to cut, and an arch already draws its own curved geometry inside its
+		// bounding frame - cutting that frame would leave a half-arch, which is not a thing.
+		const diagonal = alternative.diagonal ?? null;
+		if (diagonal !== null) {
+			if (!DIAGONALS.includes(diagonal)) fail(`${label}.diagonal must be one of ${DIAGONALS.join(", ")}`);
+			if (alternative.terminal === "wall") fail(`${label}.diagonal on a wall cuts nothing: wall emits no geometry`);
+			if (alternative.terminal === "arch") fail(`${label}.diagonal cannot cut an arch: its rectangle is already the frame its curve is drawn inside`);
+		}
 		// Absent means "whatever this member is usually made of", which is what every grammar
 		// written before this field existed means, so the default has to stay the table's.
 		const material = alternative.material ?? null;
 		if (material !== null && !TERMINAL_MATERIAL_CHOICES.includes(material) && !declaredMaterialIds.has(material)) {
 			fail(`${label}.material must be one of ${TERMINAL_MATERIAL_CHOICES.join(", ")} or a material this grammar declares`);
 		}
-		return Object.freeze({ when, guard, terminal: alternative.terminal, inset_m: inset, depth_m: depth, rise_to: riseTo, reach, material, grade });
+		return Object.freeze({ when, guard, terminal: alternative.terminal, inset_m: inset, depth_m: depth, rise_to: riseTo, reach, material, grade, diagonal });
 	}
 	// Strict structured output forces both fields onto a split too, where zero is the
 	// only sensible answer. Only a real offset here means the model confused the two.
@@ -305,6 +335,7 @@ function parseAlternative(value, label, symbols) {
 	// (rise_to and material predate this rule and keep their old tolerance.)
 	if ((alternative.reach ?? null) !== null) fail(`${label}.reach belongs to a terminal`);
 	if ((alternative.grade ?? null) !== null) fail(`${label}.grade belongs to a terminal`);
+	if ((alternative.diagonal ?? null) !== null) fail(`${label}.diagonal belongs to a terminal`);
 	if ((alternative.split ?? null) === null) fail(`${label} is neither a split nor a terminal`);
 	const split = record(alternative.split, `${label}.split`, new Set(["axis", "parts"]));
 	if (!AXES.includes(split.axis)) fail(`${label}.split.axis must be u, z, storey or layer`);

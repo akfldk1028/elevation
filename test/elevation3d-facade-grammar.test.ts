@@ -743,3 +743,34 @@ test("the schema lets a terminal name a declared material, not just the legacy f
 		assert.ok(admits.test(legacy), `a legacy word must still satisfy the schema: ${legacy}`);
 	}
 });
+
+// The diagonal parsed, the deriver carried it, and the geometry builder had the code to draw
+// it - and 312 spandrels still came out as boxes, because the detail builder's property list
+// is a WHITELIST and nothing named the new field. No error, no warning, every gate green,
+// 799 primitives accepted, and the drawing simply had no triangles in it. That is the silent
+// wrong answer this repository keeps paying for, so the contract is pinned here.
+test("a terminal may be cut on a diagonal, and only a terminal", () => {
+	const parsed = grammar({ Facet: [{ terminal: "spandrel", depth_m: 0.1, diagonal: "rising" }] }, "Facet");
+	assert.equal(parsed.rules.Facet[0].diagonal, "rising");
+
+	// Absent stays absent, so every grammar written before this field draws exactly the box
+	// it always drew.
+	const plain = grammar({ Facet: [{ terminal: "spandrel", depth_m: 0.1 }] }, "Facet");
+	assert.equal(plain.rules.Facet[0].diagonal, null);
+
+	// A diagonal on a split would be a request the engine silently ignores - the same class
+	// of fault as the drop that prompted this test.
+	assert.throws(() => grammar({
+		Facet: [{ diagonal: "rising", split: { axis: "u", parts: [{ size: "~1", symbol: "Wall" }] } }],
+		Wall: WALL,
+	}, "Facet"), /diagonal belongs to a terminal/);
+
+	// `wall` emits nothing, so there is nothing to cut.
+	assert.throws(() => grammar({ Facet: [{ terminal: "wall", diagonal: "falling" }] }, "Facet"), /cuts nothing/);
+
+	// An arch already draws its own curve inside its rectangle; cutting that frame in half
+	// would leave a half-arch, which is not a thing anyone builds.
+	assert.throws(() => grammar({ Facet: [{ terminal: "arch", depth_m: 0.2, diagonal: "rising" }] }, "Facet"), /cannot cut an arch/);
+
+	assert.throws(() => grammar({ Facet: [{ terminal: "spandrel", depth_m: 0.1, diagonal: "sideways" }] }, "Facet"), /must be one of/);
+});

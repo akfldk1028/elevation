@@ -1,6 +1,6 @@
 import { sha256, stableJson } from "../../../core.mjs";
 import { TERMINAL_MATERIAL_CHOICES, TERMINAL_VOCABULARY } from "../../facade-vocabulary.mjs";
-import { AXES, BOUNDS, MAX_PARAM_INDEX, PARAM_VALUES, PARAM_WORDS, REACH_EDGES, RISE_DATUMS, TERMINALS } from "./contract.mjs";
+import { AXES, BOUNDS, DIAGONALS, MAX_PARAM_INDEX, PARAM_VALUES, PARAM_WORDS, REACH_EDGES, RISE_DATUMS, TERMINALS } from "./contract.mjs";
 import { DECLARED_MATERIAL_AXES, DECLARED_MATERIAL_ID_PATTERN } from "../../declared-material.mjs";
 import { PBR_MIN_ROLE_COLOR_DISTANCE } from "../../../texturing/render-style-evidence.mjs";
 import { MIN_ROLE_COLOR_DISTANCE as AXON_MIN_ROLE_COLOR_DISTANCE } from "../../../competition-axon.mjs";
@@ -88,7 +88,7 @@ export const FACADE_GRAMMAR_V3_SCHEMA = Object.freeze({
 			// 400 from the provider before any model output. min_u_m and min_z_m drifted out
 			// of this list on 2026-08-31 and rise_to, material and reach followed - no live
 			// call ran in between, which is the only reason it never fired.
-			required: ["when", "split", "terminal", "inset_m", "depth_m", "min_u_m", "min_z_m", "rise_to", "reach", "material", "grade"],
+			required: ["when", "split", "terminal", "inset_m", "depth_m", "min_u_m", "min_z_m", "rise_to", "reach", "material", "grade", "diagonal"],
 			properties: {
 				when: {
 					type: ["string", "null"],
@@ -164,6 +164,11 @@ export const FACADE_GRAMMAR_V3_SCHEMA = Object.freeze({
 					type: ["string", "null"],
 					pattern: DECLARED_MATERIAL_ID_PATTERN,
 					description: "What this member is made of. Name one of the materials this grammar declares in its top-level `materials` list - that is the free way to say it - or one of the legacy words when a declaration would add nothing. Null takes the terminal's own. A pilaster's default is the mass's own material, so a pier left at default shares a material with the wall behind it and the plan cut draws no line between them.",
+				},
+				diagonal: {
+					type: ["string", "null"],
+					enum: [...DIAGONALS, null],
+					description: "Cut this member's rectangle in half on a diagonal and keep one half, instead of drawing a box. rising keeps the half below the diagonal from the bottom-left corner to the top-right; falling keeps the half below the one from top-left to bottom-right. Two members in ONE scope with opposite diagonals tile that scope exactly and share the cut edge - a layer split is how you put both in the same scope. Null draws the usual box. Refused on wall, which emits nothing, and on arch, whose rectangle is already the frame its curve is drawn inside.",
 				},
 				inset_m: { type: ["number", "null"] },
 				depth_m: { type: ["number", "null"] },
@@ -414,6 +419,22 @@ still work and are there for the case where a declaration would add nothing, but
 fallback, not the menu. An author transcribing a bronze rainscreen with only those four
 wrote "brick" to borrow its hue and called it "a lie on a construction document"; that is
 the situation the declaration exists to end, so do not settle for the nearest legacy word.
+
+A MEMBER MAY BE A TRIANGLE. Write "diagonal": "rising" or "falling" on a terminal and its
+rectangle is cut in half on that diagonal, keeping the lower half; rising cuts from the
+bottom-left corner to the top-right, falling from the top-left to the bottom-right. Two
+members in ONE scope with opposite diagonals tile that scope exactly and share the cut
+edge, and the layer axis is what puts two members in one scope - so a diagrid, a folded or
+faceted panel field, a chevron, a gable, a sawtooth are all sayable now. It is an attribute
+and not a word, so the member keeps being whatever terminal it is: a glazed triangle is
+still a window and counts as glass, a stone one is still a panel. Refused on wall, which
+emits nothing to cut, and on arch, whose rectangle is already the frame its curve sits in.
+
+This exists because a facade of triangles is one of the commonest cladding patterns there
+is and this language could not say it at all. An author transcribing one wrote a rectangle
+per facet and reported the loss exactly: the alternation happens ACROSS the diagonal, and
+the diagonal was the building's entire signature. If a picture in front of you has a
+diagonal in it, you can now draw it - do not flatten it to squares.
 
 WHERE THE SEMANTIC ROLE ACTUALLY COMES FROM, because the obvious reading is wrong and it
 has cost a render. A substance does map to a role, but the presentation resolver does not
