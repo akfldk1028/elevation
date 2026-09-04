@@ -19,6 +19,20 @@
 export const COMPOSITION_BOUNDS = Object.freeze({
 	/** Guidance asks for a fifth to two fifths. Reject only what is plainly a blank wall. */
 	minOpeningRatio: 0.1,
+	// A face may be BLIND. The floor above is right for a punched wall and has no category
+	// for a solid, so a windowless monolith - Chipperfield's Kunsthaus, Nouvel's Fondation,
+	// Zumthor's Bruder Klaus - could be described by this language and never accepted by it.
+	// An author transcribing one measured what passing would cost: 124 m2 of glass across
+	// four faces where its photograph has 12, a tenfold invention, and it refused to make it.
+	// The previous attempt on that building did make it - thirty windows on a facade that has
+	// almost none - and an independent reviewer called the result "not remotely the same
+	// building" and named those windows the worst single fault in the set.
+	//
+	// So this is a category, not a lower threshold: under the floor is allowed only when the
+	// face is genuinely solid. A wall with slits in it - the case the floor was written to
+	// catch - sits at 3 to 8% and still fails, because it is neither a punched facade nor a
+	// solid one and that is exactly the indecision worth refusing.
+	maxSolidFaceRatio: 0.02,
 	/**
 	 * Largest opening against the median one. Below this every opening is the same.
 	 *
@@ -265,8 +279,13 @@ export function measureComposition({ context, resolved } = {}) {
 	// is and by how much to move, so each one carries its measurement.
 	const faults = [];
 	const note = (code, text) => { codes.push(code); faults.push(`${code}: ${text}`); };
-	if (worstRatio + 1e-9 < COMPOSITION_BOUNDS.minOpeningRatio) {
-		note("OPENING_RATIO_LOW", `openings are ${(worstRatio * 100).toFixed(1)}% of the poorest elevation, which reads as a blank wall with slits in it; the floor here is ${(COMPOSITION_BOUNDS.minOpeningRatio * 100).toFixed(0)}% and a deliberately closed face may sit near it, but a face this starved is not a decision`);
+	// Every face is either above the floor, or so far below it that it is plainly a solid.
+	// The band between is the fault.
+	const indecisive = Object.entries(openingRatios)
+		.filter(([, ratio]) => ratio + 1e-9 < COMPOSITION_BOUNDS.minOpeningRatio && ratio > COMPOSITION_BOUNDS.maxSolidFaceRatio);
+	if (indecisive.length) {
+		const [view, ratio] = indecisive.sort((left, right) => left[1] - right[1])[0];
+		note("OPENING_RATIO_LOW", `openings are ${(ratio * 100).toFixed(1)}% of the ${view} elevation, which reads as a blank wall with slits in it; the floor is ${(COMPOSITION_BOUNDS.minOpeningRatio * 100).toFixed(0)}% and a deliberately closed face may sit near it. A face may also be BLIND - under ${(COMPOSITION_BOUNDS.maxSolidFaceRatio * 100).toFixed(0)}%, which is a solid and a real thing to build - but this one is neither, and that is the indecision being refused`);
 	}
 	// A cornice is the only terminal that means "this is where the building stops".
 	// Without one the elevation reads as cut off at whatever storey it happened to reach.
@@ -299,9 +318,15 @@ export function measureComposition({ context, resolved } = {}) {
 		const kinds = kindsByView.get(view) ?? new Set();
 		const hasDoor = doorView === view;
 		const missing = [];
-		if (!kinds.has("window") && !hasDoor) missing.push(["glass", "a window (or the placed entrance)"]);
+		// A blind face is exempt from the glass demand, for the same reason it is exempt from
+		// the opening ratio: it has no openings BY DESIGN, and requiring one on every
+		// elevation means no building may have a solid side. The exemption is narrow - it
+		// applies only to a face under the solid threshold, so a face with slits still owes
+		// its glass.
+		const blind = (openingRatios[view] ?? 1) <= COMPOSITION_BOUNDS.maxSolidFaceRatio;
+		if (!kinds.has("window") && !hasDoor && !blind) missing.push(["glass", "a window (or the placed entrance)"]);
 		if (!["sill", "band", "transom"].some((kind) => kinds.has(kind))) missing.push(["opaque", "a sill, a band or a transom - they are the only kinds that carry it, so a pure skin needs its transom"]);
-		if (!["mullion", "reveal", "window", "louvre"].some((kind) => kinds.has(kind)) && !hasDoor) missing.push(["bronze", "a mullion, a reveal or a louvre (a window without a reveal grows its own bronze frame)"]);
+		if (!["mullion", "reveal", "window", "louvre"].some((kind) => kinds.has(kind)) && !hasDoor && !blind) missing.push(["bronze", "a mullion, a reveal or a louvre (a window without a reveal grows its own bronze frame)"]);
 		for (const [role, source] of missing) {
 			note("MATERIAL_ROLE_MISSING", `the ${view} elevation has no kind that can produce the ${role} role, and the render gate requires all four roles on every elevation; it needs ${source}`);
 		}

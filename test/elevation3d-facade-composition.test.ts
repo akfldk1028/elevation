@@ -82,9 +82,39 @@ test("the worst elevation sets the opening ratio", () => {
 		cornice,
 	];
 	const { metrics, codes } = measureComposition({ context, resolved: { primitives } });
-	assert.ok(codes.includes("OPENING_RATIO_LOW"));
 	assert.ok(metrics.opening_ratio_by_view.front > metrics.opening_ratio_by_view.back);
 	assert.equal(metrics.worst_opening_ratio, metrics.opening_ratio_by_view.back);
+	// That back face is 1 m2 in 165 - 0.6%, which is a BLIND face and a real thing to build,
+	// so it is exempt. The ratio still records it; the fault is what changed.
+	assert.ok(metrics.opening_ratio_by_view.back <= 0.02);
+	assert.equal(codes.includes("OPENING_RATIO_LOW"), false, "a face this closed is a solid, not a starved facade");
+});
+
+// The floor was written to catch a wall with slits in it, and that case still has to fail.
+// A blind face is exempt because it has no openings BY DESIGN; a face at 5% is neither a
+// solid nor a punched facade, and that indecision is the thing worth refusing. An author
+// transcribing a windowless monolith measured what the old undifferentiated floor cost:
+// 124 m2 of glass across four faces where its photograph has 12, and it refused to invent
+// them. The attempt before it did invent them, and an independent reviewer called the
+// result "not remotely the same building".
+test("a blind face is allowed; a face with slits in it is not", () => {
+	const context = {
+		...CONTEXT,
+		facade_segments: [
+			{ segment_id: "seg-front", face_view: "front", length_m: 10, local_z: [0, 16.5] },
+			{ segment_id: "seg-back", face_view: "back", length_m: 10, local_z: [0, 16.5] },
+		],
+	};
+	const slitted = [
+		...Array.from({ length: 10 }, (_, index) => opening(0.5, 9.5, 0.5 + index * 1.6, 1.9 + index * 1.6)),
+		// 8.25 m2 of 165 = 5%: under the floor, over the solid threshold.
+		{ ...opening(1, 4.5, 1, 3.357), segment_id: "seg-back" },
+		cornice,
+	];
+	const { metrics, codes } = measureComposition({ context, resolved: { primitives: slitted } });
+	const back = metrics.opening_ratio_by_view.back;
+	assert.ok(back > 0.02 && back < 0.1, `the back face must sit in the refused band, measured ${back}`);
+	assert.ok(codes.includes("OPENING_RATIO_LOW"));
 });
 
 // v12 answered the bare lockstep fault by deleting windows until the elevation was a
