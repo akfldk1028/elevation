@@ -2,6 +2,7 @@ import { sha256, stableJson } from "../../../core.mjs";
 import { TERMINAL_MATERIAL_CHOICES, TERMINAL_VOCABULARY } from "../../facade-vocabulary.mjs";
 import { AXES, BOUNDS, DIAGONALS, MAX_PARAM_INDEX, PARAM_VALUES, PARAM_WORDS, REACH_EDGES, RISE_DATUMS, TERMINALS } from "./contract.mjs";
 import { DECLARED_MATERIAL_AXES, DECLARED_MATERIAL_ID_PATTERN } from "../../declared-material.mjs";
+import { rankedSegments } from "../resolver.mjs";
 import { PBR_MIN_ROLE_COLOR_DISTANCE } from "../../../texturing/render-style-evidence.mjs";
 import { MIN_ROLE_COLOR_DISTANCE as AXON_MIN_ROLE_COLOR_DISTANCE } from "../../../competition-axon.mjs";
 
@@ -785,12 +786,24 @@ export function buildFacadeGrammarPrompt({ context, correctionCodes = [], attemp
 	// code puts the entrance on the highest-visibility ground segment that can hold it, so
 	// the face that segment belongs to is knowable here. Two authors given the same brief
 	// guessed it differently until it was stated.
-	const fold = context.exclusions?.fold_clearance_m ?? 0;
-	const entranceSegment = (context.facade_segments ?? [])
-		.filter((segment) => segment.ground_access && segment.length_m >= 0.8 + fold * 2)
-		.sort((left, right) => right.visibility_score - left.visibility_score
-			|| right.length_m - left.length_m || left.segment_id.localeCompare(right.segment_id))[0] ?? null;
+	// The ordering is the RESOLVER'S OWN, not a second copy of it. The copy that used to live
+	// here filtered on a hardcoded 0.8 m door - the minimum - while the resolver filters on the
+	// door the grammar actually declares, so the two could rank differently and the brief stated
+	// its answer as fact. An author measured the placed door landing on `back` while this
+	// sentence said `left`, and nothing catches that: the brief asserts, the pipeline
+	// contradicts, no gate is involved.
+	const groundRanked = rankedSegments(context, 0.8, true);
+	const entranceSegment = groundRanked[0] ?? null;
 	const entranceFace = entranceSegment ? (entranceSegment.face_view ?? entranceSegment.view) : null;
+	// And the claim is only worth making when the ordering is not a coin toss. On this mass the
+	// top two ground segments tie at visibility 0.63370366 and are separated by 5e-9 of length,
+	// on opposite faces - so which face the brief names is decided by floating-point noise, and
+	// a door one centimetre wider can move it. Where the top two are that close, say so instead
+	// of asserting a street face an author would then design around.
+	const runnerUp = groundRanked[1] ?? null;
+	const entranceIsContested = Boolean(runnerUp && entranceSegment
+		&& Math.abs(runnerUp.visibility_score - entranceSegment.visibility_score) < 1e-6
+		&& (runnerUp.face_view ?? runnerUp.view) !== entranceFace);
 	// A stepped or battered mass has facets of very different sizes, and the first live run
 	// on one spent its attempts finding that out: a z split written for the building height
 	// overran a 3.7 m facet, and fractional sizes that drew windows on the wide facets drew
@@ -819,7 +832,9 @@ export function buildFacadeGrammarPrompt({ context, correctionCodes = [], attemp
 		OPERATORS,
 		GUIDANCE,
 		entranceFace
-			? `On this candidate the entrance lands on the ${entranceFace} face - it holds the ground segment that ranks first on the visibility-then-length ordering the placement code uses, and only a door too wide for that segment could move it. Treat ${entranceFace} as the street face; the differ-in-kind asked for above is between it and the face opposite.`
+			? (entranceIsContested
+				? `On this candidate the entrance is CONTESTED between the ${entranceFace} and ${runnerUp.face_view ?? runnerUp.view} faces: their best ground segments tie on visibility and are separated by less than a micrometre of length, so which one gets the door depends on the width you declare and you cannot know it from here. Do not design a street face around either. Either keep both plausible, or resolve the ambiguity in your own design by giving one of them something the other has not.`
+				: `On this candidate the entrance lands on the ${entranceFace} face - it holds the ground segment that ranks first on the visibility-then-length ordering the placement code uses, and only a door too wide for that segment could move it. Treat ${entranceFace} as the street face; the differ-in-kind asked for above is between it and the face opposite.`)
 			: "",
 		facetAdvisory,
 		`Attempt: ${attempt}.`,
