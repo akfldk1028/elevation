@@ -129,7 +129,12 @@ export function validateResolvedFacadeProgram({ program, context, resolved } = {
 				// a storey table that sums to 9.899999999999999 must not reject a member drawn at
 				// the 9.9 the deriver emitted. Facet bounds keep their exact comparison, which is
 				// what every existing grammar is measured against.
-				|| (primitive.rises_to === "building_top"
+				// `storey_line` is bounded by the slab lines the storeys already declare, not by
+				// the facet, which is the whole point of it: the extractor cuts a wall into
+				// courses and the design's cadence should not be that cut. Still bounded - the
+				// deriver will only ever emit the next line up, so anything past the building's
+				// own top is a fault here as it always was.
+				|| (primitive.rises_to === "building_top" || primitive.rises_to === "storey_line"
 					? bounds.z_max > buildingTop + 1e-6
 					: bounds.z_max > segment?.local_z?.[1])
 				|| bounds.z_min >= bounds.z_max) {
