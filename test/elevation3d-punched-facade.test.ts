@@ -4,7 +4,9 @@ import { readFile } from "node:fs/promises";
 import sharp from "sharp";
 import { buildPunchedFacadeDetails } from "../plugins/elevation-3d/lib/facade-agent/punched-facade.mjs";
 import * as punchedFacade from "../plugins/elevation-3d/lib/facade-agent/punched-facade.mjs";
-import { createFacadePbrMaps } from "../plugins/elevation-3d/lib/facade-agent/procedural-materials.mjs";
+import { createDeclaredMaterialMaps, createFacadePbrMaps } from "../plugins/elevation-3d/lib/facade-agent/procedural-materials.mjs";
+import { deriveDeclaredMaterial } from "../plugins/elevation-3d/lib/facade-agent/declared-material.mjs";
+import sharp from "sharp";
 import { buildEnrichedScene } from "../plugins/elevation-3d/lib/enrichment.mjs";
 
 const mesh = {
@@ -453,4 +455,32 @@ test("an arch draws a curved band inside its bounding rectangle", () => {
 	for (const [a, b, c] of detail.indices) {
 		for (const index of [a, b, c]) assert.ok(index >= 0 && index < detail.positions.length);
 	}
+});
+
+
+// glTF multiplies baseColorFactor by baseColorTexture, and the factor already carries the
+// declared colour - so a tinted base map applies the colour TWICE. When it did, a mid-dark
+// glass squared itself to near-black and, at the 0.42 opacity every glazing derives,
+// composited to 58% of the pale wall behind it: a flat neutral grey. Every declared glazing
+// in the corpus rendered at chroma 1-5 where legacy glass rendered at 16-19, so no declared
+// window read as a window in any render while the drawing painted it as one. The map carries
+// modulation only; the colour stays on the factor.
+test("a declared material's base map carries modulation, never the tint", async () => {
+	const material = deriveDeclaredMaterial({
+		id: "vision-glass", substance: "glazing", lightness: "mid-dark",
+		hue: "cool", finish: "polished", joint_m: null, reads_as: null,
+	});
+	// A strongly coloured declaration: cool at mid-dark is far from neutral.
+	const fill = material.elevation_fill;
+	const channels = [1, 3, 5].map((offset) => Number.parseInt(fill.slice(offset, offset + 2), 16));
+	assert.ok(Math.max(...channels) - Math.min(...channels) >= 8, `declaration must be chromatic to test this: ${fill}`);
+
+	const maps = createDeclaredMaterialMaps({ material, resolution: 32 });
+	const { data } = await sharp(Buffer.from(maps.baseColor.data)).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+	let chromatic = 0;
+	for (let index = 0; index < data.length; index += 3) {
+		const [red, green, blue] = [data[index], data[index + 1], data[index + 2]];
+		if (Math.max(red, green, blue) - Math.min(red, green, blue) > 1) chromatic += 1;
+	}
+	assert.equal(chromatic, 0, "the base map must be achromatic - the tint belongs to baseColorFactor alone");
 });

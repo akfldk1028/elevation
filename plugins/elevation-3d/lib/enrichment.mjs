@@ -346,7 +346,20 @@ function createMaterial(document, name, textures, declared) {
 	// in the material's extras, which the loader hands back as userData - the first place
 	// resolveSemanticRole looks. Without it every declared member fell through to the kind
 	// table and a whole elevation could lose a role it plainly draws.
-	if (declared) material.setExtras({ semantic_role: declared.role, declared_material: declared.id, joint_family: declared.joint_family });
+	// `elevation_fill` rides along because the DRAWING had no way to reach a declaration.
+	// The elevation painted every member by its palette role, and the role comes from the
+	// terminal, so a facade of three declared panel tones written as spandrels printed as
+	// one flat cream field while the PBR views showed the chequer plainly. Two authors
+	// reported it independently - "the declared glass tint does not reach the elevation
+	// drawing" - and a reader comparing the concept photograph with the elevation saw two
+	// different buildings. The declared value is the author's own; it travels with the
+	// material rather than being looked up in a preset that only knows the legacy words.
+	if (declared) {
+		material.setExtras({
+			semantic_role: declared.role, declared_material: declared.id,
+			joint_family: declared.joint_family, elevation_fill: declared.elevation_fill,
+		});
+	}
 	if (name === "glass" || declared?.role === "glass") material.setAlphaMode(Material.AlphaMode.BLEND).setDoubleSided(true);
 	return material;
 }
