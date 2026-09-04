@@ -541,12 +541,21 @@ distinguishes those three. If you hit it on the plan, say so in your report and 
 remaining attempts on the rest of the design; a scheme that fails only the plan is a more
 useful result to us than one redesigned blind.
 
-ON THE TOP VIEW, depth IS the lever, and the mechanism is different. A course carried to
-the facet edges oversails the roof at every fold, and two slabs projecting along different
-normals cannot mitre at a star point - they leave a notch that scales with the projection.
-Measured: the same continuous cornice failed at 0.75 m and passed at 0.10 m with everything
-else unchanged. So if the fault is on the top view rather than the plan, reducing the
-oversail is the first thing to try, not the last.
+AND THE FIRST THING TO LOOK FOR IS A LINE YOU AUTHORED. The fault needs same-material
+surfaces AND a visible line between them, and the line is usually yours: a lightness step
+declared across a junction the building has no joint at. An author who read a LIGHTING
+difference in a photograph as a material one - a cap plate looked brighter than the wall,
+so they declared it a step lighter - put a step at the head of a wall that is one pour, and
+the detector prosecuted it. Deleting that false distinction took the top view from two
+visible segments to zero.
+
+That same author had first cleared it by cutting the cornice oversail from 0.75 m to 0.10 m
+and reported that depth was the lever after all. They then retracted it themselves: with
+the false material step removed they re-ran the identical 0.75 m geometry and it passes at
+seam fraction zero. Shrinking the projection had only shortened and softened the line until
+it fell under the threshold, which looks exactly like a depth lever and is not one - and it
+cost them seven and a half times their oversail. So check your materials across every
+junction before you touch a depth, on the plan and on the top view alike.
 
 The start symbol is derived once per facet, not once per elevation. A folded elevation
 is several facets side by side, so a pilaster at the two edges of the start rule puts a
