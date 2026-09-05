@@ -1,3 +1,10 @@
+> **Start at [AGENTS.md](AGENTS.md).** It is the shared entry point for any agent working
+> here - Claude Code and Codex both - and it carries what the system is, how to run it, the
+> four rules that are not negotiable, the language surface, and the four links a new grammar
+> field has to travel. This file is what happened, in order: 1400 lines of working log kept
+> because the measurements in it are load-bearing. It is evidence, not an introduction. Read
+> AGENTS.md first, then search this for the specific thing you are about to touch.
+
 # Elevation agent handoff
 
 이 저장소가 elevation agent입니다. `D:\Data\50_ELE\ElevationAgent`, GitHub은
