@@ -418,6 +418,16 @@ function competitionMaterials(root, palette, options = {}) {
 			color: originals[index]?.userData?.elevation_fill
 				?? palette.materials?.[String(originals[index]?.name ?? "").toLowerCase()]?.elevation_fill
 				?? palette.roles[role].elevation_fill,
+			// The declared JOINT is still not drawn here, and reusing the material's PBR map as
+			// this fill's texture - the cheap route - was tried and reverted. The map is built
+			// for a surface at a metre scale that has no relation to this drawing's UVs, so its
+			// joint lines land under a pixel and all that survives is the grain, which lowers
+			// the average and prints the wall a step darker than the colour its author
+			// declared. Measured on one transcription: strong edge density 0.0151 to 0.0173,
+			// with no line to show for it. All three authors working today reported the missing
+			// joint in the same words - it is the most legible line on the wall in every
+			// photograph and it appears in none of the eight views - so this wants a real line
+			// pass keyed to joint_m, not a texture borrowed from another renderer.
 			side: THREE.DoubleSide,
 			depthWrite: true,
 			transparent: false,
