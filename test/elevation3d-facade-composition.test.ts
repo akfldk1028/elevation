@@ -344,3 +344,23 @@ test("a skin that leaves the face bare cannot report itself as more transparent"
 	assert.ok(heldBack.metrics.skin_transparency_by_view.front <= covering.metrics.skin_transparency_by_view.front + 1e-9,
 		`held back ${heldBack.metrics.skin_transparency_by_view.front} vs covering ${covering.metrics.skin_transparency_by_view.front}`);
 });
+
+// The opening ratio measured a member's RECTANGLE, so on a facade of triangles it reported
+// roughly twice the glass drawn. An author transcribing one verified it to four decimals by
+// hand: a face reported at 0.313 draws about 0.17. That flatters exactly the schemes most in
+// need of judging - a triangulated skin passed OPENING_RATIO_LOW on glass it does not have.
+test("a diagonal opening counts half its rectangle", () => {
+	const context = {
+		...CONTEXT,
+		facade_segments: [{ segment_id: "seg-front", face_view: "front", length_m: 10, local_z: [0, 16.5] }],
+	};
+	const rect = opening(1, 3, 1, 3);
+	const whole = measureComposition({ context, resolved: { primitives: [rect, cornice] } });
+	const half = measureComposition({ context, resolved: { primitives: [{ ...rect, diagonal: "rising" }, cornice] } });
+	assert.ok(whole.metrics.opening_ratio_by_view.front > 0, "the rectangle must measure something to compare against");
+	assert.equal(
+		Number((half.metrics.opening_ratio_by_view.front * 2).toFixed(6)),
+		Number(whole.metrics.opening_ratio_by_view.front.toFixed(6)),
+		"a triangle is half the rectangle it is cut from",
+	);
+});
