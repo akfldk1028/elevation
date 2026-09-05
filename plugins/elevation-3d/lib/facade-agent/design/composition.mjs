@@ -117,8 +117,20 @@ function levelsOfScale(areas) {
 	};
 }
 
-function area(bounds) {
-	return Math.max(0, bounds.u_max - bounds.u_min) * Math.max(0, bounds.z_max - bounds.z_min);
+/**
+ * The area a member actually covers, which is HALF its rectangle when it is cut on a
+ * diagonal.
+ *
+ * The rectangle alone was what every ratio in this file measured, so on a facade of triangles
+ * the reported opening ratio was roughly twice the glass drawn: an author transcribing one
+ * verified it to four decimals by hand and reported a face at 0.313 that draws about 0.17.
+ * That flatters exactly the schemes that most need judging - a triangulated skin passes
+ * OPENING_RATIO_LOW on glass it does not have, and the gate that refuses a blank wall stops
+ * meaning what it says.
+ */
+function area(bounds, primitive) {
+	const rectangle = Math.max(0, bounds.u_max - bounds.u_min) * Math.max(0, bounds.z_max - bounds.z_min);
+	return primitive?.diagonal ? rectangle / 2 : rectangle;
 }
 
 function median(values) {
@@ -241,7 +253,7 @@ export function measureComposition({ context, resolved } = {}) {
 		}
 		if (!OPENING_KINDS.has(primitive.kind)) continue;
 		const view = segments.get(primitive.segment_id)?.face_view ?? segments.get(primitive.segment_id)?.view;
-		const value = area(primitive.local_bounds);
+		const value = area(primitive.local_bounds, primitive);
 		openByView.set(view, (openByView.get(view) ?? 0) + value);
 		openingAreas.push(value);
 		if (view) openingAreasByView.set(view, [...(openingAreasByView.get(view) ?? []), value]);
