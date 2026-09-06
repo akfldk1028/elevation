@@ -1,4 +1,5 @@
 import { TERMINAL_KINDS } from "../../facade-vocabulary.mjs";
+import { continuationHolding } from "../geometry/continuation.mjs";
 import { BOUNDS, FacadeGrammarError, predicateHolds } from "./contract.mjs";
 
 const MAX_PRIMITIVES = 2048;
@@ -202,8 +203,7 @@ export function deriveFacadePrimitives({ grammar, segment, storeys, entrance = n
 		const line = risesToStoreyLine(alternative, facetTop);
 		if (line === null) return null;
 		const head = round(line - floorBandClearance);
-		const holds = continuations.some((item) => item.u_min <= uMin + 1e-8 && item.u_max >= uMax - 1e-8 && item.z_max >= head - 1e-8);
-		return holds && head > facetTop + 1e-9 ? head : null;
+		return continuationHolding(continuations, uMin, uMax, head) && head > facetTop + 1e-9 ? head : null;
 	};
 
 	// A SPLIT may take the storey line, and this is how a composite opening - sill, pane, head
@@ -217,8 +217,7 @@ export function deriveFacadePrimitives({ grammar, segment, storeys, entrance = n
 		const facetTop = segment.local_z?.[1];
 		if (!Number.isFinite(facetTop) || Math.abs(scope.z_max - facetTop) > 1e-8) return scope;
 		const line = risesToStoreyLine(alternative, facetTop);
-		const held = line !== null && continuations.some((item) => item.u_min <= scope.u_min + 1e-8
-			&& item.u_max >= scope.u_max - 1e-8 && item.z_max >= line - 1e-8);
+		const held = line !== null && continuationHolding(continuations, scope.u_min, scope.u_max, line);
 		return held ? { ...scope, z_max: line, risen: true } : scope;
 	};
 

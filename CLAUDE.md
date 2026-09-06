@@ -1411,8 +1411,9 @@ seams with `outward_normal` before writing anything, and two of the three masses
 A window across a 3 deg crease stands 0.18 m proud or buried at its head, and the mass is
 never cut. So on 004 the fix is in the image lane - the extractor's 3 degrees are invisible
 in a flat-shaded axon and the image model has to be shown the courses - and on 013 it is the
-mass's own. `probe-continuation.mjs` (scratchpad pattern: stacked pairs, dot of normals,
-overlap along the face) is the measurement to make before calling a size gap a language gap.
+mass's own. `.superpowers/sdd/2026-08-10-llm-facade-design-agent/probe-continuation.mjs`
+(stacked pairs, dot of normals, overlap along the face, per candidate) is the measurement to
+make before calling a size gap a language gap.
 
 **What landed, because the rule is right wherever a seam IS coplanar.** `design/geometry/
 continuation.mjs` is one source for resolver, validator and brief: the course above on the
