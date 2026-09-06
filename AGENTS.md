@@ -94,6 +94,12 @@ sign on `depth_m`.
 So: **query the compiled GLB, and open all four elevations.** `check` validates the design
 and never reaches the compiler; only a render exercises the geometry path.
 
+The elevation sheet is a flat fill plus a LINE PASS (`elevation-ink.mjs`): a declared
+material's `joint_m` drawn as its module over its own fill, and member edges wherever the
+depth raster steps 30 mm or more. The ink footprint persists as `<view>-ink.png` and the seam
+detector skips it. A material with `joint_m: null` draws no joint - that is what monolithic
+means - so a wall that should show panels needs its module declared.
+
 ## Adding a field to the grammar
 
 Four links, and the last one is a whitelist that drops silently what it does not name:

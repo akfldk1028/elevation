@@ -5,6 +5,7 @@ import sharp from "sharp";
 import { sha256, stableJson } from "./core.mjs";
 import { deriveElevationDimensions } from "./elevation-dimensions.mjs";
 import { buildElevationAnnotations } from "./elevation-annotations.mjs";
+import { dilateMask, inkMaskFromRgb } from "./elevation-ink.mjs";
 import { readVerifiedFacadeValidationAuthority } from "./enrichment-validation.mjs";
 import { assertCanonicalFacadeSegmentAuthority } from "./facade-agent/punched-facade.mjs";
 
@@ -487,7 +488,13 @@ export async function validateCompetitionElevation({ artifacts, sourceMesh, faca
 			]);
 			const measured = rasterMetrics(baseImage.data, baseImage.info.width, baseImage.info.height);
 			bounds = measured.bounds;
-			const seams = persistedSeamMetrics(baseImage.data, materialImage.data, depthImage.data, normalImage.data, baseImage.info.width, baseImage.info.height, bounds, camera.frustum.near, camera.frustum.far);
+			// The line pass's own footprint - joints and member edges are dark lines on
+			// same-material coplanar surfaces, which is the seam detector's exact definition
+			// of a defect. Skipped the way the plan's cut line is; a sheet drawn before the
+			// pass existed has no mask and is measured as it always was.
+			const inkImage = artifacts.diagnostics?.ink?.path ? await decodedRgb(artifacts.diagnostics.ink.path).catch(() => null) : null;
+			const inkMask = inkImage ? dilateMask(inkMaskFromRgb(inkImage.data, inkImage.info.width, inkImage.info.height), inkImage.info.width, inkImage.info.height) : null;
+			const seams = persistedSeamMetrics(baseImage.data, materialImage.data, depthImage.data, normalImage.data, baseImage.info.width, baseImage.info.height, bounds, camera.frustum.near, camera.frustum.far, inkMask);
 			computedDark = persistedDarkGeometry(baseImage.data, materialImage.data, depthImage.data, baseImage.info.width, baseImage.info.height, bounds);
 			diagnostics = {
 				background_fraction: 1 - measured.foreground_fraction,
