@@ -210,6 +210,18 @@ function parsePredicate(text, label) {
 		}
 		match = /^(index|storey)\s*==\s*(\d+)$/.exec(term);
 		if (match) return { field: match[1], value: Number(match[2]) };
+		// A RANGE along the face. Equality and modulus can name one facet or every n-th
+		// facet; neither can say "the corner third of this face" - an author transcribing a
+		// photograph whose windows stop two-thirds of the way along a 32-facet face had to
+		// name the bare facets one by one against an eight-alternative cap, and ran out.
+		// `index` counts facets from the face's start; `face_offset` is where the facet begins
+		// in metres along the sheet (the `face_offset_m` every facet already reports), which
+		// is the number an author measures off a picture. Still a comparison against a
+		// literal: no arithmetic, no field on the right-hand side.
+		match = /^(index|storey)\s*(<=|>=|<|>)\s*(\d+)$/.exec(term);
+		if (match) return { field: match[1], op: match[2], value: Number(match[3]) };
+		match = /^face_offset\s*(<=|>=|<|>)\s*(\d+(?:\.\d+)?)$/.exec(term);
+		if (match) return { field: "face_offset", op: match[1], value: Number(match[2]) };
 		match = /^(index|storey)\s*==\s*(last|top)$/.exec(term);
 		if (match) return { field: match[1], value: match[2] === "last" ? "last" : "last" };
 		// Whether a storey band is the whole floor or a slice of one. Every member can only
@@ -500,7 +512,17 @@ export function predicateHolds(predicate, scope) {
 				// A scope that never went through a storey split has no band to speak of, and
 				// answering `full` there would let a rule fire on a whole facet by accident.
 				: term.field === "band" ? scope.band ?? null
-					: term.field === "storey" ? scope.storey : scope.index;
+					: term.field === "face_offset" ? scope.face_offset ?? null
+						: term.field === "storey" ? scope.storey : scope.index;
+		// A range comparison. A scope with no number to compare (no face, no offset) is
+		// never inside a range, so the alternative falls through instead of firing.
+		if (term.op) {
+			if (!Number.isFinite(actual)) return false;
+			return term.op === "<" ? actual < term.value
+				: term.op === "<=" ? actual <= term.value
+					: term.op === ">" ? actual > term.value
+						: actual >= term.value;
+		}
 		if (term.value === "last") return actual === scope.total - 1;
 		if (term.modulus) return Number.isInteger(actual) && actual % term.modulus === term.value;
 		// `cut` is the family, not a fourth member of it: a band cut below, cut above or cut at

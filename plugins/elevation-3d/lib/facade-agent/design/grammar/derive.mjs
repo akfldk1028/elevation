@@ -438,6 +438,9 @@ export function deriveFacadePrimitives({ grammar, segment, storeys, entrance = n
 		// between elevations, so every bay across one face comes out identical.
 		index: segment.face_index ?? 0,
 		total: segment.face_total ?? 1,
+		// Where this facet begins along its sheet, in metres - the number an author measures
+		// off a picture, and what `face_offset < n` compares. Inherited by every child scope.
+		face_offset: Number.isFinite(segment.face_offset_m) ? segment.face_offset_m : null,
 		// With no repeat and no storey stack, the run is the face's own facets.
 		runT: (segment.face_total ?? 1) > 1 ? (segment.face_index ?? 0) / ((segment.face_total ?? 1) - 1) : 0,
 		// Nothing calls the start symbol, so it is the one rule with no argument to read.

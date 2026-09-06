@@ -54,6 +54,8 @@ Code lives here. Data does not: `elevation-agent.json` declares `dataset_root` a
     terminals  wall glass door reveal lintel sill band cornice
                pilaster mullion transom spandrel arch louvre
     axes       u  z  storey  layer
+    predicates index/storey == n, % n == m, == last; index/storey < <= > >= n;
+               face_offset < <= > >= metres; band ==; face_view ==; param ==
     rise_to    building_top  building_underside  storey_line
                (solids; storey_line also for glass/door, only into a coplanar course
                above - the facet's `continues_above_m` - never across a crease)
