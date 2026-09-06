@@ -55,6 +55,8 @@ Code lives here. Data does not: `elevation-agent.json` declares `dataset_root` a
                pilaster mullion transom spandrel arch louvre
     axes       u  z  storey  layer
     rise_to    building_top  building_underside  storey_line
+               (solids; storey_line also for glass/door, only into a coplanar course
+               above - the facet's `continues_above_m` - never across a crease)
     reach      facet_edge
     diagonal   rising  rising_upper  falling  falling_upper
     depth_m    SIGNED - positive stands out (bounded per terminal), negative sets in

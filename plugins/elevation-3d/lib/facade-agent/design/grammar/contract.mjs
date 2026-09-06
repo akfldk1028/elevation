@@ -311,12 +311,20 @@ function parseAlternative(value, label, symbols) {
 				fail(`${label}.depth_m is out of range: a ${alternative.terminal} may stand at most ${TERMINAL_PROJECTION[alternative.terminal]} m out of the wall, or be set back at most ${BOUNDS.maxRecessM} m into it (negative depth is inward)`);
 			}
 		const riseTo = alternative.rise_to ?? null;
-		// Only a solid may be carried past its facet. A hole above the mass is a hole in
-		// nothing, and glass there would be a window onto the sky - the loosening is for a
-		// parapet, not for openings that escape the buildability gates by leaving the facet.
+		// Only a solid may be carried past the MASS. A hole above the building's top is a hole
+		// in nothing, and glass there would be a window onto the sky - those two datums are for
+		// a parapet and a soffit. The storey line is different: a facet ends there because the
+		// extractor cut the wall at a floor, and where the course above is the same plane the
+		// seam is a line the building does not have. Glass and a door may ask for it; the
+		// deriver grants it only over a coplanar continuation wide enough to hold the opening
+		// (geometry/continuation.mjs), and over a crease or a corner nothing happens. An arch
+		// keeps the old refusal - its geometry is shaped to its own scope.
 		if (riseTo !== null) {
 			if (!RISE_DATUMS.includes(riseTo)) fail(`${label}.rise_to must be one of ${RISE_DATUMS.join(", ")}`);
-			if (OPENING_TERMINALS.has(alternative.terminal)) fail(`${label}.rise_to cannot carry a ${alternative.terminal} past its facet`);
+			if (OPENING_TERMINALS.has(alternative.terminal) && (riseTo !== "storey_line" || alternative.terminal === "arch")) {
+				fail(`${label}.rise_to cannot carry a ${alternative.terminal} past its facet`
+					+ (alternative.terminal === "arch" ? "" : ": only storey_line is open to an opening, and only into a coplanar course above"));
+			}
 		}
 		// The sideways twin of rise_to: carry a solid course through the fold clearance to
 		// the facet's own edge, so a cornice or a band runs to the corner instead of pausing
@@ -411,7 +419,19 @@ function parseAlternative(value, label, symbols) {
 	if (repeats.length && parts.some((part) => !part.repeat && part.size.kind === "float")) {
 		fail(`${label}.split mixes a repeat part with other floating parts`);
 	}
-	return Object.freeze({ when, guard, split: Object.freeze({ axis: split.axis, parts: Object.freeze(parts) }) });
+	// A split may rise to the storey line - that is how a sill, a pane and its head cross the
+	// seam between two coplanar courses as ONE opening: the scope extends and the split lays
+	// itself out over it (derive.mjs riseScope). A scope may hold openings, so it gets only
+	// the datum an opening may have. Until now the field was accepted here and dropped on the
+	// floor, the silent-wrong-answer class this grammar keeps paying for.
+	const riseTo = alternative.rise_to ?? null;
+	if (riseTo !== null && riseTo !== "storey_line") {
+		fail(`${label}.rise_to on a split may only be storey_line: a scope may carry openings, and those are not carried past the mass`);
+	}
+	return Object.freeze({
+		when, guard, split: Object.freeze({ axis: split.axis, parts: Object.freeze(parts) }),
+		...(riseTo !== null ? { rise_to: riseTo } : {}),
+	});
 }
 
 export function parseFacadeGrammar(input) {

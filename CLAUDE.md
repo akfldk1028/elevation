@@ -1392,3 +1392,52 @@ backwards for architecture: the author had five materials, four usable stops, an
 collision landed on the two it cared most about. A stop near 0.24 and one near 0.44 before
 anything above 0.55. Also raised: `design_rationale[i]` is capped at 512 characters while
 `reads_as` gets 1200, and the rationale is the only field where an author explains a decision.
+
+## 2026-09-06 the seam is the extractor's; the creases are the mass's
+
+The independent reviewer's round-two verdict on all three transcriptions was "the voids are
+the wrong shape and size" - not thickness - and I told the user it was mostly code: an
+opening cannot rise past the facet the extractor cut at a floor line. Then I measured the
+seams with `outward_normal` before writing anything, and two of the three masses refuted me.
+
+    creative-004   39 stacked pairs, 0 coplanar: every course alternates 4.13 / 7.34 deg of
+                   batter, a 3.2 deg crease at EVERY seam. The mass has 8 creased courses;
+                   the concept photograph drew 5 cells. The drawing (8 rows) is the faithful one.
+    creative-013   the reviewer's ground facets (1.86-4.48) crease 1.55 and 2.47 deg against the
+                   course above; only the landing stem on the right face is coplanar (0.00 deg).
+    creative-020   a prism: no stacked facets. Its gap was the photograph's rows sitting 1.5 m
+                   off the slab lines, which the t1c author closed with five equal rows.
+
+A window across a 3 deg crease stands 0.18 m proud or buried at its head, and the mass is
+never cut. So on 004 the fix is in the image lane - the extractor's 3 degrees are invisible
+in a flat-shaded axon and the image model has to be shown the courses - and on 013 it is the
+mass's own. `probe-continuation.mjs` (scratchpad pattern: stacked pairs, dot of normals,
+overlap along the face) is the measurement to make before calling a size gap a language gap.
+
+**What landed, because the rule is right wherever a seam IS coplanar.** `design/geometry/
+continuation.mjs` is one source for resolver, validator and brief: the course above on the
+same face, seam within 0.02 m, normals within 0.5 deg (a storey of rise at 0.5 deg is 3 cm at
+the head, a pane's own depth), mapped back into the lower facet's own u from
+`face_offset_m / projected_length_m` and inset by the fold clearance. On it:
+
+- `rise_to: "storey_line"` is open to `glass` and `door` (never `arch`); the deriver grants it
+  only inside a continuation, with the head at the line less the floor-band clearance.
+- **a SPLIT may carry `rise_to: "storey_line"`**: the scope extends and the split lays itself
+  out over it, so sill, pane, reveals and head cross the seam as ONE opening. A pane rising
+  alone grows through its own lintel. The field was accepted on a split and silently dropped
+  before today - the silent-wrong-answer class again - and only `storey_line` is admitted
+  there because a scope may hold openings.
+- the validator re-derives the continuation rather than trusting the deriver, and adds the
+  one collision the per-segment pass cannot see: the risen part against the course above's
+  own members. The probe hit it on the first run (1.60 m2, the risen window landing on the
+  upper course's slot) and that rejection was correct.
+- the brief prints `continues_above_m` per facet. Empty on a prism and on a creased mass.
+
+Probe `grammar-t3c-rise.json` on 013: two windows crossing seams (0.60-6.33 across 3.722;
+4.32-9.63 across 9.305), all gates green, rendered. Snapshot of 109 retained grammars
+byte-identical before and after (the one differing line is `grammar-t2c.json`, rewritten by
+its own author between the two runs).
+
+Round three of the transcriptions: t1c and t3c landed (five equal rows; ground windows 2.1 m
+tall because the facet is 2.6 m and creased above - "the bound is the mass", its author
+said, correctly, before this measurement confirmed it); t2c still running.

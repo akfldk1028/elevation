@@ -424,13 +424,15 @@ test("a facet more than one storey below the line does not rise at all", () => {
 	assert.equal(member.rises_to, undefined);
 });
 
-test("an opening cannot be carried past its facet", () => {
+test("an opening cannot be carried past the mass", () => {
 	for (const terminal of ["glass", "door", "arch"]) {
-		assert.throws(
-			() => grammar({ Facade: [{ terminal, rise_to: "building_top" }] }),
-			FacadeGrammarError,
-			`${terminal} above the mass would be a hole in nothing`,
-		);
+		for (const datum of ["building_top", "building_underside"]) {
+			assert.throws(
+				() => grammar({ Facade: [{ terminal, rise_to: datum }] }),
+				FacadeGrammarError,
+				`${terminal} past the mass would be a hole in nothing`,
+			);
+		}
 	}
 	assert.throws(() => grammar({ Facade: [{ terminal: "band", rise_to: "the_moon" }] }), FacadeGrammarError);
 });
@@ -822,21 +824,99 @@ test("a diagonal and its complement tile the scope; the two lower halves do not"
 // SOLID to the next slab line the storeys already declare, under the same guards a parapet
 // gets - never an opening, never more than one storey, inert when the facet already ends on
 // a line.
-test("storey_line carries a solid past its facet, and only a solid", () => {
+test("storey_line carries a solid past its facet, and an opening may ask for it", () => {
 	const parsed = grammar({ Facet: [{ terminal: "spandrel", depth_m: 0.1, rise_to: "storey_line" }] }, "Facet");
 	assert.equal(parsed.rules.Facet[0].rise_to, "storey_line");
 
-	// The refusal openings already had applies unchanged: a hole carried past its facet is
-	// the case the fold clearance exists to prevent.
+	// The seam between two coplanar courses is the extractor's line, not the building's, so
+	// glass and a door may ask for this one datum. The parser only admits the request; the
+	// deriver grants it over a coplanar continuation and nowhere else (tested below).
 	for (const terminal of ["glass", "door"]) {
-		assert.throws(
-			() => grammar({ Facet: [{ terminal, inset_m: 0.05, rise_to: "storey_line" }] }, "Facet"),
-			new RegExp(`cannot carry a ${terminal} past its facet`),
-			`${terminal} must not reach a storey line`,
-		);
+		const opening = grammar({ Facet: [{ terminal, inset_m: 0.05, rise_to: "storey_line" }] }, "Facet");
+		assert.equal(opening.rules.Facet[0].rise_to, "storey_line", `${terminal} may ask for the storey line`);
 	}
+	// An arch keeps the refusal: its geometry is shaped to its own scope.
+	assert.throws(
+		() => grammar({ Facet: [{ terminal: "arch", inset_m: 0.05, rise_to: "storey_line" }] }, "Facet"),
+		/cannot carry a arch past its facet/,
+	);
 	// And it is one of the datums, not a free-text field.
 	assert.throws(() => grammar({ Facet: [{ terminal: "spandrel", depth_m: 0.1, rise_to: "next_facet" }] }, "Facet"), /rise_to must be one of/);
+});
+
+// The grant itself. The facet ends at 4.4 on a 3.3 m storey grid, so the next line is 6.6;
+// a continuation is what the resolver computed from the facet above, in this facet's u.
+test("an opening rises to the storey line only inside a coplanar continuation", () => {
+	const GLASS_RISING = { Facade: [{ terminal: "glass", inset_m: 0.5, rise_to: "storey_line" }] };
+	const derive = (continuations: unknown[]) => deriveFacadePrimitives({
+		grammar: grammar(GLASS_RISING),
+		segment: { ...SEGMENT, length_m: 4, local_z: [2, 4.4], placeable: { u_min: 0, u_max: 4 } },
+		storeys: STOREY_LINES,
+		continuations,
+		floorBandClearance: 0.15,
+	}) as any[];
+
+	// Held across the whole opening (u 0.5..3.5): the head goes to 6.6 less the clearance.
+	const [held] = derive([{ segment_id: "above", u_min: 0.3, u_max: 3.7, z_max: 7.0, u_shift_m: 0 }]);
+	assert.equal(held.local_bounds.z_max, 6.45);
+	assert.equal(held.rises_to, "storey_line");
+
+	// The course above is narrower than the opening: nothing happens, the pane keeps its facet.
+	const [narrow] = derive([{ segment_id: "above", u_min: 1, u_max: 3.7, z_max: 7.0, u_shift_m: 0 }]);
+	assert.equal(narrow.local_bounds.z_max, 3.9);
+	assert.equal(narrow.rises_to, undefined);
+
+	// The course above stops short of the head: same.
+	const [low] = derive([{ segment_id: "above", u_min: 0.3, u_max: 3.7, z_max: 6.0, u_shift_m: 0 }]);
+	assert.equal(low.rises_to, undefined);
+
+	// No continuation at all - a prism, or a crease - is the old behaviour to the decimal.
+	const [alone] = derive([]);
+	assert.equal(alone.local_bounds.z_max, 3.9);
+	assert.equal(alone.rises_to, undefined);
+
+	// A solid asking the same is unchanged by any of this: it reaches the line itself.
+	const [solid] = deriveFacadePrimitives({
+		grammar: grammar({ Facade: [{ terminal: "spandrel", depth_m: 0.1, rise_to: "storey_line" }] }),
+		segment: { ...SEGMENT, length_m: 4, local_z: [2, 4.4], placeable: { u_min: 0, u_max: 4 } },
+		storeys: STOREY_LINES,
+	}) as any[];
+	assert.equal(solid.local_bounds.z_max, 6.6);
+});
+
+// A pane that rose alone would grow through its own head. The split rises instead, and the
+// head moves up with the pane because the split is laid out over the taller scope.
+test("a split rises to the storey line as one opening, head and all", () => {
+	const COMPOSITE = {
+		Facade: [{ rise_to: "storey_line", split: { axis: "z", parts: [{ size: "~1", symbol: "Pane" }, { size: "0.2", symbol: "Head" }] } }],
+		Pane: [{ terminal: "glass", inset_m: 0.5 }],
+		Head: [{ terminal: "lintel", depth_m: 0.1 }],
+	};
+	const derive = (continuations: unknown[]) => deriveFacadePrimitives({
+		grammar: grammar(COMPOSITE),
+		segment: { ...SEGMENT, length_m: 4, local_z: [2, 4.4], placeable: { u_min: 0, u_max: 4 } },
+		storeys: STOREY_LINES,
+		continuations,
+	}) as any[];
+
+	const risen = derive([{ segment_id: "above", u_min: 0, u_max: 4, z_max: 7.0, u_shift_m: 0 }]);
+	const pane = risen.find((primitive) => primitive.kind === "window");
+	const head = risen.find((primitive) => primitive.kind === "lintel");
+	assert.deepEqual([pane.local_bounds.z_min, pane.local_bounds.z_max], [2.5, 5.9], "the pane fills the taller scope");
+	assert.deepEqual([head.local_bounds.z_min, head.local_bounds.z_max], [6.4, 6.6], "the head sits at the line");
+	assert.equal(pane.rises_to, "storey_line");
+	assert.equal(head.rises_to, "storey_line");
+
+	// The continuation stops short of the scope's width: nothing rises and the old layout stands.
+	const held = derive([{ segment_id: "above", u_min: 0.3, u_max: 4, z_max: 7.0, u_shift_m: 0 }]);
+	assert.equal(held.find((primitive) => primitive.kind === "lintel").local_bounds.z_max, 4.4);
+	assert.equal(held.every((primitive) => primitive.rises_to === undefined), true);
+
+	// And only the storey line is open to a split: a scope may hold openings.
+	assert.throws(
+		() => grammar({ Facade: [{ rise_to: "building_top", split: { axis: "z", parts: [{ size: "~1", symbol: "Pane" }] } }], Pane: [{ terminal: "glass" }] }),
+		/rise_to on a split may only be storey_line/,
+	);
 });
 
 // A member's whole relationship to the wall was one UNSIGNED number, so nothing could be set

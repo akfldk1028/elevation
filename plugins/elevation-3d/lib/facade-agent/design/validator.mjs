@@ -2,9 +2,16 @@ import { sha256, stableJson } from "../../core.mjs";
 import { KIND_PROJECTION } from "../facade-vocabulary.mjs";
 import { readVerifiedFacadeDesignContextAuthority } from "./context.mjs";
 import { readVerifiedFacadeProgramAuthority } from "./contract.mjs";
+import { continuationHolding, coplanarContinuations } from "./geometry/continuation.mjs";
 import { readVerifiedResolvedFacadeAuthority, resolveFacadeProgram } from "./resolver.mjs";
 
 const verifiedValidationAuthorities = new WeakMap();
+
+// Deliberately excludes mullion, transom and spandrel. A curtain wall's framing sits over
+// its glass by construction - that is what a framed surface is - so putting the skin
+// members in here would reject every curtain wall on contact. This has read as an
+// oversight once already; it is not one.
+const COLLIDABLE_KINDS = new Set(["door", "window", "pilaster", "band", "cornice"]);
 
 export class FacadeDesignValidationError extends Error {
 	constructor(message, cause) {
@@ -141,6 +148,24 @@ export function validateResolvedFacadeProgram({ program, context, resolved } = {
 				measure("SEGMENT_BOUNDS_INVALID", index, bounds?.u_max ?? Number.MAX_SAFE_INTEGER, segment?.length_m ?? 0);
 				continue;
 			}
+			// An opening that took the storey line has left its facet, and may only have done so
+			// into a coplanar course above that holds its whole width - the deriver's grant,
+			// re-derived here from the same geometry rather than trusted. The part standing on
+			// that course must also not land on anything the course already carries, which the
+			// per-segment collision pass below cannot see: it compares members of one facet.
+			if ((primitive.kind === "door" || primitive.kind === "window") && primitive.rises_to === "storey_line") {
+				const held = continuationHolding(coplanarContinuations(segment, context), bounds.u_min, bounds.u_max, bounds.z_max);
+				if (!held) {
+					measure("SEGMENT_BOUNDS_INVALID", index, bounds.z_max, segment.local_z[1]);
+					continue;
+				}
+				const above = { u_min: bounds.u_min - held.u_shift_m, u_max: bounds.u_max - held.u_shift_m, z_min: segment.local_z[1], z_max: bounds.z_max };
+				for (const other of resolved.primitives) {
+					if (other.segment_id !== held.segment_id || !COLLIDABLE_KINDS.has(other.kind) || (other.layer ?? 0) !== (primitive.layer ?? 0)) continue;
+					const overlap = rectanglesOverlap(above, other.local_bounds);
+					if (overlap > 0) measure("PRIMITIVE_OVERLAP", index, overlap, 0);
+				}
+			}
 			if (primitive.kind === "door" || primitive.kind === "window") {
 				// A hole must stay off the fold because cutting one through a turn breaks the
 				// mass. That is an argument about punching a solid wall, and a glazed skin is
@@ -217,11 +242,6 @@ export function validateResolvedFacadeProgram({ program, context, resolved } = {
 			if (!segment?.ground_access || entrance.storey !== 1 || entrance.local_bounds.z_min !== ground?.z_min) codes.add("PRIMARY_ENTRANCE_INVALID");
 		}
 
-		// Deliberately excludes mullion, transom and spandrel. A curtain wall's framing sits
-		// over its glass by construction - that is what a framed surface is - so putting the
-		// skin members in here would reject every curtain wall on contact. This has read as an
-		// oversight once already; it is not one.
-		const collidable = new Set(["door", "window", "pilaster", "band", "cornice"]);
 		// A framing member between two panes is what separates them on a glazed skin. The
 		// clearance rule below asks for bare wall between two openings, which is the right
 		// question for two holes cut in masonry and the wrong one for one framed surface: it
@@ -235,10 +255,10 @@ export function validateResolvedFacadeProgram({ program, context, resolved } = {
 				- Math.max(primitive.local_bounds.z_min, left.local_bounds.z_min, right.local_bounds.z_min) > 1e-8));
 		for (let leftIndex = 0; leftIndex < resolved.primitives.length; leftIndex += 1) {
 			const left = resolved.primitives[leftIndex];
-			if (!collidable.has(left.kind)) continue;
+			if (!COLLIDABLE_KINDS.has(left.kind)) continue;
 			for (let rightIndex = leftIndex + 1; rightIndex < resolved.primitives.length; rightIndex += 1) {
 				const right = resolved.primitives[rightIndex];
-				if (right.segment_id !== left.segment_id || !collidable.has(right.kind)) continue;
+				if (right.segment_id !== left.segment_id || !COLLIDABLE_KINDS.has(right.kind)) continue;
 				// Members of different layers overlap by declaration - a layer split stacks
 				// whole constructions in depth, the way a curtain wall's framing already sits
 				// over its glass. Within one layer everything collides exactly as before, and

@@ -148,7 +148,7 @@ function chooseAlternative(alternatives, scope) {
  * compilation, mass backing, rendering and scoring are untouched: v3 changes what the
  * model can say, not what the pipeline trusts.
  */
-export function deriveFacadePrimitives({ grammar, segment, storeys, entrance = null, buildingUnderside = null } = {}) {
+export function deriveFacadePrimitives({ grammar, segment, storeys, entrance = null, buildingUnderside = null, continuations = [], floorBandClearance = 0 } = {}) {
 	if (!grammar?.rules || !segment) fail("a parsed grammar and a segment scope are required");
 	const primitives = [];
 	let layerCount = 0;
@@ -191,14 +191,45 @@ export function deriveFacadePrimitives({ grammar, segment, storeys, entrance = n
 	const dropsTo = (alternative, facetBottom) => alternative.rise_to === "building_underside"
 		&& underside !== null && Number.isFinite(facetBottom)
 		&& facetBottom - underside > 1e-9 && facetBottom - underside <= maxRise + 1e-9;
+	// An OPENING may take the storey line too, on one condition a solid is not held to: the
+	// course above must be the same plane, and wide enough there. `continuations` is that
+	// list, computed by the resolver from every facet together (geometry/continuation.mjs);
+	// the deriver sees one facet and cannot know it. The head stops short of the line by the
+	// floor-band clearance, as every opening head must, so the rise lands where a window may
+	// legally end rather than on the slab itself. Nothing here applies to a solid, whose rise
+	// is exactly what it was.
+	const openingRisesToStoreyLine = (alternative, facetTop, uMin, uMax) => {
+		const line = risesToStoreyLine(alternative, facetTop);
+		if (line === null) return null;
+		const head = round(line - floorBandClearance);
+		const holds = continuations.some((item) => item.u_min <= uMin + 1e-8 && item.u_max >= uMax - 1e-8 && item.z_max >= head - 1e-8);
+		return holds && head > facetTop + 1e-9 ? head : null;
+	};
 
-	const walk = (symbol, scope) => {
+	// A SPLIT may take the storey line, and this is how a composite opening - sill, pane, head
+	// - crosses the seam as one thing: the scope extends to the line and the split lays itself
+	// out over the taller scope, so the head member moves up instead of the pane growing
+	// through it. Granted only from the top of the facet, only over a coplanar continuation
+	// holding the scope's whole width, and the scope is marked so every member laid out inside
+	// carries the datum. A scope with nothing coplanar above it is laid out exactly as before.
+	const riseScope = (alternative, scope) => {
+		if (alternative.terminal || alternative.rise_to !== "storey_line") return scope;
+		const facetTop = segment.local_z?.[1];
+		if (!Number.isFinite(facetTop) || Math.abs(scope.z_max - facetTop) > 1e-8) return scope;
+		const line = risesToStoreyLine(alternative, facetTop);
+		const held = line !== null && continuations.some((item) => item.u_min <= scope.u_min + 1e-8
+			&& item.u_max >= scope.u_max - 1e-8 && item.z_max >= line - 1e-8);
+		return held ? { ...scope, z_max: line, risen: true } : scope;
+	};
+
+	const walk = (symbol, given) => {
 		if (primitives.length > MAX_PRIMITIVES) fail("derived facade primitive budget exceeded");
-		if (scope.depth > BOUNDS.maxDepth) fail(`derivation exceeded depth ${BOUNDS.maxDepth} at ${symbol}`);
+		if (given.depth > BOUNDS.maxDepth) fail(`derivation exceeded depth ${BOUNDS.maxDepth} at ${symbol}`);
 		const alternatives = grammar.rules[symbol];
 		if (!alternatives) fail(`symbol ${symbol} has no rule`);
-		const alternative = chooseAlternative(alternatives, scope);
+		const alternative = chooseAlternative(alternatives, given);
 		if (!alternative) return;
+		const scope = riseScope(alternative, given);
 		if (alternative.terminal) {
 			if (alternative.terminal === "wall") return;
 			// A graded attribute interpolates along THE RUN - the nearest enclosing repeat
@@ -225,6 +256,13 @@ export function deriveFacadePrimitives({ grammar, segment, storeys, entrance = n
 			const reach = !inset && (SKIN_KINDS.has(kind) || alternative.reach === "facet_edge");
 			const uStart = reach && Math.abs(uMin - placeable.u_min) <= 1e-8 ? 0 : uMin;
 			const uEnd = reach && Math.abs(uMax - placeable.u_max) <= 1e-8 ? segment.length_m : uMax;
+			const opening = kind === "window" || kind === "door";
+			const storeyLine = opening
+				? openingRisesToStoreyLine(alternative, segment.local_z?.[1], uStart, uEnd)
+				: risesToStoreyLine(alternative, segment.local_z?.[1]);
+			// Laid out inside a scope that rose (riseScope above): the member keeps whatever
+			// height the split gave it, above the facet if that is where it landed, and says so.
+			const inRisenScope = scope.risen === true && round(zMax) > (segment.local_z?.[1] ?? Infinity) + 1e-9;
 			primitives.push({
 				kind,
 				segment_id: segment.segment_id,
@@ -246,13 +284,16 @@ export function deriveFacadePrimitives({ grammar, segment, storeys, entrance = n
 					// a member asking for one of the two is asking to stop being ragged.
 					z_max: risesTo(alternative, segment.local_z?.[1])
 						? Math.max(round(zMax), buildingTop)
-						: risesToStoreyLine(alternative, segment.local_z?.[1]) !== null
-							? Math.max(round(zMax), risesToStoreyLine(alternative, segment.local_z?.[1]))
-							: Math.min(segment.local_z?.[1] ?? Infinity, round(zMax)),
+						: storeyLine !== null
+							? Math.max(round(zMax), storeyLine)
+							: inRisenScope
+								? round(zMax)
+								: Math.min(segment.local_z?.[1] ?? Infinity, round(zMax)),
 				},
 				...(risesTo(alternative, segment.local_z?.[1]) || dropsTo(alternative, segment.local_z?.[0])
-					|| risesToStoreyLine(alternative, segment.local_z?.[1]) !== null
-					? { rises_to: alternative.rise_to } : {}),
+					|| storeyLine !== null
+					? { rises_to: alternative.rise_to }
+					: inRisenScope ? { rises_to: "storey_line" } : {}),
 				depth_m: kind === "door" && entrance ? entrance.recess_m : graded("depth_m", alternative.depth_m),
 				// Only when the author named one. Absent leaves the primitive exactly as every
 				// grammar written before this field produced it, so the geometry builder's

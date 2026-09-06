@@ -1,6 +1,7 @@
 import { sha256, stableJson } from "../../core.mjs";
 import { readVerifiedFacadeDesignContextAuthority } from "./context.mjs";
 import { readVerifiedFacadeProgramAuthority } from "./contract.mjs";
+import { coplanarContinuations } from "./geometry/continuation.mjs";
 import { deriveFacadePrimitives, SKIN_KINDS } from "./grammar/derive.mjs";
 
 const verifiedResolutionAuthorities = new WeakMap();
@@ -227,6 +228,11 @@ function grammarPrimitives(program, context, entrance) {
 			},
 			storeys: context.storeys,
 			buildingUnderside: undersideFor(segment),
+			// Where this facet continues, in its own plane, into the course above - a fact
+			// about two facets together, so it is computed here and handed down like the
+			// underside is. An opening may rise across that seam and nowhere else.
+			continuations: coplanarContinuations(segment, context),
+			floorBandClearance: context.exclusions.floor_band_clearance_m,
 		});
 		// The inset pass is a probe, so it must not be the one that throws. A skin grammar whose
 		// parts fit the facet but not the inset scope would otherwise die before anything could

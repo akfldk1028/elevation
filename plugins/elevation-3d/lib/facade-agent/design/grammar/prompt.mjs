@@ -2,6 +2,7 @@ import { sha256, stableJson } from "../../../core.mjs";
 import { TERMINAL_MATERIAL_CHOICES, TERMINAL_VOCABULARY } from "../../facade-vocabulary.mjs";
 import { AXES, BOUNDS, DIAGONALS, MAX_PARAM_INDEX, PARAM_VALUES, PARAM_WORDS, REACH_EDGES, RISE_DATUMS, TERMINALS } from "./contract.mjs";
 import { DECLARED_MATERIAL_AXES, DECLARED_MATERIAL_ID_PATTERN } from "../../declared-material.mjs";
+import { coplanarContinuations } from "../geometry/continuation.mjs";
 import { rankedSegments } from "../resolver.mjs";
 import { PBR_MIN_ROLE_COLOR_DISTANCE } from "../../../texturing/render-style-evidence.mjs";
 import { MIN_ROLE_COLOR_DISTANCE as AXON_MIN_ROLE_COLOR_DISTANCE } from "../../../competition-axon.mjs";
@@ -109,7 +110,7 @@ export const FACADE_GRAMMAR_V3_SCHEMA = Object.freeze({
 				rise_to: {
 					type: ["string", "null"],
 					enum: [...RISE_DATUMS, null],
-					description: "Carry this SOLID terminal past an edge of its facet to a datum the engine knows. building_top is the building's top line, so a stepped mass ends on one level parapet. building_underside is the line a lifted building flies at, for a level bottom edge across steps in the base. Refused for openings, ignored beyond one storey, and building_underside does not exist on a mass that sits on the ground. Null everywhere else.",
+					description: "Carry this terminal past an edge of its facet to a datum the engine knows. building_top is the building's top line, so a stepped mass ends on one level parapet; building_underside is the line a lifted building flies at, for a level bottom edge across steps in the base - both SOLIDS only, and building_underside does not exist on a mass that sits on the ground. storey_line is the next slab line above the facet: a solid reaches it; glass or a door reaches it (less the floor-band clearance) ONLY where the facet's continues_above_m says the course above is the same plane and wide enough there, and does nothing otherwise. Ignored beyond one storey. Null everywhere else.",
 				},
 				reach: {
 					type: ["string", "null"],
@@ -319,7 +320,22 @@ same one-storey limit. On a building that sits on the ground there is no such li
 datum does not exist, and nothing happens - so this can never be used to fill in underneath
 a bridge.
 
-If the mass does not step, neither datum changes anything and neither costs anything.
+The third datum is the seam the extractor drew, not one the building has. A wall is cut
+into a facet per course wherever a floor line crosses it, so on a stacked mass "the top of
+the facet" is often just the next slab, and a member ends there whether the design wanted a
+course or not. "rise_to": "storey_line" carries a SOLID up to the next slab line the storeys
+declare. It is also the ONE rise an OPENING may take - glass or a door, never an arch - and
+only where the course above is the same plane: every facet lists \`continues_above_m\`, the u
+ranges (in that facet's own u, fold clearance already taken off) and the z it may rise to.
+Put the opening inside one of those ranges and it rises to the slab line less the
+floor-band clearance, where a head may legally end; put it anywhere else, or on a facet
+whose list is empty, and it stays in its facet and nothing happens. A crease between two
+courses - three degrees is a crease - is a fold, not a seam, and an opening does not cross
+it: a pane across a crease would stand proud or buried at its head, and this mass is never
+cut. If the list is empty on every facet, the mass is either a prism or a creased one and
+this datum is not for it.
+
+If the mass does not step, none of the three datums changes anything and none costs anything.
 
 The same idea runs sideways. On a punched wall the derivation scope is pre-inset by the
 fold clearance, so a course written across the full scope still pauses 0.3 m short of every
@@ -817,6 +833,12 @@ export function buildFacadeGrammarPrompt({ context, correctionCodes = [], attemp
 			// arithmetic the model should not have to do. Zero means the facet is narrower
 			// than the two clearances and cannot be punched at all.
 			punched_scope_m: Number(Math.max(0, (segment.length_m ?? 0) - 2 * (context.exclusions?.fold_clearance_m ?? 0)).toFixed(4)),
+			// Where this facet is the same plane as the course above it, in this facet's own u
+			// and already inset by the fold clearance: the only place an opening may take
+			// `rise_to: "storey_line"`. Empty on a prism (every facet is full height) and on a
+			// creased mass (every seam is a fold), which is the honest answer on both.
+			continues_above_m: coplanarContinuations(segment, context)
+				.map(({ u_min, u_max, z_max }) => ({ u_min, u_max, z_max: Number(z_max.toFixed(4)) })),
 		})),
 		storeys: context.storeys,
 		exclusions: context.exclusions,
