@@ -34,6 +34,21 @@ test("a wall of identical slits with no top fails every check", () => {
 	assert.equal(metrics.max_storey_span, 1);
 });
 
+// A closed monolith the client photographed measured 8.3% at its own slot width and was
+// refused; a grammar that names its photograph has that gate recorded, not refused.
+test("a transcription stands aside from OPENING_RATIO_LOW, and only from the waivable gates", () => {
+	const program = { source_photograph: "concept.png" };
+	const { codes, faults, waived } = measureComposition({ context: CONTEXT, resolved: { primitives: WAREHOUSE }, program });
+	assert.deepEqual([...codes].sort(), ["MATERIAL_ROLE_MISSING", "SCALE_HIERARCHY_FLAT", "STOREY_LOCKSTEP", "TOP_TERMINATION_MISSING"]);
+	assert.equal(faults.some((fault) => fault.startsWith("OPENING_RATIO_LOW")), false);
+	assert.equal(waived.length, 1);
+	assert.match(waived[0], /^OPENING_RATIO_LOW: openings are/);
+	// Without a photograph the record is exactly what it was, `waived` included.
+	const plain = measureComposition({ context: CONTEXT, resolved: { primitives: WAREHOUSE } });
+	assert.equal(plain.waived, undefined);
+	assert.ok(plain.codes.includes("OPENING_RATIO_LOW"));
+});
+
 // A pier is not glazed and still breaks the lockstep, so it has to count.
 test("a pier carried through three storeys satisfies the storey span on its own", () => {
 	const primitives = [

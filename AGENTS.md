@@ -65,6 +65,9 @@ Code lives here. Data does not: `elevation-agent.json` declares `dataset_root` a
     diagonal   rising  rising_upper  falling  falling_upper
     depth_m    SIGNED - positive stands out (bounded per terminal), negative sets in
                (bounded by the wall)
+    source_photograph  the file a grammar TRANSCRIBES; then HIERARCHY_MISSING,
+               OPENING_RATIO_LOW, PBR_PRESENTATION_RANGE_INVALID, LINE_DENSITY_EXCEEDED (+ its plan twin)
+               are recorded as waived, not refused (TRANSCRIPTION_WAIVERS). Null = intent.
     materials  DECLARED, not chosen: substance / lightness / hue / finish / joint_m,
                under a name the author invents. The engine derives colour, roughness,
                metalness, joint family. Nobody writes a hex code.

@@ -30,6 +30,7 @@ import { measureComposition } from "./composition.mjs";
 import { locatedCodes } from "./design-agent.mjs";
 import { compileFacadeDesign } from "./compiler.mjs";
 import { parseFacadeDesign } from "./contract.mjs";
+import { TRANSCRIPTION_WAIVERS } from "./grammar/contract.mjs";
 import { readVerifiedFacadeDesignContextAuthority } from "./context.mjs";
 import { buildFacadeGrammarPrompt, FACADE_GRAMMAR_V3_SCHEMA } from "./grammar/prompt.mjs";
 import { resolveFacadeProgram } from "./resolver.mjs";
@@ -108,14 +109,18 @@ export function checkAuthoredGrammar({ context, grammar } = {}) {
 	if (!validation.accepted) {
 		return { ok: false, stage: "validate", codes: validation.codes, faults: locatedCodes(validation, resolved, context) };
 	}
-	const composition = measureComposition({ context, resolved });
+	const composition = measureComposition({ context, resolved, program });
 	const kinds = {};
 	for (const primitive of resolved.primitives) kinds[primitive.kind] = (kinds[primitive.kind] ?? 0) + 1;
+	// What a transcription stood aside from, measurement and all, so the author and the
+	// sheet both see it. Absent when nothing was waived.
+	const waived = [...(validation.waived ?? []), ...(composition.waived ?? [])];
 	return {
 		ok: composition.codes.length === 0,
 		stage: composition.codes.length ? "composition" : "accepted",
 		primitives: resolved.primitives.length, kinds,
 		metrics: composition.metrics, faults: composition.faults,
+		...(waived.length ? { waived } : {}),
 		program, resolved, validation,
 	};
 }
@@ -140,6 +145,9 @@ export async function renderAuthoredFacade({
 		throw new Error(`grammar was rejected at ${checked.stage}: ${detail}`);
 	}
 	const { program, resolved, validation } = checked;
+	// A transcription names its photograph; the sheet and PBR gates in TRANSCRIPTION_WAIVERS
+	// then record instead of refuse. Every other gate on the way holds.
+	const waive = program.source_photograph ? [...TRANSCRIPTION_WAIVERS] : [];
 	const compiled = await compileFacadeDesign({
 		outputRoot: join(runDir, "compiled"), candidate, context, program, resolved, validation,
 	});
@@ -152,7 +160,7 @@ export async function renderAuthoredFacade({
 		facadeSegmentAuthority: candidate.facade_segment_authority, cameras,
 		designFacadeManifest: { path: designManifestPath, sha256: sha256(await readFile(designManifestPath)) },
 		palette: resolveMaterialPalette(palette),
-		candidateId: candidate.candidate?.candidate_id ?? candidate.candidate_id, cutElevationM: 1.2, signal,
+		candidateId: candidate.candidate?.candidate_id ?? candidate.candidate_id, cutElevationM: 1.2, signal, waive,
 	});
 	const pbrRoot = join(runDir, "pbr-render");
 	const technicalCameraAuthority = await technicalCameraAuthorityFromGlb({ bytes: await readFile(compiled.output.path), cameras });
@@ -161,7 +169,7 @@ export async function renderAuthoredFacade({
 		candidateId: candidate.candidate?.candidate_id ?? candidate.candidate_id, cameras,
 		expectedTechnicalCameras: technicalCameraAuthority.cameras,
 		baselineRunDir: technicalRoot, baselineManifestRecord: technical.manifest_record,
-		outputSize, renderStyleOverrides, signal,
+		outputSize, renderStyleOverrides, signal, waive,
 	});
 	if (!pbr.validation.accepted) throw new Error(`PBR validation rejected: ${pbr.validation.codes.join(", ")}`);
 	const heroPath = join(pbrRoot, "perspective-hero.png");

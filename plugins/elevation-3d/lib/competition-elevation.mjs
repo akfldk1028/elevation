@@ -443,6 +443,8 @@ async function classifyAndCleanDarkArtifacts(base) {
 
 export async function renderCompetitionElevation({
 	runDir, glbPath, sourceMesh, floorGuides, facadePlanes, facadeSegmentAuthority, facadeValidation, facadeValidationReceipt, designFacadeManifest, camera, palette, dimensions, view, candidateId, pixelsPerMetre, signal, lifecycle,
+	// Codes a transcription of a photograph stands aside from; see TRANSCRIPTION_WAIVERS.
+	waive = [],
 }) {
 	const base = await renderCompetitionElevationBase({ runDir, glbPath, sourceMesh, camera, palette, dimensions, view, pixelsPerMetre, signal, lifecycle });
 	const outputDir = join(resolve(runDir), "competition-elevation", view);
@@ -524,7 +526,7 @@ export async function renderCompetitionElevation({
 	};
 	const validation = await validateCompetitionElevation({
 		artifacts: draft, sourceMesh, facadePlanes, facadeSegmentAuthority, facadeValidation, facadeValidationReceipt, designFacadeManifest,
-		floorGuides, view: camera, selectedGlbPath: glbPath,
+		floorGuides, view: camera, selectedGlbPath: glbPath, waive,
 	});
 	const validationPath = join(outputDir, `${view}-validation.json`);
 	await atomicWrite(validationPath, Buffer.from(JSON.stringify(validation, null, 2)), outputDir);
