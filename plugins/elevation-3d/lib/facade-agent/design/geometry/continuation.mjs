@@ -34,25 +34,20 @@ function dot(left, right) {
  * u_shift_m }` where `u_shift_m` converts a u on this facet to a u on the continuation
  * (`u_above = u - u_shift_m`). Empty when nothing coplanar stands on this facet's top.
  *
- * A facet's local u runs along its tangent `[-n1, n0]`; the face axis is the elevation's
- * horizontal. The two agree in sign on a facet that faces the sheet and disagree on one
- * grouped into the face obliquely, and a coplanar pair shares whichever it is - so the sign
- * is read once from this facet's normal against its face's axis, and the offsets that
- * `faces.mjs` recorded along that axis are turned back into local u with it.
+ * A facet's local u runs along its tangent `[-n1, n0]` and the face axis is `[-o1, o0]` of
+ * the sheet's outward: both are the same quarter-turn, so they agree in sign exactly when
+ * the facet faces the sheet - which is the condition `faces.mjs` grouped it there by. So
+ * local u increases with `face_offset_m` on every facet of a face, and the offsets are
+ * turned back into local metres by the facet's own projection scale alone.
  */
 export function coplanarContinuations(segment, context) {
 	const segments = context?.facade_segments ?? [];
-	const face = (context?.facade_faces ?? []).find((item) => item.face_id === segment.face_id);
 	const fold = context?.exclusions?.fold_clearance_m ?? 0;
 	const normal = segment.outward_normal;
 	const top = segment.local_z?.[1];
 	const scale = segment.length_m > 0 ? (segment.projected_length_m ?? 0) / segment.length_m : 0;
-	if (!face || !Array.isArray(normal) || !Number.isFinite(top) || !(scale > EPSILON)) return [];
-	const horizontal = Math.hypot(normal[0], normal[1]) || 1;
-	const tangent = [-normal[1] / horizontal, normal[0] / horizontal];
-	const forward = dot(tangent, face.axis) >= 0;
-	const faceEnd = segment.face_offset_m + segment.projected_length_m;
-	const toLocal = (offset) => (forward ? offset - segment.face_offset_m : faceEnd - offset) / scale;
+	if (!segment.face_id || !Array.isArray(normal) || !Number.isFinite(top) || !(scale > EPSILON)) return [];
+	const toLocal = (offset) => (offset - segment.face_offset_m) / scale;
 	const found = [];
 	for (const above of segments) {
 		if (above.segment_id === segment.segment_id || above.face_id !== segment.face_id) continue;
