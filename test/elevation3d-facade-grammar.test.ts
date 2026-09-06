@@ -147,7 +147,9 @@ test("rejects grammars that reach outside the closed language", () => {
 	rejects({ Facade: [{ split: { axis: "u", parts: [{ size: "1", symbol: "Missing" }] } }] });
 	rejects({ Facade: [{ terminal: "balcony" }] });
 	rejects({ Facade: [{ when: "process.exit(1)", terminal: "wall" }] });
-	rejects({ Facade: [{ when: "index > 2", terminal: "wall" }] });
+	// `index > 2` is a range now (see the range test below); a field on the right is not.
+	rejects({ Facade: [{ when: "index > last", terminal: "wall" }] });
+	rejects({ Facade: [{ when: "index > storey", terminal: "wall" }] });
 	rejects({ Facade: [{ split: { axis: "u", parts: [
 		{ size: "~1", symbol: "Wall", repeat: true }, { size: "~1", symbol: "Wall", repeat: true },
 	] } }], Wall: WALL });
@@ -165,6 +167,32 @@ test("reads a predicate against the scope it is given", () => {
 	assert.equal(predicateHolds(predicate, { index: 2, face_view: "front", storey: 1, total: 4 }), false);
 	assert.equal(predicateHolds(predicate, { index: 1, face_view: "back", storey: 1, total: 4 }), false);
 	assert.equal(predicateHolds(null, { index: 9, face_view: "left", storey: 3, total: 4 }), true);
+});
+
+// Equality and modulus can name one facet or every n-th; neither can say "the corner third
+// of this face". An author transcribing a photograph whose windows stop two-thirds along a
+// 32-facet face named the bare facets one at a time against the eight-alternative cap and
+// ran out, and wrote the fix in one line: `face_offset < 7`.
+test("a predicate may compare index, storey and face_offset against a range", () => {
+	const when = (text: string) => (grammar({ Facade: [{ when: text, terminal: "wall" }] }).rules as any).Facade[0].when;
+	const at = (face_offset: number, index = 0) => ({ index, face_view: "front", storey: 1, total: 32, face_offset });
+
+	assert.equal(predicateHolds(when("face_offset < 7"), at(6.9)), true);
+	assert.equal(predicateHolds(when("face_offset < 7"), at(7)), false);
+	assert.equal(predicateHolds(when("face_offset >= 7.0"), at(7)), true);
+	assert.equal(predicateHolds(when("face_view == front && face_offset <= 10.6"), at(10.6)), true);
+	assert.equal(predicateHolds(when("index < 17"), at(0, 16)), true);
+	assert.equal(predicateHolds(when("index < 17"), at(0, 17)), false);
+	assert.equal(predicateHolds(when("index > 16"), at(0, 17)), true);
+	assert.equal(predicateHolds(when("storey >= 2"), { ...at(0), storey: 2 }), true);
+	// A scope with no offset (a fixture segment, a nested scope on a mass without faces) is
+	// never inside a range, so the alternative falls through rather than firing by accident.
+	assert.equal(predicateHolds(when("face_offset < 7"), { index: 0, face_view: "front", storey: 1, total: 1 }), false);
+
+	// Still a comparison against a literal: no field on the right, no `last`, no param.
+	assert.throws(() => when("index < last"), FacadeGrammarError);
+	assert.throws(() => when("face_offset < index"), FacadeGrammarError);
+	assert.throws(() => when("param > 2"), FacadeGrammarError);
 });
 
 test("branches one rule on the argument it was called with", () => {

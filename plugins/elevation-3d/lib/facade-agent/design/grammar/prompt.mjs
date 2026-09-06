@@ -384,12 +384,17 @@ storey) - it is not "any storey the scope touches", and at the start rule it rea
 facet's own bottom, so a facet that begins on the third storey answers storey == 3.
 
 Predicates: index % <n> == <m>, index == <n>, index == last, storey % <n> == <m>,
-storey == <n>, band == full|cut|cut_below|cut_above|cut_both,
+storey == <n>, index < <n> (also <=, >, >=), storey < <n> (also <=, >, >=),
+face_offset < <metres> (also <=, >, >=), band == full|cut|cut_below|cut_above|cut_both,
 face_view == front|back|left|right,
 param == <value>. Two may be joined with &&. \`index\` is the position within the
 repeat that produced this scope, so "index % 2 == 0" alternates floors and, at the top
 level, alternates facets across one elevation. \`index == top\` is accepted as a synonym
-for \`index == last\`; prefer \`last\`.
+for \`index == last\`; prefer \`last\`. The comparisons are for RANGES: "the corner third
+of this face" is \`face_view == front && face_offset < 7\`, one alternative, where
+\`face_offset\` is the facet's \`face_offset_m\` - where it begins in metres along that
+sheet, the number you measure off a picture. Before these existed an author naming the
+bare two-thirds of a 32-facet face had to spend one alternative per facet and ran out.
 
 This list is complete - if a comparison is not on it, it is not a predicate, and
 \`band\` being on it is the point of the storey section above.

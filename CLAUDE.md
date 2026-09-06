@@ -1441,3 +1441,21 @@ its own author between the two runs).
 Round three of the transcriptions: t1c and t3c landed (five equal rows; ground windows 2.1 m
 tall because the facet is 2.6 m and creased above - "the bound is the mass", its author
 said, correctly, before this measurement confirmed it); t2c still running.
+
+**Rounds three to five, and the predicate an author wrote for us.** Fresh independent
+reviewers (images only) rated round three ROUGHLY / NO / ROUGHLY and round four t2d NO,
+t3d ROUGHLY with "rhythm and count match" - t3 is at the point where everything the
+reviewer still names is a creased facet or engine work (joints not drawn, soffit, tone).
+The cleft block's NO in round three was the photograph ignoring the mass's eight creased
+courses; a concept recommissioned with the courses STATED AS FACT dressed them on the first
+try (`concept-004-courses.png`). Its round-four NO was the author's ("identical on every
+face" - the photographed face has windows only in its outer third), and round five ran
+into the language: the bare two-thirds of a 32-facet face had to be named facet by facet
+against the eight-alternative cap, because `when` had equality and modulus and nothing
+that says a RANGE. The author wrote the fix in one line - "`face_offset < 7` or `index <
+17` would do it in one alternative" - and that is what landed: `index`/`storey` with
+`< <= > >=`, and `face_offset` (the facet's `face_offset_m`, the number an author measures
+off a picture) with the same four. Still a comparison against a literal, no field on the
+right. The `index > 2` rejection in the closed-language test became `index > last`. All
+retained grammars byte-identical. The t1 gate question stands: the photograph has four rows
+and a blank crown on a five-storey mass, and `HIERARCHY_MISSING` forbids the crown.
