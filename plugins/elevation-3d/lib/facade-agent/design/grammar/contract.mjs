@@ -110,6 +110,11 @@ export const BOUNDS = Object.freeze({
 	// over. Derivation is bounded by depth and by the primitive budget, not by how many
 	// ways one rule may branch; a grammar written under 8 parses exactly as it did.
 	maxAlternatives: 12,
+	// The size a graded tile may run between: a centimetre is below anything the renderer
+	// draws as a member, and a tile wider than the widest facet on any candidate is a
+	// number the engine would clamp to one tile anyway.
+	minGradedTileM: 0.01,
+	maxGradedTileM: 20,
 	maxParts: 16,
 	// 12, because 8 rejected a design the brief itself asks for: per-facet routing, a
 	// tripartite section, a bay, and the four-way opening nest is ten levels, and a blind
@@ -257,10 +262,28 @@ function parsePredicate(text, label) {
 }
 
 function parsePart(value, label, symbols) {
-	const part = record(value, label, new Set(["size", "symbol", "arg", "repeat"]));
+	const part = record(value, label, new Set(["size", "symbol", "arg", "repeat", "grade"]));
 	if (typeof part.symbol !== "string" || !SYMBOL.test(part.symbol)) fail(`${label}.symbol is not a symbol name`);
 	symbols.add(part.symbol);
 	if (part.repeat !== undefined && part.repeat !== null && typeof part.repeat !== "boolean") fail(`${label}.repeat must be a boolean`);
+	// A repeat whose tiles change size along the run: the first tile is `from` metres, the
+	// last is `to`, every tile between interpolates, and the run still fills its scope
+	// exactly. This is the parametric operator the elevation can actually SHOW - a terminal's
+	// depth grade is real in the geometry and invisible on an orthographic sheet, and the
+	// author transcribing a fin screen "densest at the corners, opening out at the centre"
+	// found that spacing was the one gradient the language had no word for. Only a repeat
+	// part has a run to grade along; on anything else it would be a number the engine
+	// ignores.
+	const grade = (part.grade ?? null) === null ? null : (() => {
+		if (part.repeat !== true) fail(`${label}.grade belongs to a repeat part: only a run of tiles has a size to grade along`);
+		const fields = record(part.grade, `${label}.grade`, new Set(["from", "to"]));
+		for (const key of ["from", "to"]) {
+			if (!Number.isFinite(fields[key]) || fields[key] < BOUNDS.minGradedTileM || fields[key] > BOUNDS.maxGradedTileM) {
+				fail(`${label}.grade.${key} is out of range: a graded tile stays within ${BOUNDS.minGradedTileM}..${BOUNDS.maxGradedTileM} m`);
+			}
+		}
+		return Object.freeze({ from: fields.from, to: fields.to });
+	})();
 	// The argument is written by the author as a constant, so an unknown or out of range
 	// one is caught here rather than degrading to a branch that quietly never fires.
 	// A number is accepted alongside its string because both normalise to the same value.
@@ -272,6 +295,7 @@ function parsePart(value, label, symbols) {
 		symbol: part.symbol,
 		arg,
 		repeat: part.repeat === true,
+		...(grade ? { grade } : {}),
 	});
 }
 

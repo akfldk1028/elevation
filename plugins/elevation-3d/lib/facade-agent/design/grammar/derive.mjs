@@ -96,14 +96,27 @@ function layout(parts, length, mayShrink = true) {
 	const repeat = parts.find((part) => part.repeat);
 	const slots = [];
 	if (repeat) {
-		const count = Math.max(1, Math.min(BOUNDS.maxRepeat, Math.round(leftover / repeat.size.value)));
+		// A graded repeat runs its tile size from `from` to `to` across the run; the nominal
+		// size is then their mean, and the tiles are scaled together so the run still fills
+		// the scope exactly, the way equal tiles always have. The count is the nearest whole
+		// number of mean-sized tiles, never zero, capped like any repeat.
+		const nominal = repeat.grade ? (repeat.grade.from + repeat.grade.to) / 2 : repeat.size.value;
+		const count = Math.max(1, Math.min(BOUNDS.maxRepeat, Math.round(leftover / nominal)));
 		if (leftover / count <= 1e-6) return { overrun: 0, fixed, starved: true };
+		const tile = (index) => {
+			if (!repeat.grade || count === 1) return leftover / count;
+			const t = index / (count - 1);
+			const raw = repeat.grade.from + (repeat.grade.to - repeat.grade.from) * t;
+			// Sum of the linear ramp over the run, so the scale that fills the scope is exact.
+			const sum = (count * (repeat.grade.from + repeat.grade.to)) / 2;
+			return (raw * leftover) / sum;
+		};
 		for (const part of parts) {
 			if (!part.repeat) {
 				slots.push({ part, size: part.size.kind === "relative" ? part.size.value * length : part.size.value, index: 0, total: 1 });
 				continue;
 			}
-			for (let index = 0; index < count; index += 1) slots.push({ part, size: leftover / count, index, total: count });
+			for (let index = 0; index < count; index += 1) slots.push({ part, size: tile(index), index, total: count });
 		}
 		return { slots };
 	}

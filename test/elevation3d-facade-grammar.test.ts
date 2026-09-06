@@ -912,6 +912,45 @@ test("an opening rises to the storey line only inside a coplanar continuation", 
 	assert.equal(solid.local_bounds.z_max, 6.6);
 });
 
+// A depth grade is real in the geometry and invisible on an orthographic sheet; the gradient
+// an elevation can show is spacing. An author transcribing a fin screen "densest at the
+// corners, opening out at the centre" measured the pitch and had one constant to write it
+// with. A repeat part now grades its tile size from the first tile to the last.
+test("a repeat part may grade its tile size along the run, and the run still fills the scope", () => {
+	const parsed = grammar({
+		Facade: [{ split: { axis: "u", parts: [{ size: "~0.15", symbol: "Fin", repeat: true, grade: { from: 0.1, to: 0.3 } }] } }],
+		Fin: [{ terminal: "mullion", depth_m: 0.2 }],
+	});
+	const fins = deriveFacadePrimitives({
+		grammar: parsed,
+		segment: { ...SEGMENT, length_m: 4, local_z: [0, 3.3], placeable: { u_min: 0, u_max: 4 } },
+		storeys: STOREY_LINES,
+	}) as any[];
+	const widths = fins.map((fin) => fin.local_bounds.u_max - fin.local_bounds.u_min);
+	// Count from the mean tile (0.2 m over 4 m), first tile a third of the last, monotone.
+	assert.equal(fins.length, 20);
+	assert.ok(Math.abs(widths[0] / widths[widths.length - 1] - 1 / 3) < 1e-6, `first/last ${widths[0]} / ${widths[widths.length - 1]}`);
+	for (let index = 1; index < widths.length; index += 1) assert.ok(widths[index] > widths[index - 1]);
+	assert.ok(Math.abs(widths.reduce((sum, width) => sum + width, 0) - 4) < 1e-6, "the run fills the scope exactly");
+	assert.equal(fins[0].local_bounds.u_min, 0);
+	assert.equal(fins[fins.length - 1].local_bounds.u_max, 4);
+
+	// Only a repeat has a run to grade along; and the endpoints are bounded.
+	assert.throws(
+		() => grammar({ Facade: [{ split: { axis: "u", parts: [{ size: "~1", symbol: "Fin", grade: { from: 0.1, to: 0.3 } }] } }], Fin: [{ terminal: "mullion", depth_m: 0.2 }] }),
+		/grade belongs to a repeat part/,
+	);
+	assert.throws(
+		() => grammar({ Facade: [{ split: { axis: "u", parts: [{ size: "~1", symbol: "Fin", repeat: true, grade: { from: 0, to: 0.3 } }] } }], Fin: [{ terminal: "mullion", depth_m: 0.2 }] }),
+		/out of range/,
+	);
+	// A repeat without a grade lays out exactly as it always did: equal tiles.
+	const plain = grammar({ Facade: [{ split: { axis: "u", parts: [{ size: "~0.2", symbol: "Fin", repeat: true }] } }], Fin: [{ terminal: "mullion", depth_m: 0.2 }] });
+	const equal = deriveFacadePrimitives({ grammar: plain, segment: { ...SEGMENT, length_m: 4, local_z: [0, 3.3], placeable: { u_min: 0, u_max: 4 } }, storeys: STOREY_LINES }) as any[];
+	assert.equal(equal.length, 20);
+	assert.ok(equal.every((fin) => Math.abs(fin.local_bounds.u_max - fin.local_bounds.u_min - 0.2) < 1e-6));
+});
+
 // A pane that rose alone would grow through its own head. The split rises instead, and the
 // head moves up with the pane because the split is laid out over the taller scope.
 test("a split rises to the storey line as one opening, head and all", () => {
