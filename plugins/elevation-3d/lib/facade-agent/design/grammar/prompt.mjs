@@ -172,7 +172,10 @@ export const FACADE_GRAMMAR_V3_SCHEMA = Object.freeze({
 					description: "Cut this member's rectangle in half on a diagonal and keep one half, instead of drawing a box. Four halves: rising is below the cut from bottom-left to top-right and rising_upper is above it; falling is below the cut from top-left to bottom-right and falling_upper above. A member and ITS OWN COMPLEMENT tile the scope and share only the cut - rising with rising_upper, falling with falling_upper. rising and falling do NOT tile: both keep the bottom edge, so they overlap below and leave the top bare. A layer split is how you put two members in one scope. Null draws the usual box. Refused on wall, which emits nothing, and on arch, whose rectangle is already the frame its curve is drawn inside.",
 				},
 				inset_m: { type: ["number", "null"] },
-				depth_m: { type: ["number", "null"] },
+				depth_m: {
+					type: ["number", "null"],
+					description: "How far the member stands OUT of the wall, in metres, bounded per terminal. Negative parses and validates - it means set INTO the wall, bounded by max_recess_m - but read the brief before using it: the mass is never cut, so a set-back member is drawn in front of an intact surface and is not reliably visible through the gated views. Three authors each spent a render learning that.",
+				},
 			},
 		},
 	},
@@ -420,6 +423,19 @@ still work and are there for the case where a declaration would add nothing, but
 fallback, not the menu. An author transcribing a bronze rainscreen with only those four
 wrote "brick" to borrow its hue and called it "a lie on a construction document"; that is
 the situation the declaration exists to end, so do not settle for the nearest legacy word.
+
+DEPTH IS SIGNED, AND THE NEGATIVE HALF IS NOT DRAWABLE. A negative depth_m parses, validates,
+and means set INTO the wall, bounded by max_recess_m. It reaches the geometry. But the mass
+is never cut - every member is a solid placed on an intact surface - so a set-back member
+is a closed prism from the wall face inward whose only visible face is coplanar with the
+mass. What that does, measured by three authors on three masses in one afternoon without
+being told each other's results: the pane hatches where it z-fights the wall, and from the
+oblique axons the intact mass occludes it and MATERIAL_ROLE_COLLAPSE fires (glass at 8.7 to
+9.9 against a floor of 10, at every depth from 0.05 to 0.25 m). Lifting it a hair off the
+wall was tried and made the occlusion worse. So: the sign exists because the primitive was
+wrong without it, and it is not yet a drawing move. Do not spend a render on it. If the
+photograph's openings sit back into a thick wall, say so in your loss list as a missing
+capability - it is one - and draw the frame proud and thin instead.
 
 A MEMBER MAY BE A TRIANGLE. Write "diagonal" on a terminal and its rectangle is cut in half
 on a diagonal. There are four halves, because there are two diagonals and each has two
