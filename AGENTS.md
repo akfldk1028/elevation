@@ -100,6 +100,12 @@ depth raster steps 30 mm or more. The ink footprint persists as `<view>-ink.png`
 detector skips it. A material with `joint_m: null` draws no joint - that is what monolithic
 means - so a wall that should show panels needs its module declared.
 
+A RECESSED opening (negative `depth_m`) is a hole. The mass mesh is never cut, so the hole is
+cut at render time: the builder emits the pane at the bottom of the recess plus four jamb
+faces in the shell material, and the viewer (`holeCut`) subtracts the hole volume from every
+mass material per pixel before every render. Query the compiled GLB and you will find the
+pane and the jambs; the hole itself exists only in the rasters.
+
 ## Adding a field to the grammar
 
 Four links, and the last one is a whitelist that drops silently what it does not name:

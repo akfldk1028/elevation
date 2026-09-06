@@ -271,10 +271,11 @@ function renderInteractiveAllViews(root, gltf = null) {
 		reset() { activateView(currentView); }, toggleFullscreen, activateView,
 		presentationEvidence() { return presentation?.evidence() ?? null; },
 		semanticRoleGeometry() { return semanticRoleGeometryEvidence(materialRecords); },
-		semanticRolePng() { return renderSemanticRoleMask({ THREE, renderer, scene, camera, materialRecords }); },
+		semanticRolePng() { return renderSemanticRoleMask({ THREE, renderer, scene, camera, materialRecords, beforeRender: () => holeCut.apply(camera) }); },
 		setPresentationObjectsVisible(visible) { presentation?.setPresentationObjectsVisible(visible); },
 		async settledPng() {
 			await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+			holeCut.apply(camera, currentClipping?.enabled ? [new THREE.Plane(new THREE.Vector3(0, 0, -1), currentClipping.elevation_m)] : []);
 			renderer.render(scene, camera);
 			return renderer.domElement.toDataURL("image/png");
 		},
@@ -295,7 +296,7 @@ function renderInteractiveAllViews(root, gltf = null) {
 	};
 	if (materialMode !== "embedded-pbr") applyPalette("warm");
 	activateView("axon");
-	renderer.setAnimationLoop(() => { controls.update(); renderer.render(scene, camera); });
+	renderer.setAnimationLoop(() => { controls.update(); holeCut.apply(camera); renderer.render(scene, camera); });
 }
 
 function projectedMeshes() {
@@ -455,6 +456,139 @@ function applyMaterials(records, key) {
 	for (const record of records) record.object.material = Array.isArray(record.object.material) ? record[key] : record[key][0];
 }
 
+// ---- The hole cut ----------------------------------------------------------------------
+// The mass mesh is never cut: it is the authority and the geometry lock holds it. A recessed
+// opening is still a hole, so the hole is cut where it can be - here, per render, as a
+// subtraction. The builder marks each recessed pane with its recess and its facet normal;
+// the pane's back face extruded out along that normal by the recess is the box the hole
+// occupies. Two passes draw that box's ENTRY depth (nearest front face) and EXIT depth
+// (back face) into textures, and every material on a mesh that is not a facade detail
+// discards the fragments that lie between the two. Depth alone - "in front of the pane
+// bottom" - was tried first and cut the wall beside every jamb on an oblique view, showing
+// the pane through the return; the box test cuts the hole and nothing beside it. What
+// remains inside is what a hole contains: the jambs the builder lined it with, the pane,
+// and whatever stands behind the glass. Applied before every render of every mode, so the
+// fill, the material-id, the depth, the normal, the axon and the PBR pass agree.
+const HOLE_PACK = "vec3 packHole(float d){vec3 p=fract(d*vec3(1.,255.,65025.));p-=p.yzz*vec3(1./255.,1./255.,0.);return p;}";
+const HOLE_UNPACK = "float unpackHole(vec3 p){return p.r+p.g/255.+p.b/65025.;}";
+const HOLE_GUARD = "vec2 holeUv=gl_FragCoord.xy*holeTexel; float holeEntry=unpackHole(texture2D(tHoleEntry,holeUv).rgb); if(holeEntry<0.9999){ float holeExit=unpackHole(texture2D(tHoleExit,holeUv).rgb); if(gl_FragCoord.z>=holeEntry-0.00002&&gl_FragCoord.z<=holeExit+0.00002) discard; }";
+const HOLE_BOX_INDICES = [0, 2, 1, 0, 3, 2, 4, 5, 6, 4, 6, 7, 0, 1, 5, 0, 5, 4, 1, 2, 6, 1, 6, 5, 2, 3, 7, 2, 7, 6, 3, 0, 4, 3, 4, 7];
+const holeCut = (() => {
+	let entryTarget = null, exitTarget = null;
+	const texel = new THREE.Vector2();
+	const depthShader = {
+		vertexShader: "void main(){gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}",
+		fragmentShader: `${HOLE_PACK} void main(){gl_FragColor=vec4(packHole(gl_FragCoord.z),1.);}`,
+	};
+	const entryMaterial = new THREE.ShaderMaterial({ ...depthShader, side: THREE.FrontSide });
+	const exitMaterial = new THREE.ShaderMaterial({ ...depthShader, side: THREE.BackSide, depthTest: false, depthWrite: false });
+	const volumes = new Map();
+	const isFacadeDetail = (object) => {
+		for (let ancestor = object; ancestor; ancestor = ancestor.parent) if (String(ancestor.name).toLowerCase() === "facade-details") return true;
+		return false;
+	};
+	const isPane = (object) => object.isMesh && object.geometry?.userData?.recessed === true;
+	// The hole box: the pane slab's back face (the four vertices deepest along the normal),
+	// and those four moved out along the normal by the recess to the wall face.
+	function volumeFor(pane) {
+		let volume = volumes.get(pane);
+		if (volume) return volume;
+		const extras = pane.geometry.userData;
+		const normal = new THREE.Vector3(...extras.recess_normal).normalize();
+		const position = pane.geometry.getAttribute("position");
+		const points = Array.from({ length: position.count }, (_, index) => new THREE.Vector3().fromBufferAttribute(position, index).applyMatrix4(pane.matrixWorld));
+		const depthOf = (point) => point.dot(normal);
+		const back = [...points].sort((left, right) => depthOf(left) - depthOf(right)).slice(0, 4);
+		// Order the four back corners around their face so the box winds consistently.
+		const centre = back.reduce((sum, point) => sum.add(point), new THREE.Vector3()).multiplyScalar(0.25);
+		const axisU = back[0].clone().sub(centre).normalize();
+		const axisV = new THREE.Vector3().crossVectors(normal, axisU);
+		const angle = (point) => Math.atan2(point.clone().sub(centre).dot(axisV), point.clone().sub(centre).dot(axisU));
+		back.sort((left, right) => angle(left) - angle(right));
+		const front = back.map((point) => point.clone().addScaledVector(normal, extras.recess_m));
+		const corners = [...front, ...back];
+		// Wind the box outward whichever way the corners came out: the entry pass culls back
+		// faces and the exit pass front faces, so an inside-out box draws nothing and cuts
+		// nothing - which is exactly what happened on the first render of this version.
+		const boxCentre = corners.reduce((sum, point) => sum.add(point), new THREE.Vector3()).multiplyScalar(1 / 8);
+		const faceNormal = new THREE.Vector3().crossVectors(corners[2].clone().sub(corners[0]), corners[1].clone().sub(corners[0]));
+		const faceCentre = corners.slice(0, 4).reduce((sum, point) => sum.add(point), new THREE.Vector3()).multiplyScalar(0.25);
+		const outward = faceNormal.dot(faceCentre.sub(boxCentre)) > 0;
+		const indices = outward ? HOLE_BOX_INDICES : HOLE_BOX_INDICES.map((value, index, all) => all[index - (index % 3) + (2 - (index % 3))]);
+		const geometry = new THREE.BufferGeometry();
+		geometry.setAttribute("position", new THREE.Float32BufferAttribute(corners.flatMap((point) => [point.x, point.y, point.z]), 3));
+		geometry.setIndex(indices);
+		volume = new THREE.Mesh(geometry, entryMaterial);
+		volume.frustumCulled = false;
+		volumes.set(pane, volume);
+		return volume;
+	}
+	function inject(material) {
+		if (!material || material.userData?.holeCut) return;
+		material.userData = { ...(material.userData ?? {}), holeCut: true };
+		const previous = material.onBeforeCompile;
+		material.onBeforeCompile = (shader, renderer) => {
+			previous?.(shader, renderer);
+			shader.uniforms.tHoleEntry = { value: entryTarget?.texture ?? null };
+			shader.uniforms.tHoleExit = { value: exitTarget?.texture ?? null };
+			shader.uniforms.holeTexel = { value: texel };
+			shader.fragmentShader = shader.fragmentShader.replace(/void main\(\)\s*\{/, `uniform sampler2D tHoleEntry; uniform sampler2D tHoleExit; uniform vec2 holeTexel; ${HOLE_UNPACK}\nvoid main(){\n${HOLE_GUARD}`);
+		};
+		const key = material.customProgramCacheKey?.bind(material);
+		material.customProgramCacheKey = () => `${key ? key() : ""}|hole-cut`;
+		material.needsUpdate = true;
+	}
+	return {
+		/** Draw the hole volumes for this camera and arm every mass material; call before each render. */
+		apply(camera, clippingPlanes = []) {
+			const panes = [];
+			scene.traverse((object) => { if (isPane(object)) panes.push(object); });
+			if (!panes.length) return false;
+			const size = renderer.getDrawingBufferSize(new THREE.Vector2());
+			let retargeted = false;
+			if (!entryTarget || entryTarget.width !== size.x || entryTarget.height !== size.y) {
+				entryTarget?.dispose(); exitTarget?.dispose();
+				const options = { minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter, format: THREE.RGBAFormat };
+				entryTarget = new THREE.WebGLRenderTarget(size.x, size.y, options);
+				exitTarget = new THREE.WebGLRenderTarget(size.x, size.y, options);
+				texel.set(1 / size.x, 1 / size.y);
+				retargeted = true;
+			}
+			scene.traverse((object) => {
+				if (!object.isMesh || isPane(object) || isFacadeDetail(object)) return;
+				for (const material of Array.isArray(object.material) ? object.material : [object.material]) inject(material);
+			});
+			scene.updateMatrixWorld(true);
+			const holeScene = new THREE.Scene();
+			for (const pane of panes) holeScene.add(volumeFor(pane));
+			entryMaterial.clippingPlanes = clippingPlanes;
+			exitMaterial.clippingPlanes = clippingPlanes;
+			const previousTarget = renderer.getRenderTarget();
+			const previousColor = renderer.getClearColor(new THREE.Color());
+			const previousAlpha = renderer.getClearAlpha();
+			const previousAutoClear = renderer.autoClear;
+			try {
+				renderer.autoClear = true;
+				for (const [target, material] of [[entryTarget, entryMaterial], [exitTarget, exitMaterial]]) {
+					for (const volume of holeScene.children) volume.material = material;
+					renderer.setRenderTarget(target); renderer.setClearColor(0xffffff, 1); renderer.clear();
+					renderer.render(holeScene, camera);
+				}
+			} finally {
+				renderer.setRenderTarget(previousTarget); renderer.setClearColor(previousColor, previousAlpha); renderer.autoClear = previousAutoClear;
+				holeScene.clear();
+			}
+			if (retargeted) scene.traverse((object) => {
+				if (!object.isMesh) return;
+				for (const material of Array.isArray(object.material) ? object.material : [object.material]) {
+					if (material?.userData?.holeCut) material.needsUpdate = true;
+				}
+			});
+			return true;
+		},
+	};
+})();
+
 function renderCompetition(root, view) {
 	const settings = config.competition_elevation;
 	const fitted = createCompetitionCamera(root, view, outputSize, settings.margin_ratio, settings.pixels_per_metre);
@@ -496,16 +630,16 @@ function renderCompetition(root, view) {
 	function renderMode(mode) {
 		renderer.outputColorSpace = mode === "base" ? THREE.SRGBColorSpace : THREE.LinearSRGBColorSpace;
 		if (mode === "material-id") {
-			applyMaterials(semantic.meshes, "ids");
+			applyMaterials(semantic.meshes, "ids"); holeCut.apply(fitted.camera);
 			renderer.setRenderTarget(null); renderer.setClearColor(0x000000, 1); renderer.render(scene, fitted.camera);
 		} else if (mode === "normal") {
-			applyMaterials(semantic.meshes, "normals");
+			applyMaterials(semantic.meshes, "normals"); holeCut.apply(fitted.camera);
 			renderer.setRenderTarget(null); renderer.setClearColor(0x000000, 1); renderer.render(scene, fitted.camera);
 		} else if (mode === "depth") {
-			applyMaterials(semantic.meshes, "depths");
+			applyMaterials(semantic.meshes, "depths"); holeCut.apply(fitted.camera);
 			renderer.setRenderTarget(null); renderer.setClearColor(0xffffff, 1); renderer.render(scene, fitted.camera);
 		} else {
-			applyMaterials(semantic.meshes, "fills"); renderer.setClearColor(settings.background, 1);
+			applyMaterials(semantic.meshes, "fills"); holeCut.apply(fitted.camera); renderer.setClearColor(settings.background, 1);
 			renderer.setRenderTarget(renderTarget); renderer.clear(); renderer.render(scene, fitted.camera);
 			renderer.setRenderTarget(null); renderer.setClearColor(settings.background, 1); renderer.clear(); renderer.render(postScene, postCamera);
 		}
@@ -644,13 +778,13 @@ function renderCompetitionPlan(root, view) {
 		renderer.outputColorSpace = mode === "base" ? THREE.SRGBColorSpace : THREE.LinearSRGBColorSpace;
 		cutMesh.visible = mode === "base" && isPlan;
 		if (mode === "material-id") {
-			applyMaterials(semantic.meshes, "ids"); renderer.setRenderTarget(null); renderer.setClearColor(0x000000, 1); renderer.render(scene, fitted.camera);
+			applyMaterials(semantic.meshes, "ids"); holeCut.apply(fitted.camera, clippingPlanes); renderer.setRenderTarget(null); renderer.setClearColor(0x000000, 1); renderer.render(scene, fitted.camera);
 		} else if (mode === "normal") {
-			applyMaterials(semantic.meshes, "normals"); renderer.setRenderTarget(null); renderer.setClearColor(0x000000, 1); renderer.render(scene, fitted.camera);
+			applyMaterials(semantic.meshes, "normals"); holeCut.apply(fitted.camera, clippingPlanes); renderer.setRenderTarget(null); renderer.setClearColor(0x000000, 1); renderer.render(scene, fitted.camera);
 		} else if (mode === "depth") {
-			applyMaterials(semantic.meshes, "depths"); renderer.setRenderTarget(null); renderer.setClearColor(0xffffff, 1); renderer.render(scene, fitted.camera);
+			applyMaterials(semantic.meshes, "depths"); holeCut.apply(fitted.camera, clippingPlanes); renderer.setRenderTarget(null); renderer.setClearColor(0xffffff, 1); renderer.render(scene, fitted.camera);
 		} else {
-			applyMaterials(semantic.meshes, "fills"); renderer.setClearColor(settings.background, 1); renderer.setRenderTarget(renderTarget); renderer.clear(); renderer.autoClear = false;
+			applyMaterials(semantic.meshes, "fills"); holeCut.apply(fitted.camera, clippingPlanes); renderer.setClearColor(settings.background, 1); renderer.setRenderTarget(renderTarget); renderer.clear(); renderer.autoClear = false;
 			if (isPlan) { renderer.render(overheadScene, fitted.camera); renderer.clearDepth(); }
 			renderer.render(scene, fitted.camera);
 			renderer.autoClear = true; renderer.setRenderTarget(null); renderer.setClearColor(settings.background, 1); renderer.clear(); renderer.render(postScene, postCamera);
@@ -823,6 +957,7 @@ function renderCompetitionAxon(root, view) {
 		} else {
 			contextGroup.visible = true; applyMaterials(semantic.meshes, "pbrs"); renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.outputColorSpace = THREE.SRGBColorSpace; renderer.setClearColor(settings.background, 1);
 		}
+		holeCut.apply(fitted.camera);
 		renderer.render(scene, fitted.camera);
 		return renderer.domElement.toDataURL("image/png");
 	}
@@ -869,6 +1004,6 @@ if (allViews) renderInteractiveAllViews(loadedRoot, loadedGltf);
 else if (competitionElevation) renderCompetition(loadedRoot, config.cameras.views[viewName]);
 else if (competitionPlan) renderCompetitionPlan(loadedRoot, config.cameras.views[viewName]);
 else if (competitionAxon) renderCompetitionAxon(loadedRoot, config.cameras.views[viewName]);
-else renderer.render(scene, createLegacyCamera(viewName));
+else { const legacy = createLegacyCamera(viewName); holeCut.apply(legacy); renderer.render(scene, legacy); }
 document.querySelector("[data-status]").textContent = `${config.candidate_id} · ${strategy} · ${viewName}`;
 globalThis.__ELEVATION3D_READY__ = true;

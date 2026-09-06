@@ -293,7 +293,7 @@ export function buildEnrichedScene({ mesh, floorGuides, facadePlanes, grammar, t
 	return {
 		base: { positions: mesh.vertices, indices: mesh.triangles },
 		details: safeFallback ? [] : typedPrimitives
-			? buildTypedFacadeDetails({ mesh, floorGuides, facadePlanes, primitives: typedPrimitives })
+			? buildTypedFacadeDetails({ mesh, floorGuides, facadePlanes, primitives: typedPrimitives, shellMaterial })
 			: grammar?.system === PUNCHED_FACADE_SYSTEM
 			? buildPunchedFacadeDetails({ mesh, floorGuides, facadePlanes, grammar })
 			: facadeDetails(mesh, floorGuides, facadePlanes, grammar),
