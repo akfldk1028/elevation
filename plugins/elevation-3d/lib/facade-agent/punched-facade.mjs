@@ -885,8 +885,12 @@ export const TYPED_FACADE_GRAMMAR = Object.freeze({
 	unresolved_surfaces: Object.freeze([]),
 });
 const TYPED_MATERIAL = TERMINAL_MATERIALS;
+/** A recessed pane's own thickness: a glazing unit, sitting at the bottom of its recess. */
+const PANE_THICKNESS_M = 0.015;
+/** The lining of a recess: the wall's own face turned into the hole, drawn as a thin box just inside it. */
+const JAMB_THICKNESS_M = 0.02;
 
-export function buildTypedFacadeDetails({ mesh, floorGuides, facadePlanes, primitives }) {
+export function buildTypedFacadeDetails({ mesh, floorGuides, facadePlanes, primitives, shellMaterial = null }) {
 	validateFloorGuideBudget(floorGuides);
 	validateSourceMesh(mesh);
 	const authority = verifiedFacadeSegmentAuthority(mesh, facadePlanes);
@@ -928,20 +932,21 @@ export function buildTypedFacadeDetails({ mesh, floorGuides, facadePlanes, primi
 		const depth = !opening ? authored
 			: authored < 0 ? Math.min(-0.015, authored)
 				: Math.max(0.015, authored || 0.015);
-		// A recessed pane z-fights the wall, and that is not fixable here. Its front face at
-		// n=0 is coplanar with the mass surface, which is never cut, so on some panes at some
-		// angles the alpha-blended glass hatches against it - measured as pixel-to-pixel
-		// contrast 10.4 inside the glass against 0.79 on the wall beside it. Lifting the front
-		// face off the wall was tried twice, at 2 mm on every recessed member and at 0.5 mm on
-		// glass alone, and both failed MATERIAL_ROLE_COLLAPSE on the opposite axon: the moment
-		// the pane is genuinely inside, the intact mass occludes it from an oblique view. So a
-		// set-back opening is drawn IN FRONT of an uncut surface by polygon offset, and the
-		// hatch is the price of the offset being the only thing holding it visible. The fix
-		// is a hole in the mass, and the mass is the one thing this facade does not get to cut.
+		// A RECESSED opening is a hole. The mass mesh is never cut - it is the authority, and
+		// the geometry lock holds it - so the hole is cut where it can be: the renderers discard
+		// the mass surface inside the pane's footprint, in front of the pane (viewer-app.mjs
+		// and the PBR presentation, keyed to the `recessed` extra below). What this builder
+		// emits for a recess is therefore what a hole contains: the pane as a thin slab at the
+		// BOTTOM of the recess, and four jamb faces in the shell's own material lining its sides.
+		// Before this the pane was a solid block of glass from the wall face to the recess
+		// depth, coplanar with the uncut mass at n=0 - it z-fought the wall (contrast 10.4 in
+		// the glass against 0.79 beside it), could not be lifted off (2 mm and 0.5 mm both lost
+		// the glass role on the opposite axon to the mass in front of it), and drew no reveal.
+		const recessed = opening && depth < 0;
 		const bounds = {
 			u0: local.u_min, u1: local.u_max,
 			v0: local.z_min - plane.origin[2], v1: local.z_max - plane.origin[2],
-			n0: 0, n1: depth,
+			n0: recessed ? depth + PANE_THICKNESS_M : 0, n1: depth,
 		};
 		// A member that named a rise datum is the one thing allowed to stand above its own
 		// plane rectangle, because that rectangle is the facet's mesh face and a parapet is by
@@ -977,7 +982,35 @@ export function buildTypedFacadeDetails({ mesh, floorGuides, facadePlanes, primi
 			...(primitive.family_id ? { family_id: primitive.family_id } : {}),
 			...(primitive.zone_id ? { zone_id: primitive.zone_id } : {}),
 			...(primitive.material_id ? { material_id: primitive.material_id } : {}),
+			// The renderers read this to cut the mass in front of the pane. Only a recess is
+			// a hole; a proud pane keeps the exact record it always had.
+			// The renderer rebuilds the hole VOLUME from the pane: its back face extruded
+			// out along this normal by the recess, so the cut is the box the hole occupies and
+			// nothing beside it. Depth alone was tried first and cut the wall beside every
+			// jamb on an oblique view, showing the pane through the return.
+			...(recessed ? { recessed: true, recess_m: -depth, recess_normal: [...plane.normal] } : {}),
 		}, backing.get(plane.segment_id));
+		// The hole's four sides, lining the recess from the wall face to the pane, in the
+		// shell's own material so they read as the wall's thickness and not as a surround.
+		// Thin boxes just inside the footprint; the renderer's cut exposes their inner faces.
+		if (recessed) {
+			const jamb = Math.min(JAMB_THICKNESS_M, (bounds.u1 - bounds.u0) / 8, (bounds.v1 - bounds.v0) / 8);
+			const sides = [
+				{ u0: bounds.u0, u1: bounds.u0 + jamb, v0: bounds.v0, v1: bounds.v1 },
+				{ u0: bounds.u1 - jamb, u1: bounds.u1, v0: bounds.v0, v1: bounds.v1 },
+				{ u0: bounds.u0 + jamb, u1: bounds.u1 - jamb, v0: bounds.v0, v1: bounds.v0 + jamb },
+				{ u0: bounds.u0 + jamb, u1: bounds.u1 - jamb, v0: bounds.v1 - jamb, v1: bounds.v1 },
+			].map((side) => ({ ...side, n0: 0, n1: depth }));
+			sides.forEach((side, sideIndex) => pushDetail(
+				details, plane, tangent, TYPED_FACADE_GRAMMAR, side,
+				{
+					kind: "reveal", material: shellMaterial ?? "concrete", slot: `typed-${index}-jamb-${sideIndex}`,
+					design_primitive_index: index, source_kind: primitive.kind, jamb: true,
+					...(primitive.face_view ? { face_view: primitive.face_view } : {}),
+				},
+				backing.get(plane.segment_id),
+			));
+		}
 		// A grammar that draws its own jambs and sills does not want a second frame
 		// pushed inside the first: the opening ends up as a frame within a frame and
 		// reads as a heavy black border rather than a window. The entrance is placed by

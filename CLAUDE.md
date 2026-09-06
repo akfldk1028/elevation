@@ -1520,3 +1520,27 @@ the ink, so the two agree. Measured on the bent bar (`render-t3d-ink2`): strong 
 0.006-0.012 against the typed 0.030, every sheet accepted, hero rendered; the back elevation
 now carries the 1.35 m panel joints and the storey joints four reviewers in a row had named
 as the most legible line on the wall and absent from every sheet.
+
+**The reveal ("시작해").** The mass mesh is still never cut - it is the authority and the
+geometry lock holds it - so the hole is cut where it can be: at render time, per pixel, as a
+subtraction. Two halves. GEOMETRY (`punched-facade.mjs`): a recessed opening now emits what a
+hole contains - the pane as a 15 mm slab at the BOTTOM of the recess, marked `recessed` with
+`recess_m` and the facet's `recess_normal`, and four 20 mm jamb faces in the shell's own
+material (`shellMaterial` now threaded into `buildTypedFacadeDetails`) lining the hole from
+the wall face to the pane. RENDERER (`holeCut` in `web/viewer-app.mjs`): before every render
+of every mode it rebuilds each hole's VOLUME from the pane (its back face extruded out along
+the normal by the recess), draws the volume's entry depth (front faces) and exit depth (back
+faces, depth test off) into two textures, and every material on a mesh that is not a facade
+detail discards fragments with entry <= z <= exit. Armed at thirteen render sites plus the
+PBR role mask, so fill, material-id, depth, normal, plan, axon, the interactive viewer and
+the PBR pass all draw the same hole.
+
+Two mistakes, both measured. Depth alone - "discard mass in front of the pane bottom" -
+cut the wall beside every jamb on an oblique view and showed the pane through the return;
+the volume test is the fix. And the first volume box was wound inward, so the entry pass
+culled it to nothing, no hole was cut, every pane sat behind an intact wall and the right
+sheet failed MATERIAL_ROLE_MISSING; the box is now wound outward from its own centre.
+Result on the star prism (`t1d-reveal3`): no glass hatch (the coplanar z-fight is gone with
+the surface it fought), jamb faces visible at oblique angles, no lifted-pane occlusion, all
+eight views through the gates, hero rendered. The mass-is-never-cut memory is closed with
+this.

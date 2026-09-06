@@ -153,7 +153,7 @@ export function semanticRoleGeometryEvidence(materialRecords) {
 	return result;
 }
 
-export function renderSemanticRoleMask({ THREE, renderer, scene, camera, materialRecords }) {
+export function renderSemanticRoleMask({ THREE, renderer, scene, camera, materialRecords, beforeRender = null }) {
 	const clearColor = renderer.getClearColor(new THREE.Color()).clone();
 	const clearAlpha = renderer.getClearAlpha();
 	const outputColorSpace = renderer.outputColorSpace;
@@ -183,6 +183,9 @@ export function renderSemanticRoleMask({ THREE, renderer, scene, camera, materia
 		renderer.outputColorSpace = THREE.SRGBColorSpace;
 		renderer.toneMapping = THREE.NoToneMapping;
 		renderer.setClearColor(0x000000, 1);
+		// The hole cut arms the replacement materials it has not seen and draws the pane
+		// bottoms for this camera, so the role mask shows the hole the presentation shows.
+		beforeRender?.();
 		renderer.render(scene, camera);
 		return renderer.domElement.toDataURL("image/png");
 	} finally {
