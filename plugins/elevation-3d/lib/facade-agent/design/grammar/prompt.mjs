@@ -139,9 +139,19 @@ export const FACADE_GRAMMAR_V3_SCHEMA = Object.freeze({
 							items: {
 								type: "object",
 								additionalProperties: false,
-								required: ["size", "symbol", "arg", "repeat"],
+								required: ["size", "symbol", "arg", "repeat", "grade"],
 								properties: {
 									size: { type: "string", description: "\"2.4\" absolute metres, \"'0.5\" fraction of the scope, \"~1\" floating weight." },
+									grade: {
+										type: ["object", "null"],
+										additionalProperties: false,
+										required: ["from", "to"],
+										properties: {
+											from: { type: "number", description: "Size in metres of the FIRST tile of this repeat." },
+											to: { type: "number", description: "Size in metres of the LAST tile; every tile between interpolates, and the run still fills its scope exactly." },
+										},
+										description: "Only on a part with repeat: true. Tiles change size along the run - a fin screen densest at one end and opening out toward the other, a bay rhythm that widens toward the entrance. The nominal size is ignored (the count comes from the mean of from and to). Null everywhere else.",
+									},
 									symbol: SYMBOL,
 									// An enum rather than a pattern: it is the one constraint every strict
 									// provider enforces, so an argument outside the set cannot be emitted.
@@ -358,6 +368,17 @@ a repeat (a grade cannot be written on a split, and at the start rule every usef
 alternative is one). Both endpoints obey exactly the bounds the plain field obeys - a grade never
 reaches a number you could not have written by hand; it removes the hand-enumeration, not
 the bound.
+
+A depth grade is real in the geometry and INVISIBLE on an orthographic elevation: the sheet
+looks straight at the wall and a fin 0.30 m deep draws the same 0.04 m face as one 0.16 m
+deep. The gradient an elevation can actually show is SPACING, and that is written on the
+repeat part itself: { "size": "~0.14", "symbol": "Fin", "arg": null, "repeat": true,
+"grade": { "from": 0.10, "to": 0.20 } } lays the first tile out at 0.10 m and the last at
+0.20 m with every tile between interpolating, the run still filling its scope exactly and
+the count coming from the mean of the two. A screen densest at the corner and opening out
+toward the centre of a face is two facets, one graded 0.10 to 0.20 and its mirror 0.20 to
+0.10, routed by index parity. "grade" on a part is only legal with "repeat": true, and
+takes two metres, not an attr; set it null everywhere else.
 
 One thing to get right, because the elevation will not show you the mistake: put the rise on
 a member that SPANS the facet, and never on a run of separate piers. Above the roof there is
