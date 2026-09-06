@@ -1460,3 +1460,27 @@ off a picture) with the same four. Still a comparison against a literal, no fiel
 right. The `index > 2` rejection in the closed-language test became `index > last`. All
 retained grammars byte-identical. The t1 gate question stands: the photograph has four rows
 and a blank crown on a five-storey mass, and `HIERARCHY_MISSING` forbids the crown.
+
+**The parametric test, and the operator it was missing.** The user asked for the parametric
+elevation to be tested; `concept-020-param.png` (2026-09-03: the star prism in a screen of
+slender fins whose depth and spacing change across each face) had never been transcribed.
+A blind vision author did it in one attempt - 1559 primitives, 160 pier blades + 795 louvre
+blades over continuous glazing, four declared materials, depth graded 0.16 to 0.30 m by
+facet parity so the field is continuous across every fold, zero faults - and then reported
+the thing that matters: **a depth grade is real in the GLB and invisible on an orthographic
+sheet** (a 0.30 m fin draws the same 0.04 m face as a 0.16 m one), so the only gradient an
+elevation can show is SPACING, and spacing had one constant to write it with. `e9e816b`:
+`grade: { from, to }` on a repeat PART lays the first tile at `from` metres and the last at
+`to`, the run scaled to fill its scope exactly, count from the mean; refused off a repeat.
+Re-run with pitch 0.10 to 0.20 (parity-mirrored): accepted, and the front sheet shows the
+fins tightening across each facet. Equal tiles lay out to the decimal as before; snapshot
+identical.
+
+Two more things the test showed. Every elevation of the fin screen is refused by
+`LINE_DENSITY_EXCEEDED` at 0.038-0.039 against the typed 0.030 - fifteen blades per facet
+is the photograph's own count, so this is the fourth gate on the decision list, not a
+grammar to thin. And the four oblique facets on every sheet draw as a blank champagne slab:
+at 45 degrees the blade side faces overlap into one surface, which is what an orthographic
+projection of a fin screen physically does, and what a drawn line pass would show as edges.
+Files: `creative-020/llm-facade-subagent-v1/grammar-param-020{,-spacing}.json`,
+`render-param-020{,-spacing}/` (technical sheets only; the elevation gate stops the rest).
