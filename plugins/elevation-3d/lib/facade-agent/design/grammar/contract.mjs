@@ -102,7 +102,14 @@ export const BOUNDS = Object.freeze({
 	// Derivation is bounded by depth and repeat, not by how many names the grammar
 	// uses. A facade that varies by elevation, by parity and by zone needs the room.
 	maxSymbols: 64,
-	maxAlternatives: 8,
+	// 12, because 8 was a number nobody chose and three authors ran into it at the start
+	// rule - the one rule that sees the whole face. On a 32-facet face with a door facet,
+	// a coping course, two ranges for one photographed face and three for the other, the
+	// eighth slot was spoken for and the two refinements the reviewer still asked for
+	// (the inner column's ground pair, the band's eave facet) were each one alternative
+	// over. Derivation is bounded by depth and by the primitive budget, not by how many
+	// ways one rule may branch; a grammar written under 8 parses exactly as it did.
+	maxAlternatives: 12,
 	maxParts: 16,
 	// 12, because 8 rejected a design the brief itself asks for: per-facet routing, a
 	// tripartite section, a bay, and the four-way opening nest is ten levels, and a blind
