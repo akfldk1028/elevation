@@ -70,6 +70,8 @@ export { validateCompetitionPlanTopPair };
 
 export async function renderCompetitionPlan({
 	runDir, glbPath, sourceMesh, camera, palette, mode, cutElevationM, signal, lifecycle = {},
+	// Codes a transcription of a photograph stands aside from; see TRANSCRIPTION_WAIVERS.
+	waive = [],
 }) {
 	assertInputs({ mode, cutElevationM, camera, palette, sourceMesh });
 	const root = join(resolve(runDir), "views", mode);
@@ -162,7 +164,7 @@ export async function renderCompetitionPlan({
 			manifest, diagnostics,
 			manifest_record: { path: manifestPath, sha256: sha256(await readFile(manifestPath)) },
 		};
-		const validation = await validateCompetitionPlanTopArtifact({ artifact: result, sourceMesh, camera, selectedGlbPath: glbPath, mode, cutElevationM });
+		const validation = await validateCompetitionPlanTopArtifact({ artifact: result, sourceMesh, camera, selectedGlbPath: glbPath, mode, cutElevationM, waive });
 		const validationPath = join(root, `${mode}-validation.json`);
 		await atomicWrite(validationPath, Buffer.from(JSON.stringify(validation, null, 2)), root);
 		return { ...result, validation, validation_report: { path: validationPath, sha256: sha256(await readFile(validationPath)) } };

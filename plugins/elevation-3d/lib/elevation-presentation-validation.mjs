@@ -435,7 +435,7 @@ function inspectSvg(svg, authoritative, contentBounds) {
 	return { mismatch, overlap, pageViolation, source_count: bySource.size };
 }
 
-export async function validateCompetitionElevation({ artifacts, sourceMesh, facadePlanes, facadeSegmentAuthority, facadeValidation, facadeValidationReceipt, designFacadeManifest, floorGuides, view, selectedGlbPath }) {
+export async function validateCompetitionElevation({ artifacts, sourceMesh, facadePlanes, facadeSegmentAuthority, facadeValidation, facadeValidationReceipt, designFacadeManifest, floorGuides, view, selectedGlbPath, waive = [] }) {
 	const codes = [];
 	const grammarEvidence = await verifiedTypedFacadeArtifact(selectedGlbPath, facadeValidation, facadeValidationReceipt, sourceMesh, facadeSegmentAuthority);
 	const designEvidence = grammarEvidence.typed
@@ -598,10 +598,16 @@ export async function validateCompetitionElevation({ artifacts, sourceMesh, faca
 				|| !sameJson(manifest.displayed_dimensions, dimensionValues(artifacts.dimensions)));
 		} catch { add(codes, "DIMENSION_SOURCE_MISSING", true); }
 	}
+	// A transcription of a photograph stands aside from the codes in `waive` (the design
+	// contract's TRANSCRIPTION_WAIVERS): recorded, measured, not refused. The record is
+	// unchanged when nothing was waived, so every persisted validation stays byte-identical.
+	const waived = codes.filter((code) => waive.includes(code));
+	const kept = codes.filter((code) => !waive.includes(code));
 	return {
 		schema_version: "arr.elevation3d.presentation-validation.v1",
-		accepted: codes.length === 0,
-		codes,
+		accepted: kept.length === 0,
+		codes: kept,
+		...(waived.length ? { waived } : {}),
 		tolerance_mm: 1,
 		metrics: {
 			dimension_values: authoritative ? dimensionValues(authoritative) : null,
@@ -642,7 +648,7 @@ function horizontalTopAxes(axes) {
 		&& Math.abs(vertical[2]) <= 1e-6;
 }
 
-export async function validateCompetitionPlanTopArtifact({ artifact, sourceMesh, camera, selectedGlbPath, mode, cutElevationM }) {
+export async function validateCompetitionPlanTopArtifact({ artifact, sourceMesh, camera, selectedGlbPath, mode, cutElevationM, waive = [] }) {
 	const codes = [];
 	let rasterDiagnostics = null;
 	const manifest = artifact?.manifest;
@@ -706,10 +712,15 @@ export async function validateCompetitionPlanTopArtifact({ artifact, sourceMesh,
 		} catch { add(codes, "PLAN_TOP_DIAGNOSTIC_INVALID", true); }
 	}
 	add(codes, "PLAN_TOP_MANIFEST_INVALID", !await validRecord(artifact?.manifest_record));
+	// Same stand-aside as the elevation sheet: a transcription's waived codes are recorded,
+	// and the record is unchanged when nothing was waived.
+	const waived = codes.filter((code) => waive.includes(code));
+	const kept = codes.filter((code) => !waive.includes(code));
 	return {
 		schema_version: "arr.elevation3d.plan-top-validation.v1",
-		accepted: codes.length === 0,
-		codes,
+		accepted: kept.length === 0,
+		codes: kept,
+		...(waived.length ? { waived } : {}),
 		metrics: { content_bounds_px: content ?? null, selected_glb_sha256: selectedHash, equal_scale: scaleX === scaleY, ...rasterDiagnostics },
 	};
 }

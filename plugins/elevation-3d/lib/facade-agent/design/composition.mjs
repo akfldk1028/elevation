@@ -1,3 +1,5 @@
+import { TRANSCRIPTION_WAIVERS } from "./grammar/contract.mjs";
+
 /**
  * Composition metrics: the difference between a designed elevation and a housing block,
  * measured rather than eyeballed.
@@ -145,8 +147,13 @@ function median(values) {
  * facade composes. `codes` are stable identifiers for the record, `faults` are the same
  * codes carrying their measurement, which is what the model is shown.
  */
-export function measureComposition({ context, resolved } = {}) {
+export function measureComposition({ context, resolved, program = null } = {}) {
 	if (!context?.facade_segments || !resolved?.primitives) throw new TypeError("composition needs a context and a resolution");
+	// A grammar transcribing a photograph stands aside from the composition gates in
+	// TRANSCRIPTION_WAIVERS: the code and its measurement are recorded under `waived`
+	// instead of `codes`/`faults`, and nothing else here changes.
+	const waive = program?.source_photograph ? TRANSCRIPTION_WAIVERS : [];
+	const waived = [];
 	const segments = new Map(context.facade_segments.map((segment) => [segment.segment_id, segment]));
 
 	// Opening share is read per elevation, not over the whole building. One generous
@@ -290,7 +297,10 @@ export function measureComposition({ context, resolved } = {}) {
 	// `faults` is what the model is shown. A bare code leaves it guessing how far off it
 	// is and by how much to move, so each one carries its measurement.
 	const faults = [];
-	const note = (code, text) => { codes.push(code); faults.push(`${code}: ${text}`); };
+	const note = (code, text) => {
+		if (waive.includes(code)) { waived.push(`${code}: ${text}`); return; }
+		codes.push(code); faults.push(`${code}: ${text}`);
+	};
 	// Every face is either above the floor, or so far below it that it is plainly a solid.
 	// The band between is the fault.
 	const indecisive = Object.entries(openingRatios)
@@ -436,5 +446,6 @@ export function measureComposition({ context, resolved } = {}) {
 		},
 		codes,
 		faults,
+		...(waived.length ? { waived } : {}),
 	};
 }

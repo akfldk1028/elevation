@@ -113,6 +113,9 @@ export function validateEmbeddedPbrRender({
 	views, selectedGlbSha256, consoleErrors, materialMode,
 	renderStyle, renderStyleSha256, presentationEvidence, presentationEnvironment, semanticRoleEvidence, baselineComparison,
 	requirePresentationBaselineComparison = false,
+	// Codes a transcription of a photograph stands aside from; see the design contract's
+	// TRANSCRIPTION_WAIVERS. Recorded as `waived`, never dropped.
+	waive = [],
 }) {
 	const codes = [];
 	const records = VIEW_NAMES.map((name) => views?.[name]).filter(Boolean);
@@ -156,7 +159,9 @@ export function validateEmbeddedPbrRender({
 		codes.push("PBR_BASELINE_COMPARISON_REQUIRED");
 	}
 	const unique = [...new Set(codes)];
-	return { accepted: unique.length === 0, status: unique.length === 0 ? "accepted" : "rejected", codes: unique };
+	const waived = unique.filter((code) => waive.includes(code));
+	const kept = unique.filter((code) => !waive.includes(code));
+	return { accepted: kept.length === 0, status: kept.length === 0 ? "accepted" : "rejected", codes: kept, ...(waived.length ? { waived } : {}) };
 }
 
 function decodePng(dataUrl) {
@@ -399,7 +404,7 @@ export async function renderEmbeddedPbrViews({
 	authoritativeCameras, expectedTechnicalCameras,
 	outputSize = 1600, signal, lifecycle = {},
 	renderStyleId = "competition-daylight-v1", renderStyleOverrides, presentationBaselineRunDir,
-	requirePresentationBaselineComparison = false, canonicalSelection,
+	requirePresentationBaselineComparison = false, canonicalSelection, waive = [],
 } = {}) {
 	const root = resolve(runDir);
 	await prepareSafeDirectory(root, root, "embedded-PBR render root");
@@ -562,6 +567,7 @@ export async function renderEmbeddedPbrViews({
 			semanticRoleEvidence,
 			baselineComparison,
 			requirePresentationBaselineComparison,
+			waive,
 		});
 		const thumbnails = await Promise.all(VIEW_NAMES.map((name) => sharp(views[name].path).resize(500, 500).png().toBuffer()));
 		const contactSheetPath = join(root, "contact-sheet.png");

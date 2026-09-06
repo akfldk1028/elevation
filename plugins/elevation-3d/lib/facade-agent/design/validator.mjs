@@ -2,6 +2,7 @@ import { sha256, stableJson } from "../../core.mjs";
 import { KIND_PROJECTION } from "../facade-vocabulary.mjs";
 import { readVerifiedFacadeDesignContextAuthority } from "./context.mjs";
 import { readVerifiedFacadeProgramAuthority } from "./contract.mjs";
+import { partitionWaived, TRANSCRIPTION_WAIVERS } from "./grammar/contract.mjs";
 import { continuationHolding, coplanarContinuations } from "./geometry/continuation.mjs";
 import { readVerifiedResolvedFacadeAuthority, resolveFacadeProgram } from "./resolver.mjs";
 
@@ -278,11 +279,17 @@ export function validateResolvedFacadeProgram({ program, context, resolved } = {
 			}
 		}
 
-		const sortedCodes = [...codes].sort();
+		// A transcription stands aside from the gates in TRANSCRIPTION_WAIVERS: the code is
+		// recorded as waived, with nothing else changed. A grammar with no source photograph
+		// produces the receipt it always did, to the byte - `waived` only appears when it holds
+		// something.
+		const partitioned = partitionWaived([...codes].sort(), program.source_photograph ? TRANSCRIPTION_WAIVERS : []);
+		const sortedCodes = partitioned.codes;
 		const receiptBase = {
 			schema_version: "arr.elevation3d.facade-design-validation.v1",
 			accepted: sortedCodes.length === 0,
 			codes: sortedCodes,
+			...(partitioned.waived.length ? { waived: partitioned.waived } : {}),
 			measurements,
 			source: { ...contextAuthority },
 			resolution_sha256: resolved.resolution_sha256,

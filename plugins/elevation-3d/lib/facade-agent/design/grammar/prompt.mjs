@@ -28,9 +28,13 @@ const PREDICATE_TERM = `(?:(?:index|storey) *% *[0-9]+ *== *[0-9]+|(?:index|stor
 export const FACADE_GRAMMAR_V3_SCHEMA = Object.freeze({
 	type: "object",
 	additionalProperties: false,
-	required: ["schema_version", "concept_id", "start", "entrance", "rules", "design_rationale", "materials"],
+	required: ["schema_version", "concept_id", "start", "entrance", "rules", "design_rationale", "materials", "source_photograph"],
 	properties: {
 		schema_version: { type: "string", const: "arr.elevation3d.facade-grammar.v3" },
+		source_photograph: {
+			type: ["string", "null"],
+			description: "If this grammar TRANSCRIBES a photograph, its file name (e.g. concept-020-param.png). Four gates then record instead of refuse: HIERARCHY_MISSING, OPENING_RATIO_LOW, PBR_PRESENTATION_RANGE_INVALID, LINE_DENSITY_EXCEEDED (and its plan/roof twin PLAN_TOP_LINE_DENSITY_EXCEEDED) - each has refused something a client's photograph showed. Every other gate holds. Null when designing from an intent.",
+		},
 		concept_id: { type: "string", pattern: "^[a-z0-9](?:[a-z0-9._-]{0,126}[a-z0-9])?$" },
 		start: { ...SYMBOL, description: "The rule a facet starts from." },
 		entrance: {
@@ -346,6 +350,17 @@ cut. If the list is empty on every facet, the mass is either a prism or a crease
 this datum is not for it.
 
 If the mass does not step, none of the three datums changes anything and none costs anything.
+
+If you are TRANSCRIBING A PHOTOGRAPH, name it: "source_photograph": "<file name>". Four
+gates then record their measurement instead of refusing - HIERARCHY_MISSING (a top storey
+with no opening), OPENING_RATIO_LOW (a face under 10% glass), PBR_PRESENTATION_RANGE_INVALID
+(a face with too little tonal spread for a hero) and LINE_DENSITY_EXCEEDED (a sheet with more
+line than the typed limit). Each was set to refuse a design nobody asked for and each has
+since refused a thing a client's photograph showed: a blank crown, a closed monolith with
+narrow slots, a pale face with ten windows, fifteen fins per facet. The picture is the
+decision; draw what it shows and let the report say what was waived. Every other gate
+holds exactly as before - buildability, bounds, collisions, the plan cut - and a grammar
+designed from an intent, with no photograph, leaves the field null and faces all four.
 
 The same idea runs sideways. On a punched wall the derivation scope is pre-inset by the
 fold clearance, so a course written across the full scope still pauses 0.3 m short of every

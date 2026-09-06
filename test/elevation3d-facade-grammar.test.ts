@@ -5,7 +5,9 @@ import {
 	BOUNDS,
 	FacadeGrammarError,
 	parseFacadeGrammar,
+	partitionWaived,
 	predicateHolds,
+	TRANSCRIPTION_WAIVERS,
 } from "../plugins/elevation-3d/lib/facade-agent/design/grammar/contract.mjs";
 import { deriveFacadePrimitives } from "../plugins/elevation-3d/lib/facade-agent/design/grammar/derive.mjs";
 import { FACADE_GRAMMAR_V3_SCHEMA, openingZones } from "../plugins/elevation-3d/lib/facade-agent/design/grammar/prompt.mjs";
@@ -910,6 +912,29 @@ test("an opening rises to the storey line only inside a coplanar continuation", 
 		storeys: STOREY_LINES,
 	}) as any[];
 	assert.equal(solid.local_bounds.z_max, 6.6);
+});
+
+// Four gates each refused something a client's photograph showed. A grammar that names the
+// photograph it transcribes has those four recorded as waived instead; nothing else moves.
+test("a transcription names its photograph, and the four waivable gates are partitioned", () => {
+	const named = grammar({ Facade: [{ terminal: "wall" }] });
+	assert.equal((named as any).source_photograph, undefined, "absent unless declared");
+	const transcribing = parseFacadeGrammar({
+		schema_version: "arr.elevation3d.facade-grammar.v3", concept_id: "t", start: "Facade",
+		rules: { Facade: [{ terminal: "wall" }] }, source_photograph: "concept-020-param.png",
+	});
+	assert.equal(transcribing.source_photograph, "concept-020-param.png");
+	for (const bad of ["../concept.png", "D:/x/concept.png", "concept.txt", ""]) {
+		assert.throws(() => parseFacadeGrammar({
+			schema_version: "arr.elevation3d.facade-grammar.v3", concept_id: "t", start: "Facade",
+			rules: { Facade: [{ terminal: "wall" }] }, source_photograph: bad,
+		}), /source_photograph/, `refuses ${JSON.stringify(bad)}`);
+	}
+	assert.deepEqual(
+		partitionWaived(["HIERARCHY_MISSING", "PRIMITIVE_OVERLAP", "LINE_DENSITY_EXCEEDED"], TRANSCRIPTION_WAIVERS),
+		{ codes: ["PRIMITIVE_OVERLAP"], waived: ["HIERARCHY_MISSING", "LINE_DENSITY_EXCEEDED"] },
+	);
+	assert.deepEqual(partitionWaived(["HIERARCHY_MISSING"]), { codes: ["HIERARCHY_MISSING"], waived: [] }, "no photograph, nothing waived");
 });
 
 // A depth grade is real in the geometry and invisible on an orthographic sheet; the gradient

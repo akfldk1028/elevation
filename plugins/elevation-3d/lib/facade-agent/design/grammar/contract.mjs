@@ -137,6 +137,8 @@ export const BOUNDS = Object.freeze({
 
 const SYMBOL = /^[A-Za-z][A-Za-z0-9_]{0,31}$/;
 const ID = /^[a-z0-9](?:[a-z0-9._-]{0,126}[a-z0-9])?$/;
+/** A photograph's file name, nothing more: no path, so the field cannot reach outside a run. */
+const SOURCE_FILE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,200}\.(?:png|jpe?g|webp)$/i;
 const VIEWS = new Set(["front", "back", "left", "right"]);
 
 /**
@@ -478,10 +480,19 @@ function parseAlternative(value, label, symbols) {
 }
 
 export function parseFacadeGrammar(input) {
-	const program = record(input, "facade grammar", new Set(["schema_version", "concept_id", "start", "rules", "design_rationale", "materials"]));
+	const program = record(input, "facade grammar", new Set(["schema_version", "concept_id", "start", "rules", "design_rationale", "materials", "source_photograph"]));
 	if (program.schema_version !== "arr.elevation3d.facade-grammar.v3") fail("schema_version is unsupported");
 	if (typeof program.concept_id !== "string" || !ID.test(program.concept_id)) fail("concept_id is not a safe identifier");
 	if (typeof program.start !== "string" || !SYMBOL.test(program.start)) fail("start is not a symbol name");
+	// A grammar that transcribes a photograph says so, by naming the file. That is the one
+	// fact the four TRANSCRIPTION_WAIVERS gates key off: they were set to refuse a design
+	// nobody wanted (a blank crown, a warehouse wall, a sheet with no tone, a drawing too busy
+	// to read) and each has now refused something a client's photograph shows. A picture is
+	// the client's decision already taken; the gate records its measurement and stands aside.
+	const sourcePhotograph = program.source_photograph ?? null;
+	if (sourcePhotograph !== null && (typeof sourcePhotograph !== "string" || !SOURCE_FILE.test(sourcePhotograph))) {
+		fail("source_photograph must be a plain file name such as concept-020-param.png");
+	}
 	// The material list was four words an author could only choose among; one copying a bronze
 	// rainscreen wrote `brick` to borrow its hue and said so. A grammar may now DECLARE its
 	// materials in an architect's terms - substance, lightness, hue, finish, joint - and every
@@ -532,7 +543,38 @@ export function parseFacadeGrammar(input) {
 		// Absent unless the author declared any, so a grammar written before this exists is
 		// the same frozen object it always was.
 		...(declaredMaterials.length ? { materials: Object.freeze(declaredMaterials) } : {}),
+		...(sourcePhotograph !== null ? { source_photograph: sourcePhotograph } : {}),
 	});
+}
+
+/**
+ * The gates a transcription may stand aside from, and why each one.
+ *
+ * Every one of these was set to refuse a design nobody asked for, and every one has since
+ * refused a thing a client's photograph showed: HIERARCHY_MISSING a four-row facade with a
+ * blank crown on a five-storey mass; OPENING_RATIO_LOW a closed monolith with 0.55 m slots
+ * at 8.3%; PBR_PRESENTATION_RANGE_INVALID a pale ten-window face whose only tonal spread is
+ * its own pleats; LINE_DENSITY_EXCEEDED fifteen fins per facet, the picture's own count. A
+ * grammar that names its `source_photograph` has these four recorded as `waived`, with the
+ * measurement, instead of refused. Nothing else moves: buildability, bounds, collisions,
+ * the plan cut, camera identity and every other gate hold exactly as before.
+ */
+export const TRANSCRIPTION_WAIVERS = Object.freeze([
+	"HIERARCHY_MISSING",
+	"OPENING_RATIO_LOW",
+	"PBR_PRESENTATION_RANGE_INVALID",
+	"LINE_DENSITY_EXCEEDED",
+	// The same line budget applied to the plan and roof sheets: the fin screen that
+	// exceeds it on the elevation exceeds it in plan for the same reason - the count.
+	"PLAN_TOP_LINE_DENSITY_EXCEEDED",
+]);
+
+/** Which of a validator's codes a transcription waives: `{ codes, waived }`. */
+export function partitionWaived(codes, waive = []) {
+	const set = new Set(waive);
+	const kept = [], waived = [];
+	for (const code of codes) (set.has(code) ? waived : kept).push(code);
+	return { codes: kept, waived };
 }
 
 export function predicateHolds(predicate, scope) {
