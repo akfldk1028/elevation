@@ -83,7 +83,14 @@ test("renders the real creative-013 front with one orthographic pixel scale and 
 		internal_triangle_edges: false,
 		per_primitive_edges: false,
 		depth_silhouette: true,
+		// The line pass: declared joints over their own fill, member edges at depth steps.
+		joints: true,
+		member_edges: true,
 	});
+	// Its footprint persists beside the other rasters and the pass reports what it drew.
+	assert.ok(artifact.diagnostic_paths.ink.endsWith("front-ink.png"));
+	assert.equal(typeof artifact.ink.member_edge_pixels, "number");
+	assert.equal(typeof artifact.ink.joint_pixels, "number");
 	assert.ok(artifact.diagnostics.background_fraction >= 0.55);
 	assert.ok(artifact.diagnostics.dark_pixel_fraction <= 0.07);
 	assert.ok(artifact.diagnostics.total_edge_density >= 0.01 && artifact.diagnostics.total_edge_density <= 0.035);

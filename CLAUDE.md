@@ -1502,3 +1502,21 @@ row overlaps storey 5, HIERARCHY_MISSING never fired, nothing was waived, and th
 has the photograph's four rows, its taller ground row and its 2.40 m crown
 (`t1d-transcription`). The "fifth row" had been the author's split choice, not the gate.
 Check the author's split before putting a gate on the decision list.
+
+**The line pass ("시작").** `elevation-ink.mjs`: the elevation sheet gets the lines a drawing
+has and a flat fill does not, both keyed to facts the GLB already carries. JOINTS - a declared
+material's `joint_m` (now on the GLB as `joint_pitch_m` beside `joint_family`) drawn as its
+module over every pixel painted with that material's own `elevation_fill`, in the sheet's own
+metres, so the lines stop at every window and every other material; the family decides the
+pattern (precast: vertical module + slab lines; panels: a grid; masonry: courses; boards:
+vertical; extrusions and glazing: none; modules under 0.2 m not drawn). MEMBER EDGES - the
+silhouette of the nearer member wherever the depth raster steps by 30 mm or more, which is
+what lets a fin screen on a 45-degree facet read as fins and not a slab. The inked raster IS
+the base from then on; the ink's footprint persists as `<view>-ink.png` beside the depth and
+material rasters, and the seam detector skips it (grown by 2 px - the exact footprint left
+five two-pixel seam candidates beside the joints and refused the first inked sheet) exactly
+as it skips the plan's own cut line. The seam metric at render time runs on the fill before
+the ink, so the two agree. Measured on the bent bar (`render-t3d-ink2`): strong edge density
+0.006-0.012 against the typed 0.030, every sheet accepted, hero rendered; the back elevation
+now carries the 1.35 m panel joints and the storey joints four reviewers in a row had named
+as the most legible line on the wall and absent from every sheet.

@@ -359,6 +359,9 @@ function createMaterial(document, name, textures, declared) {
 		material.setExtras({
 			semantic_role: declared.role, declared_material: declared.id,
 			joint_family: declared.joint_family, elevation_fill: declared.elevation_fill,
+				// The module the material comes in, so the elevation's line pass can draw the joints
+				// where this fill is painted. Null for a monolithic declaration, which draws no line.
+				joint_pitch_m: declared.joint?.pitch_m ?? null,
 		});
 	}
 	if (name === "glass" || declared?.role === "glass") material.setAlphaMode(Material.AlphaMode.BLEND).setDoubleSided(true);

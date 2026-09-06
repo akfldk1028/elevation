@@ -8,6 +8,7 @@ import { startPreview, stopPreview } from "./preview.mjs";
 import { findChrome } from "./results.mjs";
 import { buildViewerBundle } from "./viewer.mjs";
 import { buildElevationAnnotations } from "./elevation-annotations.mjs";
+import { inkElevation, inkMaskToRgb, readInkMaterials } from "./elevation-ink.mjs";
 import { MIN_VISIBLE_SEAM_PX, validateCompetitionElevation } from "./elevation-presentation-validation.mjs";
 import { atomicCopy, atomicWrite, prepareSafeDirectory } from "./facade-agent/path-safety.mjs";
 
@@ -246,7 +247,7 @@ export async function renderCompetitionElevationBase({
 			background: "#fafaf7",
 			palette: { preset: palette.preset, sha256: palette.sha256, roles: palette.roles },
 			projected_bounds_m: dimensions.projected_bounds_m,
-			line_pass: { internal_triangle_edges: false, per_primitive_edges: false, depth_silhouette: true },
+			line_pass: { internal_triangle_edges: false, per_primitive_edges: false, depth_silhouette: true, joints: true, member_edges: true },
 		},
 	};
 	const viewerConfigSha256 = sha256(stableJson(config));
@@ -283,20 +284,23 @@ export async function renderCompetitionElevationBase({
 			material_id: join(outputDir, `${view}-material-id.png`),
 			depth: join(outputDir, `${view}-depth.png`),
 			normal: join(outputDir, `${view}-normal.png`),
+			ink: join(outputDir, `${view}-ink.png`),
 		};
-		const bytes = await writeBrowserPng(page, "base", path, outputDir);
+		const fillBytes = await writeBrowserPng(page, "base", path, outputDir);
 		const materialIdBytes = await writeBrowserPng(page, "material-id", diagnosticPaths.material_id, outputDir);
 		const depthBytes = await writeBrowserPng(page, "depth", diagnosticPaths.depth, outputDir);
 		const normalBytes = await writeBrowserPng(page, "normal", diagnosticPaths.normal, outputDir);
 		signal?.throwIfAborted();
 		const browserArtifact = await page.evaluate(() => globalThis.__ELEVATION3D_ARTIFACT__);
-		const decoded = await sharp(bytes).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+		const decoded = await sharp(fillBytes).removeAlpha().raw().toBuffer({ resolveWithObject: true });
 		if (decoded.info.width !== OUTPUT_SIZE || decoded.info.height !== OUTPUT_SIZE) throw new Error("competition elevation PNG size invalid");
-		const measured = contentBounds(decoded.data, decoded.info.width, decoded.info.height);
-		const edges = edgeMetrics(decoded.data, decoded.info.width, decoded.info.height);
 		const materialId = await sharp(materialIdBytes).removeAlpha().raw().toBuffer({ resolveWithObject: true });
 		const depth = await sharp(depthBytes).removeAlpha().raw().toBuffer({ resolveWithObject: true });
 		const normal = await sharp(normalBytes).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+		// The seam detector runs on the FILL, before the line pass: a joint is a dark line on
+		// a same-material coplanar surface, which is its exact definition of a defect. The
+		// persisted validator gets the same answer by skipping the ink's footprint.
+		const fillBounds = contentBounds(decoded.data, decoded.info.width, decoded.info.height);
 		const diagnostic = diagnosticMetrics({
 			base: decoded.data,
 			materialId: materialId.data,
@@ -304,10 +308,27 @@ export async function renderCompetitionElevationBase({
 			normal: normal.data,
 			width: decoded.info.width,
 			height: decoded.info.height,
-			bounds: measured.bounds,
+			bounds: fillBounds.bounds,
 			near: browserArtifact.depth_encoding.near_m,
 			far: browserArtifact.depth_encoding.far_m,
 		});
+		// The line pass: declared joints over their own fill, member edges at depth steps.
+		// The inked raster IS the base from here on - its bytes are what the sheet is built
+		// from and what every provenance hash names.
+		const inkPixels = Buffer.from(decoded.data);
+		const ink = inkElevation({
+			pixels: inkPixels, materialId: materialId.data, depth: depth.data,
+			width: decoded.info.width, height: decoded.info.height,
+			near: browserArtifact.depth_encoding.near_m, far: browserArtifact.depth_encoding.far_m,
+			camera: browserArtifact.camera, projectedBounds: browserArtifact.projected_bounds_m,
+			levels: (dimensions.levels ?? []).map((level) => level.value_m).filter(Number.isFinite),
+			materials: await readInkMaterials(selectedGlbBytes),
+		});
+		const bytes = await sharp(inkPixels, { raw: { width: decoded.info.width, height: decoded.info.height, channels: 3 } }).png().toBuffer();
+		await atomicWrite(path, bytes, outputDir);
+		await atomicWrite(diagnosticPaths.ink, await sharp(inkMaskToRgb(ink.mask), { raw: { width: decoded.info.width, height: decoded.info.height, channels: 3 } }).png().toBuffer(), outputDir);
+		const measured = contentBounds(inkPixels, decoded.info.width, decoded.info.height);
+		const edges = edgeMetrics(inkPixels, decoded.info.width, decoded.info.height);
 		const rolePixelCounts = materialRolePixelCounts(materialId.data, materialId.info.width, materialId.info.height);
 		const artifact = {
 			schema_version: "arr.elevation3d.base-elevation-artifact.v1",
@@ -335,6 +356,7 @@ export async function renderCompetitionElevationBase({
 			material_roles: browserArtifact.material_roles,
 			typed_facade: browserArtifact.typed_facade === true,
 			line_pass: config.competition_elevation.line_pass,
+			ink: ink.report,
 			diagnostic_paths: diagnosticPaths,
 			diagnostics: {
 				background_fraction: 1 - measured.foregroundFraction,
