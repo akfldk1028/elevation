@@ -928,6 +928,16 @@ export function buildTypedFacadeDetails({ mesh, floorGuides, facadePlanes, primi
 		const depth = !opening ? authored
 			: authored < 0 ? Math.min(-0.015, authored)
 				: Math.max(0.015, authored || 0.015);
+		// A recessed pane z-fights the wall, and that is not fixable here. Its front face at
+		// n=0 is coplanar with the mass surface, which is never cut, so on some panes at some
+		// angles the alpha-blended glass hatches against it - measured as pixel-to-pixel
+		// contrast 10.4 inside the glass against 0.79 on the wall beside it. Lifting the front
+		// face off the wall was tried twice, at 2 mm on every recessed member and at 0.5 mm on
+		// glass alone, and both failed MATERIAL_ROLE_COLLAPSE on the opposite axon: the moment
+		// the pane is genuinely inside, the intact mass occludes it from an oblique view. So a
+		// set-back opening is drawn IN FRONT of an uncut surface by polygon offset, and the
+		// hatch is the price of the offset being the only thing holding it visible. The fix
+		// is a hole in the mass, and the mass is the one thing this facade does not get to cut.
 		const bounds = {
 			u0: local.u_min, u1: local.u_max,
 			v0: local.z_min - plane.origin[2], v1: local.z_max - plane.origin[2],
