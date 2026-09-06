@@ -657,22 +657,32 @@ function cornerId(point) {
 }
 
 /**
- * Which elevation a facet leans toward, by dominant axis.
+ * Which elevation a facet is drawn in, by dominant axis.
  *
- * This is the SEGMENT AUTHORITY's own classifier and it is deliberately crude. The drawings
- * are grouped by a different one - `deriveFacadeFaces` scores each plane's normal against
- * every elevation's actual outward frame and takes the best - and on an oblique facet the
- * two can disagree. A 16-facet star prism produced exactly that: a facet tagged `front`
- * here whose `face_view` in the context is `back`, so the entrance appeared on the back
- * elevation while this field said front, and a reader tracing a missing door was sent to
- * the wrong drawing.
+ * IT IS INVERTED ON ALL FOUR AND IT IS LEFT THAT WAY DELIBERATELY. Measured, not guessed:
+ * the elevations project along a depth axis and a face is drawn in the view whose OUTWARD
+ * direction it faces, where outward is minus that depth. front [0,-1,0] -> +y, back -> -y,
+ * left [-1,0,0] -> +x, right -> -x. This function returns the opposite of each, so every
+ * member in every compiled GLB carries a `view` one hundred and eighty degrees from the
+ * sheet it actually appears on.
  *
- * Everything that decides anything already prefers `face_view` - `composition.mjs` reads
- * `segment.face_view ?? segment.view` in all six places it needs a view - so the metrics
- * and the gates are attributed correctly and only the diagnostic misleads. It is left as it
- * is rather than corrected here because this value is part of the byte-canonical authority
- * that every retained grammar resolves against; changing it is a migration, not a fix. When
- * reading a primitive's `view` extra, treat the segment's `face_view` as the truth.
+ * Correcting it was tried and reverted. `view` is inside `facade_planes_sha256`, so flipping
+ * it invalidates every prepared evidence pack on every candidate - `prepare` refuses with
+ * "evidence authority mismatch" for all three - which makes a label fix into a migration of
+ * the mass-side authority chain. That chain is the one thing in this system that is not the
+ * facade's to move.
+ *
+ * Nothing downstream needs the value to be right, which is why it survived:
+ * `composition.mjs` prefers the segment's `face_view`, computed from the frames and always
+ * correct, and `enrichment-validation.mjs` uses this only to choose a measuring axis, where
+ * front and back share one axis and the flip is invisible. What it cost was READERS - three
+ * separate times someone read `view: front` on the entrance, opened the front elevation,
+ * found no door and reported the entrance missing. It was on the back sheet every time.
+ *
+ * So: `face_view` now travels on the primitive beside this, and `face_view` is the answer to
+ * "which sheet". Read that one. This field means "which world axis this member's own plane
+ * faces", it is off by a sign, and it is only safe to correct alongside a regeneration of
+ * the evidence packs.
  */
 function facadeView(normal) {
 	if (Math.abs(normal[0]) > Math.abs(normal[1])) return normal[0] > 0 ? "right" : "left";
@@ -949,6 +959,11 @@ export function buildTypedFacadeDetails({ mesh, floorGuides, facadePlanes, primi
 			// it, the geometry builder had the code to draw it, and 312 spandrels still came out
 			// as boxes because the property never travelled the last step.
 			...(primitive.diagonal ? { diagonal: primitive.diagonal } : {}),
+			// The elevation this member is drawn in, beside the `view` above, which is the
+			// dominant axis of its own plane. See the note in derive.mjs: the two are different
+			// questions and reading one as the other has cost three false "the entrance is
+			// missing" reports.
+			...(primitive.face_view ? { face_view: primitive.face_view } : {}),
 			...(primitive.family_id ? { family_id: primitive.family_id } : {}),
 			...(primitive.zone_id ? { zone_id: primitive.zone_id } : {}),
 			...(primitive.material_id ? { material_id: primitive.material_id } : {}),

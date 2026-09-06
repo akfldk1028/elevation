@@ -262,6 +262,14 @@ export function deriveFacadePrimitives({ grammar, segment, storeys, entrance = n
 				// before diagonals existed emits exactly the record it always did and the
 				// geometry builder keeps drawing it as a box.
 				...(alternative.diagonal ? { diagonal: alternative.diagonal } : {}),
+				// WHICH ELEVATION THIS IS DRAWN IN. Distinct from the `view` the detail builder
+				// stamps, which is the dominant axis of the member's own plane - the right
+				// answer for the validation that measures along an axis, and the wrong one for
+				// a reader asking which sheet to open. The two disagree on an oblique facet,
+				// and three times now someone has read `view: front`, opened the front
+				// elevation, found no entrance and reported it missing. The door was on the
+				// back face every time. Carrying both ends the question.
+				...(segment.face_view ? { face_view: segment.face_view } : {}),
 				family_id: familyId(symbol, scope.param),
 				storey: storeyOf(zMin),
 				...(scope.layer ? { layer: scope.layer } : {}),
