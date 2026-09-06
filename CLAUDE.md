@@ -1484,3 +1484,21 @@ at 45 degrees the blade side faces overlap into one surface, which is what an or
 projection of a fin screen physically does, and what a drawn line pass would show as edges.
 Files: `creative-020/llm-facade-subagent-v1/grammar-param-020{,-spacing}.json`,
 `render-param-020{,-spacing}/` (technical sheets only; the elevation gate stops the rest).
+
+**The gates, decided ("빨리 해").** `4e5e5d3`: a grammar names the photograph it transcribes
+(`source_photograph`, a plain file name) and the five codes in `TRANSCRIPTION_WAIVERS` -
+HIERARCHY_MISSING, OPENING_RATIO_LOW, PBR_PRESENTATION_RANGE_INVALID, LINE_DENSITY_EXCEEDED
+and its plan twin - are recorded under `waived`, with their measurement, instead of refusing.
+One name, one partition, threaded as `waive` from the authoring kit through renderAllViews to
+the elevation, plan/top and PBR validators; a receipt gains `waived` only when it holds
+something, so every persisted validation stays byte-identical. Every other gate holds, and a
+grammar with no photograph faces all five as before. Measured: the cleft block's first hero
+(`render-004-t2j-final`, back face 10.0 against 15, waived); the fin screen end to end
+(`render-param-020-waived2`, elevation and plan line density waived, then PBR range too).
+
+And the star prism turned out not to need it. Told the crown could be blank, the author
+placed the four rows by ABSOLUTE height with a z split instead of the storey axis; the top
+row overlaps storey 5, HIERARCHY_MISSING never fired, nothing was waived, and the front sheet
+has the photograph's four rows, its taller ground row and its 2.40 m crown
+(`t1d-transcription`). The "fifth row" had been the author's split choice, not the gate.
+Check the author's split before putting a gate on the decision list.
