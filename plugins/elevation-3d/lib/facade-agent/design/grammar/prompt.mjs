@@ -294,7 +294,7 @@ An alternative may also declare the smallest scope it is willing to be used on, 
 "min_u_m" and "min_z_m". Below that it is simply not selected and the next alternative is
 tried, so end such a rule with a plain one - often bare wall. This is how you keep a design
 off a facet too small to carry it. Do NOT enumerate the slivers by index instead: index is
-readable only at the start rule, there are at most 8 alternatives there, and spending them
+readable only at the start rule, there are at most ${BOUNDS.maxAlternatives} alternatives there, and spending them
 on slivers is what stops you routing the design itself.
 
 Everything you draw lives inside its own facet, with one exception, and it is the only way
