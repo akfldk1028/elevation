@@ -30,6 +30,17 @@ import { NodeIO } from "@gltf-transform/core";
 export const MEMBER_EDGE_STEP_M = 0.03;
 /** Below this module the joints are courses of brick or board, unreadable at sheet scale; drawn from here up. */
 export const MIN_JOINT_PITCH_M = 0.2;
+/**
+ * A surface turned this far from the sheet is not inked. The normal raster gives each pixel
+ * its facing (the view-space normal's z); at 0.25 the surface is 75 degrees off the sheet
+ * and four metres of it project onto one. Measured on the cleft block: the facet turning
+ * away at the sheet's edge, a pale sliver with dark slots before the pass, came back as a
+ * solid dark wedge - every jamb, pane and frame of every recessed slot is a depth step, and
+ * on a face compressed four to one they land a pixel apart and fill it with ink.
+ */
+export const MIN_FACING_FOR_EDGES = 0.25;
+/** Joints stop a little earlier: a module foreshortened past 3:1 is a hatch, not a joint. */
+export const MIN_FACING_FOR_JOINTS = 0.33;
 /** Ink tones. Both above the luminance-50 line that marks a dark ARTEFACT, so the cleaner leaves them alone. */
 const EDGE_INK = [58, 60, 64];
 const JOINT_INK_BLEND = 0.45;
@@ -80,6 +91,14 @@ function decodeDepthMetres(raw, offset, near, far) {
 	return near + normalized * (far - near);
 }
 
+/** How squarely the surface at this pixel faces the sheet: |z| of the view-space normal, 1 head-on, 0 edge-on. */
+function facing(normal, offset) {
+	if (!normal) return 1;
+	const x = normal[offset] / 255 * 2 - 1, y = normal[offset + 1] / 255 * 2 - 1, z = normal[offset + 2] / 255 * 2 - 1;
+	const length = Math.hypot(x, y, z);
+	return length > 0 ? Math.abs(z) / length : 0;
+}
+
 /**
  * Ink the base raster in place and return the footprint.
  *
@@ -87,7 +106,7 @@ function decodeDepthMetres(raw, offset, near, far) {
  * the viewer's manifest (`px_per_m_x`, `px_per_m_y`), `projectedBounds` its `{min, max}` in
  * sheet metres, `levels` the slab lines in metres, `materials` from `readInkMaterials`.
  */
-export function inkElevation({ pixels, materialId, depth, width, height, near, far, camera, projectedBounds, levels = [], materials = [] }) {
+export function inkElevation({ pixels, materialId, depth, normal = null, width, height, near, far, camera, projectedBounds, levels = [], materials = [] }) {
 	const mask = new Uint8Array(width * height);
 	const isBackground = (offset) => materialId[offset] === 0 && materialId[offset + 1] === 0 && materialId[offset + 2] === 0;
 	let edgePixels = 0, jointPixels = 0;
@@ -110,6 +129,7 @@ export function inkElevation({ pixels, materialId, depth, width, height, near, f
 	for (let y = 1; y < height - 1; y++) for (let x = 1; x < width - 1; x++) {
 		const offset = (y * width + x) * 3;
 		if (isBackground(offset)) continue;
+		if (facing(normal, offset) < MIN_FACING_FOR_EDGES) continue;
 		const here = decodeDepthMetres(depth, offset, near, far);
 		let edge = false;
 		for (const [dx, dy] of [[1, 0], [0, 1]]) {
@@ -118,7 +138,7 @@ export function inkElevation({ pixels, materialId, depth, width, height, near, f
 			const there = decodeDepthMetres(depth, other, near, far);
 			// Draw on whichever of the pair is nearer the camera (smaller depth).
 			if (there - here >= MEMBER_EDGE_STEP_M) edge = true;
-			else if (here - there >= MEMBER_EDGE_STEP_M) {
+			else if (here - there >= MEMBER_EDGE_STEP_M && facing(normal, other) >= MIN_FACING_FOR_EDGES) {
 				pixels[other] = EDGE_INK[0]; pixels[other + 1] = EDGE_INK[1]; pixels[other + 2] = EDGE_INK[2];
 				mask[(y + dy) * width + x + dx] = 1; edgePixels++;
 			}
@@ -133,6 +153,7 @@ export function inkElevation({ pixels, materialId, depth, width, height, near, f
 			if (mask[index]) continue;
 			const offset = index * 3;
 			if (isBackground(offset)) continue;
+			if (facing(normal, offset) < MIN_FACING_FOR_JOINTS) continue;
 			const material = materials.find((item) => pixels[offset] === item.fill[0] && pixels[offset + 1] === item.fill[1] && pixels[offset + 2] === item.fill[2]);
 			if (!material) continue;
 			const { pattern, pitch_m: pitch } = material;

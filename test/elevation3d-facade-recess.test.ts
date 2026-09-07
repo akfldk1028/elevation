@@ -35,6 +35,7 @@ test("a recessed opening emits a pane at the bottom of its recess and four jambs
 	for (const jamb of jambs) {
 		assert.equal(jamb.kind, "reveal");
 		assert.equal(jamb.material, "precast", "the lining is the wall, not a surround");
+		assert.equal(jamb.semantic_role, "concrete", "and it carries the wall's role, not trim's");
 		assert.equal(jamb.local_bounds.n0, 0);
 		assert.ok(Math.abs(jamb.local_bounds.n1 - -0.18) < 1e-9, "from the wall face to the pane");
 	}

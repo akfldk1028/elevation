@@ -1005,6 +1005,10 @@ export function buildTypedFacadeDetails({ mesh, floorGuides, facadePlanes, primi
 				details, plane, tangent, TYPED_FACADE_GRAMMAR, side,
 				{
 					kind: "reveal", material: shellMaterial ?? "concrete", slot: `typed-${index}-jamb-${sideIndex}`,
+					// The hole's returns ARE the wall, so they carry the mass's role. Read by kind
+					// they would be `bronze` (a reveal is trim), which put the same surface in two
+					// roles by construction and measured concrete:bronze at 5.9 against a floor of 5.
+					semantic_role: "concrete",
 					design_primitive_index: index, source_kind: primitive.kind, jamb: true,
 					...(primitive.face_view ? { face_view: primitive.face_view } : {}),
 				},

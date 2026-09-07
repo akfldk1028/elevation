@@ -59,6 +59,16 @@ test("a depth step of a member's thickness draws its edge on the nearer side; a 
 	assert.equal(mask[50 * W + 21], 1);
 	assert.equal(mask[50 * W + 30], 0, "the wall beside it is not");
 	assert.ok(MEMBER_EDGE_STEP_M < 1);
+	// A surface turned almost edge-on to the sheet is not inked: the same fin on a facet whose
+	// normal points 80 degrees off the view leaves no edge (measured on the cleft block's
+	// sliver facet, which the pass had filled solid).
+	const turned = sheet([200, 200, 200], 10);
+	for (let y = 0; y < H; y++) for (const x of [20, 21]) turned.depth.set(encodeDepth(9), (y * W + x) * 3);
+	const normal = Buffer.alloc(W * H * 3);
+	// view-space normal (0.98, 0, 0.17): x = 0.98 -> 252, y = 0 -> 128, z = 0.17 -> 149
+	for (let i = 0; i < W * H; i++) normal.set([252, 128, 149], i * 3);
+	const away = inkElevation({ ...turned, normal, width: W, height: H, near: NEAR, far: FAR, camera, projectedBounds });
+	assert.equal(away.report.member_edge_pixels, 0);
 	// The mask survives a round trip through its RGB raster.
 	const back = inkMaskFromRgb(inkMaskToRgb(mask), W, H);
 	assert.deepEqual([...back], [...mask]);
