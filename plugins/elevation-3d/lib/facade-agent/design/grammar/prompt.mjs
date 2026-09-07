@@ -189,7 +189,7 @@ export const FACADE_GRAMMAR_V3_SCHEMA = Object.freeze({
 				inset_m: { type: ["number", "null"] },
 				depth_m: {
 					type: ["number", "null"],
-					description: "How far the member stands OUT of the wall, in metres, bounded per terminal. Negative parses and validates - it means set INTO the wall, bounded by max_recess_m - but read the brief before using it: the mass is never cut, so a set-back member is drawn in front of an intact surface and is not reliably visible through the gated views. Three authors each spent a render learning that.",
+					description: "How far the member stands OUT of the wall, in metres, bounded per terminal. Negative means set INTO the wall, bounded by max_recess_m, and a set-back OPENING is drawn as a real hole: the pane at the bottom of the recess, the recess lined with jamb faces in the shell material, the wall surface cut away in every view. A set-back solid (a band, a reveal) is still a solid inside the wall and only its exposed faces show.",
 				},
 			},
 		},
@@ -481,18 +481,16 @@ fallback, not the menu. An author transcribing a bronze rainscreen with only tho
 wrote "brick" to borrow its hue and called it "a lie on a construction document"; that is
 the situation the declaration exists to end, so do not settle for the nearest legacy word.
 
-DEPTH IS SIGNED, AND THE NEGATIVE HALF IS NOT DRAWABLE. A negative depth_m parses, validates,
-and means set INTO the wall, bounded by max_recess_m. It reaches the geometry. But the mass
-is never cut - every member is a solid placed on an intact surface - so a set-back member
-is a closed prism from the wall face inward whose only visible face is coplanar with the
-mass. What that does, measured by three authors on three masses in one afternoon without
-being told each other's results: the pane hatches where it z-fights the wall, and from the
-oblique axons the intact mass occludes it and MATERIAL_ROLE_COLLAPSE fires (glass at 8.7 to
-9.9 against a floor of 10, at every depth from 0.05 to 0.25 m). Lifting it a hair off the
-wall was tried and made the occlusion worse. So: the sign exists because the primitive was
-wrong without it, and it is not yet a drawing move. Do not spend a render on it. If the
-photograph's openings sit back into a thick wall, say so in your loss list as a missing
-capability - it is one - and draw the frame proud and thin instead.
+DEPTH IS SIGNED, AND A SET-BACK OPENING IS A HOLE. A negative depth_m means set INTO the
+wall, bounded by max_recess_m. For glass or a door it draws as a real recess in every view:
+the pane sits at the BOTTOM of the recess, the recess is lined with jamb faces in the shell's
+own material (the wall's thickness, not a surround - you do not need a reveal terminal to get
+them), and the wall surface inside the opening is cut away, so the reveal reads at oblique
+angles and the pane never fights the wall. The mass mesh itself is untouched; the cut is
+made when the sheet is drawn. Write the depth the photograph shows - 0.2 to 0.35 m is an
+ordinary punched reveal - and let the frame, if any, sit proud of the wall face as before.
+A set-back SOLID (a band, a sill) is different: it is a solid inside the wall and only its
+exposed faces show, so a recessed course reads as a groove, not as a member.
 
 A MEMBER MAY BE A TRIANGLE. Write "diagonal" on a terminal and its rectangle is cut in half
 on a diagonal. There are four halves, because there are two diagonals and each has two
