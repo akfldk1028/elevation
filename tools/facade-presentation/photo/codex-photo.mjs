@@ -23,12 +23,31 @@ export function defaultGeneratedImagesDir() {
 /** The image tool codex exposes. Named in the prompt because the model denies having it. */
 export const CODEX_IMAGE_TOOL = "image_gen__imagegen";
 
-export function buildCodexPrompt(inputPng, subject) {
+/**
+ * Two passes share the lane and want opposite things from the picture they are handed.
+ * `photo` re-photographs a RENDERED scheme and must keep every member of it; `concept`
+ * dresses a BARE mass and must keep only the mass - the facade is what it is asked for.
+ * One prompt served both until a concept commission told the model to keep "the same
+ * window grid" of a picture that had no windows.
+ */
+const PROMPT_BY_MODE = Object.freeze({
+	photo: [
+		"architectural photograph of the same building. Keep the same massing, window grid,",
+		"construction, entrance block - change only surface realism, lighting nuance and context.",
+	],
+	concept: [
+		"architectural photograph of that exact mass with a facade designed onto it. Keep the",
+		"silhouette, storey count and every facet exactly as rendered; the facade is the subject.",
+	],
+});
+
+export function buildCodexPrompt(inputPng, subject, mode = "photo") {
+	const wording = PROMPT_BY_MODE[mode];
+	if (!wording) throw new Error(`codex prompt mode must be photo or concept, got ${mode}`);
 	return [
 		`Use your ${CODEX_IMAGE_TOOL} tool.`,
 		`Read the render at ${resolve(inputPng).replace(/\\/g, "/")} and generate a photorealistic`,
-		"architectural photograph of the same building. Keep the same massing, window grid,",
-		"construction, entrance block - change only surface realism, lighting nuance and context.",
+		...wording,
 		`Subject: ${subject}.`,
 		"Do not answer that you lack the tool without calling it.",
 		// Left to itself the model sometimes reaches for an image_gen.py script instead,
@@ -121,12 +140,12 @@ function runCodex({ command, args }, timeoutMs = 15 * 60 * 1000) {
 	});
 }
 
-export async function codexPhoto({ inputPng, outputPng, subject, generatedDir = defaultGeneratedImagesDir() }) {
+export async function codexPhoto({ inputPng, outputPng, subject, mode = "photo", generatedDir = defaultGeneratedImagesDir() }) {
 	if (!inputPng || !outputPng || !subject) {
 		throw new Error("codexPhoto requires inputPng, outputPng and subject");
 	}
 	const startMs = Date.now();
-	const prompt = buildCodexPrompt(inputPng, subject);
+	const prompt = buildCodexPrompt(inputPng, subject, mode);
 	const { code, output } = await runCodex(buildCodexCommand(prompt));
 	// Success is the file, not the model's account of itself. This used to ask codex to print a
 	// sentinel when it had no image tool, and then search the whole transcript for that word -
@@ -136,7 +155,10 @@ export async function codexPhoto({ inputPng, outputPng, subject, generatedDir = 
 	// and a third run produced the photograph. An artifact check cannot be fooled by what the
 	// model says about itself, and `findNewestPng` below was always the real signal.
 	if (code !== 0) {
-		throw new Error(`codex exec exited with code ${code}: ${output.slice(-2000)}`);
+		// A quota refusal is one line in the middle of the transcript and the tail below cut
+		// it off, so two commissions were read as the tool outage. Say it first when present.
+		const limit = output.split(/\r?\n/).find((line) => /usage limit/i.test(line));
+		throw new Error(`codex exec exited with code ${code}${limit ? ` - ${limit.trim()}` : ""}: ${output.slice(-2000)}`);
 	}
 	// Only this session's own directory. A run that cannot name its session falls back to
 	// the whole tree, which is the racing search, so it says which one answered rather than

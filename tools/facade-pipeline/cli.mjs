@@ -17,6 +17,7 @@ import { readdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
 import { codexPhoto } from "../facade-presentation/photo/codex-photo.mjs";
+import { buildConceptSubject } from "../facade-presentation/photo/concept-subject.mjs";
 import { runCli as runShowcase } from "../facade-presentation/showcase/cli.mjs";
 import { resolveRoots, runDirFor } from "./config.mjs";
 import { prepareFacadeContext } from "./prepare.mjs";
@@ -56,7 +57,8 @@ const USAGE = "usage: cli.mjs roots | prepare <candidate> | brief <candidate>"
 	+ " | check <candidate> <grammar.json> | draw <candidate> <grammar.json> <name> [--palette preset|palette.json]"
 	+ " | render <candidate> <grammar.json> <name> [--palette preset|palette.json]"
 	+ " | showcase <candidate> <name> <out.png> [--wall --glass --frame --mood --face]"
-	+ " | photo <in.png> <out.png> [--subject s]";
+	+ " | photo <in.png> <out.png> [--subject s]"
+	+ " | concept <candidate> <name> --idea \"...\"";
 
 // A palette is a design decision, and until now this CLI could only pass one of four preset
 // NAMES - so an author could say which member is brick but never what brick looks like, and
@@ -111,6 +113,19 @@ export async function runPipelineCli(argv) {
 	if (command === "brief") {
 		const brief = await writeFacadeBrief({ runDir, context });
 		say({ ok: true, candidate: candidateId, sha256: brief.promptSha256, chars: brief.prompt.length, paths: brief.paths });
+		return 0;
+	}
+
+	// A concept is the perspective the standard lane starts from: the image model dresses
+	// THIS mass with the commissioner's idea. The mass facts come from the prepared context,
+	// so nobody types the storey count by hand; the idea is passed through verbatim.
+	if (command === "concept") {
+		const [name] = args;
+		if (!name || !flag.idea) { say({ ok: false, error: USAGE }); return 2; }
+		const subject = buildConceptSubject({ context, idea: flag.idea });
+		const outputPng = join(runDir, `concept-${name}.png`);
+		const photo = await codexPhoto({ inputPng: join(runDir, "evidence", "color", "axon.png"), outputPng, subject, mode: "concept" });
+		say({ ok: true, candidate: candidateId, concept: name, subject, ...photo });
 		return 0;
 	}
 

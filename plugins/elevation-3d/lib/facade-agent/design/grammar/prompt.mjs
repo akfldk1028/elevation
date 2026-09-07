@@ -538,6 +538,13 @@ and the roof one material id in the seam raster - so a cornice declared a lightn
 from the shell is a same-material seam BY CONSTRUCTION and the roof plan will reject it. A
 cornice takes the mass's material. Two authors paid two renders each learning that one.
 
+The mass's material is yours to declare, and there is exactly one place to say it: the
+material on a \`wall\` terminal. \`wall\` draws nothing, so what it names is what the
+building is MADE of - the mass, the roof, the coping, and the jamb faces of every set-back
+opening. One shell per building: the first \`wall\` that names a declared material wins. A
+grammar that names none leaves the mass in the palette's concrete, which is why a dark
+building whose author clad the piers and left the wall undeclared drew a pale roof.
+
 If a gate tells you a role is missing or two roles collapsed, look at your terminals, not
 only at your materials.
 

@@ -1608,3 +1608,45 @@ standoff (a screen with air behind it); a member's size independent of its tile;
 face that fades from open to solid. Perspective -> drawing holds for punched, layered and
 screened facades and does not yet hold for a facade whose idea is a field. The next language
 move is the field grade.
+
+**The roles live here now.** The user: "D:\Data\50_ELE\ElevationAgent 반쯤이 아니라 여기서 다
+해결되게 해야지 ... 폴더 구조 지켜서 해." Two of the three roles the lane depends on had been
+prompts typed into a chat: the transcriber (photograph -> grammar with `source_photograph`)
+and the reviewer (images only, "same building?"). Only the blind author was a file. Now all
+three are `.claude/agents/facade-{author,transcriber,reviewer}.md`, each carrying its blind
+rule, its reading list, its procedure and its report headings, distilled from the prompts
+that produced the accepted rounds (holes first, then reveals, joints, proportion, tone; read
+`photographed_faces` before judging positions; what is the mass's is not the drawing's
+fault; do not invent openings to pass a gate). AGENTS.md has the table and the lane. The
+third gap was the concept commission: every `--subject` so far had its storey count and
+height typed by hand, and one was typed wrong. `cli.mjs concept <candidate> <name> --idea`
+now reads storeys, height, facet count and ground contact from the prepared context
+(`concept-subject.mjs`), states them as facts, and passes the idea through verbatim; the
+codex prompt has a `concept` mode that keeps the mass rather than "the same window grid" of
+a picture that had none, and a quota refusal now names the limit and its date first. Tests:
+`elevation3d-concept-subject.test.ts` pins the subject and the three role files (name ==
+filename, blind rule stated, AGENTS.md names each).
+
+Both new roles were then played from the file alone, by fresh agents told nothing but
+"open this file and play it". The reviewer judged the current four from `final2-set.json`:
+t1d ROUGHLY, t2m NO, t3e ROUGHLY, param-b ROUGHLY - the same line as the last two reviews,
+so the file reproduces the verdict. Its six notes on the file were all fair and are in it
+now: the three verdicts had no boundary (now: NO = one dominant feature absent); sorting
+into "missing capability" needs the language the reviewer is forbidden to read (now two
+bins, absent / honest limit, and the engineer splits absent); CLAUDE.md is injected into a
+subagent's context unasked (now: do not use it, say it arrived); the second face's weight
+(now: the worse of the two); hero on faces the photograph does not show (now: judge its
+construction, not its positions); and 150 words could not hold the ordered walk. The
+transcriber re-transcribed `concept-020-param.png` blind as `render-roletest-param`: every
+gate green in two attempts, and "it is the same building" by its own eye; what it could not
+do was name the shell's material, because the brief never said that the material on a
+`wall` terminal is the mass's - the compiler had read it off `wall` since 2026-09-05 and no
+author could know. The brief says it now, the role file says it, and the test pins both.
+Its other notes are in the file too: `context-summary.json` does not carry the per-facet
+numbers (the brief's Technical context does); the waiver count was wrong; a `resolve`-stage
+stop counts as an attempt; look at all eight views, because on a screen the axons carry
+the reading and the elevations flatten it. Two engine findings from the two runs, not yet
+addressed: the placed entrance draws as a flat pale panel in the hero (t1d, param-b,
+roletest) though its object carries `recess_m` - the door does not use the hole cut the
+panes use; and t2m's NO is the diamond fold field, which is in the mass and the hero and
+not on the elevation sheet - the line pass inks joints and member edges, not creases.
