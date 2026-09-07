@@ -1544,3 +1544,25 @@ Result on the star prism (`t1d-reveal3`): no glass hatch (the coplanar z-fight i
 the surface it fought), jamb faces visible at oblique angles, no lifted-pane occlusion, all
 eight views through the gates, hero rendered. The mass-is-never-cut memory is closed with
 this.
+
+**Re-transcription with the new capabilities (2026-09-07).** The user's check - "did we
+confirm the parametric one goes perspective -> drawing?" - was the right one: nothing after
+the line pass and the reveal had been reviewed. All three authors re-read their photographs
+with the recess drawable and the joints drawn. Bent bar t3e: 0.25 m reveals measured off the
+picture, the shadowed-jamb-liner terminal and material retired ("with a real hole the jamb is
+the wall"), 76 primitives from 122. Cleft block t2l: panes at -0.25, door at -0.30, the frame
+shrunk to a 40 mm line, the 1.8 m joint drawn. Fin screen param-b: slot 0.9 m re-measured as
+0.40 of the facet, and the spacing gradient re-measured as FACE-wide - dense at both end
+facets, steady across the middle - so the parity routing went and the end facets grade 0.10
+to 0.15 m toward the corners. The first recessed renders surfaced three engine defects, each
+fixed and committed (`2fbf0c9`): paired hole exits (two dark rectangles cut into the bent
+bar's roof), jambs in the trim role (concrete:bronze 5.9 against 5), and the sliver facet
+inked solid (facing cull from the normal raster). Fresh reviewer on the four current
+drawings: t1d ROUGHLY, t2m NO, t3e ROUGHLY, param-b ROUGHLY. The parametric case holds at
+the level the others hold - fin fields, one slot column per facet, rail zones, the corner
+tightening; what the reviewer still names there is the photograph disobeying the mass (six
+storeys, a fin crown above the roof), the engine's entrance placement, and the tone. Two
+reviewer readings worth knowing: a frontal orthographic sheet cannot show a reveal, so
+"reveals: no depth" recurs against the sheet while the hero has them; and the cleft block's
+band has been read at the outer third, half and 40% by three reviewers - the third NO on
+that face is as much variance as drawing. Tone is next.
