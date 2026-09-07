@@ -1566,3 +1566,24 @@ reviewer readings worth knowing: a frontal orthographic sheet cannot show a reve
 "reveals: no depth" recurs against the sheet while the hero has them; and the cleft block's
 band has been read at the outer third, half and 40% by three reviewers - the third NO on
 that face is as much variance as drawing. Tone is next.
+
+**Tone.** The fin screen's champagne rendered terracotta. Measured: `champagne-blade` was
+declared `mid / warm / satin` and the material table derived that to sRGB (0.39, 0.17, 0.08);
+the photograph's sunlit blades measure 0.85 - the PALE stop. Half the declaration, half the
+table. The author redeclared from the picture (pale; the anthracite tray, the black frame and
+the glass re-measured and kept). The table got two rules in a row: first "a metal takes half
+the hue saturation and keeps its lightness", which rendered pale grey (R-B +8 against the
+photograph's +46) because HSL saturation is RELATIVE to the chroma a lightness can hold; then
+the right one (`c29861d` and after) - a metal's colour is a reflectance and carries its hue
+as a roughly constant chroma however light it is (gold, copper, champagne anodising), so the
+tint is built from an absolute chroma and keeps its declared lightness. `#f7ba97`, R-B +96 at
+HSL 0.78; `render-param-020-d` reads as a pale warm metal beside the photograph, where round
+b was terracotta. What still differs is the light: the photograph's low sun and specular
+contrast against a neutral room environment - that is the render style, not the material.
+
+Found on the way: `SILHOUETTE_MISMATCH` fired on a change of material lightness alone. The
+gate read the silhouette off tone (a pixel is building when it differs from the sheet
+background by more than 2 levels), and a pale screen on a pale sheet lost its antialiased
+blade ends unevenly between the textured and untextured pass - IoU 0.977 against 0.985. It
+now OR-s in the same view's semantic role mask, the silhouette independent of tone, and still
+catches texturing that changes where the building is. PBR test files 52/52.
