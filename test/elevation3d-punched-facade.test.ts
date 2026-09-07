@@ -484,21 +484,29 @@ test("a declared material's base map carries modulation, never the tint", async 
 	assert.equal(chromatic, 0, "the base map must be achromatic - the tint belongs to baseColorFactor alone");
 });
 
-// A metal's colour is its reflectance, not a pigment. A `mid / warm / satin` extrusion derived
-// to a dark copper (0.39, 0.17, 0.08) and rendered terracotta on a building whose photograph
-// shows champagne; the render tint of a metal now keeps its lightness and half the hue's
-// saturation, while a matte surface of the same declaration is untouched.
-test("a metal's render tint keeps its lightness and half the saturation; a pigment keeps both", () => {
+// A metal's colour is its reflectance and carries its hue as a roughly constant chroma however
+// light it is; HSL saturation does not, so a pale warm metal came out nearly grey (R-B +8
+// against the photograph's +46) and a mid one as terracotta. The render tint of a metal is
+// built from an absolute chroma and keeps its declared lightness; a pigment is untouched.
+test("a metal's render tint keeps its lightness and its hue's chroma at every lightness", () => {
 	const rgb = (hex: string) => [1, 3, 5].map((offset) => Number.parseInt(hex.slice(offset, offset + 2), 16));
-	const chroma = (hex: string) => Math.max(...rgb(hex)) - Math.min(...rgb(hex));
-	const mean = (hex: string) => rgb(hex).reduce((sum, value) => sum + value, 0) / 3;
-	const metal = deriveDeclaredMaterial({ id: "blade", substance: "extrusion", lightness: "mid", hue: "warm", finish: "satin", joint_m: null, reads_as: null });
-	const cast = deriveDeclaredMaterial({ id: "panel", substance: "cast", lightness: "mid", hue: "warm", finish: "satin", joint_m: null, reads_as: null });
+	const warmth = (hex: string) => rgb(hex)[0] - rgb(hex)[2];
+	// HSL lightness, which is what the declaration names: (max + min) / 2, not the channel mean.
+	const mean = (hex: string) => (Math.max(...rgb(hex)) + Math.min(...rgb(hex))) / 2;
+	const declare = (substance: string, lightness: string) => deriveDeclaredMaterial({ id: "warm-metal", substance, lightness, hue: "warm", finish: "satin", joint_m: null, reads_as: null });
+	const pale = declare("extrusion", "pale"), cast = declare("cast", "pale");
 	// Same declared fill on the drawing - the sheet is read in value, and value is declared.
-	assert.equal(metal.elevation_fill, cast.elevation_fill);
-	// The metal's render tint is lighter and less saturated than the pigment's.
-	assert.ok(mean(metal.axon_pbr) > mean(cast.axon_pbr), `${metal.axon_pbr} vs ${cast.axon_pbr}`);
-	assert.ok(chroma(metal.axon_pbr) < chroma(cast.axon_pbr) * 0.7, `${metal.axon_pbr} vs ${cast.axon_pbr}`);
-	// And the metal's tint is no darker than its own declared lightness.
-	assert.ok(mean(metal.axon_pbr) >= mean(metal.elevation_fill) - 2);
+	assert.equal(pale.elevation_fill, cast.elevation_fill);
+	// A pale warm metal is warm: the photograph's champagne blades measured R-B +46.
+	assert.ok(warmth(pale.axon_pbr) >= 40, `pale metal warmth ${warmth(pale.axon_pbr)} (${pale.axon_pbr})`);
+	assert.ok(warmth(pale.axon_pbr) > warmth(cast.axon_pbr), "and warmer than the same pigment, which HSL leaves pale");
+	// And no darker than its own declared lightness - a PBR metal has no diffuse term to darken twice.
+	assert.ok(mean(pale.axon_pbr) >= mean(pale.elevation_fill) - 2, `${pale.axon_pbr} vs ${pale.elevation_fill}`);
+	// A mid warm metal is a copper, not a terracotta: warmer than the mid pigment, no darker than its fill.
+	const mid = declare("extrusion", "mid"), midCast = declare("cast", "mid");
+	assert.ok(warmth(mid.axon_pbr) >= warmth(midCast.axon_pbr));
+	assert.ok(mean(mid.axon_pbr) >= mean(mid.elevation_fill) - 2);
+	// A neutral metal stays neutral: the chroma is the hue's, and neutral has almost none.
+	const grey = deriveDeclaredMaterial({ id: "grey-metal", substance: "extrusion", lightness: "pale", hue: "neutral", finish: "satin", joint_m: null, reads_as: null });
+	assert.ok(Math.abs(warmth(grey.axon_pbr)) <= 12, `neutral metal warmth ${warmth(grey.axon_pbr)}`);
 });
