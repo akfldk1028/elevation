@@ -1650,3 +1650,70 @@ addressed: the placed entrance draws as a flat pale panel in the hero (t1d, para
 roletest) though its object carries `recess_m` - the door does not use the hole cut the
 panes use; and t2m's NO is the diamond fold field, which is in the mass and the hero and
 not on the elevation sheet - the line pass inks joints and member edges, not creases.
+
+**Both of those, fixed 2026-09-07.** The user: "고쳐."
+
+*The entrance stood proud of the wall.* `entrance.recess_m` is a MAGNITUDE, bounded 0 to
+`max_recess_m`; `depth_m` is SIGNED and positive is out of the wall. The resolver passed one
+straight into the other, so every placed entrance projected by exactly its own recess and
+drew as a flat pale slab in front of the facade with no head and no shadow. One character in
+`resolver.mjs` (`-program.entrance.recess_m`) and the door takes the same hole every recessed
+pane takes. The validator's own comment had said "a door is recessed rather than built out"
+since before anything could spend it. Reviewers had named this on t1d, param-b and roletest,
+each time as a different-sounding fault.
+
+*The fold field was invisible, and the reason was not the line pass.* Adding a crease pass
+(normal turns where the depth does not step) drew ONE pixel on the cleft block's whole sheet.
+Three measurements found why, in this order. First, the normal raster was SMOOTH-shaded: the
+compiled GLB carries positions and indices and no normals, so three averages them across
+every triangle sharing a vertex, and a fold became a ramp - at a 1-pixel baseline 1.75% of
+the raster turned 3 degrees or more, at 15 pixels 33% did. `MeshNormalMaterial` now sets
+`flatShading: true`; the raster is a statement about geometry and every primitive here is a
+polyhedron. Second, the crease clearance was wrong: it excluded any pixel near a 30 mm
+first-difference depth step, but that is a threshold on the depth DERIVATIVE - at 100 px/m a
+facet past about 72 degrees spends it on plain recession, and the cleft block leans and
+pleats, so 52,556 of 52,557 candidate turns were suppressed by walls that were only going
+away. The clearance now tests the SECOND difference: a plane predicts its own next sample
+whatever its tilt, a fin's edge does not. Third, the threshold was too high, because the
+folds are shallow: asked directly, the compiled mass answers 78 shared edges turning 0.5-5
+degrees and 54 turning 5-15, against 67 over 45 which are its corners. At 10 degrees the
+pass drew 1 pixel, at 5 it drew 1,386, at 2 it drew 24,987. Flat shading is what makes 2
+safe - one triangle, one normal, one encoded value, so a flat face reads exactly zero and
+there is no quantisation floor to clear.
+
+*And the flat raster had to be a SECOND raster.* Flat-shading `<view>-normal.png` itself
+turned creative-013 red - `TRIANGULATION_VISIBLE` on three of four sheets - on a drawing
+whose pixels had not changed at all: with creases switched off entirely the failure stayed,
+so it was the shading, not the pass. That raster has two calibrated readers. The ink pass's
+facing cull was measured against it (`MIN_FACING_FOR_EDGES`, on this mass's sliver facet),
+and flat shading moved the cleft block's member edges by 12%, 145,394 to 128,443. The seam
+detector asks it whether the two sides of a dark line are coplanar within 2 degrees, and
+smoothing rounds a box's front face near its own edges - which is the only thing that had
+been stopping the detector from reading a legitimately drawn dark member as a triangulation
+seam. So the crease test gets `<view>-normal-flat.png`, rendered by a `normal-flat` mode
+beside the existing one, and every previous reader keeps the raster it was measured against.
+The seam gate's dependence on smoothing artefacts is real and is recorded here rather than
+quietly changed: it is a gate weakness, found by this work, not caused by it.
+
+*And a fold is the lightest of the three lines.* Drawn at the member-edge tone the creases
+put the bare mass over the untyped strong-edge budget (creative-013 at 0.0222 against 0.020),
+and the honest reading of that is not that the gate is wrong: a stroke at full contrast says
+the wall is CUT there, and a crease is the one line where the surface continues through. It
+is now a 0.28 blend toward the edge tone, so the hierarchy is silhouette, then member edge,
+then joint, then fold - and a fold lands under the Sobel-180 "strong edge" bar by
+construction, which is what that bar should mean. Legible at true contrast, checked by eye.
+
+The cleft block's four sheets now carry 21,335 / 21,612 / 21,676 / 3,988 crease pixels and
+the wall reads as a field of fine diagonal creases, which is what the reviewer said was
+missing; all four accept with seam fractions at zero and member edges back at their original
+counts. The bent bar gains creases too and all four of its sheets accept. The fin screen's
+blades read crisper rather than muddier. Suite 846/846.
+
+One deliberate consequence to expect: the entrance sign changes the RESOLVED geometry of
+every grammar that uses a placed entrance, so those snapshot hashes move. That is the
+correction landing, not drift. The authoring kit's located-fault probe now reads "measured
+-1.2 against 0.5", which is the door 1.2 m into the wall as `recess_m: 1.2` always meant.
+
+Query the GLB, not the raster: `listMeshes` for `exact-mass`, pair the triangles by shared
+edge, and the fold angles are right there. Three of the four hypotheses above died against
+that measurement rather than against a render.

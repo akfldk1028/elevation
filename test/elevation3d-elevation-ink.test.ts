@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { dilateMask, inkElevation, inkMaskFromRgb, inkMaskToRgb, MEMBER_EDGE_STEP_M } from "../plugins/elevation-3d/lib/elevation-ink.mjs";
+import { CREASE_ANGLE_DEG, dilateMask, inkElevation, inkMaskFromRgb, inkMaskToRgb, MEMBER_EDGE_STEP_M } from "../plugins/elevation-3d/lib/elevation-ink.mjs";
 
 // A 100 x 100 sheet at 10 px/m showing a 10 x 10 m wall; the projected bounds fill the
 // canvas exactly so pixel (x, y) is (x / 10 m, 10 - y / 10 m).
@@ -80,4 +80,67 @@ test("a depth step of a member's thickness draws its edge on the nearer side; a 
 	assert.equal(grown[50 * W + 23], 1);
 	assert.equal(grown[50 * W + 17], 0);
 	assert.equal(grown[50 * W + 24], 0);
+});
+
+/** A view-space normal encoded the way the raster carries it. */
+function encodeNormal(x: number, y: number, z: number) {
+	const length = Math.hypot(x, y, z);
+	return [x / length, y / length, z / length].map((component) => Math.round((component + 1) / 2 * 255));
+}
+
+test("a fold draws as a crease: the surface turns, the depth does not step, the fill is one material", () => {
+	// A wall folded down the middle: the left half faces the sheet, the right half is turned
+	// 20 degrees about the vertical. Same material, same fill, and the depth is flat - which
+	// is exactly what the cleft block's folded panel field was, and what left it a grey wall.
+	const { pixels, materialId, depth } = sheet([200, 200, 200], 10);
+	const normal = Buffer.alloc(W * H * 3);
+	const head = encodeNormal(0, 0, 1);
+	const turned = encodeNormal(Math.sin(20 * Math.PI / 180), 0, Math.cos(20 * Math.PI / 180));
+	for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) normal.set(x < 50 ? head : turned, (y * W + x) * 3);
+
+	const { mask, report } = inkElevation({ pixels, materialId, depth, normal, creaseNormal: normal, width: W, height: H, near: NEAR, far: FAR, camera, projectedBounds });
+	assert.ok(report.crease_pixels > 0, "the fold is drawn");
+	assert.equal(mask[50 * W + 49], 1, "on the fold line");
+	assert.equal(mask[50 * W + 30], 0, "and nowhere on either flat half");
+	assert.equal(mask[50 * W + 70], 0);
+	assert.equal(report.member_edge_pixels, 0, "a fold steps no depth, so it is not a member edge");
+	// A fold is a lighter line than a member's silhouette: the surface continues through it.
+	assert.ok(pixels[(50 * W + 49) * 3] > 58 && pixels[(50 * W + 49) * 3] < 200);
+});
+
+test("a turn under the threshold, a material boundary and a fin's own arris are not creases", () => {
+	// The threshold is low because the raster is flat-shaded and the folds are shallow: the
+	// cleft block's own mass turns 0.5-5 degrees across 78 of its shared edges.
+	assert.ok(CREASE_ANGLE_DEG > 0 && CREASE_ANGLE_DEG < 5);
+	const flatter = encodeNormal(Math.sin((CREASE_ANGLE_DEG / 2) * Math.PI / 180), 0, Math.cos((CREASE_ANGLE_DEG / 2) * Math.PI / 180));
+	const head = encodeNormal(0, 0, 1);
+
+	// Half the threshold is the antialiasing smear, not a fold.
+	const gentle = sheet([200, 200, 200], 10);
+	const gentleNormal = Buffer.alloc(W * H * 3);
+	for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) gentleNormal.set(x < 50 ? head : flatter, (y * W + x) * 3);
+	assert.equal(inkElevation({ ...gentle, normal: gentleNormal, creaseNormal: gentleNormal, width: W, height: H, near: NEAR, far: FAR, camera, projectedBounds }).report.crease_pixels, 0);
+
+	// Two materials meeting at 20 degrees: already a line in the fill, so the pass leaves it.
+	const twoTone = sheet([200, 200, 200], 10);
+	const steep = encodeNormal(Math.sin(20 * Math.PI / 180), 0, Math.cos(20 * Math.PI / 180));
+	const twoToneNormal = Buffer.alloc(W * H * 3);
+	for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+		twoToneNormal.set(x < 50 ? head : steep, (y * W + x) * 3);
+		if (x >= 50) twoTone.materialId.set([0, 255, 0], (y * W + x) * 3);
+	}
+	assert.equal(inkElevation({ ...twoTone, normal: twoToneNormal, creaseNormal: twoToneNormal, width: W, height: H, near: NEAR, far: FAR, camera, projectedBounds }).report.crease_pixels, 0);
+
+	// A fin: its arris turns 20 degrees with the depth continuous across the turn itself, but
+	// the side face plunges away beside it and the member-edge pass has already drawn that.
+	// Without the clearance the fin screen inked nine per cent of its own sheet.
+	const fin = sheet([200, 200, 200], 10);
+	const finNormal = Buffer.alloc(W * H * 3);
+	for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+		finNormal.set(x === 20 ? steep : head, (y * W + x) * 3);
+		if (x === 21) fin.depth.set(encodeDepth(9), (y * W + x) * 3);
+	}
+	const inked = inkElevation({ ...fin, normal: finNormal, creaseNormal: finNormal, width: W, height: H, near: NEAR, far: FAR, camera, projectedBounds });
+	assert.ok(inked.report.member_edge_pixels > 0, "the fin is drawn as an edge");
+	assert.equal(inked.report.crease_pixels, 0, "and not a second time as a crease");
 });
