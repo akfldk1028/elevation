@@ -317,7 +317,7 @@ export async function renderCompetitionElevationBase({
 		// from and what every provenance hash names.
 		const inkPixels = Buffer.from(decoded.data);
 		const ink = inkElevation({
-			pixels: inkPixels, materialId: materialId.data, depth: depth.data,
+			pixels: inkPixels, materialId: materialId.data, depth: depth.data, normal: normal.data,
 			width: decoded.info.width, height: decoded.info.height,
 			near: browserArtifact.depth_encoding.near_m, far: browserArtifact.depth_encoding.far_m,
 			camera: browserArtifact.camera, projectedBounds: browserArtifact.projected_bounds_m,

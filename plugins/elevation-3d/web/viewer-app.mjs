@@ -481,7 +481,11 @@ const holeCut = (() => {
 		fragmentShader: `${HOLE_PACK} void main(){gl_FragColor=vec4(packHole(gl_FragCoord.z),1.);}`,
 	};
 	const entryMaterial = new THREE.ShaderMaterial({ ...depthShader, side: THREE.FrontSide });
-	const exitMaterial = new THREE.ShaderMaterial({ ...depthShader, side: THREE.BackSide, depthTest: false, depthWrite: false });
+	// The exit is the NEAREST back face, under the ordinary depth test, so that where two holes
+	// overlap on screen the entry and the exit belong to the same box. With the test off the
+	// last box drawn won, a near hole's entry paired with a far hole's exit, and the roof
+	// between them was cut away - two dark rectangles on the bent bar's roof planes.
+	const exitMaterial = new THREE.ShaderMaterial({ ...depthShader, side: THREE.BackSide });
 	const volumes = new Map();
 	const isFacadeDetail = (object) => {
 		for (let ancestor = object; ancestor; ancestor = ancestor.parent) if (String(ancestor.name).toLowerCase() === "facade-details") return true;
