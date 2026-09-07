@@ -1587,3 +1587,24 @@ background by more than 2 levels), and a pale screen on a pale sheet lost its an
 blade ends unevenly between the textured and untextured pass - IoU 0.977 against 0.985. It
 now OR-s in the same view's semantic role mask, the silhouette independent of tone, and still
 catches texturing that changes where the building is. PBR test files 52/52.
+
+**The parametric test, done properly.** The user: "너 파라메트릭 뜻은 아니? ... 복잡한 거 그걸
+테스트해보라니까." A fin screen whose pitch changes is the scalar case; a parametric facade is
+one whose unit is constant and whose parameter is a FIELD over the surface. Two real ones were
+authored - drawing-first, because `codex exec` is out of usage credits until 13 Sep (a quota,
+not the tool outage; probe with `codex exec --sandbox read-only 'Reply OK'`). Al Bahar's
+responsive mashrabiya on the star prism (`grammar-mashrabiya-020.json`, every gate green, 810
+primitives: hexagons from a bar plus four diagonal-half triangles in layers, opening graded by
+inset along the face; the author's score, about a third). An attractor-scaled perforated skin
+on the bent bar (`grammar-attractor-013.json`: the 2D field staged as eight `face_offset`
+zones by three storey bands of linear ramps; technical sheets green, PBR refused on the blind
+far faces the ratio gate forced; the faithful field at 2-7% opening could not be drawn at all;
+score 3/10). Both authors, independently and first, named the same missing operator: **a grade
+over a field** - distance to a point, orientation to the sun, any function of (u, z) - where
+`grade` today is one ramp along one run. Then: a member outline beyond box / arch / diagonal
+half (a hexagon is five members and un-hexes as its inset grows; a circle is a rectangle);
+standoff (a screen with air behind it); a member's size independent of its tile; folds; the
+2,048-primitive and ~2,500-detail budgets; and OPENING_RATIO_LOW, which has no category for a
+face that fades from open to solid. Perspective -> drawing holds for punched, layered and
+screened facades and does not yet hold for a facade whose idea is a field. The next language
+move is the field grade.
