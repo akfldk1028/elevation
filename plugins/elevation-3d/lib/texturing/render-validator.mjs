@@ -170,17 +170,29 @@ function decodePng(dataUrl) {
 	return Buffer.from(match[1], "base64");
 }
 
-async function compareRenderEvidence(texturedBytes, diagnosticBytes) {
-	const [textured, diagnostic] = await Promise.all([
+// `geometryMaskBytes` is the semantic role mask of the same view: geometry drawn in flat role
+// colours on black, so its foreground is the building's silhouette independent of tone. It is
+// OR-ed into both flags below. Without it the silhouette was read off tone alone - a pixel
+// counted as building when it differed from the sheet background by more than 2 levels - and
+// a pale anodised screen against a pale sheet (roof (245,242,239) on (250,250,247)) lost its
+// antialiased blade ends unevenly between the textured and the untextured pass: IoU 0.977
+// against 0.985, SILHOUETTE_MISMATCH, on a change of material lightness alone. The gate is
+// there to catch texturing that changes WHERE the building is; tone is not that.
+async function compareRenderEvidence(texturedBytes, diagnosticBytes, geometryMaskBytes = null) {
+	const [textured, diagnostic, geometryMask] = await Promise.all([
 		sharp(texturedBytes).removeAlpha().raw().toBuffer({ resolveWithObject: true }),
 		sharp(diagnosticBytes).removeAlpha().raw().toBuffer({ resolveWithObject: true }),
+		geometryMaskBytes ? sharp(geometryMaskBytes).removeAlpha().raw().toBuffer({ resolveWithObject: true }) : null,
 	]);
+	const geometryAt = (offset) => geometryMask !== null && geometryMask.info.width === textured.info.width && geometryMask.info.height === textured.info.height
+		&& (geometryMask.data[offset] > 0 || geometryMask.data[offset + 1] > 0 || geometryMask.data[offset + 2] > 0);
 	const backgrounds = [textured, diagnostic].map(({ data }) => [data[0], data[1], data[2]]);
 	const bounds = [{ minX: textured.info.width, minY: textured.info.height, maxX: -1, maxY: -1 }, { minX: textured.info.width, minY: textured.info.height, maxX: -1, maxY: -1 }];
 	let texturedCount = 0, intersection = 0, union = 0, pixelDifference = 0;
 	for (let pixel = 0; pixel < textured.info.width * textured.info.height; pixel += 1) {
 		const offset = pixel * 3, x = pixel % textured.info.width, y = Math.floor(pixel / textured.info.width);
-		const flags = [textured, diagnostic].map(({ data }, image) => Math.hypot(data[offset] - backgrounds[image][0], data[offset + 1] - backgrounds[image][1], data[offset + 2] - backgrounds[image][2]) > 2);
+		const geometry = geometryAt(offset);
+		const flags = [textured, diagnostic].map(({ data }, image) => geometry || Math.hypot(data[offset] - backgrounds[image][0], data[offset + 1] - backgrounds[image][1], data[offset + 2] - backgrounds[image][2]) > 2);
 		if (flags[0]) texturedCount++;
 		if (flags[0] && flags[1]) intersection++;
 		if (flags[0] || flags[1]) {
@@ -501,7 +513,7 @@ export async function renderEmbeddedPbrViews({
 				await page.evaluate(() => globalThis.__ELEVATION3D_TEST_CONTROLS__.setEmbeddedMaps(true));
 				await page.evaluate(() => globalThis.__ELEVATION3D_TEST_CONTROLS__.setPresentationObjectsVisible(true));
 			}
-			const evidence = await compareRenderEvidence(geometryTextured, diagnostic);
+			const evidence = await compareRenderEvidence(geometryTextured, diagnostic, semanticRoleMask);
 			const directory = join(root, "views", name);
 			await prepareSafeDirectory(root, directory, `embedded-PBR ${name} view directory`);
 			const path = join(directory, `${name}.png`);
