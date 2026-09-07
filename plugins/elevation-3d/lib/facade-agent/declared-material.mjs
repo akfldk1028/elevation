@@ -112,14 +112,23 @@ export function deriveDeclaredMaterial(declaration) {
 	const { h, s } = HUE[hue];
 	const light = LIGHTNESS[lightness];
 	const surface = FINISH[finish];
+	// A metal's colour is its reflectance, not a pigment: real anodised and coated metals sit
+	// well inside the saturation a matte surface of the same hue would carry (gold's F0 is
+	// (1.0, 0.77, 0.34); a champagne anodising is aluminium barely tinted), and a PBR metal
+	// already loses its diffuse term, so darkening the tint again buries it. Measured: a
+	// `mid / warm / satin` extrusion derived to (0.39, 0.17, 0.08) and rendered as terracotta
+	// on a building whose photograph shows champagne. Half of that was the declaration -
+	// champagne is pale - and half was this table treating a metal like a pigment.
+	const metallic = metalness >= 0.5;
+	const tintSaturation = metallic ? s * 0.5 : s;
 	// The drawing is read in value first - it has to survive a greyscale print - so the fill
 	// takes the declared lightness directly and the render tint sits a touch darker, where
-	// the PBR pass adds its own light back.
+	// the PBR pass adds its own light back. A metal keeps its lightness: the pass takes it.
 	return Object.freeze({
 		id, substance, lightness, hue, finish, joint_m, reads_as,
 		role,
 		elevation_fill: hex(h, s, light),
-		axon_pbr: hex(h, s, Math.max(0.06, light - 0.06)),
+		axon_pbr: hex(h, tintSaturation, metallic ? light : Math.max(0.06, light - 0.06)),
 		opacity, metalness,
 		roughness: surface.roughness,
 		texture_intensity: surface.texture,

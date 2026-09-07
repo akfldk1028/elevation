@@ -483,3 +483,22 @@ test("a declared material's base map carries modulation, never the tint", async 
 	}
 	assert.equal(chromatic, 0, "the base map must be achromatic - the tint belongs to baseColorFactor alone");
 });
+
+// A metal's colour is its reflectance, not a pigment. A `mid / warm / satin` extrusion derived
+// to a dark copper (0.39, 0.17, 0.08) and rendered terracotta on a building whose photograph
+// shows champagne; the render tint of a metal now keeps its lightness and half the hue's
+// saturation, while a matte surface of the same declaration is untouched.
+test("a metal's render tint keeps its lightness and half the saturation; a pigment keeps both", () => {
+	const rgb = (hex: string) => [1, 3, 5].map((offset) => Number.parseInt(hex.slice(offset, offset + 2), 16));
+	const chroma = (hex: string) => Math.max(...rgb(hex)) - Math.min(...rgb(hex));
+	const mean = (hex: string) => rgb(hex).reduce((sum, value) => sum + value, 0) / 3;
+	const metal = deriveDeclaredMaterial({ id: "blade", substance: "extrusion", lightness: "mid", hue: "warm", finish: "satin", joint_m: null, reads_as: null });
+	const cast = deriveDeclaredMaterial({ id: "panel", substance: "cast", lightness: "mid", hue: "warm", finish: "satin", joint_m: null, reads_as: null });
+	// Same declared fill on the drawing - the sheet is read in value, and value is declared.
+	assert.equal(metal.elevation_fill, cast.elevation_fill);
+	// The metal's render tint is lighter and less saturated than the pigment's.
+	assert.ok(mean(metal.axon_pbr) > mean(cast.axon_pbr), `${metal.axon_pbr} vs ${cast.axon_pbr}`);
+	assert.ok(chroma(metal.axon_pbr) < chroma(cast.axon_pbr) * 0.7, `${metal.axon_pbr} vs ${cast.axon_pbr}`);
+	// And the metal's tint is no darker than its own declared lightness.
+	assert.ok(mean(metal.axon_pbr) >= mean(metal.elevation_fill) - 2);
+});
