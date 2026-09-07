@@ -24,7 +24,32 @@ Everything after it is deterministic local code that refuses what it cannot veri
     node tools/facade-pipeline/cli.mjs brief    <candidate>        # the brief + schema an author answers
     node tools/facade-pipeline/cli.mjs check    <candidate> <grammar.json>
     node tools/facade-pipeline/cli.mjs render   <candidate> <grammar.json> <run-name> --palette competition-material
+    node tools/facade-pipeline/cli.mjs concept  <candidate> <name> --idea "..."   # mass -> perspective (codex image lane)
+    node tools/facade-pipeline/cli.mjs draw     <candidate> <grammar.json> <run-name>   # check + render, one verdict
     node tools/facade-pipeline/cli.mjs photo    <in.png> <out.png> --subject "..."
+
+`concept` reads the storey count, height, facet count and ground contact from the prepared
+context and states them as facts to the image model; the `--idea` is the open brief and is
+passed through verbatim. It writes `concept-<name>.png` into the run directory. The lane is
+the user's Codex CLI; on a quota refusal the error names the limit and the date it lifts.
+
+## The roles
+
+Three roles do the work an engineer cannot do by reading code, and each is a file under
+`.claude/agents/` that any agent - Claude Code, Codex, a person - plays by reading it:
+
+| file | plays | reads | must not read |
+|---|---|---|---|
+| `facade-author.md` | designs a facade from the brief alone (programme-led briefs, and the cheapest test of whether the brief works) | brief, schema, context, mass pictures | `plugins/`, `tools/`, `.superpowers/` |
+| `facade-transcriber.md` | turns a concept photograph into a grammar with `source_photograph` set; the standard lane | the photograph, brief, schema, context, mass pictures | the engine |
+| `facade-reviewer.md` | says YES / ROUGHLY / NO to "same building?" from a manifest of concept / elevation / hero paths | images only | code, grammars, reports, notes |
+
+The standard lane is `prepare` -> `brief` -> `concept` -> transcriber -> `draw` -> reviewer,
+and it loops: the reviewer's list of what a person could still point at goes back to the
+transcriber (a defect or an honest limit) or to the engineer (a missing capability). The
+reviewer's manifest is a JSON file of relative paths per building - `concept`, `elevation`,
+optional `elevation_second_face`, `hero`, and `photographed_faces` in words; the role file
+says why that last field exists.
 
 Candidates: `creative-020` (16-facet star prism, 5 storeys), `creative-004` (cleft block,
 113 facets, 5 storeys), `creative-013` (bent bar, 37 facets, 3 storeys, a bridge - most of
@@ -36,7 +61,7 @@ through `tail`; that once masked two failed renders as successes.
 Code lives here. Data does not: `elevation-agent.json` declares `dataset_root` and
 `output_root`. Nothing depends on cwd.
 
-    npm test        # 824 tests. Two are load-flaky (a file-lock race, a 287 s e2e);
+    npm test        # 843 tests. Two are load-flaky (a file-lock race, a 287 s e2e);
                     # if one fails, re-run that file alone before believing it.
 
 ## The four rules that are not negotiable

@@ -93,6 +93,13 @@ test("codex photo: prompt locks geometry and command is codex exec", () => {
 	assert.ok(prompt.includes("construction"));
 	assert.ok(prompt.includes("entrance block"));
 	assert.ok(prompt.includes("red brick block at golden hour"));
+	// A concept dresses a bare mass: it keeps the mass and must not be told to keep a window
+	// grid the input does not have.
+	const concept = buildCodexPrompt("C:/x/axon.png", "a field of openings", "concept");
+	assert.ok(concept.includes("storey count and every facet"));
+	assert.ok(!concept.includes("window grid"));
+	assert.ok(concept.includes("a field of openings"));
+	assert.throws(() => buildCodexPrompt("C:/x/in.png", "s", "sketch"), /photo or concept/);
 	// The tool is named, because codex denies having it when asked in the abstract - a direct
 	// probe of the same build answers "image generation: image_gen__imagegen".
 	assert.ok(prompt.includes(CODEX_IMAGE_TOOL));
