@@ -28,6 +28,13 @@ test("resolves one ground-floor entrance onto the highest-ranked eligible segmen
 	assert.equal(segment.visibility_score, Math.max(...context.facade_segments.map((item: any) => item.visibility_score)));
 	assert.equal(door.local_bounds.u_min >= context.exclusions.edge_clearance_m, true);
 	assert.equal(door.local_bounds.u_max <= segment.length_m - context.exclusions.edge_clearance_m, true);
+	// `recess_m` is a magnitude and `depth_m` is signed with positive OUT of the wall, so the
+	// door's depth is the negated recess. Passed straight through, every placed entrance stood
+	// proud of the facade by its own recess and drew as a flat pale slab in front of the wall -
+	// named by two independent reviewers on three buildings. Negative is what makes it a hole.
+	assert.equal(door.depth_m, -program.entrance.recess_m);
+	assert.ok(program.entrance.recess_m > 0 && door.depth_m < 0, "a recessed entrance is set INTO the wall");
+	assert.ok(Math.abs(door.depth_m) <= context.exclusions.max_recess_m);
 });
 
 test("emits deterministic window families and articulation without crossing segment bounds", async (t) => {

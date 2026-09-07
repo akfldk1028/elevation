@@ -438,6 +438,27 @@ function competitionMaterials(root, palette, options = {}) {
 		}));
 		const ids = roles.map((role) => new THREE.MeshBasicMaterial({ color: roleColors[role], side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor, polygonOffsetUnits: polygonOffsetFactor }));
 		const normals = roles.map(() => new THREE.MeshNormalMaterial({ side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor, polygonOffsetUnits: polygonOffsetFactor }));
+		// The same raster, FLAT-shaded, and it is a second raster rather than a change to the
+		// first on purpose.
+		//
+		// Why flat at all: the compiled GLB carries positions and indices and NO normals, so
+		// three computes them per vertex and averages across every triangle sharing one, which
+		// smooths a faceted mass's own folds into ramps. Measured on the cleft block, whose
+		// wall is a field of shallow folded diamonds: at a one-pixel baseline 1.75% of the
+		// smooth raster turned 3 degrees or more, at fifteen pixels 33% did. A fold was fifteen
+		// pixels wide instead of the edge it is, and no line pass can find a ramp.
+		//
+		// Why a second raster: `<view>-normal.png` has two calibrated readers. The ink pass's
+		// facing cull was measured against it (MIN_FACING_FOR_EDGES, on this mass's sliver
+		// facet), and the seam detector asks it whether the two sides of a dark line are
+		// coplanar within 2 degrees. Flat-shading the shared raster moved the first by 12% of
+		// its member edges and turned the second red on a building whose drawing had not
+		// changed by one pixel: smoothing rounds a box's front face near its own edges, and the
+		// detector had been relying on that to tell a legitimately drawn dark member from a
+		// triangulation seam. That is worth knowing and is not this pass's to decide, so the
+		// crease test gets its own raster and every existing reader keeps the one it was
+		// measured against.
+		const flatNormals = roles.map(() => new THREE.MeshNormalMaterial({ flatShading: true, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor, polygonOffsetUnits: polygonOffsetFactor }));
 		const depths = roles.map(() => new THREE.ShaderMaterial({
 			side: THREE.DoubleSide,
 			polygonOffset: true,
@@ -446,7 +467,7 @@ function competitionMaterials(root, palette, options = {}) {
 			vertexShader: `void main(){gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}`,
 			fragmentShader: `void main(){float d=gl_FragCoord.z;vec3 packed=fract(d*vec3(1.,255.,65025.));packed-=packed.yzz*vec3(1./255.,1./255.,0.);gl_FragColor=vec4(packed,1.);}`,
 		}));
-		meshes.push({ object, originals, roles, fills, ids, normals, depths });
+		meshes.push({ object, originals, roles, fills, ids, normals, flatNormals, depths });
 		object.material = Array.isArray(object.material) ? fills : fills[0];
 	});
 	return { meshes, counts, typedFacade };
@@ -636,8 +657,8 @@ function renderCompetition(root, view) {
 		if (mode === "material-id") {
 			applyMaterials(semantic.meshes, "ids"); holeCut.apply(fitted.camera);
 			renderer.setRenderTarget(null); renderer.setClearColor(0x000000, 1); renderer.render(scene, fitted.camera);
-		} else if (mode === "normal") {
-			applyMaterials(semantic.meshes, "normals"); holeCut.apply(fitted.camera);
+		} else if (mode === "normal" || mode === "normal-flat") {
+			applyMaterials(semantic.meshes, mode === "normal-flat" ? "flatNormals" : "normals"); holeCut.apply(fitted.camera);
 			renderer.setRenderTarget(null); renderer.setClearColor(0x000000, 1); renderer.render(scene, fitted.camera);
 		} else if (mode === "depth") {
 			applyMaterials(semantic.meshes, "depths"); holeCut.apply(fitted.camera);
@@ -783,8 +804,8 @@ function renderCompetitionPlan(root, view) {
 		cutMesh.visible = mode === "base" && isPlan;
 		if (mode === "material-id") {
 			applyMaterials(semantic.meshes, "ids"); holeCut.apply(fitted.camera, clippingPlanes); renderer.setRenderTarget(null); renderer.setClearColor(0x000000, 1); renderer.render(scene, fitted.camera);
-		} else if (mode === "normal") {
-			applyMaterials(semantic.meshes, "normals"); holeCut.apply(fitted.camera, clippingPlanes); renderer.setRenderTarget(null); renderer.setClearColor(0x000000, 1); renderer.render(scene, fitted.camera);
+		} else if (mode === "normal" || mode === "normal-flat") {
+			applyMaterials(semantic.meshes, mode === "normal-flat" ? "flatNormals" : "normals"); holeCut.apply(fitted.camera, clippingPlanes); renderer.setRenderTarget(null); renderer.setClearColor(0x000000, 1); renderer.render(scene, fitted.camera);
 		} else if (mode === "depth") {
 			applyMaterials(semantic.meshes, "depths"); holeCut.apply(fitted.camera, clippingPlanes); renderer.setRenderTarget(null); renderer.setClearColor(0xffffff, 1); renderer.render(scene, fitted.camera);
 		} else {

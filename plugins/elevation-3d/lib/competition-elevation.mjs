@@ -247,7 +247,7 @@ export async function renderCompetitionElevationBase({
 			background: "#fafaf7",
 			palette: { preset: palette.preset, sha256: palette.sha256, roles: palette.roles },
 			projected_bounds_m: dimensions.projected_bounds_m,
-			line_pass: { internal_triangle_edges: false, per_primitive_edges: false, depth_silhouette: true, joints: true, member_edges: true },
+			line_pass: { internal_triangle_edges: false, per_primitive_edges: false, depth_silhouette: true, joints: true, member_edges: true, creases: true },
 		},
 	};
 	const viewerConfigSha256 = sha256(stableJson(config));
@@ -284,12 +284,16 @@ export async function renderCompetitionElevationBase({
 			material_id: join(outputDir, `${view}-material-id.png`),
 			depth: join(outputDir, `${view}-depth.png`),
 			normal: join(outputDir, `${view}-normal.png`),
+			// The same normals, flat-shaded, for the crease test alone. The smooth raster above
+			// keeps every reader it was calibrated with; see the note in viewer-app.mjs.
+			normal_flat: join(outputDir, `${view}-normal-flat.png`),
 			ink: join(outputDir, `${view}-ink.png`),
 		};
 		const fillBytes = await writeBrowserPng(page, "base", path, outputDir);
 		const materialIdBytes = await writeBrowserPng(page, "material-id", diagnosticPaths.material_id, outputDir);
 		const depthBytes = await writeBrowserPng(page, "depth", diagnosticPaths.depth, outputDir);
 		const normalBytes = await writeBrowserPng(page, "normal", diagnosticPaths.normal, outputDir);
+		const flatNormalBytes = await writeBrowserPng(page, "normal-flat", diagnosticPaths.normal_flat, outputDir);
 		signal?.throwIfAborted();
 		const browserArtifact = await page.evaluate(() => globalThis.__ELEVATION3D_ARTIFACT__);
 		const decoded = await sharp(fillBytes).removeAlpha().raw().toBuffer({ resolveWithObject: true });
@@ -297,6 +301,7 @@ export async function renderCompetitionElevationBase({
 		const materialId = await sharp(materialIdBytes).removeAlpha().raw().toBuffer({ resolveWithObject: true });
 		const depth = await sharp(depthBytes).removeAlpha().raw().toBuffer({ resolveWithObject: true });
 		const normal = await sharp(normalBytes).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+		const flatNormal = await sharp(flatNormalBytes).removeAlpha().raw().toBuffer({ resolveWithObject: true });
 		// The seam detector runs on the FILL, before the line pass: a joint is a dark line on
 		// a same-material coplanar surface, which is its exact definition of a defect. The
 		// persisted validator gets the same answer by skipping the ink's footprint.
@@ -318,6 +323,7 @@ export async function renderCompetitionElevationBase({
 		const inkPixels = Buffer.from(decoded.data);
 		const ink = inkElevation({
 			pixels: inkPixels, materialId: materialId.data, depth: depth.data, normal: normal.data,
+			creaseNormal: flatNormal.data,
 			width: decoded.info.width, height: decoded.info.height,
 			near: browserArtifact.depth_encoding.near_m, far: browserArtifact.depth_encoding.far_m,
 			camera: browserArtifact.camera, projectedBounds: browserArtifact.projected_bounds_m,

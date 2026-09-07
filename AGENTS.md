@@ -61,7 +61,7 @@ through `tail`; that once masked two failed renders as successes.
 Code lives here. Data does not: `elevation-agent.json` declares `dataset_root` and
 `output_root`. Nothing depends on cwd.
 
-    npm test        # 843 tests. Two are load-flaky (a file-lock race, a 287 s e2e);
+    npm test        # 846 tests. Two are load-flaky (a file-lock race, a 287 s e2e);
                     # if one fails, re-run that file alone before believing it.
 
 ## The four rules that are not negotiable
@@ -119,16 +119,32 @@ sign on `depth_m`.
 So: **query the compiled GLB, and open all four elevations.** `check` validates the design
 and never reaches the compiler; only a render exercises the geometry path.
 
-The elevation sheet is a flat fill plus a LINE PASS (`elevation-ink.mjs`): a declared
-material's `joint_m` drawn as its module over its own fill, and member edges wherever the
-depth raster steps 30 mm or more. The ink footprint persists as `<view>-ink.png` and the seam
+The elevation sheet is a flat fill plus a LINE PASS (`elevation-ink.mjs`), three kinds of
+line: a declared material's `joint_m` drawn as its module over its own fill; member edges
+wherever the depth raster steps 30 mm or more; and CREASES, where the surface turns 2 degrees
+or more with the depth continuous through the turn - a folded panel, a pleat, the arris
+between two facets of the mass. The ink footprint persists as `<view>-ink.png` and the seam
 detector skips it. A material with `joint_m: null` draws no joint - that is what monolithic
 means - so a wall that should show panels needs its module declared.
+
+The crease pass reads its OWN raster, `<view>-normal-flat.png`, flat-shaded. The compiled GLB
+carries positions and indices and no normals, so three computes them per vertex and averages
+across every triangle sharing one; on a faceted mass that smooths its own folds into ramps
+fifteen pixels wide, and a reviewer called the resulting flat grey wall the disqualifying
+difference on a building whose every panel is a folded diamond. Two degrees is low because
+flat shading has no quantisation floor: one triangle, one normal, one encoded value. It is a
+second raster because `<view>-normal.png` has two readers calibrated against its smoothing -
+the ink pass's facing cull, and the seam detector's 2-degree coplanarity test - and flat
+shading moved both, the second into a false TRIANGULATION_VISIBLE on a drawing that had not
+changed by a pixel. **Do not merge the two rasters without re-measuring both readers.**
 
 A RECESSED opening (negative `depth_m`) is a hole. The mass mesh is never cut, so the hole is
 cut at render time: the builder emits the pane at the bottom of the recess plus four jamb
 faces in the shell material, and the viewer (`holeCut`) subtracts the hole volume from every
-mass material per pixel before every render. Query the compiled GLB and you will find the
+mass material per pixel before every render. The PLACED entrance takes the same hole: its
+`entrance.recess_m` is a magnitude and `depth_m` is signed, so the resolver negates it. Passed
+through unnegated it stood every entrance proud of the wall by its own recess, which two
+reviewers named on three buildings before anyone read the sign. Query the compiled GLB and you will find the
 pane and the jambs; the hole itself exists only in the rasters.
 
 ## Adding a field to the grammar

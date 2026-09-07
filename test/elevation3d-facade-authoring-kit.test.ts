@@ -81,5 +81,9 @@ test("a validate rejection carries its measurement and its locus", async (t) => 
 	assert.ok(rejected.codes.includes("PROJECTION_LIMIT_EXCEEDED"), rejected.codes.join(","));
 	const located = rejected.faults.find((fault: string) => fault.startsWith("PROJECTION_LIMIT_EXCEEDED"));
 	assert.ok(located, "the rejection must carry located faults, not only bare codes");
-	assert.match(located, /measured [\d.]+ against [\d.]+/, located);
+	// Signed, because `depth_m` is: `recess_m: 1.2` is 1.2 m INTO the wall, so the measurement
+	// reads -1.2 against the 0.5 the exclusions allow. It read +1.2 while the resolver was
+	// passing the recess through unnegated and standing every placed entrance proud of it.
+	assert.match(located, /measured -?[\d.]+ against [\d.]+/, located);
+	assert.match(located, /measured -1\.2 /, located);
 });

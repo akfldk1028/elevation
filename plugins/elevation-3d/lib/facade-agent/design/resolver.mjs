@@ -67,7 +67,15 @@ function entrancePrimitive(program, context) {
 			u_min: round(uMin), u_max: round(uMin + program.entrance.width_m),
 			z_min: ground.z_min, z_max: round(ground.z_min + program.entrance.height_m),
 		},
-		depth_m: program.entrance.recess_m,
+		// `recess_m` is a MAGNITUDE (0..max_recess_m): how deep the door sits IN the wall.
+		// `depth_m` is SIGNED, and positive is out of it - so passing one straight into the
+		// other stood every placed entrance proud of the facade by its own recess. It drew as
+		// a flat pale slab in front of the wall with no head and no shadow, and two independent
+		// reviewers named it on three separate buildings ("a pale glazed slab standing proud of
+		// the wall and overshooting the ground plane"). Negated, the door takes the same hole
+		// every recessed pane takes: a leaf at the bottom of the recess and four jamb faces
+		// lining it, with the mass cut away in front. A `recess_m` of 0 stays a flush door.
+		depth_m: -program.entrance.recess_m,
 		family_id: program.entrance.door_family,
 		role: "primary_entrance",
 		storey: 1,
