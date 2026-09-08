@@ -22,6 +22,7 @@ export { REPO_ROOT, resolveRoots, runDirFor } from "./config.mjs";
 export { prepareFacadeContext } from "./prepare.mjs";
 export {
 	writeGrammarBrief as writeFacadeBrief,
+	grammarBriefIsStale as briefIsStale,
 	checkAuthoredGrammar as checkFacadeGrammar,
 	renderAuthoredFacade as renderFacadeScheme,
 	REVEAL_FACADE_PRESENTATION_STYLE,

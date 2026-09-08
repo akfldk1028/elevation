@@ -594,6 +594,14 @@ and the roof one material id in the seam raster - so a cornice declared a lightn
 from the shell is a same-material seam BY CONSTRUCTION and the roof plan will reject it. A
 cornice takes the mass's material. Two authors paid two renders each learning that one.
 
+And the shell's own SUBSTANCE decides which role the whole building lands in - the table
+above reads for a member, but the mass takes the role its declared shell implies, not
+\`concrete\`. Declare the shell a sheet metal and the mass is \`opaque\`: on one transcription
+that put 94.8% of the plan raster in one role, left \`concrete\` at 0.9%, and collapsed the
+glass:opaque pair at 3.3 against a floor of 5 - on a grammar whose design gates were all
+green. If your building is metal, the roles you have left to separate are fewer than you
+think, and glass is the one to move.
+
 The mass's material is yours to declare, and there is exactly one place to say it: the
 material on a \`wall\` terminal. \`wall\` draws nothing, so what it names is what the
 building is MADE of - the mass, the roof, the coping, and the jamb faces of every set-back
