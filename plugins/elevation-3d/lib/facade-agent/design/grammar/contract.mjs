@@ -573,6 +573,13 @@ export function parseFacadeGrammar(input) {
 			if (typeof field.id !== "string" || !ID.test(field.id)) fail(`fields[${index}].id is not a safe identifier`);
 			if (seen.has(field.id)) fail(`fields[${index}].id is declared twice: ${field.id}`);
 			seen.add(field.id);
+			// The two-entry form was the first shape of this operator and it was wrong: `at` was
+			// [u, z] in face metres, and a per-face offset restarts at 0 on every face, so one
+			// declared place produced four identical ramps on a four-faced mass. Say that,
+			// rather than counting entries at an author who wrote the documented form of the day.
+			if (Array.isArray(field.at) && field.at.length === 2) {
+				fail(`fields[${index}].at is now a place in SPACE, [x, y, z] in the mass's own metres, not [u, z] in face metres - the face coordinate restarted on every face and made one place into four. The context summary gives each facet an origin_m to read a place from.`);
+			}
 			const at = list(field.at, `fields[${index}].at`, 3, 3);
 			if (!at.every((value) => Number.isFinite(value))) fail(`fields[${index}].at is not three finite metres [x, y, z]`);
 			fields.push(Object.freeze({ id: field.id, at: Object.freeze(at.map(Number)) }));

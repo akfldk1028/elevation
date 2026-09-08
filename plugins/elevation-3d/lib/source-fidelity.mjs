@@ -19,6 +19,14 @@
  *
  * Both are read from the pixels of the two images rather than from anything the author says
  * about them, because what the author says about them is the thing that was wrong.
+ *
+ * WHAT IT DOES NOT CATCH, measured rather than assumed. A transcription of The Broad scored a
+ * sixth of its photograph by its own author - studs bolted to a flat wall where the building
+ * is a continuous scooped honeycomb - and comes back CLEAN here: its colour is right (both
+ * pictures are near-white) and it varies across its width as much as the photograph does. The
+ * failure was the CONSTRUCTION, and neither statistic can see construction. So this closes the
+ * two failures that have actually happened twice, and a drawing that passes it is not thereby
+ * the same building. That judgement is still a person's, which is what rule 4 says.
  */
 
 /** Below this a pixel is the drawing's paper or the photograph's sky; above it, a highlight. */
