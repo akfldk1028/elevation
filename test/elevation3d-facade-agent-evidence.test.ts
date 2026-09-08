@@ -13,8 +13,8 @@ import {
 } from "../plugins/elevation-3d/lib/facade-agent/evidence.mjs";
 import { renderFacadeEvidencePasses } from "../plugins/elevation-3d/lib/facade-agent/evidence-renderer.mjs";
 import { deriveFacadeSegmentsFromMass } from "../plugins/elevation-3d/lib/facade-agent/punched-facade.mjs";
+import { DATASET_ROOT } from "./helpers/roots.ts";
 
-const DATASET_ROOT = process.env.ELEVATION3D_DATASET_ROOT ?? "D:/Data/50_ELE/MAAS_ELEVATION_TEST_SET_20260730";
 const VIEW_NAMES = ["front", "right", "back", "left", "top", "axon", "opposite-axon"];
 const PASS_NAMES = ["color", "depth", "normal", "edge", "surface-id"];
 

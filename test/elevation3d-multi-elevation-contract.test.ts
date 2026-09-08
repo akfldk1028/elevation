@@ -7,9 +7,10 @@ import { sha256 } from "../plugins/elevation-3d/lib/core.mjs";
 import { buildElevationAnnotations } from "../plugins/elevation-3d/lib/elevation-annotations.mjs";
 import { deriveElevationDimensions } from "../plugins/elevation-3d/lib/elevation-dimensions.mjs";
 import { validateCompetitionElevation } from "../plugins/elevation-3d/lib/elevation-presentation-validation.mjs";
+import { fixture, massDir } from "./helpers/roots.ts";
 
-const datasetMassRoot = "D:/Data/50_ELE/MAAS_ELEVATION_TEST_SET_20260730/candidates/creative-013/mass";
-const selectedGlbPath = "D:/Data/50_ELE/elevation-3d-e2e-results/creative-013/final-fix-b-round1-20260803-190000/versions/v001/enriched.glb";
+const datasetMassRoot = massDir("creative-013");
+const selectedGlbPath = fixture("creative-013", "final-fix-b-round1-20260803-190000", "versions", "v001", "enriched.glb");
 const elevationNames = ["front", "back", "left", "right"] as const;
 const temporaryRoots: string[] = [];
 

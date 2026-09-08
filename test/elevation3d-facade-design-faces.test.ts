@@ -5,8 +5,9 @@ import { loadCandidatePackage } from "../plugins/elevation-3d/lib/core.mjs";
 import { FacadeFaceError, deriveFacadeFaces } from "../plugins/elevation-3d/lib/facade-agent/design/geometry/faces.mjs";
 import { deriveFacadeSegmentsFromMass } from "../plugins/elevation-3d/lib/facade-agent/punched-facade.mjs";
 import { createFacadeDesignFixture } from "./helpers/facade-design-fixture.ts";
+import { DATASET_ROOT } from "./helpers/roots.ts";
 
-const DATASET = "D:/Data/50_ELE/MAAS_ELEVATION_TEST_SET_20260730";
+const DATASET = DATASET_ROOT;
 const DEPTHS = { front: [0, -1, 0], back: [0, 1, 0], left: [-1, 0, 0], right: [1, 0, 0] };
 
 test("groups the facets of a box into one face per elevation", async (t) => {

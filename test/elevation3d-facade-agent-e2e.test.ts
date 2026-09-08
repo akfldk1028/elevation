@@ -21,11 +21,11 @@ import {
 	facadeProposalFixture,
 	renderFacadeProposalFixture,
 } from "./fixtures/facade-agent/providers/generate-proposals.mjs";
+import { DATASET_ROOT } from "./helpers/roots.ts";
 
 const roots: string[] = [];
 after(async () => Promise.all(roots.map((root) => rm(root, { recursive: true, force: true }))));
 
-const DATASET_ROOT = resolve("D:/Data/50_ELE/MAAS_ELEVATION_TEST_SET_20260730");
 const MASS_GEOMETRY_SHA256 = "86bb271ffc8e951ff75d813c98fdf4742bc5938970ecc30f4d49c291923dabe1";
 const MASS_CONTENT_SHA256 = "c8373d6545d3773f7d474b08cde521a93b923a95dd52dcf1dc81f8a5ea190c0b";
 const FACADE_SEGMENT_AUTHORITY_SHA256 = "3784872ef9066362896f52f170f0a1c1a9518b49d312c18504957966d3c0c4c4";

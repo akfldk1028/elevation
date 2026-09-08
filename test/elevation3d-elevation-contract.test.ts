@@ -8,6 +8,7 @@ import { sha256 } from "../plugins/elevation-3d/lib/core.mjs";
 import { deriveElevationDimensions } from "../plugins/elevation-3d/lib/elevation-dimensions.mjs";
 import { writeEnrichedGlb } from "../plugins/elevation-3d/lib/enrichment.mjs";
 import { resolveMaterialPalette } from "../plugins/elevation-3d/lib/material-palettes.mjs";
+import { fixture, massDir } from "./helpers/roots.ts";
 
 const temporaryRoots: string[] = [];
 after(async () => Promise.all(temporaryRoots.map((root) => rm(root, { recursive: true, force: true }))));
@@ -75,8 +76,8 @@ test("retains the complete material schema after a valid partial override", () =
 	assert.equal(palette.roles.concrete.roughness, 0.75);
 });
 
-const datasetMassRoot = "D:/Data/50_ELE/MAAS_ELEVATION_TEST_SET_20260730/candidates/creative-013/mass";
-const selectedGlbPath = "D:/Data/50_ELE/elevation-3d-e2e-results/creative-013/final-fix-b-round1-20260803-190000/versions/v001/enriched.glb";
+const datasetMassRoot = massDir("creative-013");
+const selectedGlbPath = fixture("creative-013", "final-fix-b-round1-20260803-190000", "versions", "v001", "enriched.glb");
 
 async function realCreative013Inputs() {
 	const [sourceMesh, floorGuides, facadePlanes, cameras, glbBytes] = await Promise.all([

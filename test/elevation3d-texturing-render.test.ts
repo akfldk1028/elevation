@@ -7,6 +7,7 @@ import { after, test } from "node:test";
 import sharp from "sharp";
 import { deriveExpectedCameraContract, loadPresentationBaseline, renderEmbeddedPbrViews, validateEmbeddedPbrRender } from "../plugins/elevation-3d/lib/texturing/render-validator.mjs";
 import { renderStyleHash, resolvePbrRenderStyle } from "../plugins/elevation-3d/lib/texturing/render-style.mjs";
+import { fixture } from "./helpers/roots.ts";
 
 const names = ["front", "back", "left", "right", "plan", "top", "axon", "opposite-axon"];
 const selectedGlbSha256 = "a".repeat(64);
@@ -370,7 +371,7 @@ test("legacy semantic reuse requires exact GLB, dimensions, cameras, cuts, bound
 });
 
 test("real rendered-pbr-v6 binds all eight legacy views to the accepted GLB and camera contract", async () => {
-	const root = "D:/Data/50_ELE/elevation-3d-e2e-results/autonomous/creative-013/tripo-pbr-v1-20260804";
+	const root = fixture("autonomous", "creative-013", "tripo-pbr-v1-20260804");
 	const legacyDir = join(root, "rendered-pbr-v6"), canonicalDir = join(root, "rendered-pbr-v7-competition-daylight");
 	const [legacyReport, canonicalReport, baselineConfig] = await Promise.all([
 		readFile(join(legacyDir, "render-validation.json"), "utf8").then(JSON.parse),

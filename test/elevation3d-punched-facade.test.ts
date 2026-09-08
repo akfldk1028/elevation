@@ -7,6 +7,8 @@ import * as punchedFacade from "../plugins/elevation-3d/lib/facade-agent/punched
 import { createDeclaredMaterialMaps, createFacadePbrMaps } from "../plugins/elevation-3d/lib/facade-agent/procedural-materials.mjs";
 import { deriveDeclaredMaterial } from "../plugins/elevation-3d/lib/facade-agent/declared-material.mjs";
 import { buildEnrichedScene } from "../plugins/elevation-3d/lib/enrichment.mjs";
+import { join } from "node:path";
+import { massDir } from "./helpers/roots.ts";
 
 const mesh = {
 	vertices: [
@@ -41,7 +43,7 @@ const grammar = {
 };
 
 test("derives the real creative-020 closed-shell perimeter as 16 deterministic backed segments", async () => {
-	const source = JSON.parse(await readFile("D:/Data/50_ELE/MAAS_ELEVATION_TEST_SET_20260730/candidates/creative-020/mass/mesh/indexed-mesh.json", "utf8"));
+	const source = JSON.parse(await readFile(join(massDir("creative-020"), "mesh", "indexed-mesh.json"), "utf8"));
 	assert.throws(() => buildPunchedFacadeDetails({
 		mesh: source,
 		floorGuides: { floor_guides_m: [0, 3.3, 6.6, 9.9, 13.2, 16.5] },
@@ -82,7 +84,7 @@ test("derives the real creative-020 closed-shell perimeter as 16 deterministic b
 });
 
 test("recomputes exact creative-020 segment authority before allocating facade details", async () => {
-	const source = JSON.parse(await readFile("D:/Data/50_ELE/MAAS_ELEVATION_TEST_SET_20260730/candidates/creative-020/mass/mesh/indexed-mesh.json", "utf8"));
+	const source = JSON.parse(await readFile(join(massDir("creative-020"), "mesh", "indexed-mesh.json"), "utf8"));
 	const derive = (punchedFacade as any).deriveFacadeSegmentsFromMass;
 	const authority = derive({ mesh: source });
 	const floors = { floor_guides_m: [0, 3.3, 6.6, 9.9, 13.2, 16.5] };
