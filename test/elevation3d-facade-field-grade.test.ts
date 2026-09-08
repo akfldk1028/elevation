@@ -13,7 +13,7 @@ import { deriveFacadePrimitives } from "../plugins/elevation-3d/lib/facade-agent
  * distance to a point. `grade` could only ramp along a run, which is the scalar case, and two
  * authors asked for this and got zones of linear ramps instead.
  */
-const program = (grade: Record<string, unknown>, fields: unknown = [{ id: "sun", at: [0, 0] }]) => ({
+const program = (grade: Record<string, unknown>, fields: unknown = [{ id: "sun", at: [0, 0, 0] }]) => ({
 	schema_version: "arr.elevation3d.facade-grammar.v3",
 	concept_id: "field-probe",
 	start: "Facet",
@@ -26,9 +26,12 @@ const program = (grade: Record<string, unknown>, fields: unknown = [{ id: "sun",
 });
 
 const storeys = [{ storey: 1, z_min: 0, z_max: 3.3 }];
-const segment = (faceOffsetM: number, lengthM = 10) => ({
-	segment_id: `s-${faceOffsetM}`, length_m: lengthM, local_z: [0, 3.3],
-	face_offset_m: faceOffsetM, face_view: "front", face_index: 0, face_total: 1,
+// A facet standing `alongM` metres along the x axis, facing -y, so its members run from
+// (alongM, 0) outward. The attractor sits at the origin at ground level.
+const segment = (alongM: number, lengthM = 10) => ({
+	segment_id: `s-${alongM}`, length_m: lengthM, local_z: [0, 3.3],
+	face_offset_m: 0, origin_m: [alongM, 0, 0], outward_normal: [0, -1, 0],
+	face_view: "front", face_index: 0, face_total: 1,
 });
 const depths = (faceOffsetM: number, grade: Record<string, unknown>, lengthM?: number) =>
 	deriveFacadePrimitives({ grammar: parseFacadeGrammar(program(grade)), segment: segment(faceOffsetM, lengthM), storeys })
@@ -47,9 +50,11 @@ test("a field drives a terminal's depth by distance, not by position along the r
 });
 
 test("a field spans the building: the same rule reads a far facet differently", () => {
-	// The distinction the operator exists for. A graded RUN restarts at every facet and the
-	// far facet would read exactly like the near one; a field is measured from a fixed place,
-	// so a facet 20 m away sits at the far end of its range on every tile.
+	// The distinction the operator exists for, and the reason `at` is a place in SPACE rather
+	// than a position on a sheet. The first author to use it proved the sheet coordinate wrong
+	// from the outside: `face_offset_m` restarts at 0 on every FACE, so one declared place made
+	// four identical ramps on a four-faced mass, and two corners of a star plan demand
+	// incompatible origins. A graded RUN restarts at every facet; a field does not.
 	assert.deepEqual(depths(20, toTheSun, 3), [0.4, 0.4, 0.4]);
 	assert.ok(depths(0, toTheSun, 3).every((depth: number) => depth < 0.1));
 });
@@ -68,11 +73,11 @@ test("a field and its range come together, are declared, and stay inside their b
 	rejects({ attr: "depth_m", from: 0, to: 0.4, field: "sun" });
 	rejects({ attr: "depth_m", from: 0, to: 0.4, range_m: [0, 20] });
 	rejects({ attr: "depth_m", from: 0, to: 0.4, field: "nowhere", range_m: [0, 20] });
-	rejects({ ...toTheSun, range_m: [20, 4] }, [{ id: "sun", at: [0, 0] }]);
-	rejects({ ...toTheSun, range_m: [0, 400] }, [{ id: "sun", at: [0, 0] }]);
+	rejects({ ...toTheSun, range_m: [20, 4] }, [{ id: "sun", at: [0, 0, 0] }]);
+	rejects({ ...toTheSun, range_m: [0, 400] }, [{ id: "sun", at: [0, 0, 0] }]);
 	// Two places cannot share a name, and a place is two finite metres.
-	rejects(toTheSun, [{ id: "sun", at: [0, 0] }, { id: "sun", at: [4, 4] }]);
-	rejects(toTheSun, [{ id: "sun", at: [0] }]);
+	rejects(toTheSun, [{ id: "sun", at: [0, 0, 0] }, { id: "sun", at: [4, 4, 4] }]);
+	rejects(toTheSun, [{ id: "sun", at: [0, 0] }]);
 });
 
 test("a field is refused on a repeat's tile size rather than accepted and dropped", () => {
@@ -121,4 +126,31 @@ test("a run directory's brief is checked against what the engine would write now
 	// with an absent one, and a false positive here would cry wolf on every fresh run.
 	assert.equal(grammarBriefIsStale({ context: fixture.context, onDisk: undefined as any }), false);
 	assert.equal(grammarBriefIsStale({ onDisk } as any), false);
+});
+
+test("a place in space leaves the far side of a building alone", () => {
+	// The fault the first outside author found and proved. Two facets with the SAME
+	// `face_offset_m` on opposite sides of a building read identically under a sheet
+	// coordinate - four open quadrants on a four-faced mass where the photograph has one open
+	// side - and they showed it was not tuning: making the values agree at one corner of a
+	// star plan and at the next demands two different origins, and that mass has eight corners.
+	const grade = { attr: "depth_m", from: 0, to: 0.4, field: "sun", range_m: [10, 30] };
+	const grammar = parseFacadeGrammar(program(grade, [{ id: "sun", at: [0, -20, 8] }]) as any);
+	const facet = (originM: number[], normal: number[]) => ({
+		segment_id: `s-${originM.join("_")}`, length_m: 3, local_z: [0, 3.3],
+		face_offset_m: 0, origin_m: originM, outward_normal: normal,
+		face_view: "front", face_index: 0, face_total: 1,
+	});
+	const depthsAt = (originM: number[], normal: number[]) =>
+		deriveFacadePrimitives({ grammar, segment: facet(originM, normal), storeys }).map((p: any) => p.depth_m);
+
+	const near = depthsAt([-1.5, -6, 0], [0, -1, 0]);
+	const far = depthsAt([1.5, 6, 0], [0, 1, 0]);
+	assert.equal(near.length, far.length);
+	assert.ok(near.every((depth: number) => depth < 0.15), `near ${near}`);
+	assert.ok(far.every((depth: number) => depth > 0.3), `far ${far}`);
+	// A facet with no place of its own cannot be measured, and reads the near end rather than
+	// inventing a distance - the field is inert, not wrong, on a context without origins.
+	const placeless = { ...facet([0, 0, 0], [0, -1, 0]), origin_m: undefined, outward_normal: undefined };
+	assert.ok(deriveFacadePrimitives({ grammar, segment: placeless, storeys }).every((p: any) => p.depth_m === 0));
 });

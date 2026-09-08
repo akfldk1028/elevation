@@ -556,10 +556,15 @@ export function parseFacadeGrammar(input) {
 	// only ramp along a run, which is the scalar case of that idea and the reason two authors
 	// asked for the same thing and got eight zones of linear ramps instead of a field.
 	//
-	// The coordinates are the building's own face metres: `u` runs along the developed
-	// elevation (a segment's `face_offset_m` plus the local u, so the field does not restart
-	// at every facet, which is what would make it a per-facet gradient again) and `z` is world
-	// height. One field, one place, whatever facet a member lands on.
+	// The coordinate is the mass's own, a PLACE IN SPACE: [x, y, z] in the metres the GLB is
+	// written in. It was face metres first - a per-face offset plus the local u - and the
+	// first author to place a field proved that wrong from the outside: `face_offset_m`
+	// restarts at 0 on every FACE, so one declared place produced four identical ramps on a
+	// four-faced mass, and they showed it was not a matter of tuning by writing down the two
+	// incompatible origins two corners of a star plan demand. A point in space has no seam to
+	// restart at, wraps a building of any plan, and is what an attractor has always been in
+	// the literature. `context-summary.json` gives every facet its `origin_m` so the place can
+	// be read off the building rather than inferred.
 	const fields = [];
 	if (program.fields !== undefined && program.fields !== null) {
 		const seen = new Set();
@@ -568,9 +573,9 @@ export function parseFacadeGrammar(input) {
 			if (typeof field.id !== "string" || !ID.test(field.id)) fail(`fields[${index}].id is not a safe identifier`);
 			if (seen.has(field.id)) fail(`fields[${index}].id is declared twice: ${field.id}`);
 			seen.add(field.id);
-			const at = list(field.at, `fields[${index}].at`, 2, 2);
-			if (!at.every((value) => Number.isFinite(value))) fail(`fields[${index}].at is not two finite metres [u, z]`);
-			fields.push(Object.freeze({ id: field.id, at: Object.freeze([Number(at[0]), Number(at[1])]) }));
+			const at = list(field.at, `fields[${index}].at`, 3, 3);
+			if (!at.every((value) => Number.isFinite(value))) fail(`fields[${index}].at is not three finite metres [x, y, z]`);
+			fields.push(Object.freeze({ id: field.id, at: Object.freeze(at.map(Number)) }));
 		}
 	}
 	declaredFieldIds = new Set(fields.map((field) => field.id));

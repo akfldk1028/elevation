@@ -176,10 +176,16 @@ function chooseAlternative(alternatives, scope) {
  */
 function fieldT(grade, scope, fields) {
 	const place = fields?.find((entry) => entry.id === grade.field);
-	if (!place) return 0;
-	const u = (scope.face_offset ?? 0) + (scope.u_min + scope.u_max) / 2;
-	const z = (scope.z_min + scope.z_max) / 2;
-	const distance = Math.hypot(u - place.at[0], z - place.at[1]);
+	if (!place || !scope.origin_m || !scope.tangent) return 0;
+	// The member's own place in the mass's coordinates: its facet's corner, plus its centre
+	// along that facet's own direction, at its own height.
+	const u = (scope.u_min + scope.u_max) / 2;
+	const here = [
+		scope.origin_m[0] + scope.tangent[0] * u,
+		scope.origin_m[1] + scope.tangent[1] * u,
+		(scope.z_min + scope.z_max) / 2,
+	];
+	const distance = Math.hypot(here[0] - place.at[0], here[1] - place.at[1], here[2] - place.at[2]);
 	const [near, far] = grade.range_m;
 	return Math.min(1, Math.max(0, (distance - near) / (far - near)));
 }
@@ -479,6 +485,19 @@ export function deriveFacadePrimitives({ grammar, segment, storeys, entrance = n
 		// Where this facet begins along its sheet, in metres - the number an author measures
 		// off a picture, and what `face_offset < n` compares. Inherited by every child scope.
 		face_offset: Number.isFinite(segment.face_offset_m) ? segment.face_offset_m : null,
+		// Where the facet IS, and which way its local u runs from there, so a field can be a
+		// place in space rather than a position on a sheet. `face_offset` above restarts at 0
+		// on every FACE, which is right for the predicate that reads a picture and wrong for a
+		// field: one declared place produced four identical ramps on a four-faced mass.
+		// Inherited by every child scope, like face_offset.
+		origin_m: Array.isArray(segment.origin_m) && segment.origin_m.length === 3 ? segment.origin_m : null,
+		tangent: Array.isArray(segment.outward_normal) && Math.hypot(segment.outward_normal[0], segment.outward_normal[1]) > 0
+			? (() => {
+				const horizontal = Math.hypot(segment.outward_normal[0], segment.outward_normal[1]);
+				const unit = Math.abs(horizontal - 1) > 1e-6 ? horizontal : 1;
+				return [-segment.outward_normal[1] / unit, segment.outward_normal[0] / unit, 0];
+			})()
+			: null,
 		// With no repeat and no storey stack, the run is the face's own facets.
 		runT: (segment.face_total ?? 1) > 1 ? (segment.face_index ?? 0) / ((segment.face_total ?? 1) - 1) : 0,
 		// Nothing calls the start symbol, so it is the one rule with no argument to read.

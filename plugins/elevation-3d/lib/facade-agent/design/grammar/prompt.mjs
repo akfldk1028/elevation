@@ -69,15 +69,15 @@ export const FACADE_GRAMMAR_V3_SCHEMA = Object.freeze({
 		fields: {
 			type: ["array", "null"],
 			maxItems: 8,
-			description: "Places on the BUILDING that a parameter can be measured from. Declare one here, then a terminal's `grade` may name it and vary depth_m or inset_m with the DISTANCE from that place - an aperture that opens toward one corner, a relief that dies out away from the entrance, a screen that closes where the sun strikes. This is the difference between a gradient and a field: a graded run varies along ONE run and restarts in the next, while a field is measured from a fixed place and means the same thing on every facet of the building.",
+			description: "Places in SPACE that a parameter can be measured from. Declare one here, then a terminal's `grade` may name it and vary depth_m or inset_m with the DISTANCE from that place - an aperture that opens toward one corner, a relief that dies out away from the entrance, a screen that closes where the sun strikes. This is the difference between a gradient and a field: a graded run varies along ONE run and restarts in the next, while a field is measured from a fixed place and means the same thing on every facet of the building.",
 			items: {
 				type: "object", additionalProperties: false,
 				required: ["id", "at"],
 				properties: {
 					id: { type: "string", description: "A name you invent, which a grade then refers to." },
 					at: {
-						type: "array", minItems: 2, maxItems: 2, items: { type: "number" },
-						description: "[u, z] in the building's own DEVELOPED metres: u is measured along the elevation from the same origin every facet's `face_offset_m` is measured from, and z is height above grade. So [0, 0] is the left end at the ground and [40, 16.5] is 40 m along at the parapet. The context summary gives every facet's face_offset_m and length_m; add them to place a point.",
+						type: "array", minItems: 3, maxItems: 3, items: { type: "number" },
+						description: "[x, y, z] - a PLACE IN SPACE, in the metres the mass itself is written in. The context summary gives every facet its `origin_m` (its corner) and `outward_normal` (which way it faces), so you can read a place straight off the building: a corner it names, the mid-point between two of them, or a point out in front of one face to make the field arrive nearly flat across it. Distance is measured in three dimensions from the centre of each member, so a point placed on one side of a building genuinely leaves the far side alone, whatever the plan.",
 					},
 				},
 			},
@@ -428,12 +428,13 @@ on the building instead, so it means the same thing wherever the member lands.
 
 Declare the place at the top of the grammar:
 
-    "fields": [ { "id": "sun", "at": [38.0, 16.5] } ]
+    "fields": [ { "id": "sun", "at": [0.0, -24.0, 8.25] } ]
 
-\`at\` is [u, z] in the building's own DEVELOPED metres - u along the elevation from the same
-origin every facet's \`face_offset_m\` is measured from, z the height above grade. The context
-summary gives you \`face_offset_m\` and \`length_m\` for every facet, which is how you place a
-point at a corner, over an entrance, or at the top of one end.
+\`at\` is [x, y, z]: a PLACE IN SPACE, in the metres the mass is written in. The context
+summary gives every facet its \`origin_m\` (its own corner) and \`outward_normal\` (which way it
+faces), so you read a place off the building rather than inventing one. Distance is measured
+in three dimensions from the centre of each member, so a point on one side of a building
+genuinely leaves the far side alone, whatever the plan does in between.
 
 Then a terminal's grade names it:
 
@@ -441,14 +442,25 @@ Then a terminal's grade names it:
 
 which reads: this member's inset is 0.02 m within 4 m of that place, 0.30 m at 26 m and
 beyond, interpolating between - so an aperture opens toward the point and closes away from
-it, across every facet, in one rule. \`field\` and \`range_m\` come together or not at all: a
-field with no stated range would have to normalise itself over whatever scope it landed in,
-which is a per-facet gradient wearing a field's name.
+it, across every facet and around every corner, in one rule. \`field\` and \`range_m\` come
+together or not at all: a field with no stated range would have to normalise itself over
+whatever scope it landed in, which is a per-facet gradient wearing a field's name.
+
+TWO THINGS ABOUT THE SHAPE OF IT, both of which cost the first author who used it real work.
+A point makes CIRCULAR level sets. If you want a parameter that depends only on which way
+round the building you are and not on height, put the point well outside the building - at
+twenty or thirty metres the arcs arrive nearly straight across a face - and spend \`range_m\`
+on that distance plus the run you actually want. A point placed ON the facade instead draws
+a bull's-eye, which is right for "brightest at this window" and wrong for "open toward the
+south". And a field varies a NUMBER, not a construction: it can open an aperture from a slot
+to a window, but it cannot turn a punched wall into a curtain wall along the way, because a
+face is classified punched or skin as a whole.
 
 What a field cannot do yet, so you do not spend an attempt finding out: it cannot drive TILE
 SIZE on a repeat part (that grade still runs along its run, and the grammar refuses \`field\`
 there rather than accepting the word and dropping it), and there is one kind of field, a
-point you name. Distance to a line, and a direction like solar orientation, are not sayable.
+point. Distance to a LINE, and a direction like solar orientation, are not sayable - the
+distant-point trick above is how you approximate a line, and it costs you most of your range.
 If your design needs one, say so in your report rather than approximating it with zones.
 
 One thing to get right, because the elevation will not show you the mistake: put the rise on

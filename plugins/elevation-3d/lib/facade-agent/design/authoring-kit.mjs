@@ -83,6 +83,11 @@ export async function writeGrammarBrief({ runDir, context } = {}) {
 			segment_id: segment.segment_id, face_view: segment.face_view ?? segment.view,
 			length_m: segment.length_m, local_z: segment.local_z,
 			ground_access: segment.ground_access, visibility_score: segment.visibility_score,
+			// Where the facet actually IS, so an author placing a field can read a place off
+			// the building instead of inferring one. The first author to place a field could
+			// not derive it from this file at all and had to measure the operator's semantics
+			// by moving a point and re-running `check` four times.
+			origin_m: segment.origin_m ?? null, outward_normal: segment.outward_normal ?? null,
 		})),
 		exclusions: context.exclusions,
 		existing_openings: context.existing_openings,
