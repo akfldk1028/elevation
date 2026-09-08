@@ -100,3 +100,25 @@ test("the brief and the schema both carry it, or no author can reach it", () => 
 	assert.match(fields.description, /distance/i);
 	assert.ok((FACADE_GRAMMAR_V3_SCHEMA as any).required.includes("fields"));
 });
+
+test("a run directory's brief is checked against what the engine would write now", async () => {
+	// `brief` writes a file per candidate and nothing regenerates it when the prompt changes.
+	// A transcriber read one a day behind the engine: it told them a set-back opening "is not
+	// yet a drawing move - do not spend a render on it", while the schema beside it described
+	// the hole the engine had been cutting since the day before. They followed the brief, filed
+	// the photograph's most visible feature as a missing capability, and reported that the two
+	// documents could not both be current. Nothing had told them, so `check` and `draw` do.
+	const { grammarBriefIsStale, writeGrammarBrief } = await import("../plugins/elevation-3d/lib/facade-agent/design/authoring-kit.mjs");
+	const { createFacadeDesignFixture } = await import("./helpers/facade-design-fixture.ts");
+	const { readFile } = await import("node:fs/promises");
+	const fixture = await createFacadeDesignFixture({ after: () => {} } as any);
+	const written = await writeGrammarBrief({ runDir: fixture.runDir, context: fixture.context });
+	const onDisk = await readFile(written.paths.prompt, "utf8");
+
+	assert.equal(grammarBriefIsStale({ context: fixture.context, onDisk }), false, "a brief just written is current");
+	assert.equal(grammarBriefIsStale({ context: fixture.context, onDisk: `${onDisk}\nstale` }), true);
+	// A missing or unreadable brief is not a staleness claim - the caller decides what to do
+	// with an absent one, and a false positive here would cry wolf on every fresh run.
+	assert.equal(grammarBriefIsStale({ context: fixture.context, onDisk: undefined as any }), false);
+	assert.equal(grammarBriefIsStale({ onDisk } as any), false);
+});

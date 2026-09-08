@@ -1717,3 +1717,35 @@ correction landing, not drift. The authoring kit's located-fault probe now reads
 Query the GLB, not the raster: `listMeshes` for `exact-mass`, pair the triangles by shared
 edge, and the fold angles are right there. Three of the four hypotheses above died against
 that measurement rather than against a render.
+
+**The standard lane ran end to end, and the brief was a day behind the engine.** The codex
+image lane came back (the quota lifted early, not on the 13th), so `concept` commissioned a
+perspective for the cleft block from an open brief - the constraint and the question, no
+style named - and got a folded-panel facade where the fold that shades the glass is the fold
+that sheds the water, on the right mass. A transcriber playing the repo's own role file drew
+it: `grammar-lane-004.json`, `render-lane-004`, all eight views accepted, hero rendered, its
+own verdict "it is the same building". It measured the new crease pass rather than trusting
+it - fine horizontal lines 2.059 m apart against the mass's 2.0625 m course pitch, 9 levels
+below the wall tone - and confirmed three distinguishable line weights on the sheet.
+
+Then it found something worth more than the drawing. Its brief on disk still carried the
+paragraph "DEPTH IS SIGNED, AND THE NEGATIVE HALF IS NOT DRAWABLE ... it is not yet a drawing
+move. Do not spend a render on it", written before 09-06, while the schema beside it
+described the hole the engine had cut since. It followed the brief, drew the frame proud and
+thin, filed the photograph's most visible feature - panes recessed 150-250 mm behind the
+fold - as a missing capability, and said plainly that the two documents could not both be
+current. `brief` writes a file per candidate and NOTHING regenerated it; regenerating
+creative-020's had not touched creative-004's. So `check` and `draw` now compare the run
+directory's brief against what the engine would write and report `brief_stale` when they
+differ (`grammarBriefIsStale`), all three briefs were regenerated, and the role file says the
+schema wins on what a field DOES while the brief wins on how to use it.
+
+Three more of its findings, all fixed: `check` costs nothing and did not appear in the role
+file's procedure, so an author spent a draw finding that out; `compiled facade version
+already exists` fails before reading the grammar and had been counted as one of three
+attempts; and the reader downsamples a photograph past the point where a fold can be told
+from a joint, so the role file now says to crop and enlarge first. Its last one closed a real
+brief gap: the shell's own SUBSTANCE decides which role the whole building lands in, not the
+terminal table - declaring a sheet-metal shell put 94.8% of the plan raster in `opaque`, left
+`concrete` at 0.9%, and collapsed a PBR role pair at 3.3 against a floor of 5 on a grammar
+whose design gates were all green.

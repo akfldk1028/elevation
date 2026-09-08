@@ -48,6 +48,25 @@ export { REVEAL_FACADE_PRESENTATION_STYLE };
  *
  * @returns {Promise<{prompt: string, promptSha256: string, paths: object}>}
  */
+/**
+ * Whether the brief sitting in a run directory is still the brief the engine would write.
+ *
+ * `writeGrammarBrief` writes a file per candidate and nothing regenerates it when the prompt
+ * changes, so a run directory keeps whatever was written into it last. A transcriber read one
+ * that predated the recess work by a day: it told them, at length and with measurements, that
+ * a set-back opening "is not yet a drawing move - do not spend a render on it", while the
+ * schema beside it described the hole the engine had been cutting since the day before. They
+ * followed the brief, filed the photograph's most visible feature as a missing capability,
+ * and reported that the two documents could not both be current. They were right, and nothing
+ * in the pipeline had told them.
+ *
+ * @returns {boolean} true when the file differs from what `brief` would write now
+ */
+export function grammarBriefIsStale({ context, onDisk } = {}) {
+	if (typeof onDisk !== "string" || !context?.facade_segments) return false;
+	return onDisk !== buildFacadeGrammarPrompt({ context, correctionCodes: [], attempt: 1, previous: null }).prompt;
+}
+
 export async function writeGrammarBrief({ runDir, context } = {}) {
 	if (!context?.facade_segments || !context?.storeys) throw new TypeError("a verified facade design context is required");
 	const built = buildFacadeGrammarPrompt({ context, correctionCodes: [], attempt: 1, previous: null });

@@ -21,7 +21,7 @@ import { buildConceptSubject } from "../facade-presentation/photo/concept-subjec
 import { runCli as runShowcase } from "../facade-presentation/showcase/cli.mjs";
 import { resolveRoots, runDirFor } from "./config.mjs";
 import { prepareFacadeContext } from "./prepare.mjs";
-import { checkFacadeGrammar, renderFacadeScheme, writeFacadeBrief } from "./index.mjs";
+import { briefIsStale, checkFacadeGrammar, renderFacadeScheme, writeFacadeBrief } from "./index.mjs";
 
 /**
  * The compiled GLB of a rendered scheme.
@@ -148,13 +148,30 @@ export async function runPipelineCli(argv) {
 	const [grammarPath, name] = args;
 	if (!grammarPath) { say({ ok: false, error: USAGE }); return 2; }
 	const grammar = JSON.parse(await readFile(resolve(grammarPath), "utf8"));
+	// Is the brief in this run directory still the brief the engine would write?
+	//
+	// `brief` writes a file per candidate and nothing regenerates it when the prompt changes,
+	// so a run directory quietly keeps whatever was written into it last. A transcriber read
+	// one that predated the recess work by a day: it told them, at length and with
+	// measurements, that a set-back opening "is not yet a drawing move - do not spend a render
+	// on it", while the schema beside it described the hole the engine had been cutting since
+	// the day before. They followed the brief, filed the photograph's most visible feature as
+	// a missing capability, and said the two documents could not both be current. They were
+	// right. Nothing had told them, so every run says it now.
+	const briefStale = await (async () => {
+		try {
+			const onDisk = await readFile(join(runDir, "grammar-prompt.txt"), "utf8");
+			if (!briefIsStale({ context, onDisk })) return null;
+			return "the brief in this run directory is not what `brief` would write now - re-run `brief` and re-read it; an author following a stale one drew a building without the feature it was written to forbid";
+		} catch { return null; }
+	})();
 
 	if (command === "check") {
 		const checked = checkFacadeGrammar({ context, grammar });
 		// The program and its resolution are megabytes of derived geometry and no caller of a
 		// CLI wants them on stdout; the verdict, the measurements and the faults are the answer.
 		const { program, resolved, validation, ...report } = checked;
-		say(report);
+		say({ ...report, ...(briefStale ? { brief_stale: briefStale } : {}) });
 		return checked.ok ? 0 : 1;
 	}
 
@@ -168,7 +185,7 @@ export async function runPipelineCli(argv) {
 		const checked = checkFacadeGrammar({ context, grammar });
 		if (!checked.ok) {
 			const { program, resolved, validation, ...report } = checked;
-			say({ ...report, drew: false });
+			say({ ...report, drew: false, ...(briefStale ? { brief_stale: briefStale } : {}) });
 			return 1;
 		}
 		const drawn = await renderFacadeScheme({
@@ -179,6 +196,7 @@ export async function runPipelineCli(argv) {
 		say({
 			ok: true, stage: "drawn", drew: true, candidate: candidateId, out: join(runDir, name),
 			hero: drawn.hero.path, metrics: checked.metrics, composition: drawn.composition,
+			...(briefStale ? { brief_stale: briefStale } : {}),
 		});
 		return 0;
 	}
