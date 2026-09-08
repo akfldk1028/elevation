@@ -154,3 +154,26 @@ test("a place in space leaves the far side of a building alone", () => {
 	const placeless = { ...facet([0, 0, 0], [0, -1, 0]), origin_m: undefined, outward_normal: undefined };
 	assert.ok(deriveFacadePrimitives({ grammar, segment: placeless, storeys }).every((p: any) => p.depth_m === 0));
 });
+
+test("the schema admits every predicate the engine accepts", () => {
+	// Two transcribers hit this independently and both reported the brief and the schema
+	// contradicting each other: the brief teaches range comparisons and `face_offset` in a
+	// worked example, the contract accepts them, and the schema's `when` pattern refused them -
+	// so a provider held to the schema could not emit a documented feature. The second author
+	// tested it and wrote down which ones failed. These are those.
+	const pattern = new RegExp((FACADE_GRAMMAR_V3_SCHEMA as any).$defs.alternative.properties.when.pattern);
+	for (const when of ["storey >= 5", "face_offset < 7", "index > 2", "index <= 3", "storey == 5",
+		"face_view == front && face_offset < 7", "face_offset < 7.5", "index % 2 == 0"]) {
+		assert.ok(pattern.test(when), `schema must admit ${when}`);
+		// And what the schema admits, the contract has to parse - the two travel together.
+		assert.doesNotThrow(() => parseFacadeGrammar({
+			schema_version: "arr.elevation3d.facade-grammar.v3", concept_id: "predicate-probe", start: "F",
+			design_rationale: ["probe"],
+			rules: [{ name: "F", alternatives: [
+				{ when, split: null, terminal: "band", inset_m: 0, depth_m: 0.1 },
+				{ when: null, split: null, terminal: "wall", inset_m: 0, depth_m: 0 },
+			] }],
+		} as any), when);
+	}
+	assert.ok(!pattern.test("nonsense == 3"));
+});

@@ -66,7 +66,7 @@ path typed into them, which is the eleven-copies problem the config module exist
 Tests reach their data through `test/helpers/roots.ts` and name a candidate and a file, never
 a path. Override any root with `ELEVATION_AGENT_{DATASET,OUTPUT,FIXTURE}_ROOT`.
 
-    npm test        # 854 tests. Two are load-flaky (a file-lock race, a 287 s e2e);
+    npm test        # 861 tests. Two are load-flaky (a file-lock race, a 287 s e2e);
                     # if one fails, re-run that file alone before believing it.
 
 ## The four rules that are not negotiable
@@ -121,6 +121,16 @@ shapes to know: a point makes CIRCULAR level sets, so a u-only field wants the p
 or thirty metres off the building; and a field varies a NUMBER, not a construction, because a
 face is classified punched or skin as a whole. It cannot drive a repeat's TILE SIZE yet and
 is refused there rather than dropped; there is one kind of field, a point.
+
+**The pipeline reads the photograph now, and until 2026-09-08 it never did.**
+`source_photograph` had eleven uses in this engine and every one spent it turning a gate OFF;
+nothing opened the file. So rule 4 above was enforced by nobody but a person, while eight
+gates checked a drawing against itself. `source-fidelity.mjs` measures the two pictures on the
+same axes and `draw` reports `source_fidelity`: SOURCE_COLOUR_INVENTED (the drawing's boldest
+surface is far more saturated than anything in the photograph) and SOURCE_VARIATION_LOST (the
+photograph changes markedly along its length and the drawing does not). Checked against three
+runs a person had already judged: the one called the same building is clean, the one called
+not the same trips both, the one called roughly trips one. It is a report, not a refusal.
 
 ## How this goes wrong, every time
 
