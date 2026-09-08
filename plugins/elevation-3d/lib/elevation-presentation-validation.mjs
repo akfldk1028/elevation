@@ -309,6 +309,22 @@ function persistedSeamMetrics(base, material, depth, normal, width, height, boun
 		if (!sameMaterial(left, right) || Math.abs(decodeDepth(depth, left, near, far) - decodeDepth(depth, right, near, far)) >= 0.0005) continue;
 		const leftNormal = decodeNormal(normal, left), rightNormal = decodeNormal(normal, right);
 		if (dot(leftNormal, rightNormal) < Math.cos(2 * Math.PI / 180)) continue;
+		// And the two sides have to be the same FILL, not merely the same role.
+		//
+		// `sameMaterial` above reads the id raster, which is painted by SEMANTIC ROLE - four
+		// colours. Two declared materials in one role are one colour there, so the edge of a
+		// dark band lying flat on a pale wall answered every test above and was counted as
+		// triangulation: same role, same depth to a tenth of a millimetre, one plane. Measured
+		// on the bent bar, where a 9-pixel band at luminance 42 on a 199 wall produced a
+		// 203-pixel "seam" with no geometry under it at all - the flat-normal raster reads
+		// 128,128,255 straight through it.
+		//
+		// The tell is what the drawing does on either SIDE of the line. A triangulation seam
+		// is an artefact between two areas the renderer meant to paint the same: the fill
+		// matches across it and only the seam itself is dark. A material boundary is a line
+		// the drawing means to have, and the fill differs across it. Antialiasing moves a
+		// channel a few counts, so this asks for equal rather than identical.
+		if ([0, 1, 2].some((channel) => Math.abs(base[left + channel] - base[right + channel]) > 6)) continue;
 		candidates[y * width + x] = 1; count++;
 	}
 	const visited = new Uint8Array(candidates.length);

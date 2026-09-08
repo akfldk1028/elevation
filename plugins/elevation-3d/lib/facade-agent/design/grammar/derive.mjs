@@ -162,6 +162,28 @@ function chooseAlternative(alternatives, scope) {
  * compilation, mass backing, rendering and scoring are untouched: v3 changes what the
  * model can say, not what the pipeline trusts.
  */
+/**
+ * Where a scope sits in the FIELD, as the 0..1 a grade travels over.
+ *
+ * The parametric literature is unanimous on the shape of this: measure a scalar at each
+ * unit's own position, normalise it over a stated range, remap it onto the parameter. The
+ * scalar here is the distance from the member's centre to a declared attractor, in the
+ * building's own developed face metres - `face_offset_m` plus the local u, so one field
+ * spans every facet instead of restarting at each - and world height for z.
+ *
+ * Clamped at both ends, so `range_m` reads as "fully `from` this close, fully `to` this far"
+ * and a member outside the range takes the nearer endpoint rather than an extrapolation.
+ */
+function fieldT(grade, scope, fields) {
+	const place = fields?.find((entry) => entry.id === grade.field);
+	if (!place) return 0;
+	const u = (scope.face_offset ?? 0) + (scope.u_min + scope.u_max) / 2;
+	const z = (scope.z_min + scope.z_max) / 2;
+	const distance = Math.hypot(u - place.at[0], z - place.at[1]);
+	const [near, far] = grade.range_m;
+	return Math.min(1, Math.max(0, (distance - near) / (far - near)));
+}
+
 export function deriveFacadePrimitives({ grammar, segment, storeys, entrance = null, buildingUnderside = null, continuations = [], floorBandClearance = 0 } = {}) {
 	if (!grammar?.rules || !segment) fail("a parsed grammar and a segment scope are required");
 	const primitives = [];
@@ -250,7 +272,11 @@ export function deriveFacadePrimitives({ grammar, segment, storeys, entrance = n
 			// Without the inheritance a fin inside a [fin, pane] module always read index 0
 			// of its two-part split and every instance came out at `from` - measured on the
 			// first probe of this operator.
-			const gradeT = alternative.grade ? scope.runT ?? 0 : 0;
+			// A grade naming a field is driven by WHERE the member is, not by how far along
+			// its run it fell. That is the whole difference between a gradient and a field.
+			const gradeT = !alternative.grade ? 0
+				: alternative.grade.field ? fieldT(alternative.grade, scope, grammar.fields)
+					: scope.runT ?? 0;
 			const graded = (attr, base) => alternative.grade?.attr === attr
 				? round(alternative.grade.from + (alternative.grade.to - alternative.grade.from) * gradeT)
 				: base;

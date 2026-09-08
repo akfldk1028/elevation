@@ -66,7 +66,7 @@ path typed into them, which is the eleven-copies problem the config module exist
 Tests reach their data through `test/helpers/roots.ts` and name a candidate and a file, never
 a path. Override any root with `ELEVATION_AGENT_{DATASET,OUTPUT,FIXTURE}_ROOT`.
 
-    npm test        # 846 tests. Two are load-flaky (a file-lock race, a 287 s e2e);
+    npm test        # 852 tests. Two are load-flaky (a file-lock race, a 287 s e2e);
                     # if one fails, re-run that file alone before believing it.
 
 ## The four rules that are not negotiable
@@ -106,6 +106,16 @@ A rule symbol with a `param` is a named composite - that is the library, and aut
 their own elements out of it. When something cannot be said, ask whether the PRIMITIVE is
 too narrow before adding a word. Four separate author requests turned out to be one missing
 sign on `depth_m`.
+
+A parameter may vary with WHERE a member sits, not only with how far along a run it fell.
+Declare a place - `"fields": [{ "id": "sun", "at": [38.0, 16.5] }]`, in the building's own
+developed metres (u from the same origin as every facet's `face_offset_m`, z above grade) -
+and a terminal's `grade` names it: `{ "attr": "inset_m", "from": 0.02, "to": 0.30, "field":
+"sun", "range_m": [4, 26] }`. That is the parametric operator the literature converged on:
+one unit repeated, one parameter driven by distance to a fixed place, so it means the same
+thing on every facet instead of restarting at each. `field` and `range_m` come together or
+not at all. It cannot drive a repeat's TILE SIZE yet and it is refused there rather than
+dropped; there is one kind of field, a point.
 
 ## How this goes wrong, every time
 
