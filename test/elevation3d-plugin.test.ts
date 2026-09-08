@@ -12,6 +12,7 @@ import { facadeCandidateHash } from "../plugins/elevation-3d/lib/facade-agent/ca
 import { createProductionFacadeAgentDependencies } from "../plugins/elevation-3d/lib/facade-agent/production-dependencies.mjs";
 import { cameraContractHash, deriveExpectedCameraContract, presentationCameraPresets, technicalCameraAuthorityFromGlb } from "../plugins/elevation-3d/lib/camera-authority.mjs";
 import { deriveDeliveryCameras } from "../plugins/elevation-3d/lib/final-delivery.mjs";
+import { DATASET_ROOT } from "./helpers/roots.ts";
 
 function sha256(value: string | Buffer) {
 	return createHash("sha256").update(value).digest("hex");
@@ -321,7 +322,7 @@ test("facade agent tool defaults to production preflight without dependency inje
 		const tools: any[] = [];
 		await register({ config: {}, registerTool: (tool: any) => tools.push(tool), addPrompt() {}, registerMemoryLayer() {}, logger: console });
 		const tool = tools.find((item) => item.name === "elevation_3d_facade_agent_run");
-		const response = await tool.handler({ run_id: "production-preflight", dataset_root: "D:/Data/50_ELE/MAAS_ELEVATION_TEST_SET_20260730", output_root: join(root, "output") }, new AbortController().signal);
+		const response = await tool.handler({ run_id: "production-preflight", dataset_root: DATASET_ROOT, output_root: join(root, "output") }, new AbortController().signal);
 		assert.equal(JSON.parse(response.text).stage, "preflight");
 		const receipt = JSON.parse(await readFile(join(root, "output", "creative-020", "production-preflight", "stages", "preflight-receipt.json"), "utf8"));
 		assert.equal(receipt.capabilities["seedream-5-pro"].available, false);

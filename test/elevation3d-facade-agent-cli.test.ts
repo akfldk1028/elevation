@@ -7,6 +7,7 @@ import { pathToFileURL } from "node:url";
 import { after, before, test } from "node:test";
 import { Document, NodeIO } from "@gltf-transform/core";
 import { sha256, stableJson } from "../plugins/elevation-3d/lib/core.mjs";
+import { DATASET_ROOT } from "./helpers/roots.ts";
 
 const projectRoot = resolve(import.meta.dirname, "..");
 const script = join(projectRoot, "scripts", "elevation-3d-facade.mjs");
@@ -586,7 +587,7 @@ test("live intent without every exact ceiling and total confirmation fails befor
 
 test("normal CLI preflight constructs production dependencies without secrets or transport", async () => {
 	const root = await mkdtemp(join(tmpdir(), "elevation3d-cli-production-")); roots.push(root);
-	const datasetRoot = resolve("D:/Data/50_ELE/MAAS_ELEVATION_TEST_SET_20260730");
+	const datasetRoot = DATASET_ROOT;
 	const productionArgs = (runId: string) => [
 		"--candidate", "creative-020", "--brief", "brick-punched-window-v1",
 		"--dataset-root", datasetRoot, "--output-root", join(root, "output"), "--run-id", runId,

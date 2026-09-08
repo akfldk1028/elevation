@@ -58,8 +58,13 @@ it does not touch the ground).
 Every subcommand prints one JSON object and **exits non-zero on failure**. Do not pipe it
 through `tail`; that once masked two failed renders as successes.
 
-Code lives here. Data does not: `elevation-agent.json` declares `dataset_root` and
-`output_root`. Nothing depends on cwd.
+Code lives here. Data does not: `elevation-agent.json` declares all three roots -
+`dataset_root` (the masses), `output_root` (authored schemes and their drawings) and
+`fixture_root` (finished e2e runs the TESTS read fixtures from). Nothing depends on cwd and
+**nothing outside that file may name a drive**: nine test files used to have the absolute
+path typed into them, which is the eleven-copies problem the config module exists to end.
+Tests reach their data through `test/helpers/roots.ts` and name a candidate and a file, never
+a path. Override any root with `ELEVATION_AGENT_{DATASET,OUTPUT,FIXTURE}_ROOT`.
 
     npm test        # 846 tests. Two are load-flaky (a file-lock race, a 287 s e2e);
                     # if one fails, re-run that file alone before believing it.

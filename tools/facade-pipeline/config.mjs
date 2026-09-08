@@ -29,6 +29,12 @@ const CONFIG_FILE = join(REPO_ROOT, "elevation-agent.json");
 const DEFAULTS = Object.freeze({
 	datasetRoot: "D:/Data/50_ELE/MAAS_ELEVATION_TEST_SET_20260730",
 	outputRoot: "D:/Data/50_ELE/facade-agent-verification/llm-facade-design-agent-20260810",
+	// The third root, and it went undeclared for a week. Ten test files reach into a tree of
+	// finished e2e runs for their fixtures - real enriched GLBs, real rendered views - and
+	// each one had the absolute path typed into it, which is the same eleven-copies problem
+	// this module exists to end. It is data, so it stays outside the folder; it is a location,
+	// so this file is where it is named.
+	fixtureRoot: "D:/Data/50_ELE/elevation-3d-e2e-results",
 });
 
 function fromFile() {
@@ -37,6 +43,7 @@ function fromFile() {
 		return {
 			datasetRoot: typeof parsed.dataset_root === "string" ? parsed.dataset_root : undefined,
 			outputRoot: typeof parsed.output_root === "string" ? parsed.output_root : undefined,
+			fixtureRoot: typeof parsed.fixture_root === "string" ? parsed.fixture_root : undefined,
 			runDirs: parsed.run_dirs && typeof parsed.run_dirs === "object" ? parsed.run_dirs : undefined,
 		};
 	} catch {
@@ -67,10 +74,12 @@ export function resolveRoots(overrides = {}) {
 	};
 	const dataset = pick("datasetRoot", "ELEVATION_AGENT_DATASET_ROOT");
 	const output = pick("outputRoot", "ELEVATION_AGENT_OUTPUT_ROOT");
+	const fixture = pick("fixtureRoot", "ELEVATION_AGENT_FIXTURE_ROOT");
 	return {
 		datasetRoot: dataset.value,
 		outputRoot: output.value,
-		source: { datasetRoot: dataset.source, outputRoot: output.source },
+		fixtureRoot: fixture.value,
+		source: { datasetRoot: dataset.source, outputRoot: output.source, fixtureRoot: fixture.source },
 	};
 }
 
