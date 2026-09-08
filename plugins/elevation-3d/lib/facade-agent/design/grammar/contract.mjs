@@ -116,6 +116,16 @@ export const BOUNDS = Object.freeze({
 	minGradedTileM: 0.01,
 	maxGradedTileM: 20,
 	maxParts: 16,
+	// A field is one named place on the building, so a handful is a vocabulary and a hundred
+	// is a point cloud the author cannot reason about. Al Bahar drives 1,049 units from one
+	// sun; the attractor tutorials use one to three.
+	maxFields: 8,
+	// How far a field may reach, and the nearest it may be pinned. The range is the author's
+	// because the alternative - normalising over whatever the current scope happens to span -
+	// makes one field mean different things on different facets, which is precisely not a
+	// field. 120 m clears the longest candidate diagonal.
+	minFieldRangeM: 0.05,
+	maxFieldRangeM: 120,
 	// 12, because 8 rejected a design the brief itself asks for: per-facet routing, a
 	// tripartite section, a bay, and the four-way opening nest is ten levels, and a blind
 	// author lost an attempt to the ceiling before anything else could be measured. The
@@ -176,6 +186,33 @@ function parseParamValue(text, label) {
 // and single-pass, so a module-scoped set is honest here and threading one lookup through
 // parseRule and parseAlternative would be noise.
 let declaredMaterialIds = new Set();
+/** The fields the grammar declared, so a grade naming one can be refused where it is written. */
+let declaredFieldIds = new Set();
+
+/**
+ * The two keys that turn a grade from a ramp along a run into a FIELD over the face.
+ *
+ * `field` names a declared attractor; `range_m` says over what distance the parameter travels
+ * from `from` to `to`. Both or neither: a field with no range would have to normalise over
+ * whatever the current scope spans, which makes one field mean different things on different
+ * facets - a per-facet gradient wearing a field's name, which is the thing this operator
+ * exists to stop being the only option.
+ */
+function parseGradeField(source, label) {
+	const named = (source.field ?? null) === null ? null : source.field;
+	const range = (source.range_m ?? null) === null ? null : source.range_m;
+	if (named === null && range === null) return {};
+	if (named === null || range === null) fail(`${label} needs both field and range_m, or neither: a field with no range is a gradient`);
+	if (typeof named !== "string" || !declaredFieldIds.has(named)) fail(`${label}.field names no declared field: ${named}`);
+	const bounds = list(range, `${label}.range_m`, 2, 2);
+	if (!bounds.every((value) => Number.isFinite(value))) fail(`${label}.range_m is not two finite metres [near, far]`);
+	const [near, far] = bounds.map(Number);
+	if (near < 0 || far <= near) fail(`${label}.range_m must run near..far with far greater than near`);
+	if (far - near < BOUNDS.minFieldRangeM || far > BOUNDS.maxFieldRangeM) {
+		fail(`${label}.range_m spans ${BOUNDS.minFieldRangeM}..${BOUNDS.maxFieldRangeM} m`);
+	}
+	return { field: named, range_m: Object.freeze([near, far]) };
+}
 
 function record(value, label, allowed) {
 	if (!value || typeof value !== "object" || Array.isArray(value)
@@ -278,11 +315,19 @@ function parsePart(value, label, symbols) {
 	// ignores.
 	const grade = (part.grade ?? null) === null ? null : (() => {
 		if (part.repeat !== true) fail(`${label}.grade belongs to a repeat part: only a run of tiles has a size to grade along`);
-		const fields = record(part.grade, `${label}.grade`, new Set(["from", "to"]));
+		const fields = record(part.grade, `${label}.grade`, new Set(["from", "to", "field", "range_m"]));
 		for (const key of ["from", "to"]) {
 			if (!Number.isFinite(fields[key]) || fields[key] < BOUNDS.minGradedTileM || fields[key] > BOUNDS.maxGradedTileM) {
 				fail(`${label}.grade.${key} is out of range: a graded tile stays within ${BOUNDS.minGradedTileM}..${BOUNDS.maxGradedTileM} m`);
 			}
+		}
+		// A field cannot drive TILE SIZE yet, and saying so is better than accepting the word
+		// and dropping it. `layout` is handed a run length and no origin, so it cannot know
+		// where on the building a tile lands; sizing by field needs the run's own position
+		// threaded through it first. A field DOES drive a terminal's depth or inset today,
+		// which is the parameter Al Bahar and the attractor screens actually vary.
+		if ((fields.field ?? null) !== null) {
+			fail(`${label}.grade.field cannot drive tile size yet: a field drives a terminal's depth_m or inset_m, not a repeat's spacing`);
 		}
 		return Object.freeze({ from: fields.from, to: fields.to });
 	})();
@@ -393,7 +438,7 @@ function parseAlternative(value, label, symbols) {
 		// author could already write by enumerating instances by hand - the operator removes
 		// the enumeration, not the bound.
 		const grade = alternative.grade === undefined || alternative.grade === null ? null : (() => {
-			const fields = record(alternative.grade, `${label}.grade`, new Set(["attr", "from", "to"]));
+			const fields = record(alternative.grade, `${label}.grade`, new Set(["attr", "from", "to", "field", "range_m"]));
 			const attr = fields.attr;
 			if (attr !== "depth_m" && attr !== "inset_m") fail(`${label}.grade.attr must be depth_m or inset_m`);
 			for (const key of ["from", "to"]) {
@@ -402,7 +447,7 @@ function parseAlternative(value, label, symbols) {
 					fail(`${label}.grade.${key} is out of range: a ${alternative.terminal} ${attr} stays within 0..${bound}`);
 				}
 			}
-			return Object.freeze({ attr, from: fields.from, to: fields.to });
+			return Object.freeze({ attr, from: fields.from, to: fields.to, ...parseGradeField(fields, `${label}.grade`) });
 		})();
 		// Cut this member's rectangle on a diagonal and keep one half. `wall` emits nothing so
 		// there is nothing to cut, and an arch already draws its own curved geometry inside its
@@ -480,7 +525,7 @@ function parseAlternative(value, label, symbols) {
 }
 
 export function parseFacadeGrammar(input) {
-	const program = record(input, "facade grammar", new Set(["schema_version", "concept_id", "start", "rules", "design_rationale", "materials", "source_photograph"]));
+	const program = record(input, "facade grammar", new Set(["schema_version", "concept_id", "start", "rules", "design_rationale", "materials", "source_photograph", "fields"]));
 	if (program.schema_version !== "arr.elevation3d.facade-grammar.v3") fail("schema_version is unsupported");
 	if (typeof program.concept_id !== "string" || !ID.test(program.concept_id)) fail("concept_id is not a safe identifier");
 	if (typeof program.start !== "string" || !SYMBOL.test(program.start)) fail("start is not a symbol name");
@@ -503,6 +548,32 @@ export function parseFacadeGrammar(input) {
 		catch (error) { fail(error.message); }
 	}
 	declaredMaterialIds = new Set(declaredMaterials.map((material) => material.id));
+	// A FIELD is a place on the building that a parameter can be measured from.
+	//
+	// Every parametric facade in the literature is one unit repeated with one parameter
+	// varying as a function of WHERE the unit sits - Al Bahar's 1,049 mashrabiyas by solar
+	// incidence, the attractor tutorials by distance to a point or a curve. `grade` could
+	// only ramp along a run, which is the scalar case of that idea and the reason two authors
+	// asked for the same thing and got eight zones of linear ramps instead of a field.
+	//
+	// The coordinates are the building's own face metres: `u` runs along the developed
+	// elevation (a segment's `face_offset_m` plus the local u, so the field does not restart
+	// at every facet, which is what would make it a per-facet gradient again) and `z` is world
+	// height. One field, one place, whatever facet a member lands on.
+	const fields = [];
+	if (program.fields !== undefined && program.fields !== null) {
+		const seen = new Set();
+		for (const [index, entry] of list(program.fields, "fields", 1, BOUNDS.maxFields).entries()) {
+			const field = record(entry, `fields[${index}]`, new Set(["id", "at"]));
+			if (typeof field.id !== "string" || !ID.test(field.id)) fail(`fields[${index}].id is not a safe identifier`);
+			if (seen.has(field.id)) fail(`fields[${index}].id is declared twice: ${field.id}`);
+			seen.add(field.id);
+			const at = list(field.at, `fields[${index}].at`, 2, 2);
+			if (!at.every((value) => Number.isFinite(value))) fail(`fields[${index}].at is not two finite metres [u, z]`);
+			fields.push(Object.freeze({ id: field.id, at: Object.freeze([Number(at[0]), Number(at[1])]) }));
+		}
+	}
+	declaredFieldIds = new Set(fields.map((field) => field.id));
 	// A provider that enforces strict structured output cannot describe an open map,
 	// so a grammar may arrive as a list of named rules. Both shapes mean the same graph.
 	const rules = Array.isArray(program.rules)
@@ -543,6 +614,7 @@ export function parseFacadeGrammar(input) {
 		// Absent unless the author declared any, so a grammar written before this exists is
 		// the same frozen object it always was.
 		...(declaredMaterials.length ? { materials: Object.freeze(declaredMaterials) } : {}),
+		...(fields.length ? { fields: Object.freeze(fields) } : {}),
 		...(sourcePhotograph !== null ? { source_photograph: sourcePhotograph } : {}),
 	});
 }

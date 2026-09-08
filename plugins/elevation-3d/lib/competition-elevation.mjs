@@ -126,6 +126,11 @@ function diagnosticMetrics({ base, materialId, depth, normal, width, height, bou
 		const leftNormal = decodeNormal(normal, left), rightNormal = decodeNormal(normal, right);
 		const normalDot = leftNormal.reduce((sum, value, channel) => sum + value * rightNormal[channel], 0);
 		if (normalDot < Math.cos(2 * Math.PI / 180)) continue;
+		// The two sides have to be the same FILL, not merely the same role - `sameId` reads a
+		// raster painted in four role colours, so two declared materials in one role are one
+		// colour there and the edge of a dark band lying flat on a pale wall passes every test
+		// above. The same guard and the same reasoning as the presentation validator's copy.
+		if ([0, 1, 2].some((channel) => Math.abs(base[left + channel] - base[right + channel]) > 6)) continue;
 		candidates[y * width + x] = 1;
 		candidateCount++;
 	}

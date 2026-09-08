@@ -28,7 +28,7 @@ const PREDICATE_TERM = `(?:(?:index|storey) *% *[0-9]+ *== *[0-9]+|(?:index|stor
 export const FACADE_GRAMMAR_V3_SCHEMA = Object.freeze({
 	type: "object",
 	additionalProperties: false,
-	required: ["schema_version", "concept_id", "start", "entrance", "rules", "design_rationale", "materials", "source_photograph"],
+	required: ["schema_version", "concept_id", "start", "entrance", "rules", "design_rationale", "materials", "fields", "source_photograph"],
 	properties: {
 		schema_version: { type: "string", const: "arr.elevation3d.facade-grammar.v3" },
 		source_photograph: {
@@ -66,6 +66,22 @@ export const FACADE_GRAMMAR_V3_SCHEMA = Object.freeze({
 			},
 		},
 		design_rationale: { type: "array", maxItems: 16, items: { type: "string", minLength: 1, maxLength: 512 } },
+		fields: {
+			type: ["array", "null"],
+			maxItems: 8,
+			description: "Places on the BUILDING that a parameter can be measured from. Declare one here, then a terminal's `grade` may name it and vary depth_m or inset_m with the DISTANCE from that place - an aperture that opens toward one corner, a relief that dies out away from the entrance, a screen that closes where the sun strikes. This is the difference between a gradient and a field: a graded run varies along ONE run and restarts in the next, while a field is measured from a fixed place and means the same thing on every facet of the building.",
+			items: {
+				type: "object", additionalProperties: false,
+				required: ["id", "at"],
+				properties: {
+					id: { type: "string", description: "A name you invent, which a grade then refers to." },
+					at: {
+						type: "array", minItems: 2, maxItems: 2, items: { type: "number" },
+						description: "[u, z] in the building's own DEVELOPED metres: u is measured along the elevation from the same origin every facet's `face_offset_m` is measured from, and z is height above grade. So [0, 0] is the left end at the ground and [40, 16.5] is 40 m along at the parapet. The context summary gives every facet's face_offset_m and length_m; add them to place a point.",
+					},
+				},
+			},
+		},
 		materials: {
 			type: ["array", "null"],
 			maxItems: 8,
@@ -124,11 +140,20 @@ export const FACADE_GRAMMAR_V3_SCHEMA = Object.freeze({
 				grade: {
 					type: ["object", "null"],
 					additionalProperties: false,
-					required: ["attr", "from", "to"],
+					required: ["attr", "from", "to", "field", "range_m"],
 					properties: {
 						attr: { type: "string", enum: ["depth_m", "inset_m"] },
 						from: { type: "number" },
 						to: { type: "number" },
+						field: {
+							type: ["string", "null"],
+							description: "Name a declared field and the grade is driven by DISTANCE to it instead of by position along the run: `from` at range_m[0] and nearer, `to` at range_m[1] and beyond, interpolating between. This is the parametric operator - one unit repeated, one parameter varying with where the unit sits. Null to grade along the run as before.",
+						},
+						range_m: {
+							type: ["array", "null"],
+							minItems: 2, maxItems: 2, items: { type: "number" },
+							description: "[near, far] in metres: how far the parameter takes to travel from `from` to `to`. Required with `field` and refused without it, because a field normalised over whatever scope it lands in would mean something different on every facet - which is a gradient again. Null when field is null.",
+						},
 					},
 					description: "Vary this terminal's attribute along the run it is laid out by, instead of repeating one number: the value interpolates linearly from `from` at the first instance of its split to `to` at the last (a single member reads `from`). Grade depth_m on a fin repeat and the fins deepen along the facade; grade inset_m on a storey split's window and the openings shrink as they rise. A terminal that no repeat stands between and the facet itself takes the FACE as its run - it varies facet to facet across one elevation, wherever in the rule graph it sits. Both endpoints obey the same bounds as the plain field. Null for a constant attribute.",
 				},
@@ -394,6 +419,37 @@ the count coming from the mean of the two. A screen densest at the corner and op
 toward the centre of a face is two facets, one graded 0.10 to 0.20 and its mirror 0.20 to
 0.10, routed by index parity. "grade" on a part is only legal with "repeat": true, and
 takes two metres, not an attr; set it null everywhere else.
+
+A GRADE ALONG A RUN IS NOT A FIELD, and if what you are drawing is parametric it is
+probably a field you want. A graded run varies along ONE run and starts over in the next,
+so a screen that should read as one continuous change across a whole building comes out as
+a set of per-facet ramps with a seam at every corner. A FIELD is measured from a fixed place
+on the building instead, so it means the same thing wherever the member lands.
+
+Declare the place at the top of the grammar:
+
+    "fields": [ { "id": "sun", "at": [38.0, 16.5] } ]
+
+\`at\` is [u, z] in the building's own DEVELOPED metres - u along the elevation from the same
+origin every facet's \`face_offset_m\` is measured from, z the height above grade. The context
+summary gives you \`face_offset_m\` and \`length_m\` for every facet, which is how you place a
+point at a corner, over an entrance, or at the top of one end.
+
+Then a terminal's grade names it:
+
+    "grade": { "attr": "inset_m", "from": 0.02, "to": 0.30, "field": "sun", "range_m": [4, 26] }
+
+which reads: this member's inset is 0.02 m within 4 m of that place, 0.30 m at 26 m and
+beyond, interpolating between - so an aperture opens toward the point and closes away from
+it, across every facet, in one rule. \`field\` and \`range_m\` come together or not at all: a
+field with no stated range would have to normalise itself over whatever scope it landed in,
+which is a per-facet gradient wearing a field's name.
+
+What a field cannot do yet, so you do not spend an attempt finding out: it cannot drive TILE
+SIZE on a repeat part (that grade still runs along its run, and the grammar refuses \`field\`
+there rather than accepting the word and dropping it), and there is one kind of field, a
+point you name. Distance to a line, and a direction like solar orientation, are not sayable.
+If your design needs one, say so in your report rather than approximating it with zones.
 
 One thing to get right, because the elevation will not show you the mistake: put the rise on
 a member that SPANS the facet, and never on a run of separate piers. Above the roof there is
