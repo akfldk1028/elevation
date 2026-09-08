@@ -66,7 +66,7 @@ path typed into them, which is the eleven-copies problem the config module exist
 Tests reach their data through `test/helpers/roots.ts` and name a candidate and a file, never
 a path. Override any root with `ELEVATION_AGENT_{DATASET,OUTPUT,FIXTURE}_ROOT`.
 
-    npm test        # 853 tests. Two are load-flaky (a file-lock race, a 287 s e2e);
+    npm test        # 854 tests. Two are load-flaky (a file-lock race, a 287 s e2e);
                     # if one fails, re-run that file alone before believing it.
 
 ## The four rules that are not negotiable
@@ -108,14 +108,19 @@ too narrow before adding a word. Four separate author requests turned out to be 
 sign on `depth_m`.
 
 A parameter may vary with WHERE a member sits, not only with how far along a run it fell.
-Declare a place - `"fields": [{ "id": "sun", "at": [38.0, 16.5] }]`, in the building's own
-developed metres (u from the same origin as every facet's `face_offset_m`, z above grade) -
+Declare a place in SPACE - `"fields": [{ "id": "sun", "at": [0.0, -24.0, 8.25] }]`, in the
+metres the mass is written in, read off `origin_m` in the context summary -
 and a terminal's `grade` names it: `{ "attr": "inset_m", "from": 0.02, "to": 0.30, "field":
 "sun", "range_m": [4, 26] }`. That is the parametric operator the literature converged on:
 one unit repeated, one parameter driven by distance to a fixed place, so it means the same
-thing on every facet instead of restarting at each. `field` and `range_m` come together or
-not at all. It cannot drive a repeat's TILE SIZE yet and it is refused there rather than
-dropped; there is one kind of field, a point.
+thing on every facet and around every corner instead of restarting at each. `field` and
+`range_m` come together or not at all. **The coordinate was face metres first and that was
+wrong** - `face_offset_m` restarts on every FACE, so one place made four identical ramps on a
+four-faced mass; the first outside author proved it and it is a place in space now. Two
+shapes to know: a point makes CIRCULAR level sets, so a u-only field wants the point twenty
+or thirty metres off the building; and a field varies a NUMBER, not a construction, because a
+face is classified punched or skin as a whole. It cannot drive a repeat's TILE SIZE yet and
+is refused there rather than dropped; there is one kind of field, a point.
 
 ## How this goes wrong, every time
 

@@ -211,6 +211,13 @@ export async function buildFacadeDesignContext(input) {
 			view: segment.view,
 			local_u: [0, segment.extent_m[0]],
 			local_z: [segment.origin[2], segment.origin[2] + segment.extent_m[1]],
+			// The facet's own corner, in the mass's coordinates, and the direction its local u
+			// runs in from there. Everything downstream had been addressing a facet by a
+			// per-FACE offset, which restarts at 0 on each of the four faces - so a field
+			// declared as one place produced four identical ramps on a four-faced mass, and an
+			// author proved it was not a matter of tuning: two corners of a star plan demand
+			// incompatible origins. A place in space has no such seam.
+			origin_m: [...segment.origin],
 			outward_normal: [...segment.normal],
 			length_m: segment.extent_m[0],
 			visibility_score: visibilityScore(segment.normal, depth),
