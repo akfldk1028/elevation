@@ -22,6 +22,7 @@ import { runCli as runShowcase } from "../facade-presentation/showcase/cli.mjs";
 import { resolveRoots, runDirFor } from "./config.mjs";
 import { prepareFacadeContext } from "./prepare.mjs";
 import { briefIsStale, checkFacadeGrammar, renderFacadeScheme, writeFacadeBrief } from "./index.mjs";
+import { compareDrawingToSource } from "./source-check.mjs";
 
 /**
  * The compiled GLB of a rendered scheme.
@@ -196,6 +197,13 @@ export async function runPipelineCli(argv) {
 		say({
 			ok: true, stage: "drawn", drew: true, candidate: candidateId, out: join(runDir, name),
 			hero: drawn.hero.path, metrics: checked.metrics, composition: drawn.composition,
+			// The one measurement that reads the photograph. `source_photograph` had eleven uses
+			// in this engine and every one of them spent it turning a gate OFF; nothing opened
+			// the file. So the project's own first rule - a person shown the photograph and the
+			// drawing agrees they are the same building - was enforced by nobody, while eight
+			// gates checked the drawing against itself and passed a drawing that was brown where
+			// its photograph was grey and one note where its photograph ran shut to open.
+			...(await compareDrawingToSource({ runDir, grammar, heroPath: drawn.hero.path })),
 			...(briefStale ? { brief_stale: briefStale } : {}),
 		});
 		return 0;

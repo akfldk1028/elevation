@@ -17,7 +17,12 @@ const PARAM_LITERALS = [...PARAM_VALUES].sort((a, b) => b.length - a.length).joi
 // stranded. The schema and the parser have drifted apart here once already - an author
 // found `band` absent from the prose list while the schema admitted it - so the two are
 // written to the same set deliberately.
-const PREDICATE_TERM = `(?:(?:index|storey) *% *[0-9]+ *== *[0-9]+|(?:index|storey) *== *(?:[0-9]+|last|top)|band *== *(?:cut_below|cut_above|cut_both|full|cut)|face_view *== *(?:front|back|left|right)|param *== *(?:${PARAM_LITERALS}))`;
+// The RANGE comparisons and `face_offset` were documented in the brief, implemented in the
+// contract, and missing from this pattern - so a provider held to the schema could not emit a
+// feature the brief spends a paragraph teaching. Two transcribers hit it independently and
+// both reported the two documents contradicting each other; the second tested it and wrote
+// down that `storey >= 5` and `face_offset < 7` are refused while `storey == 5` passes.
+const PREDICATE_TERM = `(?:(?:index|storey) *% *[0-9]+ *== *[0-9]+|(?:index|storey) *== *(?:[0-9]+|last|top)|(?:index|storey) *(?:<=|>=|<|>) *[0-9]+|face_offset *(?:<=|>=|<|>) *[0-9]+(?:\.[0-9]+)?|band *== *(?:cut_below|cut_above|cut_both|full|cut)|face_view *== *(?:front|back|left|right)|param *== *(?:${PARAM_LITERALS}))`;
 
 /**
  * The grammar the model answers in.
@@ -117,7 +122,7 @@ export const FACADE_GRAMMAR_V3_SCHEMA = Object.freeze({
 					// The predicate set is closed, so the schema carries it too. A provider that
 					// enforces patterns then cannot emit a malformed comparison at all.
 					pattern: `^${PREDICATE_TERM}(?: *&& *${PREDICATE_TERM})?$`,
-					description: "index % <n> == <m> | index == <n> | index == last | storey % <n> == <m> | storey == <n> | band == full|cut|cut_below|cut_above|cut_both (inside a storey split: full means the mass gave this floor whole; cut_below means the facet begins inside it so its BOTTOM edge is a step and its top is a slab; cut_above means the facet ends inside it so its TOP edge is a step and its bottom is a slab; cut matches any of the three) | face_view == front|back|left|right | param == <the arg this symbol was called with>. Two may be joined with &&. Use null for the else branch.",
+					description: "index % <n> == <m> | index == <n> | index == last | index/storey < <= > >= <n> | face_offset < <= > >= <metres> | storey % <n> == <m> | storey == <n> | band == full|cut|cut_below|cut_above|cut_both (inside a storey split: full means the mass gave this floor whole; cut_below means the facet begins inside it so its BOTTOM edge is a step and its top is a slab; cut_above means the facet ends inside it so its TOP edge is a step and its bottom is a slab; cut matches any of the three) | face_view == front|back|left|right | param == <the arg this symbol was called with>. Two may be joined with &&. Use null for the else branch.",
 				},
 				min_u_m: {
 					type: ["number", "null"],
