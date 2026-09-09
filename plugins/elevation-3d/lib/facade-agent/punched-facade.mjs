@@ -340,7 +340,7 @@ function pushDetail(details, plane, tangent, grammar, bounds, properties, massBa
 	// can have said: a box, an arch and a diagonal half are each one outline the language names
 	// for you, and a written one is the shape they could not name.
 	const geometry = properties.outline
-		? polygonPrismGeometry(plane, tangent, grammar, bounds, properties.outline, localPoint)
+		? polygonPrismGeometry(plane, tangent, grammar, bounds, properties.outline, localPoint, properties.outline_far ?? null)
 		: properties.kind === "arch"
 			? archGeometry(plane, tangent, grammar, bounds)
 			: properties.diagonal
@@ -949,10 +949,16 @@ export function buildTypedFacadeDetails({ mesh, floorGuides, facadePlanes, primi
 		// the glass against 0.79 beside it), could not be lifted off (2 mm and 0.5 mm both lost
 		// the glass role on the opposite axon to the mass in front of it), and drew no reveal.
 		const recessed = opening && depth < 0;
+		// STANDOFF: how far in front of the wall the member's near face sits, so a screen can
+		// have air behind it. Every member until now started at the wall plane and its only
+		// freedom was how far out it came, which is why a veil, a brise-soleil and a rainscreen
+		// could each only be drawn stuck to the surface they are supposed to stand clear of -
+		// named as a missing capability by three separate transcriptions.
+		const standoff = Number.isFinite(primitive.standoff_m) ? Math.max(0, primitive.standoff_m) : 0;
 		const bounds = {
 			u0: local.u_min, u1: local.u_max,
 			v0: local.z_min - plane.origin[2], v1: local.z_max - plane.origin[2],
-			n0: recessed ? depth + PANE_THICKNESS_M : 0, n1: depth,
+			n0: recessed ? depth + PANE_THICKNESS_M : standoff, n1: recessed ? depth : standoff + depth,
 		};
 		// A member that named a rise datum is the one thing allowed to stand above its own
 		// plane rectangle, because that rectangle is the facet's mesh face and a parapet is by
@@ -984,6 +990,8 @@ export function buildTypedFacadeDetails({ mesh, floorGuides, facadePlanes, primi
 			// line parses, validates, derives and draws as a box - which is exactly how 312
 			// spandrels came out rectangular with the diagonal in hand.
 			...(primitive.outline ? { outline: primitive.outline } : {}),
+			...(primitive.outline_far ? { outline_far: primitive.outline_far } : {}),
+			...(Number.isFinite(primitive.standoff_m) && primitive.standoff_m > 0 ? { standoff_m: primitive.standoff_m } : {}),
 			// The elevation this member is drawn in, beside the `view` above, which is the
 			// dominant axis of its own plane. See the note in derive.mjs: the two are different
 			// questions and reading one as the other has cost three false "the entrance is

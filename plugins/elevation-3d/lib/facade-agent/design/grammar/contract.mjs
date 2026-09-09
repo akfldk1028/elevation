@@ -121,6 +121,9 @@ export const BOUNDS = Object.freeze({
 	// is a point cloud the author cannot reason about. Al Bahar drives 1,049 units from one
 	// sun; the attractor tutorials use one to three.
 	maxFields: 8,
+	// How far a member may stand off the wall. Two metres is a deep veil walkway and past that
+	// the screen is a second building the mass never authored.
+	maxStandoffM: 2,
 	// How far a field may reach, and the nearest it may be pinned. The range is the author's
 	// because the alternative - normalising over whatever the current scope happens to span -
 	// makes one field mean different things on different facets, which is precisely not a
@@ -373,7 +376,7 @@ function parseGuard(alternative, label) {
 }
 
 function parseAlternative(value, label, symbols) {
-	const alternative = record(value, label, new Set(["when", "split", "terminal", "inset_m", "depth_m", "min_u_m", "min_z_m", "rise_to", "reach", "material", "grade", "diagonal", "outline"]));
+	const alternative = record(value, label, new Set(["when", "split", "terminal", "inset_m", "depth_m", "min_u_m", "min_z_m", "rise_to", "reach", "material", "grade", "diagonal", "outline", "outline_far", "standoff_m"]));
 	const when = alternative.when === undefined || alternative.when === null ? null : parsePredicate(alternative.when, `${label}.when`);
 	const guard = parseGuard(alternative, label);
 	if (alternative.terminal !== undefined && alternative.terminal !== null) {
@@ -471,6 +474,22 @@ function parseAlternative(value, label, symbols) {
 		// hexagon cost five members and un-hexed as its inset grew, a circle was a rectangle, a
 		// scooped cell was a lump. The outline is a SHAPE, not a size, so one hexagon serves a
 		// 0.4 m cell and a 4 m one.
+		// How far in front of the wall this member's near face sits. A screen with air behind it
+		// - a veil, a brise-soleil, a rainscreen - could not be said at all: every member began
+		// at the wall plane and its only freedom was how far out it came. Three transcriptions
+		// named it as the same missing capability in the same words.
+		const standoff = (alternative.standoff_m ?? null) === null ? 0 : (() => {
+			const value = alternative.standoff_m;
+			if (!Number.isFinite(value) || value < 0 || value > BOUNDS.maxStandoffM) {
+				fail(`${label}.standoff_m is out of range: a member stands off 0..${BOUNDS.maxStandoffM} m`);
+			}
+			if (OPENING_TERMINALS.has(alternative.terminal)) {
+				fail(`${label}.standoff_m on ${alternative.terminal}: a hole cannot float in front of the wall it is a hole in`);
+			}
+			if (alternative.terminal === "wall") fail(`${label}.standoff_m on a wall stands nothing off: wall emits no geometry`);
+			if (depth <= 0) fail(`${label}.standoff_m needs a member with thickness: give it a positive depth_m to stand off`);
+			return value;
+		})();
 		const outline = (alternative.outline ?? null) === null ? null : (() => {
 			if (alternative.terminal === "wall") fail(`${label}.outline on a wall shapes nothing: wall emits no geometry`);
 			if (alternative.terminal === "arch") fail(`${label}.outline on an arch: an arch already draws its own curve inside its rectangle`);
@@ -490,7 +509,27 @@ function parseAlternative(value, label, symbols) {
 			}
 			return Object.freeze(points);
 		})();
-		return Object.freeze({ when, guard, terminal: alternative.terminal, inset_m: inset, depth_m: depth, rise_to: riseTo, reach, material, grade, diagonal, ...(outline ? { outline } : {}) });
+		// The member's FAR end, when it is a different shape from its near one: a funnel, a
+		// hood, a scoop - a cell whose mouth is wider than its throat. Both ends were the same
+		// shape by construction until now, which is why a facade whose unit is a hollow could
+		// only be drawn as a facade whose unit is a lump.
+		const outlineFar = (alternative.outline_far ?? null) === null ? null : (() => {
+			if (!outline) fail(`${label}.outline_far needs an outline to taper from`);
+			const points = list(alternative.outline_far, `${label}.outline_far`, outline.length, outline.length)
+				.map((point, index) => {
+					const pair = list(point, `${label}.outline_far[${index}]`, 2, 2).map(Number);
+					if (!pair.every((value) => Number.isFinite(value) && value >= 0 && value <= 1)) {
+						fail(`${label}.outline_far[${index}] is outside the member's own square: both coordinates run 0..1`);
+					}
+					return Object.freeze(pair);
+				});
+			if (points.length !== outline.length) {
+				fail(`${label}.outline_far has ${points.length} points against the outline's ${outline.length}: each vertex has to know where it goes`);
+			}
+			if (!isSimplePolygon(points)) fail(`${label}.outline_far crosses itself or encloses no area`);
+			return Object.freeze(points);
+		})();
+		return Object.freeze({ when, guard, terminal: alternative.terminal, inset_m: inset, depth_m: depth, rise_to: riseTo, reach, material, grade, diagonal, ...(outline ? { outline } : {}), ...(outlineFar ? { outline_far: outlineFar } : {}), ...(standoff > 0 ? { standoff_m: standoff } : {}) });
 	}
 	// Strict structured output forces both fields onto a split too, where zero is the
 	// only sensible answer. Only a real offset here means the model confused the two.

@@ -115,7 +115,7 @@ export const FACADE_GRAMMAR_V3_SCHEMA = Object.freeze({
 			// 400 from the provider before any model output. min_u_m and min_z_m drifted out
 			// of this list on 2026-08-31 and rise_to, material and reach followed - no live
 			// call ran in between, which is the only reason it never fired.
-			required: ["when", "split", "terminal", "inset_m", "depth_m", "min_u_m", "min_z_m", "rise_to", "reach", "material", "grade", "diagonal", "outline"],
+			required: ["when", "split", "terminal", "inset_m", "depth_m", "min_u_m", "min_z_m", "rise_to", "reach", "material", "grade", "diagonal", "outline", "outline_far", "standoff_m"],
 			properties: {
 				when: {
 					type: ["string", "null"],
@@ -147,6 +147,16 @@ export const FACADE_GRAMMAR_V3_SCHEMA = Object.freeze({
 					minItems: 3, maxItems: 32,
 					items: { type: "array", minItems: 2, maxItems: 2, items: { type: "number" } },
 					description: "This member's OUTLINE, as [u, v] points in its own square: [0,0] is its bottom-left corner and [1,1] its top-right, so an outline is a SHAPE and not a size - the same hexagon serves a 0.4 m cell and a 4 m one. One closed loop, in order, not repeating the first point at the end; it may be concave (a star, a slot with returns, a scooped cell) but it may not cross itself. This is how a member becomes something other than a box: a hexagon, a rhombus, a circle written as a ring of points, a triangle with a returned edge. Refused on `wall` (emits nothing to shape) and on `arch` (already a curve inside its rectangle), and refused together with `diagonal`, which is an outline the language names for you. Null draws the usual box.",
+				},
+				outline_far: {
+					type: ["array", "null"],
+					minItems: 3, maxItems: 32,
+					items: { type: "array", minItems: 2, maxItems: 2, items: { type: "number" } },
+					description: "The member's FAR end, when it is a different shape from its near one - a funnel, a hood, a scoop, a cell whose mouth is wider than its throat. Same number of points as `outline`, in the same order, because vertex i travels to vertex i. Needs `outline`. Null makes both ends the same shape, which is what every member was before this.",
+				},
+				standoff_m: {
+					type: ["number", "null"],
+					description: "How far IN FRONT of the wall this member's near face sits, in metres, 0 to 2 - so a screen can have air behind it: a veil, a brise-soleil, a rainscreen standing clear of the enclosure. `depth_m` is then its own thickness, measured from there. Refused on an opening, which cannot float in front of the wall it is a hole in, on `wall`, and on a member with no thickness. Null or 0 sits it on the wall as before.",
 				},
 				grade: {
 					type: ["object", "null"],
@@ -492,10 +502,27 @@ Material, role, depth, grade and every gate work exactly as they do on a box: an
 member is still whatever terminal it is, so a hexagonal \`window\` is still glass and counts as
 glass, and a hexagonal \`spandrel\` is still opaque.
 
-What it does NOT give you, so you do not spend an attempt: the outline is extruded straight
-back, so both ends of the member are the same shape. A cell whose mouth is wider than its
-throat - a funnel, a scoop, a hood - is still not sayable, and neither is a member standing
-off the wall with air behind it.
+AND THE TWO ENDS NEED NOT MATCH. Write "outline_far" and the member tapers to it: same number
+of points, same order, because vertex i travels to vertex i. That is a funnel, a hood, a
+scoop - a cell whose mouth is wider than its throat, which is the unit of half the screens
+worth drawing and could only be drawn as a lump before.
+
+    "outline":     [[0.5,0],[1,0.25],[1,0.75],[0.5,1],[0,0.75],[0,0.25]]
+    "outline_far": [[0.5,0.35],[0.65,0.42],[0.65,0.58],[0.5,0.65],[0.35,0.58],[0.35,0.42]]
+
+is a hexagonal mouth closing to a small hexagonal throat. The taper must stay a polygon the
+whole way along, so two outlines that would fold through each other in the middle are refused.
+
+AND A MEMBER CAN STAND OFF THE WALL. Write "standoff_m" and its near face sits that far in
+FRONT of the wall, with air behind it, \`depth_m\` becoming its own thickness measured from
+there. A veil, a brise-soleil, a rainscreen clear of the enclosure: every member began at the
+wall plane until now, which is why a screen could only be drawn stuck to the surface it exists
+to stand clear of. Refused on an opening, which cannot float in front of the hole it is, on
+\`wall\`, and on a member with no thickness of its own.
+
+What none of it gives you, so you do not spend an attempt: the surface a member sits on is
+still the mass's, and the mass is fixed. A veil that lifts off the ground on a raking line, or
+that warps away from the building, is the mass's shape and not the facade's.
 
 One thing to get right, because the elevation will not show you the mistake: put the rise on
 a member that SPANS the facet, and never on a run of separate piers. Above the roof there is
