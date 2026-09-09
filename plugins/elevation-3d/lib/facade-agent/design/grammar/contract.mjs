@@ -1,5 +1,6 @@
 import { TERMINAL_MATERIAL_CHOICES, TERMINAL_PROJECTION, TERMINAL_WORDS } from "../../facade-vocabulary.mjs";
 import { deriveDeclaredMaterials } from "../../declared-material.mjs";
+import { MAX_OUTLINE_POINTS, MIN_OUTLINE_POINTS, isSimplePolygon } from "../../polygon-prism.mjs";
 
 export class FacadeGrammarError extends Error {
 	constructor(message) {
@@ -372,7 +373,7 @@ function parseGuard(alternative, label) {
 }
 
 function parseAlternative(value, label, symbols) {
-	const alternative = record(value, label, new Set(["when", "split", "terminal", "inset_m", "depth_m", "min_u_m", "min_z_m", "rise_to", "reach", "material", "grade", "diagonal"]));
+	const alternative = record(value, label, new Set(["when", "split", "terminal", "inset_m", "depth_m", "min_u_m", "min_z_m", "rise_to", "reach", "material", "grade", "diagonal", "outline"]));
 	const when = alternative.when === undefined || alternative.when === null ? null : parsePredicate(alternative.when, `${label}.when`);
 	const guard = parseGuard(alternative, label);
 	if (alternative.terminal !== undefined && alternative.terminal !== null) {
@@ -464,7 +465,32 @@ function parseAlternative(value, label, symbols) {
 		if (material !== null && !TERMINAL_MATERIAL_CHOICES.includes(material) && !declaredMaterialIds.has(material)) {
 			fail(`${label}.material must be one of ${TERMINAL_MATERIAL_CHOICES.join(", ")} or a material this grammar declares`);
 		}
-		return Object.freeze({ when, guard, terminal: alternative.terminal, inset_m: inset, depth_m: depth, rise_to: riseTo, reach, material, grade, diagonal });
+		// The member's OUTLINE, in its own normalised square: (0,0) its bottom-left corner and
+		// (1,1) its top-right. Three shapes could be drawn before this and every facade that
+		// could not be transcribed failed on that list rather than on the rules around it - a
+		// hexagon cost five members and un-hexed as its inset grew, a circle was a rectangle, a
+		// scooped cell was a lump. The outline is a SHAPE, not a size, so one hexagon serves a
+		// 0.4 m cell and a 4 m one.
+		const outline = (alternative.outline ?? null) === null ? null : (() => {
+			if (alternative.terminal === "wall") fail(`${label}.outline on a wall shapes nothing: wall emits no geometry`);
+			if (alternative.terminal === "arch") fail(`${label}.outline on an arch: an arch already draws its own curve inside its rectangle`);
+			if (alternative.diagonal) fail(`${label}.outline and diagonal both shape the same member: a diagonal is an outline the language names for you`);
+			const points = list(alternative.outline, `${label}.outline`, MIN_OUTLINE_POINTS, MAX_OUTLINE_POINTS)
+				.map((point, index) => {
+					const pair = list(point, `${label}.outline[${index}]`, 2, 2).map(Number);
+					if (!pair.every((value) => Number.isFinite(value) && value >= 0 && value <= 1)) {
+						fail(`${label}.outline[${index}] is outside the member's own square: both coordinates run 0..1`);
+					}
+					return Object.freeze(pair);
+				});
+			// Refused here rather than in the geometry builder, so an author is told at `check`
+			// - which is free - instead of losing a render to a shape that has no inside.
+			if (!isSimplePolygon(points)) {
+				fail(`${label}.outline crosses itself or encloses no area: it must be one closed loop`);
+			}
+			return Object.freeze(points);
+		})();
+		return Object.freeze({ when, guard, terminal: alternative.terminal, inset_m: inset, depth_m: depth, rise_to: riseTo, reach, material, grade, diagonal, ...(outline ? { outline } : {}) });
 	}
 	// Strict structured output forces both fields onto a split too, where zero is the
 	// only sensible answer. Only a real offset here means the model confused the two.

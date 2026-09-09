@@ -115,7 +115,7 @@ export const FACADE_GRAMMAR_V3_SCHEMA = Object.freeze({
 			// 400 from the provider before any model output. min_u_m and min_z_m drifted out
 			// of this list on 2026-08-31 and rise_to, material and reach followed - no live
 			// call ran in between, which is the only reason it never fired.
-			required: ["when", "split", "terminal", "inset_m", "depth_m", "min_u_m", "min_z_m", "rise_to", "reach", "material", "grade", "diagonal"],
+			required: ["when", "split", "terminal", "inset_m", "depth_m", "min_u_m", "min_z_m", "rise_to", "reach", "material", "grade", "diagonal", "outline"],
 			properties: {
 				when: {
 					type: ["string", "null"],
@@ -141,6 +141,12 @@ export const FACADE_GRAMMAR_V3_SCHEMA = Object.freeze({
 					type: ["string", "null"],
 					enum: [...REACH_EDGES, null],
 					description: "Carry this SOLID terminal sideways through the fold clearance to its facet's own edge - but only the side(s) where it already stands flush with its scope. A full-width course (a cornice, a band, a lintel run) then meets the corner instead of pausing 0.3 m short of every fold; two facets writing it meet there. Skin members (mullion/transom/spandrel) already do this without asking. Refused for openings: the clearance exists to keep a hole off the turn. Null everywhere else.",
+				},
+				outline: {
+					type: ["array", "null"],
+					minItems: 3, maxItems: 32,
+					items: { type: "array", minItems: 2, maxItems: 2, items: { type: "number" } },
+					description: "This member's OUTLINE, as [u, v] points in its own square: [0,0] is its bottom-left corner and [1,1] its top-right, so an outline is a SHAPE and not a size - the same hexagon serves a 0.4 m cell and a 4 m one. One closed loop, in order, not repeating the first point at the end; it may be concave (a star, a slot with returns, a scooped cell) but it may not cross itself. This is how a member becomes something other than a box: a hexagon, a rhombus, a circle written as a ring of points, a triangle with a returned edge. Refused on `wall` (emits nothing to shape) and on `arch` (already a curve inside its rectangle), and refused together with `diagonal`, which is an outline the language names for you. Null draws the usual box.",
 				},
 				grade: {
 					type: ["object", "null"],
@@ -467,6 +473,29 @@ there rather than accepting the word and dropping it), and there is one kind of 
 point. Distance to a LINE, and a direction like solar orientation, are not sayable - the
 distant-point trick above is how you approximate a line, and it costs you most of your range.
 If your design needs one, say so in your report rather than approximating it with zones.
+
+A MEMBER NEED NOT BE A BOX. Write "outline" on a terminal and its shape is yours: a list of
+[u, v] points in the member's own square, [0,0] its bottom-left corner and [1,1] its
+top-right. It is a SHAPE and not a size, so one hexagon serves a 0.4 m cell and a 4 m one:
+
+    "outline": [[0.5,0],[1,0.25],[1,0.75],[0.5,1],[0,0.75],[0,0.25]]
+
+is a hexagon; [[0.5,0],[1,0.5],[0.5,1],[0,0.5]] is a rhombus; twenty-four points on a circle
+is a circle. One closed loop, in order, and do not repeat the first point at the end. It may
+be CONCAVE - a star, a slot with returns, a cell scooped back on itself - which is the half of
+this that a diagonal could never reach. It may not cross itself, and every point lies within
+0..1; both are refused at \`check\`, which is free, rather than at the render.
+
+Refused on \`wall\`, which emits nothing to shape, on \`arch\`, which is already a curve inside
+its rectangle, and together with \`diagonal\`, which is an outline the language names for you.
+Material, role, depth, grade and every gate work exactly as they do on a box: an outlined
+member is still whatever terminal it is, so a hexagonal \`window\` is still glass and counts as
+glass, and a hexagonal \`spandrel\` is still opaque.
+
+What it does NOT give you, so you do not spend an attempt: the outline is extruded straight
+back, so both ends of the member are the same shape. A cell whose mouth is wider than its
+throat - a funnel, a scoop, a hood - is still not sayable, and neither is a member standing
+off the wall with air behind it.
 
 One thing to get right, because the elevation will not show you the mistake: put the rise on
 a member that SPANS the facet, and never on a run of separate piers. Above the roof there is

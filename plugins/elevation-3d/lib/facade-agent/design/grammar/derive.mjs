@@ -347,6 +347,9 @@ export function deriveFacadePrimitives({ grammar, segment, storeys, entrance = n
 				// before diagonals existed emits exactly the record it always did and the
 				// geometry builder keeps drawing it as a box.
 				...(alternative.diagonal ? { diagonal: alternative.diagonal } : {}),
+				// Link two of four. The whitelist in pushDetail is the fourth and it drops what it
+				// does not name.
+				...(alternative.outline ? { outline: alternative.outline } : {}),
 				// WHICH ELEVATION THIS IS DRAWN IN. Distinct from the `view` the detail builder
 				// stamps, which is the dominant axis of the member's own plane - the right
 				// answer for the validation that measures along an axis, and the wrong one for
