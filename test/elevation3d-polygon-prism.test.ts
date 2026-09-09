@@ -126,3 +126,59 @@ test("the outline is a shape, not a size: one hexagon serves any member", () => 
 	assert.ok((verifyPrism(small, area * 0.4 * 0.4 * 0.05).volume_error ?? 1) < 1e-12);
 	assert.ok((verifyPrism(large, area * 4 * 4 * 0.5).volume_error ?? 1) < 1e-9);
 });
+
+test("a tapered member has the volume the prismatoid formula says, exactly", async () => {
+	// A funnel, a hood, a scoop: a cell whose mouth is wider than its throat. Both ends of a
+	// member were the same shape by construction until this, which is why a facade whose unit
+	// is a hollow could only be drawn as a facade whose unit is a lump - named as a missing
+	// capability by the transcription of a building whose every cell is a scoop.
+	//
+	// Corresponding vertices are joined by a straight line, so the cross-sectional area is a
+	// QUADRATIC in the parameter, and Simpson's rule integrates a quadratic exactly. The
+	// prismatoid formula V = h/6 (A0 + 4Am + A1) is therefore an identity here rather than an
+	// estimate, and the divergence-theorem volume of the built mesh has to match it.
+	const { morphOutline, prismatoidVolume } = await import("../plugins/elevation-3d/lib/facade-agent/polygon-prism.mjs");
+	const scale = (bounds.u1 - bounds.u0) * (bounds.v1 - bounds.v0);
+	const height = Math.abs(bounds.n1 - bounds.n0);
+	const taper = (near: number[][], far: number[][]) =>
+		polygonPrismGeometry(plane, tangent, grammar, bounds, near, localPoint, far);
+
+	for (const [near, far] of [
+		[ring(8, 0.5), ring(8, 0.15)],
+		[ring(8, 0.45), ring(8, 0.2).map(([u, v]) => [u, v + 0.22])],
+		[ring(6, 0.5), ring(6, 0.02)],
+		[SQUARE, [[0.35, 0.35], [0.65, 0.35], [0.65, 0.65], [0.35, 0.65]]],
+	]) {
+		const built = taper(near, far);
+		const expected = prismatoidVolume(near, far, height) * scale;
+		const verified = verifyPrism(built, expected);
+		assert.equal(verified.euler, 2);
+		assert.equal(verified.closed, true);
+		assert.equal(verified.outward, true);
+		assert.ok((verified.volume_error ?? 1) < 1e-9, `${verified.volume} vs ${expected}`);
+	}
+
+	// A straight prism is the case where the formula reduces to area times height.
+	assert.ok(Math.abs(prismatoidVolume(SQUARE, SQUARE, 2) - 2) < 1e-12);
+	// The morph is the straight line between corresponding vertices.
+	assert.deepEqual(morphOutline([[0, 0], [1, 0], [0, 1]], [[1, 1], [1, 1], [1, 1]], 0.5),
+		[[0.5, 0.5], [1, 0.5], [0.5, 1]]);
+});
+
+test("a taper that folds through itself is refused, and so is one that cannot be matched up", () => {
+	const taper = (near: number[][], far: number[][]) =>
+		polygonPrismGeometry(plane, tangent, grammar, bounds, near, localPoint, far);
+	// Vertex i travels to vertex i, so the two ends must have the same count or no vertex knows
+	// where it goes.
+	assert.throws(() => taper(ring(6, 0.5), ring(8, 0.2)), /same number of points/);
+	// An outline written the other way round pairs each vertex with the one diagonally
+	// opposite, so the solid twists through its own side. Sampling the morph catches some of
+	// those and not all; the winding rule catches every one of them.
+	assert.throws(() => taper(SQUARE, [[0.9, 0.1], [0.1, 0.1], [0.1, 0.9], [0.9, 0.9]]), /winds the opposite way/);
+	// And one that stays the right way round but folds through itself in the middle is caught
+	// by the sampled morph.
+	assert.throws(() => taper([[0.1, 0.1], [0.9, 0.1], [0.9, 0.2], [0.1, 0.2]],
+		[[0.9, 0.8], [0.1, 0.8], [0.1, 0.9], [0.9, 0.9]]), /winds the opposite way|crosses itself/);
+	// And a taper to the same shape is just a prism.
+	assert.doesNotThrow(() => taper(SQUARE, SQUARE));
+});

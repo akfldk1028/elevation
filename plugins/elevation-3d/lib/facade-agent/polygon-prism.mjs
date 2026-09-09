@@ -156,7 +156,28 @@ export function triangulate(points) {
  * Vertices 0..n-1 are the back cap at n0 and n..2n-1 the front cap at n1, in the same order,
  * which is what lets the side walls be written as a single quad per outline edge.
  */
-export function polygonPrismGeometry(plane, tangent, grammar, bounds, outline, localPoint) {
+/**
+ * The cross-section half way along a tapered member.
+ *
+ * Corresponding vertices are joined by a straight line, so the outline at parameter t is the
+ * linear morph (1-t)a + t b. That makes the cross-sectional AREA a quadratic in t, which is
+ * why the prismatoid formula below is exact rather than an approximation.
+ */
+export const morphOutline = (near, far, t) =>
+	near.map(([u, v], index) => [u + (far[index][0] - u) * t, v + (far[index][1] - v) * t]);
+
+/**
+ * The volume a tapered prism should have, by the prismatoid formula.
+ *
+ * V = h/6 (A0 + 4 Am + A1). For a linear morph between two n-gons with corresponding vertices
+ * the area is a quadratic in t, and Simpson's rule integrates a quadratic exactly - so this is
+ * an identity, not an estimate, and the divergence-theorem volume of the built mesh must match
+ * it to machine precision. A straight prism is the case A0 = Am = A1 and it reduces to A x h.
+ */
+export const prismatoidVolume = (near, far, height) =>
+	(height / 6) * (polygonArea(near) + 4 * polygonArea(morphOutline(near, far, 0.5)) + polygonArea(far));
+
+export function polygonPrismGeometry(plane, tangent, grammar, bounds, outline, localPoint, farOutline = null) {
 	const { u0, u1, v0, v1, n0, n1 } = bounds;
 	if (![u0, u1, v0, v1, n0, n1].every(Number.isFinite)
 		|| u1 - u0 <= EPSILON || v1 - v0 <= EPSILON || Math.abs(n1 - n0) <= EPSILON) {
@@ -178,14 +199,41 @@ export function polygonPrismGeometry(plane, tangent, grammar, bounds, outline, l
 	const counterClockwise = shoelace(outline) > 0;
 	// One winding from here on, so the caps and the walls cannot disagree.
 	const loop = counterClockwise ? outline.slice() : outline.slice().reverse();
+	// A TAPER: the far end is a different outline on the same vertices, so a member can be a
+	// funnel, a hood, a scoop - a cell whose mouth is wider than its throat. Until this a
+	// member's two ends were the same shape by construction, which is why a facade whose unit
+	// is a hollow could only be drawn as a facade whose unit is a lump.
+	let farLoop = loop;
+	if (farOutline) {
+		if (!Array.isArray(farOutline) || farOutline.length !== outline.length) {
+			throw new TypeError("invalid member outline: the far outline needs the same number of points as the near one, so each vertex knows where it goes");
+		}
+		// The two ends must wind the same way. Vertex i travels to vertex i, so an outline
+		// written the other way round pairs each vertex with the one diagonally opposite: the
+		// morph twists through itself somewhere in the middle, and it can be simple at every
+		// sample you happen to take while still being a solid that folds through its own side.
+		// Refusing the twist is exact where sampling is not.
+		if ((shoelace(farOutline) > 0) !== counterClockwise) {
+			throw new TypeError("invalid member outline: the far outline winds the opposite way to the near one, so no vertex has a partner to travel to");
+		}
+		farLoop = counterClockwise ? farOutline.slice() : farOutline.slice().reverse();
+		// The morph has to stay a polygon the whole way, or the solid folds through itself
+		// somewhere in the middle where nothing looks.
+		for (const t of [0.25, 0.5, 0.75]) {
+			if (!isSimplePolygon(morphOutline(loop, farLoop, t))) {
+				throw new TypeError("invalid member outline: the taper crosses itself between its two ends");
+			}
+		}
+	}
 	const triangles = triangulate(loop);
 	const count = loop.length;
-	// The normalised outline mapped onto the member's own rectangle.
-	const placed = loop.map(([u, v]) => [u0 + (u1 - u0) * u, v0 + (v1 - v0) * v]);
+	// The normalised outlines mapped onto the member's own rectangle.
+	const place = (points) => points.map(([u, v]) => [u0 + (u1 - u0) * u, v0 + (v1 - v0) * v]);
+	const placedNear = place(loop), placedFar = place(farLoop);
 	const near = Math.min(n0, n1), far = Math.max(n0, n1);
 	const coordinates = [
-		...placed.map(([u, v]) => [u, v, near]),
-		...placed.map(([u, v]) => [u, v, far]),
+		...placedNear.map(([u, v]) => [u, v, near]),
+		...placedFar.map(([u, v]) => [u, v, far]),
 	];
 	const indices = [];
 	// The near cap faces -n, so its triangles are wound backwards from the outline's own order.

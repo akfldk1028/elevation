@@ -99,3 +99,37 @@ test("link 5: the author can read about it, or it does not exist", () => {
 	assert.equal(alternative.properties.outline.maxItems, 32);
 	assert.match(alternative.properties.outline.description, /concave/i);
 });
+
+test("standoff and taper travel the same four links", async (t) => {
+	const { mesh, floorGuides, facadeSegmentAuthority, context } = await createFacadeDesignFixture(t);
+	const segment = context.facade_segments[0];
+	const bounds = { u_min: 0.6, u_max: 1.6, z_min: 0.6, z_max: 1.6 };
+	const build = (extra: object) => buildTypedFacadeDetails({
+		mesh, floorGuides, facadePlanes: facadeSegmentAuthority,
+		primitives: [{ kind: "louvre", segment_id: segment.segment_id, local_bounds: bounds, depth_m: 0.2, ...extra }],
+	}).find((detail: any) => detail.kind === "louvre");
+
+	// STANDOFF: the near face moves off the wall and the member keeps its own thickness. On the
+	// wall a member runs n 0..0.2; stood off 0.9 it runs 0.9..1.1, and the air behind it is
+	// what makes a veil a veil.
+	const onWall = build({});
+	const stoodOff = build({ standoff_m: 0.9 });
+	assert.equal(onWall.local_bounds.n0, 0);
+	assert.ok(Math.abs(stoodOff.local_bounds.n0 - 0.9) < 1e-9, `${stoodOff.local_bounds.n0}`);
+	assert.ok(Math.abs((stoodOff.local_bounds.n1 - stoodOff.local_bounds.n0) - 0.2) < 1e-9, "thickness is unchanged");
+
+	// TAPER: the far cap is a different shape, so the member is a funnel rather than a tube.
+	const mouth = HEXAGON;
+	const throat = HEXAGON.map(([u, v]) => [0.5 + (u - 0.5) * 0.3, 0.5 + (v - 0.5) * 0.3]);
+	const funnel = build({ outline: mouth, outline_far: throat });
+	assert.equal(funnel.indices.length, 20, "same topology as a straight hexagonal prism");
+	const { prismatoidVolume } = await import("../plugins/elevation-3d/lib/facade-agent/polygon-prism.mjs");
+	const expected = prismatoidVolume(mouth, throat, 0.2)
+		* (bounds.u_max - bounds.u_min) * (bounds.z_max - bounds.z_min);
+	const verified = verifyPrism(funnel);
+	assert.equal(verified.closed, true);
+	assert.equal(verified.euler, 2);
+	assert.ok(Math.abs(verified.volume - expected) < 1e-9, `${verified.volume} vs ${expected}`);
+	// And it is genuinely smaller than the tube it would have been.
+	assert.ok(verified.volume < verifyPrism(build({ outline: mouth })).volume);
+});

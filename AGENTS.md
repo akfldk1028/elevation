@@ -66,7 +66,7 @@ path typed into them, which is the eleven-copies problem the config module exist
 Tests reach their data through `test/helpers/roots.ts` and name a candidate and a file, never
 a path. Override any root with `ELEVATION_AGENT_{DATASET,OUTPUT,FIXTURE}_ROOT`.
 
-    npm test        # 872 tests. Two are load-flaky (a file-lock race, a 287 s e2e);
+    npm test        # 875 tests. Two are load-flaky (a file-lock race, a 287 s e2e);
                     # if one fails, re-run that file alone before believing it.
 
 ## The four rules that are not negotiable
@@ -96,6 +96,10 @@ a path. Override any root with `ELEVATION_AGENT_{DATASET,OUTPUT,FIXTURE}_ROOT`.
     outline    the member's own shape, [u,v] points in its 0..1 square - a hexagon, a
                rhombus, a circle as a ring of points, a concave slot. One closed loop,
                may not cross itself. Refused on wall and arch and with diagonal.
+    outline_far the member's FAR end, when it differs: a funnel, a hood, a scoop. Same
+               point count and same winding, because vertex i travels to vertex i.
+    standoff_m how far IN FRONT of the wall the member sits, 0..2 - a veil, a brise-
+               soleil with air behind it. Refused on an opening and on wall.
     depth_m    SIGNED - positive stands out (bounded per terminal), negative sets in
                (bounded by the wall)
     source_photograph  the file a grammar TRANSCRIBES; then HIERARCHY_MISSING,
