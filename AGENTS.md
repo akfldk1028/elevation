@@ -66,7 +66,7 @@ path typed into them, which is the eleven-copies problem the config module exist
 Tests reach their data through `test/helpers/roots.ts` and name a candidate and a file, never
 a path. Override any root with `ELEVATION_AGENT_{DATASET,OUTPUT,FIXTURE}_ROOT`.
 
-    npm test        # 861 tests. Two are load-flaky (a file-lock race, a 287 s e2e);
+    npm test        # 868 tests. Two are load-flaky (a file-lock race, a 287 s e2e);
                     # if one fails, re-run that file alone before believing it.
 
 ## The four rules that are not negotiable
