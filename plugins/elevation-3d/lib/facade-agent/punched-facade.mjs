@@ -8,6 +8,7 @@ import {
 } from "../facade-grammar.mjs";
 import { TERMINAL_MATERIALS } from "./facade-vocabulary.mjs";
 import { archGeometry, boxGeometry, climbVector, diagonalGeometry, localPoint } from "./member-geometry.mjs";
+import { polygonPrismGeometry } from "./polygon-prism.mjs";
 
 const EPSILON = 1e-9;
 const GEOMETRY_GAP_M = 1e-4;
@@ -335,11 +336,16 @@ function pushDetail(details, plane, tangent, grammar, bounds, properties, massBa
 			mass_backing_plane_area_m2: massBacking.targetArea,
 		};
 	}
-	const geometry = properties.kind === "arch"
-		? archGeometry(plane, tangent, grammar, bounds)
-		: properties.diagonal
-			? diagonalGeometry(plane, tangent, grammar, bounds, properties.diagonal)
-			: boxGeometry(plane, tangent, grammar, bounds);
+	// An OUTLINE wins over every other shape, because it is the most specific thing the author
+	// can have said: a box, an arch and a diagonal half are each one outline the language names
+	// for you, and a written one is the shape they could not name.
+	const geometry = properties.outline
+		? polygonPrismGeometry(plane, tangent, grammar, bounds, properties.outline, localPoint)
+		: properties.kind === "arch"
+			? archGeometry(plane, tangent, grammar, bounds)
+			: properties.diagonal
+				? diagonalGeometry(plane, tangent, grammar, bounds, properties.diagonal)
+				: boxGeometry(plane, tangent, grammar, bounds);
 	details.push({
 		...properties,
 		...massBackingProperties,
@@ -974,6 +980,10 @@ export function buildTypedFacadeDetails({ mesh, floorGuides, facadePlanes, primi
 			// it, the geometry builder had the code to draw it, and 312 spandrels still came out
 			// as boxes because the property never travelled the last step.
 			...(primitive.diagonal ? { diagonal: primitive.diagonal } : {}),
+			// The same whitelist, and the same reason. A written outline that never travels this
+			// line parses, validates, derives and draws as a box - which is exactly how 312
+			// spandrels came out rectangular with the diagonal in hand.
+			...(primitive.outline ? { outline: primitive.outline } : {}),
 			// The elevation this member is drawn in, beside the `view` above, which is the
 			// dominant axis of its own plane. See the note in derive.mjs: the two are different
 			// questions and reading one as the other has cost three false "the entrance is
