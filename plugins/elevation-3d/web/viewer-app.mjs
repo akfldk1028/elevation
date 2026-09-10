@@ -3,6 +3,7 @@ import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { resolvePbrRenderStyle } from "../lib/texturing/render-style.mjs";
+import { triangulate } from "../lib/facade-agent/polygon-prism.mjs";
 import {
 	deriveCompetitionAxonCameraAuthority, deriveCompetitionElevationCameraAuthority, deriveCompetitionPlanCameraAuthority,
 } from "../lib/technical-camera-authority.mjs";
@@ -493,7 +494,28 @@ function applyMaterials(records, key) {
 const HOLE_PACK = "vec3 packHole(float d){vec3 p=fract(d*vec3(1.,255.,65025.));p-=p.yzz*vec3(1./255.,1./255.,0.);return p;}";
 const HOLE_UNPACK = "float unpackHole(vec3 p){return p.r+p.g/255.+p.b/65025.;}";
 const HOLE_GUARD = "vec2 holeUv=gl_FragCoord.xy*holeTexel; float holeEntry=unpackHole(texture2D(tHoleEntry,holeUv).rgb); if(holeEntry<0.9999){ float holeExit=unpackHole(texture2D(tHoleExit,holeUv).rgb); if(gl_FragCoord.z>=holeEntry-0.00002&&gl_FragCoord.z<=holeExit+0.00002) discard; }";
-const HOLE_BOX_INDICES = [0, 2, 1, 0, 3, 2, 4, 5, 6, 4, 6, 7, 0, 1, 5, 0, 5, 4, 1, 2, 6, 1, 6, 5, 2, 3, 7, 2, 7, 6, 3, 0, 4, 3, 4, 7];
+/**
+ * How near two vertices must be along the normal to be the same face of the pane. The pane
+ * is a straight prism so its back face is exactly planar; this only has to survive float32.
+ */
+const HOLE_FACE_EPSILON_M = 1e-4;
+/**
+ * The hole volume as a prism over the pane's own back polygon: front cap, back cap, one
+ * quad per side. This used to be a fixed list of box indices over four chosen corners, which
+ * is right for the rectangle every opening was until `outline` landed and wrong for anything
+ * else - a lens pane has sixteen vertices, four of them were picked by depth order, and the
+ * hole came out as a rough quadrilateral. The fifth link `outline` had to travel.
+ */
+function holePrismIndices(sideCount, capTriangles) {
+	const indices = [];
+	for (const [a, b, c] of capTriangles) indices.push(a, b, c);
+	for (const [a, b, c] of capTriangles) indices.push(sideCount + c, sideCount + b, sideCount + a);
+	for (let index = 0; index < sideCount; index += 1) {
+		const next = (index + 1) % sideCount;
+		indices.push(index, next, sideCount + next, index, sideCount + next, sideCount + index);
+	}
+	return indices;
+}
 const holeCut = (() => {
 	let entryTarget = null, exitTarget = null;
 	const texel = new THREE.Vector2();
@@ -523,23 +545,35 @@ const holeCut = (() => {
 		const position = pane.geometry.getAttribute("position");
 		const points = Array.from({ length: position.count }, (_, index) => new THREE.Vector3().fromBufferAttribute(position, index).applyMatrix4(pane.matrixWorld));
 		const depthOf = (point) => point.dot(normal);
-		const back = [...points].sort((left, right) => depthOf(left) - depthOf(right)).slice(0, 4);
-		// Order the four back corners around their face so the box winds consistently.
-		const centre = back.reduce((sum, point) => sum.add(point), new THREE.Vector3()).multiplyScalar(0.25);
+		// EVERY vertex on the deepest plane, not the four deepest. A box has four there and a
+		// polygon prism has one per outline point; taking four of a lens's eight cut a hole
+		// with corners the pane does not have.
+		const deepest = Math.min(...points.map(depthOf));
+		const back = points.filter((point) => depthOf(point) <= deepest + HOLE_FACE_EPSILON_M);
+		// Order the back corners around their face so the prism winds consistently.
+		const centre = back.reduce((sum, point) => sum.add(point), new THREE.Vector3()).multiplyScalar(1 / back.length);
 		const axisU = back[0].clone().sub(centre).normalize();
 		const axisV = new THREE.Vector3().crossVectors(normal, axisU);
 		const angle = (point) => Math.atan2(point.clone().sub(centre).dot(axisV), point.clone().sub(centre).dot(axisU));
 		back.sort((left, right) => angle(left) - angle(right));
+		// The cap is ear-clipped rather than fanned, because a scoop's mouth is allowed to be
+		// concave and a fan over a concave polygon covers ground the polygon does not.
+		const capTriangles = triangulate(back.map((point) => {
+			const offset = point.clone().sub(centre);
+			return [offset.dot(axisU), offset.dot(axisV)];
+		}));
 		const front = back.map((point) => point.clone().addScaledVector(normal, extras.recess_m));
 		const corners = [...front, ...back];
-		// Wind the box outward whichever way the corners came out: the entry pass culls back
-		// faces and the exit pass front faces, so an inside-out box draws nothing and cuts
+		// Wind the prism outward whichever way the corners came out: the entry pass culls back
+		// faces and the exit pass front faces, so an inside-out volume draws nothing and cuts
 		// nothing - which is exactly what happened on the first render of this version.
-		const boxCentre = corners.reduce((sum, point) => sum.add(point), new THREE.Vector3()).multiplyScalar(1 / 8);
-		const faceNormal = new THREE.Vector3().crossVectors(corners[2].clone().sub(corners[0]), corners[1].clone().sub(corners[0]));
-		const faceCentre = corners.slice(0, 4).reduce((sum, point) => sum.add(point), new THREE.Vector3()).multiplyScalar(0.25);
+		const boxCentre = corners.reduce((sum, point) => sum.add(point), new THREE.Vector3()).multiplyScalar(1 / corners.length);
+		const [capA, capB, capC] = capTriangles[0];
+		const faceNormal = new THREE.Vector3().crossVectors(front[capB].clone().sub(front[capA]), front[capC].clone().sub(front[capA]));
+		const faceCentre = front.reduce((sum, point) => sum.add(point.clone()), new THREE.Vector3()).multiplyScalar(1 / front.length);
 		const outward = faceNormal.dot(faceCentre.sub(boxCentre)) > 0;
-		const indices = outward ? HOLE_BOX_INDICES : HOLE_BOX_INDICES.map((value, index, all) => all[index - (index % 3) + (2 - (index % 3))]);
+		const wound = holePrismIndices(back.length, capTriangles);
+		const indices = outward ? wound : wound.map((value, index, all) => all[index - (index % 3) + (2 - (index % 3))]);
 		const geometry = new THREE.BufferGeometry();
 		geometry.setAttribute("position", new THREE.Float32BufferAttribute(corners.flatMap((point) => [point.x, point.y, point.z]), 3));
 		geometry.setIndex(indices);
