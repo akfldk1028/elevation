@@ -177,3 +177,24 @@ test("the schema admits every predicate the engine accepts", () => {
 	}
 	assert.ok(!pattern.test("nonsense == 3"));
 });
+
+test("a screen is not refused for being a screen: the level-step gate asks only of punched faces", async () => {
+	// A field makes a CONTINUUM of similar sizes. SCALE_STEP_BROKEN wanted distinct size levels
+	// with a hierarchy between them, measured over EVERY face - so one entrance door against a
+	// field of near-identical panes is a ten-fold jump by construction, and a facade whose whole
+	// idea is one unit repeated could never pass. Found by a field-driven grammar clearing every
+	// design gate at 416 primitives and then failing here at 10.1x that four insets and a
+	// smaller entrance could not move.
+	//
+	// Its sibling SCALE_HIERARCHY_FLAT already carves out exactly this case in exactly these
+	// words - "a skin's vision panes are identical because that is what a unitised system is" -
+	// and asks only of the punched faces. This one had no exemption.
+	const source = await (await import("node:fs/promises"))
+		.readFile("plugins/elevation-3d/lib/facade-agent/design/composition.mjs", "utf8");
+	// Both gates read the punched set, and both stand down when there is no punched face.
+	assert.match(source, /const punchedLevels = levelsOfScale\(punchedOpeningAreas\)/);
+	assert.match(source, /punchedOpeningAreas\.length > 1 && punchedLevels\.largestStep/);
+	assert.match(source, /punchedOpeningAreas\.length > 1 && punchedScaleRatio/);
+	// And the reported measurement still covers every opening, because it is worth having.
+	assert.match(source, /const levels = levelsOfScale\(openingAreas\)/);
+});

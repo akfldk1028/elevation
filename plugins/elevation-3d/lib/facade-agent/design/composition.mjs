@@ -382,9 +382,23 @@ export function measureComposition({ context, resolved, program = null } = {}) {
 	const punchedLargest = punchedOpeningAreas.length ? Math.max(...punchedOpeningAreas) : 0;
 	const punchedMedian = median(punchedOpeningAreas);
 	const punchedScaleRatio = punchedMedian > 0 ? Number((punchedLargest / punchedMedian).toFixed(6)) : 0;
+	// The step between size levels is asked of the PUNCHED faces, for exactly the reason its
+	// sibling below is: a unitised skin's panes are identical because that is what unitised
+	// means. Measured over every face, one entrance door against a field of identical panes is
+	// a ten-fold jump by construction, and a facade whose whole idea is one unit repeated -
+	// Al Bahar, an attractor screen, The Broad - can never satisfy it. That was found by a
+	// field-driven grammar passing every design gate, 416 primitives, and then failing here at
+	// 10.1x that four insets and a smaller entrance could not move: the field makes a
+	// CONTINUUM of similar sizes, and this gate was asking for distinct levels with a
+	// hierarchy between them. The sibling already carves out the same case in the same words;
+	// this one had no exemption, so a screen was refused for being a screen.
+	// Reported over every opening, because the measurement is worth having either way; asked
+	// only of the punched ones. A building with no punched face at all is not asked, exactly as
+	// its sibling below is not - there is no wall-with-openings-cut-into-it to have a hierarchy.
 	const levels = levelsOfScale(openingAreas);
-	if (levels.largestStep > COMPOSITION_BOUNDS.maxLevelStep) {
-		note("SCALE_STEP_BROKEN", `the size levels jump by ${levels.largestStep.toFixed(1)}x, so the largest opening has nothing between it and the rest and reads as a separate building; keep neighbouring sizes within about three of each other`);
+	const punchedLevels = levelsOfScale(punchedOpeningAreas);
+	if (punchedOpeningAreas.length > 1 && punchedLevels.largestStep > COMPOSITION_BOUNDS.maxLevelStep) {
+		note("SCALE_STEP_BROKEN", `the size levels jump by ${punchedLevels.largestStep.toFixed(1)}x, so the largest opening has nothing between it and the rest and reads as a separate building; keep neighbouring sizes within about three of each other`);
 	}
 	if (punchedOpeningAreas.length > 1 && punchedScaleRatio + 1e-9 < COMPOSITION_BOUNDS.minScaleRatio) {
 		note("SCALE_HIERARCHY_FLAT", `on the faces built as a wall with openings cut into it, the largest opening is only ${punchedScaleRatio.toFixed(2)}x the median, so every opening is the same size and the elevation has no subject; make one element clearly dominant, or build the face as a glazed skin where uniformity is the system`);
