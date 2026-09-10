@@ -1011,7 +1011,13 @@ export function buildTypedFacadeDetails({ mesh, floorGuides, facadePlanes, primi
 		// The hole's four sides, lining the recess from the wall face to the pane, in the
 		// shell's own material so they read as the wall's thickness and not as a surround.
 		// Thin boxes just inside the footprint; the renderer's cut exposes their inner faces.
-		if (recessed) {
+		// A rectangular lining does not line a lens. Four boxes on the footprint's four sides
+		// are the returns of a RECTANGULAR hole; against an outlined pane they lie in solid mass
+		// outside the hole the renderer actually cuts, z-fight the wall face they start on, and
+		// cost four details each - which is what put a dense veil over the GLB byte projection.
+		// An outlined opening therefore lines itself: the hole is cut on the pane's own polygon
+		// and what shows inside it is the pane.
+		if (recessed && !primitive.outline) {
 			const jamb = Math.min(JAMB_THICKNESS_M, (bounds.u1 - bounds.u0) / 8, (bounds.v1 - bounds.v0) / 8);
 			const sides = [
 				{ u0: bounds.u0, u1: bounds.u0 + jamb, v0: bounds.v0, v1: bounds.v1 },
