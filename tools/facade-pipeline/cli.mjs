@@ -229,7 +229,12 @@ export async function runPipelineCli(argv) {
 
 if (import.meta.url === `file:///${process.argv[1]?.replace(/\\/g, "/")}`) {
 	process.exitCode = await runPipelineCli(process.argv.slice(2)).catch((error) => {
-		say({ ok: false, error: String(error?.message ?? error).slice(0, 900) });
+		// A compile failure wraps its real cause and the top message is always the same
+		// sentence, so printing only `error.message` says "facade design compilation failed"
+		// and nothing else. Walk the chain.
+		const chain = [];
+		for (let e = error; e && chain.length < 6; e = e.cause) chain.push(String(e?.message ?? e));
+		say({ ok: false, error: chain.join(" <- ").slice(0, 900) });
 		return 1;
 	});
 }
