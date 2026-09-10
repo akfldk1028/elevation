@@ -148,9 +148,42 @@ function fitsGuard(guard, scope) {
 	return true;
 }
 
-function chooseAlternative(alternatives, scope) {
+/**
+ * The ordered-dither threshold for a scope, in [0, 1).
+ *
+ * A 4x4 Bayer matrix, indexed by the member's own position in its run and its storey. Ordered
+ * rather than random for two reasons: this pipeline is byte-canonical and a random draw would
+ * make a grammar draw differently every time it is compiled, and a halftone is what the
+ * buildings that do this actually look like - an even, legible mix, not noise.
+ */
+const BAYER_4 = Object.freeze([
+	[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5],
+]);
+function ditherThreshold(scope) {
+	const column = Math.abs(Math.round(scope.index ?? 0)) % 4;
+	const row = Math.abs(Math.round(scope.storey ?? 0)) % 4;
+	return (BAYER_4[row][column] + 0.5) / 16;
+}
+
+/**
+ * Which alternative applies here.
+ *
+ * `when` is a predicate and answers yes or no. `mix` is the other thing a facade does: it
+ * takes TWO constructions and varies which one appears with position, so the wall turns into
+ * the screen across the elevation without a line where one stops. Every building that makes
+ * this transition does it this way - the ArchDaily survey of dithered and halftone facades
+ * names the mechanism outright, and the District School in Bergedorf does its whole gradient
+ * with four discrete shades rather than a continuum. Nobody morphs the unit.
+ *
+ * A field gives the mix its 0..1; the Bayer threshold above decides which side of it this
+ * particular member falls. So the same rule yields mostly the first alternative near the
+ * field's origin, mostly the second far from it, and a legible halftone in between.
+ */
+function chooseAlternative(alternatives, scope, fields) {
 	for (const alternative of alternatives) {
-		if (predicateHolds(alternative.when, scope) && fitsGuard(alternative.guard, scope)) return alternative;
+		if (!predicateHolds(alternative.when, scope) || !fitsGuard(alternative.guard, scope)) continue;
+		if (alternative.mix && ditherThreshold(scope) >= fieldT(alternative.mix, scope, fields)) continue;
+		return alternative;
 	}
 	return null;
 }
@@ -267,7 +300,7 @@ export function deriveFacadePrimitives({ grammar, segment, storeys, entrance = n
 		if (given.depth > BOUNDS.maxDepth) fail(`derivation exceeded depth ${BOUNDS.maxDepth} at ${symbol}`);
 		const alternatives = grammar.rules[symbol];
 		if (!alternatives) fail(`symbol ${symbol} has no rule`);
-		const alternative = chooseAlternative(alternatives, given);
+		const alternative = chooseAlternative(alternatives, given, grammar.fields);
 		if (!alternative) return;
 		const scope = riseScope(alternative, given);
 		if (alternative.terminal) {

@@ -198,3 +198,60 @@ test("a screen is not refused for being a screen: the level-step gate asks only 
 	// And the reported measurement still covers every opening, because it is worth having.
 	assert.match(source, /const levels = levelsOfScale\(openingAreas\)/);
 });
+
+test("two constructions mix by position, which is how a facade changes kind across an elevation", () => {
+	// A field varies a NUMBER, so it can open an aperture but never turn a punched wall into a
+	// screen along the way - and that was the gap the parametric tests kept hitting. The
+	// photograph that started them runs from near-black closed panel at one end to open glazed
+	// bay at the other, which is a change of CONSTRUCTION.
+	//
+	// The survey of built halftone facades names the mechanism outright and it is not morphing:
+	// every one of them keeps two discrete conditions and varies which appears. The District
+	// School in Bergedorf does its whole gradient on four discrete shades; the Escinter store
+	// simply stops perforating. So an alternative may carry a `mix` instead of a `when`.
+	const grammar = parseFacadeGrammar({
+		schema_version: "arr.elevation3d.facade-grammar.v3", concept_id: "dither", start: "F",
+		fields: [{ id: "open", at: [0, 0, 0] }], design_rationale: ["probe"],
+		rules: [
+			{ name: "F", alternatives: [{ when: null, split: { axis: "u", parts: [{ size: "~1.0", symbol: "C", repeat: true }] }, terminal: null }] },
+			{ name: "C", alternatives: [
+				{ mix: { field: "open", range_m: [0, 20] }, split: null, terminal: "spandrel", inset_m: 0, depth_m: 0.08 },
+				{ when: null, split: null, terminal: "glass", inset_m: 0.05, depth_m: -0.04 },
+			] },
+		],
+	} as any);
+	const solidsAt = (alongM: number) => {
+		const derived = deriveFacadePrimitives({
+			grammar,
+			segment: { segment_id: `s${alongM}`, length_m: 10, local_z: [0, 3.3], face_offset_m: 0, origin_m: [alongM, 0, 0], outward_normal: [0, -1, 0], face_view: "front", face_index: 0, face_total: 1 },
+			storeys: [{ storey: 1, z_min: 0, z_max: 3.3 }],
+		});
+		return derived.filter((primitive: any) => primitive.kind === "spandrel").length;
+	};
+
+	// Near the place: mostly the else branch. Far from it: all of the mixed one. In between: both.
+	const near = solidsAt(0), middle = solidsAt(8), far = solidsAt(16);
+	assert.ok(near < middle, `${near} then ${middle}`);
+	assert.ok(middle < far, `${middle} then ${far}`);
+	assert.equal(far, 10, "past the range every member takes it");
+	assert.ok(middle > 0 && middle < 10, "and in between it is a mix, not a switch");
+	// Ordered, not random: the same grammar draws the same building every time.
+	assert.equal(solidsAt(8), middle);
+});
+
+test("a mix needs a field and a range, and does not share an alternative with a predicate", () => {
+	const program = (alternative: Record<string, unknown>) => ({
+		schema_version: "arr.elevation3d.facade-grammar.v3", concept_id: "dither", start: "F",
+		fields: [{ id: "open", at: [0, 0, 0] }], design_rationale: ["probe"],
+		rules: [{ name: "F", alternatives: [
+			{ split: null, terminal: "spandrel", inset_m: 0, depth_m: 0.08, ...alternative },
+			{ when: null, split: null, terminal: "wall", inset_m: 0, depth_m: 0 },
+		] }],
+	});
+	// `when` answers yes or no; `mix` answers how many. Two answers to one question is a bug
+	// the author would not see, because whichever lost would simply never fire.
+	assert.throws(() => parseFacadeGrammar(program({ when: "storey == 1", mix: { field: "open", range_m: [0, 20] } }) as any), /use one/);
+	assert.throws(() => parseFacadeGrammar(program({ mix: { field: "nowhere", range_m: [0, 20] } }) as any), /no declared field/);
+	assert.throws(() => parseFacadeGrammar(program({ mix: { field: "open" } }) as any), /field and range_m|both field and range_m/);
+	assert.doesNotThrow(() => parseFacadeGrammar(program({ mix: { field: "open", range_m: [0, 20] } }) as any));
+});

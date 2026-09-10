@@ -115,7 +115,7 @@ export const FACADE_GRAMMAR_V3_SCHEMA = Object.freeze({
 			// 400 from the provider before any model output. min_u_m and min_z_m drifted out
 			// of this list on 2026-08-31 and rise_to, material and reach followed - no live
 			// call ran in between, which is the only reason it never fired.
-			required: ["when", "split", "terminal", "inset_m", "depth_m", "min_u_m", "min_z_m", "rise_to", "reach", "material", "grade", "diagonal", "outline", "outline_far", "standoff_m"],
+			required: ["when", "split", "terminal", "inset_m", "depth_m", "min_u_m", "min_z_m", "rise_to", "reach", "material", "grade", "diagonal", "outline", "outline_far", "standoff_m", "mix"],
 			properties: {
 				when: {
 					type: ["string", "null"],
@@ -147,6 +147,16 @@ export const FACADE_GRAMMAR_V3_SCHEMA = Object.freeze({
 					minItems: 3, maxItems: 32,
 					items: { type: "array", minItems: 2, maxItems: 2, items: { type: "number" } },
 					description: "This member's OUTLINE, as [u, v] points in its own square: [0,0] is its bottom-left corner and [1,1] its top-right, so an outline is a SHAPE and not a size - the same hexagon serves a 0.4 m cell and a 4 m one. One closed loop, in order, not repeating the first point at the end; it may be concave (a star, a slot with returns, a scooped cell) but it may not cross itself. This is how a member becomes something other than a box: a hexagon, a rhombus, a circle written as a ring of points, a triangle with a returned edge. Refused on `wall` (emits nothing to shape) and on `arch` (already a curve inside its rectangle), and refused together with `diagonal`, which is an outline the language names for you. Null draws the usual box.",
+				},
+				mix: {
+					type: ["object", "null"],
+					additionalProperties: false,
+					required: ["field", "range_m"],
+					properties: {
+						field: { type: "string", description: "A declared field." },
+						range_m: { type: "array", minItems: 2, maxItems: 2, items: { type: "number" } },
+					},
+					description: "Take this alternative for SOME of the members, more of them the further they sit from the named field: 0 of them within range_m[0], all of them past range_m[1], an even halftone between. Written instead of `when`, not beside it. This is how a facade changes CONSTRUCTION across an elevation - a punched wall becoming a screen, solid becoming glazed - because a field varies a number and cannot turn one construction into another. Every built facade that makes that transition dithers two discrete conditions rather than morphing one. The mix is ordered, not random, so a grammar draws the same way every time.",
 				},
 				outline_far: {
 					type: ["array", "null"],
@@ -519,6 +529,23 @@ there. A veil, a brise-soleil, a rainscreen clear of the enclosure: every member
 wall plane until now, which is why a screen could only be drawn stuck to the surface it exists
 to stand clear of. Refused on an opening, which cannot float in front of the hole it is, on
 \`wall\`, and on a member with no thickness of its own.
+
+A FIELD VARIES A NUMBER. TO CHANGE THE CONSTRUCTION, MIX TWO. A field can open an aperture
+from a slit to a window, but it cannot turn a punched wall into a screen along the way -
+whether a face is punched or glazed is decided for the face as a whole. What real buildings do
+instead is DITHER: they keep two discrete conditions and vary which one appears. The halftone
+facades all work this way, and one of them runs its entire gradient on four discrete shades.
+Nobody morphs the unit.
+
+Write \`mix\` on an alternative instead of \`when\`:
+
+    { "mix": { "field": "sun", "range_m": [6, 24] }, "terminal": "spandrel", ... }
+    { "when": null,                                  "terminal": "glass",    ... }
+
+The first alternative is taken by NONE of the members within 6 m of that place, by ALL of them
+past 24 m, and by an even halftone of them in between - so the elevation reads as glass at one
+end, solid at the other, and a legible mix across the middle, from two rules. The mix is
+ordered rather than random, so the same grammar always draws the same building.
 
 What none of it gives you, so you do not spend an attempt: the surface a member sits on is
 still the mass's, and the mass is fixed. A veil that lifts off the ground on a raking line, or

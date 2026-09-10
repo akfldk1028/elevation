@@ -66,7 +66,7 @@ path typed into them, which is the eleven-copies problem the config module exist
 Tests reach their data through `test/helpers/roots.ts` and name a candidate and a file, never
 a path. Override any root with `ELEVATION_AGENT_{DATASET,OUTPUT,FIXTURE}_ROOT`.
 
-    npm test        # 876 tests. Two are load-flaky (a file-lock race, a 287 s e2e);
+    npm test        # 878 tests. Two are load-flaky (a file-lock race, a 287 s e2e);
                     # if one fails, re-run that file alone before believing it.
 
 ## The four rules that are not negotiable
@@ -100,6 +100,10 @@ a path. Override any root with `ELEVATION_AGENT_{DATASET,OUTPUT,FIXTURE}_ROOT`.
                point count and same winding, because vertex i travels to vertex i.
     standoff_m how far IN FRONT of the wall the member sits, 0..2 - a veil, a brise-
                soleil with air behind it. Refused on an opening and on wall.
+    mix        on an alternative, instead of `when`: take it for NONE of the members
+               within range_m[0] of a field, ALL past range_m[1], an ordered halftone
+               between. How a facade changes CONSTRUCTION across an elevation, since a
+               field varies a number and cannot turn a wall into a screen.
     depth_m    SIGNED - positive stands out (bounded per terminal), negative sets in
                (bounded by the wall)
     source_photograph  the file a grammar TRANSCRIBES; then HIERARCHY_MISSING,

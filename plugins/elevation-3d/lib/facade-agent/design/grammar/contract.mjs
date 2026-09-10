@@ -376,7 +376,7 @@ function parseGuard(alternative, label) {
 }
 
 function parseAlternative(value, label, symbols) {
-	const alternative = record(value, label, new Set(["when", "split", "terminal", "inset_m", "depth_m", "min_u_m", "min_z_m", "rise_to", "reach", "material", "grade", "diagonal", "outline", "outline_far", "standoff_m"]));
+	const alternative = record(value, label, new Set(["when", "split", "terminal", "inset_m", "depth_m", "min_u_m", "min_z_m", "rise_to", "reach", "material", "grade", "diagonal", "outline", "outline_far", "standoff_m", "mix"]));
 	const when = alternative.when === undefined || alternative.when === null ? null : parsePredicate(alternative.when, `${label}.when`);
 	const guard = parseGuard(alternative, label);
 	if (alternative.terminal !== undefined && alternative.terminal !== null) {
@@ -509,6 +509,28 @@ function parseAlternative(value, label, symbols) {
 			}
 			return Object.freeze(points);
 		})();
+		// TWO constructions, mixed by position - the thing a field could not do.
+		//
+		// A field varies a NUMBER, so it can open an aperture but never turn a punched wall
+		// into a screen along the way. Every building that makes that transition does it by
+		// DITHERING: it keeps two discrete conditions and varies which one appears, which is
+		// what the halftone facades do (the District School in Bergedorf runs its whole
+		// gradient on four discrete shades; the Escinter store simply stops perforating).
+		// Nobody morphs the unit.
+		//
+		// So an alternative may carry a `mix` instead of a `when`: the field gives 0..1 at this
+		// member's own place, and an ordered Bayer threshold decides which side of it this
+		// member falls on. Deterministic on purpose - a random draw would make one grammar
+		// compile differently every time, and a halftone is what the buildings look like
+		// anyway: an even, legible mix rather than noise.
+		const mix = (alternative.mix ?? null) === null ? null : (() => {
+			if (alternative.when !== null && alternative.when !== undefined) {
+				fail(`${label}.mix and when both decide whether this alternative applies: use one`);
+			}
+			const parsed = parseGradeField(record(alternative.mix, `${label}.mix`, new Set(["field", "range_m"])), `${label}.mix`);
+			if (!parsed.field) fail(`${label}.mix needs a field and a range_m`);
+			return Object.freeze(parsed);
+		})();
 		// The member's FAR end, when it is a different shape from its near one: a funnel, a
 		// hood, a scoop - a cell whose mouth is wider than its throat. Both ends were the same
 		// shape by construction until now, which is why a facade whose unit is a hollow could
@@ -529,7 +551,7 @@ function parseAlternative(value, label, symbols) {
 			if (!isSimplePolygon(points)) fail(`${label}.outline_far crosses itself or encloses no area`);
 			return Object.freeze(points);
 		})();
-		return Object.freeze({ when, guard, terminal: alternative.terminal, inset_m: inset, depth_m: depth, rise_to: riseTo, reach, material, grade, diagonal, ...(outline ? { outline } : {}), ...(outlineFar ? { outline_far: outlineFar } : {}), ...(standoff > 0 ? { standoff_m: standoff } : {}) });
+		return Object.freeze({ when, guard, terminal: alternative.terminal, inset_m: inset, depth_m: depth, rise_to: riseTo, reach, material, grade, diagonal, ...(outline ? { outline } : {}), ...(outlineFar ? { outline_far: outlineFar } : {}), ...(standoff > 0 ? { standoff_m: standoff } : {}), ...(mix ? { mix } : {}) });
 	}
 	// Strict structured output forces both fields onto a split too, where zero is the
 	// only sensible answer. Only a real offset here means the model confused the two.
