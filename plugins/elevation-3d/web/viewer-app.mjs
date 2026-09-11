@@ -542,6 +542,9 @@ const holeCut = (() => {
 		if (volume) return volume;
 		const extras = pane.geometry.userData;
 		const normal = new THREE.Vector3(...extras.recess_normal).normalize();
+		// The hole is cut along its own axis, which is the normal unless the grammar scooped it.
+		// Travel is lengthened by 1/cos so the mouth still lands exactly on the wall plane.
+		const axis = extras.recess_axis ? new THREE.Vector3(...extras.recess_axis).normalize() : normal;
 		const position = pane.geometry.getAttribute("position");
 		const points = Array.from({ length: position.count }, (_, index) => new THREE.Vector3().fromBufferAttribute(position, index).applyMatrix4(pane.matrixWorld));
 		const depthOf = (point) => point.dot(normal);
@@ -562,7 +565,7 @@ const holeCut = (() => {
 			const offset = point.clone().sub(centre);
 			return [offset.dot(axisU), offset.dot(axisV)];
 		}));
-		const front = back.map((point) => point.clone().addScaledVector(normal, extras.recess_m));
+		const front = back.map((point) => point.clone().addScaledVector(axis, extras.recess_m / Math.max(1e-6, axis.dot(normal))));
 		const corners = [...front, ...back];
 		// Wind the prism outward whichever way the corners came out: the entry pass culls back
 		// faces and the exit pass front faces, so an inside-out volume draws nothing and cuts

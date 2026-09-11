@@ -124,6 +124,10 @@ export const BOUNDS = Object.freeze({
 	// How far a member may stand off the wall. Two metres is a deep veil walkway and past that
 	// the screen is a second building the mass never authored.
 	maxStandoffM: 2,
+	// How far off the wall's own normal a recess may be cut. A scoop past 45 degrees
+	// undercuts its own mouth: the far wall of the hole passes behind the near one and
+	// the opening stops being an opening.
+	maxScoopDeg: 45,
 	// How far a field may reach, and the nearest it may be pinned. The range is the author's
 	// because the alternative - normalising over whatever the current scope happens to span -
 	// makes one field mean different things on different facets, which is precisely not a
@@ -376,7 +380,7 @@ function parseGuard(alternative, label) {
 }
 
 function parseAlternative(value, label, symbols) {
-	const alternative = record(value, label, new Set(["when", "split", "terminal", "inset_m", "depth_m", "min_u_m", "min_z_m", "rise_to", "reach", "material", "grade", "diagonal", "outline", "outline_far", "standoff_m", "mix"]));
+	const alternative = record(value, label, new Set(["when", "split", "terminal", "inset_m", "depth_m", "min_u_m", "min_z_m", "rise_to", "reach", "material", "grade", "diagonal", "outline", "outline_far", "standoff_m", "scoop_deg", "mix"]));
 	const when = alternative.when === undefined || alternative.when === null ? null : parsePredicate(alternative.when, `${label}.when`);
 	const guard = parseGuard(alternative, label);
 	if (alternative.terminal !== undefined && alternative.terminal !== null) {
@@ -490,6 +494,26 @@ function parseAlternative(value, label, symbols) {
 			if (depth <= 0) fail(`${label}.standoff_m needs a member with thickness: give it a positive depth_m to stand off`);
 			return value;
 		})();
+		// The ANGLE the hole is cut at. Every recess until now went straight in along the
+		// wall's own normal, which is a drilled hole - and the facade that asked for this is
+		// built entirely out of holes that are not drilled: The Broad's veil cells are scooped,
+		// cut on a slant so one inner surface opens wide to the sky and the opposite lip closes
+		// to a blade. Drawn perpendicular the same cell is a flat dark polygon with no depth in
+		// it at all, which is what a reviewer comparing the two pictures said first.
+		// Positive tilts the cut UPWARD in the facet's own plane, so the lower inner surface is
+		// the broad one. It is a property of the HOLE, so it is refused anywhere there is no
+		// hole to cut.
+		const scoop = (alternative.scoop_deg ?? null) === null ? 0 : (() => {
+			const value = alternative.scoop_deg;
+			if (!Number.isFinite(value) || Math.abs(value) > BOUNDS.maxScoopDeg) {
+				fail(`${label}.scoop_deg is out of range: a hole is cut at -${BOUNDS.maxScoopDeg}..${BOUNDS.maxScoopDeg} degrees off the wall's normal`);
+			}
+			if (!OPENING_TERMINALS.has(alternative.terminal)) {
+				fail(`${label}.scoop_deg on ${alternative.terminal}: only an opening has a hole to cut at an angle`);
+			}
+			if (depth >= 0) fail(`${label}.scoop_deg needs a recess to cut: give it a negative depth_m`);
+			return value;
+		})();
 		const outline = (alternative.outline ?? null) === null ? null : (() => {
 			if (alternative.terminal === "wall") fail(`${label}.outline on a wall shapes nothing: wall emits no geometry`);
 			if (alternative.terminal === "arch") fail(`${label}.outline on an arch: an arch already draws its own curve inside its rectangle`);
@@ -551,7 +575,7 @@ function parseAlternative(value, label, symbols) {
 			if (!isSimplePolygon(points)) fail(`${label}.outline_far crosses itself or encloses no area`);
 			return Object.freeze(points);
 		})();
-		return Object.freeze({ when, guard, terminal: alternative.terminal, inset_m: inset, depth_m: depth, rise_to: riseTo, reach, material, grade, diagonal, ...(outline ? { outline } : {}), ...(outlineFar ? { outline_far: outlineFar } : {}), ...(standoff > 0 ? { standoff_m: standoff } : {}), ...(mix ? { mix } : {}) });
+		return Object.freeze({ when, guard, terminal: alternative.terminal, inset_m: inset, depth_m: depth, rise_to: riseTo, reach, material, grade, diagonal, ...(outline ? { outline } : {}), ...(outlineFar ? { outline_far: outlineFar } : {}), ...(standoff > 0 ? { standoff_m: standoff } : {}), ...(scoop !== 0 ? { scoop_deg: scoop } : {}), ...(mix ? { mix } : {}) });
 	}
 	// Strict structured output forces both fields onto a split too, where zero is the
 	// only sensible answer. Only a real offset here means the model confused the two.
