@@ -128,6 +128,8 @@ export const BOUNDS = Object.freeze({
 	// undercuts its own mouth: the far wall of the hole passes behind the near one and
 	// the opening stops being an opening.
 	maxScoopDeg: 45,
+	// A member turns freely; half a turn either way names every orientation once.
+	maxRotateDeg: 180,
 	// How far a field may reach, and the nearest it may be pinned. The range is the author's
 	// because the alternative - normalising over whatever the current scope happens to span -
 	// makes one field mean different things on different facets, which is precisely not a
@@ -380,7 +382,7 @@ function parseGuard(alternative, label) {
 }
 
 function parseAlternative(value, label, symbols) {
-	const alternative = record(value, label, new Set(["when", "split", "terminal", "inset_m", "depth_m", "min_u_m", "min_z_m", "rise_to", "reach", "material", "grade", "diagonal", "outline", "outline_far", "standoff_m", "scoop_deg", "mix"]));
+	const alternative = record(value, label, new Set(["when", "split", "terminal", "inset_m", "depth_m", "min_u_m", "min_z_m", "rise_to", "reach", "material", "grade", "diagonal", "outline", "outline_far", "standoff_m", "scoop_deg", "rotate_deg", "mix"]));
 	const when = alternative.when === undefined || alternative.when === null ? null : parsePredicate(alternative.when, `${label}.when`);
 	const guard = parseGuard(alternative, label);
 	if (alternative.terminal !== undefined && alternative.terminal !== null) {
@@ -448,11 +450,37 @@ function parseAlternative(value, label, symbols) {
 		const grade = alternative.grade === undefined || alternative.grade === null ? null : (() => {
 			const fields = record(alternative.grade, `${label}.grade`, new Set(["attr", "from", "to", "field", "range_m"]));
 			const attr = fields.attr;
-			if (attr !== "depth_m" && attr !== "inset_m") fail(`${label}.grade.attr must be depth_m or inset_m`);
+			// Every numeric thing a member has, not two of them. The practice this operator
+			// comes from feeds each panel a value from an attractor field and the panel answers
+			// by changing SIZE, DEPTH, ROTATION or which module it is; the grammar had the
+			// first two and `mix` covers the fourth, so the ones missing were the turn and the
+			// angle of the cut. The bound on each end is exactly the bound the written literal
+			// obeys, so a grade can produce nothing an author could not enumerate by hand.
+			const GRADEABLE = {
+				depth_m: [0, TERMINAL_PROJECTION[alternative.terminal]],
+				inset_m: [0, BOUNDS.maxInsetM],
+				standoff_m: [0, BOUNDS.maxStandoffM],
+				scoop_deg: [-BOUNDS.maxScoopDeg, BOUNDS.maxScoopDeg],
+				rotate_deg: [-BOUNDS.maxRotateDeg, BOUNDS.maxRotateDeg],
+			};
+			if (!Object.hasOwn(GRADEABLE, attr)) {
+				fail(`${label}.grade.attr must be one of ${Object.keys(GRADEABLE).join(", ")}`);
+			}
+			// A graded attribute obeys the same preconditions as the written one, or a grade
+			// becomes the way round every refusal the literal earns.
+			if (attr === "standoff_m" && OPENING_TERMINALS.has(alternative.terminal)) {
+				fail(`${label}.grade.attr standoff_m on ${alternative.terminal}: a hole cannot float in front of the wall it is a hole in`);
+			}
+			if (attr === "scoop_deg" && (!OPENING_TERMINALS.has(alternative.terminal) || depth >= 0)) {
+				fail(`${label}.grade.attr scoop_deg needs an opening with a recess to cut`);
+			}
+			if (attr === "rotate_deg" && (alternative.outline ?? null) === null) {
+				fail(`${label}.grade.attr rotate_deg needs an outline to turn`);
+			}
 			for (const key of ["from", "to"]) {
-				const bound = attr === "depth_m" ? TERMINAL_PROJECTION[alternative.terminal] : BOUNDS.maxInsetM;
-				if (!Number.isFinite(fields[key]) || fields[key] < 0 || fields[key] > bound) {
-					fail(`${label}.grade.${key} is out of range: a ${alternative.terminal} ${attr} stays within 0..${bound}`);
+				const [low, high] = GRADEABLE[attr];
+				if (!Number.isFinite(fields[key]) || fields[key] < low || fields[key] > high) {
+					fail(`${label}.grade.${key} is out of range: a ${alternative.terminal} ${attr} stays within ${low}..${high}`);
 				}
 			}
 			return Object.freeze({ attr, from: fields.from, to: fields.to, ...parseGradeField(fields, `${label}.grade`) });
@@ -512,6 +540,21 @@ function parseAlternative(value, label, symbols) {
 				fail(`${label}.scoop_deg on ${alternative.terminal}: only an opening has a hole to cut at an angle`);
 			}
 			if (depth >= 0) fail(`${label}.scoop_deg needs a recess to cut: give it a negative depth_m`);
+			return value;
+		})();
+		// Turn the member's own shape. Rotation is one of the four things a parametric facade
+		// actually varies across a surface - the others are size, depth and which module
+		// appears - and it was the one this language had no word for at all. Applied in the
+		// member's real metres at geometry time, not in the 0..1 square, because that square
+		// is not square and turning inside it shears whatever it turns.
+		const rotate = (alternative.rotate_deg ?? null) === null ? 0 : (() => {
+			const value = alternative.rotate_deg;
+			if (!Number.isFinite(value) || Math.abs(value) > BOUNDS.maxRotateDeg) {
+				fail(`${label}.rotate_deg is out of range: a member turns -${BOUNDS.maxRotateDeg}..${BOUNDS.maxRotateDeg} degrees`);
+			}
+			if ((alternative.outline ?? null) === null) {
+				fail(`${label}.rotate_deg needs an outline to turn: a rectangle turned inside its own rectangle is not a shape the geometry can hold`);
+			}
 			return value;
 		})();
 		const outline = (alternative.outline ?? null) === null ? null : (() => {
@@ -575,7 +618,7 @@ function parseAlternative(value, label, symbols) {
 			if (!isSimplePolygon(points)) fail(`${label}.outline_far crosses itself or encloses no area`);
 			return Object.freeze(points);
 		})();
-		return Object.freeze({ when, guard, terminal: alternative.terminal, inset_m: inset, depth_m: depth, rise_to: riseTo, reach, material, grade, diagonal, ...(outline ? { outline } : {}), ...(outlineFar ? { outline_far: outlineFar } : {}), ...(standoff > 0 ? { standoff_m: standoff } : {}), ...(scoop !== 0 ? { scoop_deg: scoop } : {}), ...(mix ? { mix } : {}) });
+		return Object.freeze({ when, guard, terminal: alternative.terminal, inset_m: inset, depth_m: depth, rise_to: riseTo, reach, material, grade, diagonal, ...(outline ? { outline } : {}), ...(outlineFar ? { outline_far: outlineFar } : {}), ...(standoff > 0 ? { standoff_m: standoff } : {}), ...(scoop !== 0 ? { scoop_deg: scoop } : {}), ...(rotate !== 0 ? { rotate_deg: rotate } : {}), ...(mix ? { mix } : {}) });
 	}
 	// Strict structured output forces both fields onto a split too, where zero is the
 	// only sensible answer. Only a real offset here means the model confused the two.

@@ -74,7 +74,7 @@ export const FACADE_GRAMMAR_V3_SCHEMA = Object.freeze({
 		fields: {
 			type: ["array", "null"],
 			maxItems: 8,
-			description: "Places in SPACE that a parameter can be measured from. Declare one here, then a terminal's `grade` may name it and vary depth_m or inset_m with the DISTANCE from that place - an aperture that opens toward one corner, a relief that dies out away from the entrance, a screen that closes where the sun strikes. This is the difference between a gradient and a field: a graded run varies along ONE run and restarts in the next, while a field is measured from a fixed place and means the same thing on every facet of the building.",
+			description: "Places in SPACE that a parameter can be measured from. Declare one here, then a terminal's `grade` may name it and vary any of its five numbers - inset_m, depth_m, standoff_m, scoop_deg, rotate_deg - with the DISTANCE from that place - an aperture that opens toward one corner, a relief that dies out away from the entrance, a screen that closes where the sun strikes. This is the difference between a gradient and a field: a graded run varies along ONE run and restarts in the next, while a field is measured from a fixed place and means the same thing on every facet of the building.",
 			items: {
 				type: "object", additionalProperties: false,
 				required: ["id", "at"],
@@ -115,7 +115,7 @@ export const FACADE_GRAMMAR_V3_SCHEMA = Object.freeze({
 			// 400 from the provider before any model output. min_u_m and min_z_m drifted out
 			// of this list on 2026-08-31 and rise_to, material and reach followed - no live
 			// call ran in between, which is the only reason it never fired.
-			required: ["when", "split", "terminal", "inset_m", "depth_m", "min_u_m", "min_z_m", "rise_to", "reach", "material", "grade", "diagonal", "outline", "outline_far", "standoff_m", "scoop_deg", "mix"],
+			required: ["when", "split", "terminal", "inset_m", "depth_m", "min_u_m", "min_z_m", "rise_to", "reach", "material", "grade", "diagonal", "outline", "outline_far", "standoff_m", "scoop_deg", "rotate_deg", "mix"],
 			properties: {
 				when: {
 					type: ["string", "null"],
@@ -172,12 +172,16 @@ export const FACADE_GRAMMAR_V3_SCHEMA = Object.freeze({
 					type: ["number", "null"],
 					description: "The ANGLE a recess is cut at, -45 to 45 degrees off the wall's own normal, positive tilting the cut upward in the facet's plane. A recess written without it is DRILLED - straight in, both inner surfaces the same, and in a frontal elevation it draws as a flat dark polygon with no depth in it. A scooped cell opens one inner surface wide to the sky and closes the opposite lip to a blade, which is what makes a veil read as a veil. The mouth shifts along the wall by recess x tan(angle), so leave that much clear of the neighbouring opening. Needs a negative `depth_m`; refused on anything that is not an opening. Null cuts straight in, as every recess did before.",
 				},
+				rotate_deg: {
+					type: ["number", "null"],
+					description: "Turn this member's own shape, -180 to 180 degrees, about its own centre. Needs `outline`. The turn happens in the member's REAL METRES, so a lozenge stays a lozenge in a bay wider than it is tall - written into the 0..1 outline instead it would shear into a slanted slot, because that square is not square. A turned shape that would leave its box is scaled down about the centre until it fits, so a member never leaves its own scope. Null leaves the shape as written.",
+				},
 				grade: {
 					type: ["object", "null"],
 					additionalProperties: false,
 					required: ["attr", "from", "to", "field", "range_m"],
 					properties: {
-						attr: { type: "string", enum: ["depth_m", "inset_m"] },
+						attr: { type: "string", enum: ["depth_m", "inset_m", "standoff_m", "scoop_deg", "rotate_deg"] },
 						from: { type: "number" },
 						to: { type: "number" },
 						field: {
@@ -540,6 +544,20 @@ there. A veil, a brise-soleil, a rainscreen clear of the enclosure: every member
 wall plane until now, which is why a screen could only be drawn stuck to the surface it exists
 to stand clear of. Refused on an opening, which cannot float in front of the hole it is, on
 \`wall\`, and on a member with no thickness of its own.
+
+AND A MEMBER CAN TURN. Write "rotate_deg" beside an "outline" and the shape turns about its
+own centre - in the member's real metres, so it does not shear, and scaled down if the turn
+would take it outside its own box. Turn it by a FIELD and each cell answers to where it sits,
+which is the classic attractor panel: the rotation is one of the four things a parametric
+facade varies across a surface, and until now this language could not say it at all.
+
+FIVE THINGS CAN BE A FIELD, NOT TWO. "grade.attr" takes \`inset_m\` (the aperture),
+\`depth_m\` (how far it stands out), \`standoff_m\` (how far it stands off), \`scoop_deg\`
+(the angle its hole is cut at) and \`rotate_deg\` (which way its shape faces). Each obeys
+exactly the bound its written literal obeys and exactly the same refusals - a grade is not a
+way round a rule the number could not break. That set is deliberate: the panelization practice
+this comes from feeds every panel a value from an attractor and the panel answers by changing
+size, depth, rotation, or WHICH module it is, and the last of those is \`mix\` below.
 
 A FIELD VARIES A NUMBER. TO CHANGE THE CONSTRUCTION, MIX TWO. A field can open an aperture
 from a slit to a window, but it cannot turn a punched wall into a screen along the way -
