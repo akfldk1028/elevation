@@ -74,15 +74,49 @@ export const FACADE_GRAMMAR_V3_SCHEMA = Object.freeze({
 		fields: {
 			type: ["array", "null"],
 			maxItems: 8,
-			description: "Places in SPACE that a parameter can be measured from. Declare one here, then a terminal's `grade` may name it and vary any of its five numbers - inset_m, depth_m, standoff_m, scoop_deg, rotate_deg - with the DISTANCE from that place - an aperture that opens toward one corner, a relief that dies out away from the entrance, a screen that closes where the sun strikes. This is the difference between a gradient and a field: a graded run varies along ONE run and restarts in the next, while a field is measured from a fixed place and means the same thing on every facet of the building.",
+			description: "What a parameter can be measured FROM. Declare one here, then a terminal's `grade` names it and varies any of its five numbers - inset_m, depth_m, standoff_m, scoop_deg, rotate_deg - with what it measures. This is the difference between a gradient and a field: a graded run varies along ONE run and restarts in the next, while a field is measured from something fixed in space and means the same thing on every facet of the building. Five kinds, each a formula: `point` is the distance to a place; `line` the distance to a segment, which is the curve attractor; `plane` the SIGNED distance to a plane, so one side clamps out entirely and it reads as a horizon; `sun` is Lambert's cosine between the facet's own normal and a direction, which is how a solar screen closes where the sun strikes; `mix` combines two already-declared fields, which is how nearly every built parametric facade actually works.",
 			items: {
 				type: "object", additionalProperties: false,
-				required: ["id", "at"],
+				required: ["id", "kind", "at", "to", "normal", "direction", "of", "op", "falloff", "range_m"],
 				properties: {
 					id: { type: "string", description: "A name you invent, which a grade then refers to." },
+					kind: {
+						type: ["string", "null"],
+						enum: ["point", "line", "plane", "sun", "mix", null],
+						description: "point (default, and what every field was before the others existed) | line | plane | sun | mix.",
+					},
 					at: {
-						type: "array", minItems: 3, maxItems: 3, items: { type: "number" },
-						description: "[x, y, z] - a PLACE IN SPACE, in the metres the mass itself is written in. The context summary gives every facet its `origin_m` (its corner) and `outward_normal` (which way it faces), so you can read a place straight off the building: a corner it names, the mid-point between two of them, or a point out in front of one face to make the field arrive nearly flat across it. Distance is measured in three dimensions from the centre of each member, so a point placed on one side of a building genuinely leaves the far side alone, whatever the plan.",
+						type: ["array", "null"], minItems: 3, maxItems: 3, items: { type: "number" },
+						description: "[x, y, z] - a PLACE IN SPACE, in the metres the mass itself is written in. For `point` it is the attractor; for `line` the first end; for `plane` a point on it. The context summary gives every facet its `origin_m` (its corner) and `outward_normal` (which way it faces), so you can read a place straight off the building: a corner it names, the mid-point between two of them, or a point out in front of one face to make the field arrive nearly flat across it. Distance is measured in three dimensions from the centre of each member, so a point placed on one side of a building genuinely leaves the far side alone, whatever the plan. Null on `sun` and `mix`.",
+					},
+					to: {
+						type: ["array", "null"], minItems: 3, maxItems: 3, items: { type: "number" },
+						description: "`line` only: the far end of the segment. Distance is to the SEGMENT, not to the infinite line - past either end it becomes the distance to that end, which is what makes a line attractor behave like a real edge rather than a wall of influence. Null otherwise.",
+					},
+					normal: {
+						type: ["array", "null"], minItems: 3, maxItems: 3, items: { type: "number" },
+						description: "`plane` only: which way the plane faces. The measurement is SIGNED - everything behind the plane reads as negative distance and clamps to the `from` end of the grade, so a plane placed at the ground pointing up gives a parameter that only starts moving above a height you choose. Normalised for you. Null otherwise.",
+					},
+					direction: {
+						type: ["array", "null"], minItems: 3, maxItems: 3, items: { type: "number" },
+						description: "`sun` only: the direction the source lies in, as a vector - south-west and 35 degrees up is roughly [-0.58, -0.58, 0.57]. The value is (1 - n . s) / 2 with n the facet's own outward normal: 0 on a face pointing straight at it, 1 on a face pointing away. It answers 0..1 already, so a grade naming it takes NO range_m. Null otherwise.",
+					},
+					of: {
+						type: ["array", "null"], minItems: 2, maxItems: 2, items: { type: "string" },
+						description: "`mix` only: the ids of two fields declared ABOVE this one. They are combined after each has been normalised, so a mix answers 0..1 and takes no range_m either. Null otherwise.",
+					},
+					op: {
+						type: ["string", "null"],
+						enum: ["product", "min", "max", "mean", null],
+						description: "`mix` only: how the two combine. product (default) is an AND - both must be high; max is an OR; min the strictest; mean an average. Null otherwise.",
+					},
+					range_m: {
+						type: ["array", "null"], minItems: 2, maxItems: 2, items: { type: "number" },
+						description: "Give a distance field its OWN [near, far] and it answers 0..1 by itself - which is the only way it can go inside a `mix`, since combining raw metres with a cosine is a category error. A grade naming such a field then takes no range_m of its own. Null leaves it answering in metres for the grade to normalise, which is what every field did before mixes existed.",
+					},
+					falloff: {
+						type: ["number", "null"],
+						description: "The response curve, 0.25 to 4, applied to the normalised value. 1 is linear and the default; 2 is the inverse-square the attractor tutorials reach for, which keeps the effect tight around the attractor; 0.5 starts slowly and spreads it. Null is 1.",
 					},
 				},
 			},
@@ -154,7 +188,7 @@ export const FACADE_GRAMMAR_V3_SCHEMA = Object.freeze({
 					required: ["field", "range_m"],
 					properties: {
 						field: { type: "string", description: "A declared field." },
-						range_m: { type: "array", minItems: 2, maxItems: 2, items: { type: "number" } },
+						range_m: { type: ["array", "null"], minItems: 2, maxItems: 2, items: { type: "number" }, description: "Over what distance the field travels from `from` to `to`. Null, and ONLY null, when the field already answers 0..1 - a `sun`, a `mix`, or a distance field that declared its own range_m." },
 					},
 					description: "Take this alternative for SOME of the members, more of them the further they sit from the named field: 0 of them within range_m[0], all of them past range_m[1], an even halftone between. Written instead of `when`, not beside it. This is how a facade changes CONSTRUCTION across an elevation - a punched wall becoming a screen, solid becoming glazed - because a field varies a number and cannot turn one construction into another. Every built facade that makes that transition dithers two discrete conditions rather than morphing one. The mix is ordered, not random, so a grammar draws the same way every time.",
 				},
@@ -550,6 +584,15 @@ own centre - in the member's real metres, so it does not shear, and scaled down 
 would take it outside its own box. Turn it by a FIELD and each cell answers to where it sits,
 which is the classic attractor panel: the rotation is one of the four things a parametric
 facade varies across a surface, and until now this language could not say it at all.
+
+AND A FIELD IS FIVE FORMULAS, NOT ONE PLACE. Declare a field with a "kind": \`point\` measures
+the distance to a place, \`line\` the distance to a SEGMENT (the curve attractor: past either end
+it becomes the distance to that end), \`plane\` the SIGNED distance to a plane so one whole side
+clamps out and it reads as a horizon, \`sun\` Lambert's cosine between the facet's own normal and
+a direction - (1 - n.s)/2, zero facing the source and one facing away - and \`mix\` combines two
+already-declared fields by product, min, max or mean. \`falloff\` bends the response: 1 linear,
+2 the inverse-square the attractor practice reaches for, 0.5 a slow spread. A \`sun\` and a \`mix\`
+answer 0..1 already, so a grade naming one takes NO range_m and is refused if it writes one.
 
 FIVE THINGS CAN BE A FIELD, NOT TWO. "grade.attr" takes \`inset_m\` (the aperture),
 \`depth_m\` (how far it stands out), \`standoff_m\` (how far it stands off), \`scoop_deg\`

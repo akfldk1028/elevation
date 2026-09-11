@@ -13,13 +13,25 @@
  * every one offset sideways so only part of the width continues; creative-020 has none (a
  * prism, every facet full height); creative-004 has THIRTY-NINE stacked pairs and not one
  * is coplanar - its courses alternate 4.13 and 7.34 degrees of batter, a 3.2 degree crease
- * between every course, and a window across that would stand 0.18 m proud or buried at its
- * head. That mass's cells are creased and the photograph of it that ignored the creases is
- * the perspective's error, not this rule's; the rule refuses there, by construction.
+ * between every course, and a window rising a FULL STOREY across that would stand 0.18 m proud
+ * at its head. It does not follow that nothing may cross: a head reaching 0.2 m past the seam
+ * deviates by 11 mm. How far is the question, not whether, and the answer is a formula rather
+ * than a constant - see MAX_SURFACE_DEVIATION_M below.
  */
 
-/** Two facets closer than this in normal are one plane. Half a degree: a real crease is 3. */
-const COPLANAR_COS = Math.cos((0.5 * Math.PI) / 180);
+/**
+ * How far a member may stand off the mass surface it has crossed onto. A pane is 15 mm and a
+ * jamb 20 mm, so 30 mm is the point where a member stops being flush with the wall and starts
+ * being a thing stuck to it.
+ */
+const MAX_SURFACE_DEVIATION_M = 0.03;
+/**
+ * Below this there is no rise worth having, so no continuation is offered at all. It is the
+ * floor-band clearance: an opening that cannot even clear the slab line gains nothing by
+ * crossing the seam. This is what replaces a hard cap on the crease angle - at 11.5 degrees
+ * the admissible rise falls under 0.15 m and the continuation disappears on its own.
+ */
+const MIN_USEFUL_RISE_M = 0.15;
 /** How far apart the top of one course and the bottom of the next may sit and still be a seam. */
 const SEAM_TOLERANCE_M = 0.02;
 const EPSILON = 1e-8;
@@ -53,7 +65,23 @@ export function coplanarContinuations(segment, context) {
 		if (above.segment_id === segment.segment_id || above.face_id !== segment.face_id) continue;
 		if (!Array.isArray(above.outward_normal) || !Number.isFinite(above.local_z?.[0])) continue;
 		if (Math.abs(above.local_z[0] - top) > SEAM_TOLERANCE_M) continue;
-		if (dot(normal, above.outward_normal) < COPLANAR_COS) continue;
+		// HOW FAR a member may cross, from the crease it crosses. A member is planar and the
+		// mass is not: carried `d` metres past the seam into a course creased by `theta`, it
+		// stands off that course's surface by
+		//
+		//     e = d * sin(theta)
+		//
+		// so the admissible reach is `d_max = MAX_SURFACE_DEVIATION_M / sin(theta)`, unbounded
+		// when the two courses are truly coplanar. The old rule fixed theta at half a degree,
+		// which is that same formula solved backwards for a FULL STOREY of rise: 3.3 m at 0.5
+		// degrees is 29 mm. Fixing the height was the mistake - the same constant refused a
+		// 0.2 m head crossing a 3 degree crease, which deviates by 10 mm, while admitting a
+		// 3.3 m pane across a hairline. creative-004's courses crease 3.2 degrees and now offer
+		// 0.54 m of rise each, where before they offered none.
+		const cosine = Math.min(1, Math.max(-1, dot(normal, above.outward_normal)));
+		const sine = Math.sin(Math.acos(cosine));
+		const reach = sine <= EPSILON ? Infinity : MAX_SURFACE_DEVIATION_M / sine;
+		if (!(reach >= MIN_USEFUL_RISE_M)) continue;
 		const ends = [toLocal(above.face_offset_m), toLocal(above.face_offset_m + above.projected_length_m)];
 		const uMin = Math.max(0, Math.min(...ends) + fold);
 		const uMax = Math.min(segment.length_m, Math.max(...ends) - fold);
@@ -62,7 +90,11 @@ export function coplanarContinuations(segment, context) {
 			segment_id: above.segment_id,
 			u_min: Number(uMin.toFixed(8)),
 			u_max: Number(uMax.toFixed(8)),
-			z_max: above.local_z[1],
+			z_max: Number(Math.min(above.local_z[1], top + reach).toFixed(8)),
+			// Reported so the brief can print what a facet actually offers, and so the number
+			// in a rejection is the one the author can act on.
+			crease_deg: Number(((Math.acos(cosine) * 180) / Math.PI).toFixed(4)),
+			max_rise_m: Number((Number.isFinite(reach) ? Math.min(reach, above.local_z[1] - top) : above.local_z[1] - top).toFixed(4)),
 			u_shift_m: Number(Math.min(...ends).toFixed(8)),
 		});
 	}

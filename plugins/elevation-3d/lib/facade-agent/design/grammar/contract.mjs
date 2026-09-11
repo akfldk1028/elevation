@@ -130,6 +130,9 @@ export const BOUNDS = Object.freeze({
 	maxScoopDeg: 45,
 	// A member turns freely; half a turn either way names every orientation once.
 	maxRotateDeg: 180,
+	// A response curve: 1 is linear, 2 the inverse-square the attractor tutorials reach for.
+	minFalloff: 0.25,
+	maxFalloff: 4,
 	// How far a field may reach, and the nearest it may be pinned. The range is the author's
 	// because the alternative - normalising over whatever the current scope happens to span -
 	// makes one field mean different things on different facets, which is precisely not a
@@ -198,6 +201,7 @@ function parseParamValue(text, label) {
 let declaredMaterialIds = new Set();
 /** The fields the grammar declared, so a grade naming one can be refused where it is written. */
 let declaredFieldIds = new Set();
+let dimensionlessFieldIds = new Set();
 
 /**
  * The two keys that turn a grade from a ramp along a run into a FIELD over the face.
@@ -212,8 +216,15 @@ function parseGradeField(source, label) {
 	const named = (source.field ?? null) === null ? null : source.field;
 	const range = (source.range_m ?? null) === null ? null : source.range_m;
 	if (named === null && range === null) return {};
-	if (named === null || range === null) fail(`${label} needs both field and range_m, or neither: a field with no range is a gradient`);
+	if (named === null) fail(`${label} needs both field and range_m, or neither: a field with no range is a gradient`);
 	if (typeof named !== "string" || !declaredFieldIds.has(named)) fail(`${label}.field names no declared field: ${named}`);
+	// A sun or a mix already answers in 0..1, so it has no metres to travel over. Requiring a
+	// range there would make the author invent one and the engine ignore it.
+	if (dimensionlessFieldIds.has(named)) {
+		if (range !== null) fail(`${label}.range_m on ${named}: a sun or a mix already answers 0..1 and has no metres to travel over`);
+		return { field: named, range_m: null };
+	}
+	if (range === null) fail(`${label} needs both field and range_m, or neither: a field with no range is a gradient`);
 	const bounds = list(range, `${label}.range_m`, 2, 2);
 	if (!bounds.every((value) => Number.isFinite(value))) fail(`${label}.range_m is not two finite metres [near, far]`);
 	const [near, far] = bounds.map(Number);
@@ -719,26 +730,108 @@ export function parseFacadeGrammar(input) {
 	// restart at, wraps a building of any plan, and is what an attractor has always been in
 	// the literature. `context-summary.json` gives every facet its `origin_m` so the place can
 	// be read off the building rather than inferred.
+	// FIVE SHAPES, each a formula the panelization literature already writes down.
+	//
+	//   point  d = |p - a|                                   distance to a place
+	//   line   d = |p - (a + s(b - a))|, s clamped to 0..1   distance to a segment, the
+	//                                                        curve attractor of the tutorials
+	//   plane  d = (p - a) . n                               signed, so one side is negative
+	//                                                        and clamps to `from`
+	//   sun    t = (1 - n_face . s) / 2                      Lambert: 0 facing the source,
+	//                                                        1 facing away. Dimensionless, so
+	//                                                        it takes no range_m.
+	//   mix    t = product / min / max / mean of its parts   two fields answering at once,
+	//                                                        which is how every built one works
+	//
+	// A `mix` composes already-normalised values, so it is the one kind that cannot be given a
+	// range either. Everything else is a distance in metres and `grade.range_m` says over what
+	// span it travels. `falloff` raises the normalised value to a power - 1 linear, 2 the
+	// inverse-square the attractor tutorials reach for, 0.5 a slow start.
 	const fields = [];
 	if (program.fields !== undefined && program.fields !== null) {
 		const seen = new Set();
+		const KINDS = new Set(["point", "line", "plane", "sun", "mix"]);
+		// A field either carries its own range and answers 0..1, or takes one from the grade
+		// that names it. Only the first kind can go inside a `mix`, because combining raw
+		// metres with a cosine is a category error - and it was the first thing the probe
+		// caught: a point field inside a product contributed its distance in metres and the
+		// product clamped at 1 a metre from the attractor.
+		const dimensionless = new Set();
+		const OPS = new Set(["product", "min", "max", "mean"]);
+		const vector = (value, label, length = 3) => {
+			const parts = list(value, label, length, length);
+			if (!parts.every((entry) => Number.isFinite(entry))) fail(`${label} is not ${length} finite numbers`);
+			return Object.freeze(parts.map(Number));
+		};
+		const unit = (value, label) => {
+			const parts = vector(value, label);
+			const magnitude = Math.hypot(...parts);
+			if (!(magnitude > 1e-9)) fail(`${label} has no direction: it is the zero vector`);
+			return Object.freeze(parts.map((entry) => entry / magnitude));
+		};
 		for (const [index, entry] of list(program.fields, "fields", 1, BOUNDS.maxFields).entries()) {
-			const field = record(entry, `fields[${index}]`, new Set(["id", "at"]));
-			if (typeof field.id !== "string" || !ID.test(field.id)) fail(`fields[${index}].id is not a safe identifier`);
-			if (seen.has(field.id)) fail(`fields[${index}].id is declared twice: ${field.id}`);
-			seen.add(field.id);
-			// The two-entry form was the first shape of this operator and it was wrong: `at` was
-			// [u, z] in face metres, and a per-face offset restarts at 0 on every face, so one
-			// declared place produced four identical ramps on a four-faced mass. Say that,
-			// rather than counting entries at an author who wrote the documented form of the day.
-			if (Array.isArray(field.at) && field.at.length === 2) {
-				fail(`fields[${index}].at is now a place in SPACE, [x, y, z] in the mass's own metres, not [u, z] in face metres - the face coordinate restarted on every face and made one place into four. The context summary gives each facet an origin_m to read a place from.`);
+			const label = `fields[${index}]`;
+			const field = record(entry, label, new Set(["id", "kind", "at", "to", "normal", "direction", "of", "op", "falloff", "range_m"]));
+			if (typeof field.id !== "string" || !ID.test(field.id)) fail(`${label}.id is not a safe identifier`);
+			if (seen.has(field.id)) fail(`${label}.id is declared twice: ${field.id}`);
+			// A field with no kind is the place-in-space this operator started as, so every
+			// grammar written before the other four keeps meaning exactly what it meant.
+			const kind = (field.kind ?? null) === null ? "point" : field.kind;
+			if (!KINDS.has(kind)) fail(`${label}.kind must be one of ${[...KINDS].join(", ")}`);
+			const falloff = (field.falloff ?? null) === null ? 1 : field.falloff;
+			if (!Number.isFinite(falloff) || falloff < BOUNDS.minFalloff || falloff > BOUNDS.maxFalloff) {
+				fail(`${label}.falloff is out of range: a response curve runs ${BOUNDS.minFalloff}..${BOUNDS.maxFalloff}`);
 			}
-			const at = list(field.at, `fields[${index}].at`, 3, 3);
-			if (!at.every((value) => Number.isFinite(value))) fail(`fields[${index}].at is not three finite metres [x, y, z]`);
-			fields.push(Object.freeze({ id: field.id, at: Object.freeze(at.map(Number)) }));
+			const built = { id: field.id, kind, falloff };
+			if (kind === "point" || kind === "line" || kind === "plane") {
+				// The two-entry form was the first shape of this operator and it was wrong: `at`
+				// was [u, z] in face metres, and a per-face offset restarts at 0 on every face,
+				// so one declared place produced four identical ramps on a four-faced mass. Say
+				// that, rather than counting entries at an author who wrote the form of the day.
+				if (Array.isArray(field.at) && field.at.length === 2) {
+					fail(`${label}.at is now a place in SPACE, [x, y, z] in the mass's own metres, not [u, z] in face metres - the face coordinate restarted on every face and made one place into four. The context summary gives each facet an origin_m to read a place from.`);
+				}
+				built.at = vector(field.at, `${label}.at`);
+			}
+			if (kind === "line") built.to = vector(field.to, `${label}.to`);
+			else if (field.to !== undefined && field.to !== null) fail(`${label}.to belongs to a line field`);
+			if (kind === "plane") built.normal = unit(field.normal, `${label}.normal`);
+			else if (field.normal !== undefined && field.normal !== null) fail(`${label}.normal belongs to a plane field`);
+			if (kind === "sun") built.direction = unit(field.direction, `${label}.direction`);
+			else if (field.direction !== undefined && field.direction !== null) fail(`${label}.direction belongs to a sun field`);
+			if (kind === "mix") {
+				const parts = list(field.of, `${label}.of`, 2, 2);
+				for (const name of parts) {
+					if (!seen.has(name)) fail(`${label}.of names a field that is not declared above it: ${name}`);
+					if (!dimensionless.has(name)) {
+						fail(`${label}.of names ${name}, which answers in metres: a field inside a mix needs its own range_m so both parts are 0..1 before they combine`);
+					}
+				}
+				built.of = Object.freeze(parts.map(String));
+				const op = (field.op ?? null) === null ? "product" : field.op;
+				if (!OPS.has(op)) fail(`${label}.op must be one of ${[...OPS].join(", ")}`);
+				built.op = op;
+			} else if (field.of !== undefined && field.of !== null) fail(`${label}.of belongs to a mix field`);
+			if ((field.range_m ?? null) !== null) {
+				if (kind === "sun" || kind === "mix") fail(`${label}.range_m on a ${kind} field: it already answers 0..1`);
+				const bounds = list(field.range_m, `${label}.range_m`, 2, 2);
+				if (!bounds.every((value) => Number.isFinite(value))) fail(`${label}.range_m is not two finite metres [near, far]`);
+				const [near, far] = bounds.map(Number);
+				if (far <= near) fail(`${label}.range_m must run near..far with far greater than near`);
+				if (far - near < BOUNDS.minFieldRangeM || far > BOUNDS.maxFieldRangeM) {
+					fail(`${label}.range_m spans ${BOUNDS.minFieldRangeM}..${BOUNDS.maxFieldRangeM} m`);
+				}
+				built.range_m = Object.freeze([near, far]);
+			}
+			if (kind === "sun" || kind === "mix" || built.range_m) dimensionless.add(field.id);
+			seen.add(field.id);
+			fields.push(Object.freeze(built));
 		}
 	}
+	// Which fields carry metres and which are already a 0..1. `grade.range_m` is required by
+	// the first and refused by the second, because normalising a cosine over metres is a
+	// category error and the author who wrote it would get silence.
+	dimensionlessFieldIds = new Set(fields.filter((field) => field.kind === "sun" || field.kind === "mix" || field.range_m).map((field) => field.id));
 	declaredFieldIds = new Set(fields.map((field) => field.id));
 	// A provider that enforces strict structured output cannot describe an open map,
 	// so a grammar may arrive as a list of named rules. Both shapes mean the same graph.

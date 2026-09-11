@@ -102,8 +102,15 @@ test("the brief and the schema both carry it, or no author can reach it", () => 
 	assert.deepEqual(Object.keys(grade.properties).sort(), ["attr", "field", "from", "range_m", "to"]);
 	assert.ok(grade.required.includes("field") && grade.required.includes("range_m"));
 	const fields = (FACADE_GRAMMAR_V3_SCHEMA as any).properties.fields;
-	assert.deepEqual(Object.keys(fields.items.properties).sort(), ["at", "id"]);
+	// Five kinds now, each a formula, and every one of them reachable from the schema alone.
+	assert.deepEqual(Object.keys(fields.items.properties).sort(),
+		["at", "direction", "falloff", "id", "kind", "normal", "of", "op", "range_m", "to"]);
+	assert.deepEqual(fields.items.properties.kind.enum, ["point", "line", "plane", "sun", "mix", null]);
+	assert.deepEqual(fields.items.properties.op.enum, ["product", "min", "max", "mean", null]);
+	assert.deepEqual(fields.items.required.sort(),
+		["at", "direction", "falloff", "id", "kind", "normal", "of", "op", "range_m", "to"]);
 	assert.match(fields.description, /distance/i);
+	assert.match(fields.description, /Lambert/);
 	assert.ok((FACADE_GRAMMAR_V3_SCHEMA as any).required.includes("fields"));
 });
 
@@ -321,4 +328,112 @@ test("a turn is a turn, not a shear, and it never leaves the box", () => {
 	for (const [u, v] of turned) assert.ok(u >= -1e-9 && u <= 1 + 1e-9 && v >= -1e-9 && v <= 1 + 1e-9);
 	// Turning by nothing changes nothing, to the reference.
 	assert.equal(rotateOutline(square, 0, 2, 1), square);
+});
+
+/**
+ * The five field formulas, each checked against the identity it is.
+ *
+ * A field was one shape - the distance to a place - and the parametric facades this project
+ * is asked to transcribe use four more: a curve attractor, a horizon, solar incidence, and
+ * two fields answering at once. Each is a formula the panelization practice writes down, so
+ * each is asserted as that formula rather than as a number someone measured off a render.
+ */
+test("five fields, five formulas", () => {
+	const segment = {
+		segment_id: "s", length_m: 8, local_z: [0, 3.3], face_offset_m: 0,
+		origin_m: [0, 0, 0], outward_normal: [0, -1, 0],
+		face_view: "front", face_index: 0, face_total: 1,
+	};
+	const storeys = [{ storey: 1, z_min: 0, z_max: 3.3 }];
+	// One member per bay, so each reads the field at its own place along the facet.
+	const run = (fields: unknown, grade: object) => deriveFacadePrimitives({
+		grammar: parseFacadeGrammar({
+			schema_version: "arr.elevation3d.facade-grammar.v3", concept_id: "formula-probe", start: "F",
+			design_rationale: ["probe"], fields,
+			rules: [
+				{ name: "F", alternatives: [{ when: null, split: { axis: "u", parts: [{ size: "~1.0", symbol: "C", arg: null, repeat: true, grade: null }] }, terminal: null }] },
+				{ name: "C", alternatives: [{ when: null, split: null, terminal: "spandrel", inset_m: 0, depth_m: 0.1, grade }] },
+			],
+		} as any),
+		segment, storeys,
+	}).map((primitive: any) => primitive.depth_m);
+
+	// The member centres run 0.5, 1.5 ... 7.5 along +x, at z = 1.65.
+	const centre = (index: number) => [index + 0.5, 0, 1.65];
+	const ramp = (t: number) => Number((0.05 + 0.25 * t).toFixed(6));
+
+	// POINT: d = |p - a|, normalised over range.
+	const point = run([{ id: "a", at: [0, 0, 1.65] }], { attr: "depth_m", from: 0.05, to: 0.3, field: "a", range_m: [0, 8] });
+	for (const [index, value] of point.entries()) {
+		const d = Math.hypot(...centre(index).map((v, axis) => v - [0, 0, 1.65][axis]));
+		assert.ok(Math.abs(value - ramp(d / 8)) < 1e-6, `point ${index}: ${value}`);
+	}
+
+	// LINE: distance to a SEGMENT, so beyond either end it is the distance to that end. The
+	// segment here runs x = 2..4 at the wall, and the members at x = 0.5 and 7.5 measure 1.5
+	// and 3.5 - not the perpendicular distance an infinite line would give, which is 0.
+	const line = run([{ id: "a", kind: "line", at: [2, 0, 1.65], to: [4, 0, 1.65] }],
+		{ attr: "depth_m", from: 0.05, to: 0.3, field: "a", range_m: [0, 8] });
+	assert.ok(Math.abs(line[0] - ramp(1.5 / 8)) < 1e-6, `line near end: ${line[0]}`);
+	assert.ok(Math.abs(line[2] - ramp(0)) < 1e-6, "inside the segment it is zero");
+	assert.ok(Math.abs(line[3] - ramp(0)) < 1e-6, "and along its whole length");
+	assert.ok(Math.abs(line[7] - ramp(3.5 / 8)) < 1e-6, `line far end: ${line[7]}`);
+
+	// PLANE: SIGNED, so everything behind it clamps to `from` and the field reads as a horizon.
+	const plane = run([{ id: "a", kind: "plane", at: [4, 0, 0], normal: [1, 0, 0] }],
+		{ attr: "depth_m", from: 0.05, to: 0.3, field: "a", range_m: [0, 4] });
+	assert.equal(plane[0], ramp(0), "behind the plane, clamped");
+	assert.equal(plane[3], ramp(0), "and right up to it");
+	assert.ok(Math.abs(plane[6] - ramp(2.5 / 4)) < 1e-6, `in front: ${plane[6]}`);
+
+	// SUN: Lambert. This facet's normal is [0,-1,0]; a source in -y is straight on, so
+	// (1 - n.s)/2 = 0 everywhere on it, and a source in +y gives 1. No range_m at all.
+	const facing = run([{ id: "a", kind: "sun", direction: [0, -1, 0] }], { attr: "depth_m", from: 0.05, to: 0.3, field: "a", range_m: null });
+	const away = run([{ id: "a", kind: "sun", direction: [0, 1, 0] }], { attr: "depth_m", from: 0.05, to: 0.3, field: "a", range_m: null });
+	assert.deepEqual(new Set(facing), new Set([ramp(0)]));
+	assert.deepEqual(new Set(away), new Set([ramp(1)]));
+	// A grazing source: n.s = cos(60) so the value is (1 - 0.5)/2 = 0.25 on every member.
+	const grazing = run([{ id: "a", kind: "sun", direction: [Math.sin(Math.PI / 3), -Math.cos(Math.PI / 3), 0] }],
+		{ attr: "depth_m", from: 0.05, to: 0.3, field: "a", range_m: null });
+	assert.ok(Math.abs(grazing[0] - ramp(0.25)) < 1e-6, `grazing ${grazing[0]}`);
+
+	// MIX: two normalised fields combined. product is an AND, max an OR.
+	const both = (op: string) => run([
+		{ id: "a", at: [0, 0, 1.65], range_m: [0, 8] },
+		{ id: "b", kind: "sun", direction: [0, 1, 0] },
+		{ id: "m", kind: "mix", of: ["a", "b"], op },
+	], { attr: "depth_m", from: 0.05, to: 0.3, field: "m", range_m: null });
+	// `b` answers 1 on this facet, so the product is `a` alone and the max is 1 everywhere.
+	const alone = run([{ id: "a", at: [0, 0, 1.65] }], { attr: "depth_m", from: 0.05, to: 0.3, field: "a", range_m: [0, 8] });
+	assert.deepEqual(both("product"), alone, "product with 1 is the other field itself");
+	assert.deepEqual(new Set(both("max")), new Set([ramp(1)]));
+	// And a distance field with no range of its own cannot go inside a mix at all.
+	assert.throws(() => run([
+		{ id: "a", at: [0, 0, 1.65] },
+		{ id: "b", kind: "sun", direction: [0, 1, 0] },
+		{ id: "m", kind: "mix", of: ["a", "b"], op: "product" },
+	], { attr: "depth_m", from: 0.05, to: 0.3, field: "m", range_m: null }), /answers in metres/);
+
+	// FALLOFF: the response curve, applied to the normalised value. Squared is the
+	// inverse-square shape the attractor practice reaches for.
+	const square = run([{ id: "a", at: [0, 0, 1.65], falloff: 2 }],
+		{ attr: "depth_m", from: 0.05, to: 0.3, field: "a", range_m: [0, 8] });
+	for (const [index, value] of square.entries()) {
+		assert.ok(Math.abs(value - ramp(((index + 0.5) / 8) ** 2)) < 1e-6, `falloff ${index}: ${value}`);
+	}
+
+	// And the refusals: a dimensionless field with a range, a distance field without one, a
+	// mix naming a field that is not declared above it.
+	const bad = (fields: unknown, grade: object) => parseFacadeGrammar({
+		schema_version: "arr.elevation3d.facade-grammar.v3", concept_id: "p", start: "F", design_rationale: ["p"], fields,
+		rules: [{ name: "F", alternatives: [{ when: null, split: null, terminal: "spandrel", inset_m: 0, depth_m: 0.1, grade }] }],
+	} as any);
+	assert.throws(() => bad([{ id: "a", kind: "sun", direction: [0, 1, 0] }],
+		{ attr: "depth_m", from: 0.05, to: 0.3, field: "a", range_m: [0, 8] }), /no metres to travel over/);
+	assert.throws(() => bad([{ id: "a", at: [0, 0, 0] }],
+		{ attr: "depth_m", from: 0.05, to: 0.3, field: "a", range_m: null }), /needs both field and range_m/);
+	assert.throws(() => bad([{ id: "m", kind: "mix", of: ["a", "b"] }, { id: "a", at: [0, 0, 0], range_m: [0, 8] }],
+		{ attr: "depth_m", from: 0.05, to: 0.3, field: "m", range_m: null }), /not declared above it/);
+	assert.throws(() => bad([{ id: "a", kind: "sun", direction: [0, 0, 0] }],
+		{ attr: "depth_m", from: 0.05, to: 0.3, field: "a", range_m: null }), /no direction/);
 });
