@@ -422,8 +422,14 @@ test("five fields, five formulas", () => {
 		assert.ok(Math.abs(value - ramp(((index + 0.5) / 8) ** 2)) < 1e-6, `falloff ${index}: ${value}`);
 	}
 
+	// A plane's distance is SIGNED, so its range may straddle the plane - and only a plane's.
+	const straddle = run([{ id: "a", kind: "plane", at: [4, 0, 0], normal: [1, 0, 0] }],
+		{ attr: "depth_m", from: 0.05, to: 0.3, field: "a", range_m: [-4, 4] });
+	assert.ok(Math.abs(straddle[0] - ramp((0.5 - 4 + 4) / 8)) < 1e-6, `straddling ${straddle[0]}`);
+	assert.ok(Math.abs(straddle[7] - ramp((7.5 - 4 + 4) / 8)) < 1e-6, `straddling ${straddle[7]}`);
+
 	// And the refusals: a dimensionless field with a range, a distance field without one, a
-	// mix naming a field that is not declared above it.
+	// mix naming a field that is not declared above it, a negative range on an unsigned field.
 	const bad = (fields: unknown, grade: object) => parseFacadeGrammar({
 		schema_version: "arr.elevation3d.facade-grammar.v3", concept_id: "p", start: "F", design_rationale: ["p"], fields,
 		rules: [{ name: "F", alternatives: [{ when: null, split: null, terminal: "spandrel", inset_m: 0, depth_m: 0.1, grade }] }],
@@ -436,4 +442,43 @@ test("five fields, five formulas", () => {
 		{ attr: "depth_m", from: 0.05, to: 0.3, field: "m", range_m: null }), /not declared above it/);
 	assert.throws(() => bad([{ id: "a", kind: "sun", direction: [0, 0, 0] }],
 		{ attr: "depth_m", from: 0.05, to: 0.3, field: "a", range_m: null }), /no direction/);
+	assert.throws(() => bad([{ id: "a", at: [0, 0, 0] }],
+		{ attr: "depth_m", from: 0.05, to: 0.3, field: "a", range_m: [-4, 4] }), /signed/);
+});
+
+/**
+ * The ordered dither reads the same fields as a grade, so a construction can change with
+ * incidence and not only with distance. It shares `parseGradeField`, which means a `mix`
+ * naming a dimensionless field carries `range_m: null` - and a null range through the dither
+ * path would be a silent wrong answer rather than an error.
+ */
+test("the dither reads a dimensionless field too", () => {
+	const segment = {
+		segment_id: "s", length_m: 12, local_z: [0, 3.3], face_offset_m: 0,
+		origin_m: [0, 0, 0], outward_normal: [0, -1, 0],
+		face_view: "front", face_index: 0, face_total: 1,
+	};
+	const run = (direction: number[]) => deriveFacadePrimitives({
+		grammar: parseFacadeGrammar({
+			schema_version: "arr.elevation3d.facade-grammar.v3", concept_id: "dither-sun", start: "F",
+			design_rationale: ["probe"],
+			fields: [{ id: "sun", kind: "sun", direction }],
+			rules: [
+				{ name: "F", alternatives: [{ when: null, split: { axis: "u", parts: [{ size: "~1.0", symbol: "C", arg: null, repeat: true, grade: null }] }, terminal: null }] },
+				{
+					name: "C",
+					alternatives: [
+						{ when: null, split: null, terminal: "spandrel", inset_m: 0, depth_m: 0.1, mix: { field: "sun", range_m: null } },
+						{ when: null, split: null, terminal: "glass", inset_m: 0.05, depth_m: 0 },
+					],
+				},
+			],
+		} as any),
+		segment, storeys: [{ storey: 1, z_min: 0, z_max: 3.3 }],
+	}).map((primitive: any) => primitive.kind);
+
+	// Facing the source the field reads 0, so no member takes the first alternative and every
+	// cell is glass. Facing away it reads 1 and every cell is the spandrel.
+	assert.deepEqual(new Set(run([0, -1, 0])), new Set(["window"]));
+	assert.deepEqual(new Set(run([0, 1, 0])), new Set(["spandrel"]));
 });

@@ -190,14 +190,63 @@ pane and the jambs; the hole itself exists only in the rasters.
 
 ## Adding a field to the grammar
 
-Four links, and the last one is a whitelist that drops silently what it does not name:
+Five links. The third drops silently what it does not name, and the fourth is the one
+`outline` stopped at after clearing the other four:
 
 1. `design/grammar/contract.mjs` - parse, validate, and RETURN it; refuse it where it would
-   be ignored (on a split, on `wall`, on `arch`).
+   be ignored (on a split, on `wall`, on `arch`) and where its precondition fails (`scoop_deg`
+   needs a recess, `rotate_deg` an outline). If the field is `grade`-able, the grade must
+   inherit both the bound AND the refusals, or it becomes the way round them.
 2. `design/grammar/derive.mjs` - copy it onto the primitive, conditionally, so older
-   grammars stay byte-identical.
+   grammars stay byte-identical. Through `graded(attr, literal)` if a field may drive it.
 3. `punched-facade.mjs`, the `pushDetail` call in the design path - **the whitelist**.
-4. `design/grammar/prompt.mjs` - the emitted schema (and its `required` list, or a strict
+4. **The RENDERER, wherever it rebuilds geometry of its own from a primitive.** Only fields
+   it re-derives something from - so far `outline`, `recess_m` and `recess_axis` - and easy to
+   miss, because links 1 to 3 make the member itself draw correctly. `holeCut` in
+   `web/viewer-app.mjs` built every hole from a fixed list of BOX indices over the four
+   deepest vertices of the pane: a lens pane has sixteen, four were picked by depth order, and
+   the scoops came out square on a drawing whose own geometry was perfect and whose every gate
+   was green.
+5. `design/grammar/prompt.mjs` - the emitted schema (and its `required` list, or a strict
    provider 400s) AND the brief prose. A field no author can read about does not exist.
 
-Then check the GLB, not the gate.
+Then check the GLB, not the gate - and regenerate the three briefs, because `brief` writes a
+file per candidate and nothing regenerates it when the prompt changes. `check` and `draw`
+report `brief_stale` when they differ.
+
+## What a field can drive, and what it can be measured from
+
+Both were one-line answers and both are now sets. Five attributes take a `grade`: `inset_m`,
+`depth_m`, `standoff_m`, `scoop_deg`, `rotate_deg` - which is the list the panelization
+practice varies (size, depth, rotation, the angle of a cut) with `mix` covering the fifth,
+which module appears. Five field KINDS, each a formula:
+
+    point   d = |p - a|
+    line    d = |p - (a + s(b-a))|,  s = clamp(((p-a).(b-a))/|b-a|^2, 0, 1)   a segment
+    plane   d = (p - a) . n          SIGNED, so one side clamps out and it reads as a horizon
+    sun     t = (1 - n_face . s)/2   Lambert, on the facet's own outward normal
+    mix     product | min | max | mean of two fields declared above it
+    falloff t -> t^k, k in 0.25..4   applied after normalising; k = 2 is inverse-square
+
+A field either carries its own `range_m` and answers 0..1, or takes one from the grade naming
+it. Only the first may go inside a `mix`: combining raw metres with a cosine is a category
+error, and a point field inside a product saturated one metre from its attractor before the
+rule existed.
+
+**To tell a field from a gradient, sample the attribute per FACE.** A gradient ramps along one
+run and restarts in the next, so every face comes out identical; a field disagrees with itself
+because one term is a property of the face and the other of the place.
+
+## Crossing a fold is a formula, not a tolerance
+
+A member is planar and the mass is not, so carried `d` metres past a seam creased by `theta`
+it stands off that course's surface by `e = d sin(theta)`. The admissible reach is therefore
+`d_max = 0.03 / sin(theta)`, unbounded when the courses are truly coplanar, and the hard angle
+cap falls out rather than being chosen: under 0.15 m of reach, at 11.5 degrees, no continuation
+is offered at all. The rule this replaced fixed `theta` at 0.5 degrees, which is the same
+formula solved backwards for a FULL STOREY of rise - and fixing the height made it wrong in
+both directions at once.
+
+**The pattern to look for:** a bare constant whose comment explains where it came from. Both of
+today's were that. Still standing: `fold_clearance_m: 0.3`, `edge_clearance_m: 0.3`,
+`SEAM_TOLERANCE_M: 0.02`, the 2048-primitive and 16 MB budgets, `P05 >= 10`, `colorDistance >= 5`.
