@@ -115,7 +115,7 @@ export const FACADE_GRAMMAR_V3_SCHEMA = Object.freeze({
 			// 400 from the provider before any model output. min_u_m and min_z_m drifted out
 			// of this list on 2026-08-31 and rise_to, material and reach followed - no live
 			// call ran in between, which is the only reason it never fired.
-			required: ["when", "split", "terminal", "inset_m", "depth_m", "min_u_m", "min_z_m", "rise_to", "reach", "material", "grade", "diagonal", "outline", "outline_far", "standoff_m", "mix"],
+			required: ["when", "split", "terminal", "inset_m", "depth_m", "min_u_m", "min_z_m", "rise_to", "reach", "material", "grade", "diagonal", "outline", "outline_far", "standoff_m", "scoop_deg", "mix"],
 			properties: {
 				when: {
 					type: ["string", "null"],
@@ -167,6 +167,10 @@ export const FACADE_GRAMMAR_V3_SCHEMA = Object.freeze({
 				standoff_m: {
 					type: ["number", "null"],
 					description: "How far IN FRONT of the wall this member's near face sits, in metres, 0 to 2 - so a screen can have air behind it: a veil, a brise-soleil, a rainscreen standing clear of the enclosure. `depth_m` is then its own thickness, measured from there. Refused on an opening, which cannot float in front of the wall it is a hole in, on `wall`, and on a member with no thickness. Null or 0 sits it on the wall as before.",
+				},
+				scoop_deg: {
+					type: ["number", "null"],
+					description: "The ANGLE a recess is cut at, -45 to 45 degrees off the wall's own normal, positive tilting the cut upward in the facet's plane. A recess written without it is DRILLED - straight in, both inner surfaces the same, and in a frontal elevation it draws as a flat dark polygon with no depth in it. A scooped cell opens one inner surface wide to the sky and closes the opposite lip to a blade, which is what makes a veil read as a veil. The mouth shifts along the wall by recess x tan(angle), so leave that much clear of the neighbouring opening. Needs a negative `depth_m`; refused on anything that is not an opening. Null cuts straight in, as every recess did before.",
 				},
 				grade: {
 					type: ["object", "null"],
@@ -522,6 +526,13 @@ worth drawing and could only be drawn as a lump before.
 
 is a hexagonal mouth closing to a small hexagonal throat. The taper must stay a polygon the
 whole way along, so two outlines that would fold through each other in the middle are refused.
+
+A RECESS CAN BE CUT ON A SLANT. Write "scoop_deg" and the hole goes in at that angle off the
+wall's normal instead of straight, positive tilting it upward: one inner surface opens wide and
+the opposite lip closes to a blade. Without it a recess is DRILLED, and a drilled hole in a
+frontal elevation is a flat dark polygon - the depth is real in the model and invisible in the
+drawing. The mouth shifts along the wall by \`recess x tan(angle)\`, so a 0.40 m recess at 20
+degrees moves its mouth 0.15 m; leave that much between neighbouring openings or they meet.
 
 AND A MEMBER CAN STAND OFF THE WALL. Write "standoff_m" and its near face sits that far in
 FRONT of the wall, with air behind it, \`depth_m\` becoming its own thickness measured from

@@ -891,6 +891,18 @@ export const TYPED_FACADE_GRAMMAR = Object.freeze({
 	unresolved_surfaces: Object.freeze([]),
 });
 const TYPED_MATERIAL = TERMINAL_MATERIALS;
+/**
+ * The direction a scooped recess is cut along: the wall's own normal tilted in the facet's
+ * plane, positive upward. A recess without one is drilled straight in, which is what every
+ * recess was and what makes a cell draw as a flat dark polygon in a frontal elevation.
+ */
+function scoopAxis(normal, scoopDeg) {
+	const tangent = Math.tan((scoopDeg * Math.PI) / 180);
+	const axis = [normal[0], normal[1], normal[2] + tangent];
+	const length = Math.hypot(...axis);
+	return axis.map((value) => value / length);
+}
+
 /** A recessed pane's own thickness: a glazing unit, sitting at the bottom of its recess. */
 const PANE_THICKNESS_M = 0.015;
 /** The lining of a recess: the wall's own face turned into the hole, drawn as a thin box just inside it. */
@@ -1006,7 +1018,14 @@ export function buildTypedFacadeDetails({ mesh, floorGuides, facadePlanes, primi
 			// out along this normal by the recess, so the cut is the box the hole occupies and
 			// nothing beside it. Depth alone was tried first and cut the wall beside every
 			// jamb on an oblique view, showing the pane through the return.
-			...(recessed ? { recessed: true, recess_m: -depth, recess_normal: [...plane.normal] } : {}),
+			// `recess_axis` is the direction the hole is CUT along, which is the normal unless
+			// the grammar asked for a scoop. The renderer travels along it far enough to reach
+			// the wall plane, so the mouth lands on the wall whatever the angle, and the two
+			// inner surfaces of the hole stop being mirror images of each other.
+			...(recessed ? {
+				recessed: true, recess_m: -depth, recess_normal: [...plane.normal],
+				...(primitive.scoop_deg ? { recess_axis: scoopAxis(plane.normal, primitive.scoop_deg) } : {}),
+			} : {}),
 		}, backing.get(plane.segment_id));
 		// The hole's four sides, lining the recess from the wall face to the pane, in the
 		// shell's own material so they read as the wall's thickness and not as a surround.

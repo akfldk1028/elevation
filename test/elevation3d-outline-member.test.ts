@@ -133,3 +133,55 @@ test("standoff and taper travel the same four links", async (t) => {
 	// And it is genuinely smaller than the tube it would have been.
 	assert.ok(verified.volume < verifyPrism(build({ outline: mouth })).volume);
 });
+
+/**
+ * The angle a hole is cut at, walked the same way - and the last link here is the RENDERER,
+ * which is the fifth and the one `outline` itself stopped at: it parsed, derived, cleared the
+ * whitelist and built correct lens geometry while `holeCut` went on cutting a box.
+ */
+test("scoop_deg travels to the cut axis, and is refused where there is no hole", async (t) => {
+	const program = (extra: object) => ({
+		schema_version: "arr.elevation3d.facade-grammar.v3", concept_id: "scoop-probe", start: "F",
+		design_rationale: ["probe"],
+		rules: [{ name: "F", alternatives: [{ when: null, split: null, terminal: "glass", inset_m: 0, depth_m: -0.4, ...extra }] }],
+	});
+	assert.equal(parseFacadeGrammar(program({ scoop_deg: 20 }) as any).rules.F[0].scoop_deg, 20);
+	// Straight in is the default, and writing it changes nothing that was drawn before.
+	assert.equal(parseFacadeGrammar(program({ scoop_deg: 0 }) as any).rules.F[0].scoop_deg, undefined);
+	assert.throws(() => parseFacadeGrammar(program({ scoop_deg: 70 }) as any), /out of range/);
+	// A hole to cut is the whole precondition: no recess, or not an opening at all.
+	assert.throws(() => parseFacadeGrammar({
+		...program({}), rules: [{ name: "F", alternatives: [{ when: null, split: null, terminal: "glass", inset_m: 0, depth_m: 0.1, scoop_deg: 20 }] }],
+	} as any), /needs a recess/);
+	assert.throws(() => parseFacadeGrammar({
+		...program({}), rules: [{ name: "F", alternatives: [{ when: null, split: null, terminal: "spandrel", inset_m: 0, depth_m: -0.4, scoop_deg: 20 }] }],
+	} as any), /only an opening/);
+
+	const alternative = (FACADE_GRAMMAR_V3_SCHEMA as any).$defs.alternative;
+	assert.ok(alternative.properties.scoop_deg && alternative.required.includes("scoop_deg"));
+
+	const { mesh, floorGuides, facadeSegmentAuthority, context } = await createFacadeDesignFixture(t);
+	const segment = context.facade_segments[0];
+	const build = (extra: object) => buildTypedFacadeDetails({
+		mesh, floorGuides, facadePlanes: facadeSegmentAuthority,
+		primitives: [{
+			kind: "window", segment_id: segment.segment_id,
+			local_bounds: { u_min: 0.6, u_max: 1.6, z_min: 0.6, z_max: 1.6 }, depth_m: -0.4, ...extra,
+		}],
+	}).find((detail: any) => detail.kind === "window");
+
+	const drilled = build({});
+	const scooped = build({ scoop_deg: 20 });
+	assert.ok(drilled.recessed && scooped.recessed);
+	// A drilled hole says nothing about its axis, so every pane already written keeps the
+	// normal the renderer has always used.
+	assert.equal(drilled.recess_axis, undefined);
+	assert.ok(Array.isArray(scooped.recess_axis));
+	// The axis is the normal tilted by exactly the angle asked for, and still a unit vector.
+	const axis = scooped.recess_axis as number[];
+	const normal = scooped.recess_normal as number[];
+	assert.ok(Math.abs(Math.hypot(...axis) - 1) < 1e-12, "unit length");
+	const cosine = axis.reduce((sum, value, index) => sum + value * normal[index], 0);
+	assert.ok(Math.abs(Math.acos(cosine) * 180 / Math.PI - 20) < 1e-9, `tilted ${Math.acos(cosine) * 180 / Math.PI}`);
+	assert.ok(axis[2] > 0, "positive scoops upward");
+});
