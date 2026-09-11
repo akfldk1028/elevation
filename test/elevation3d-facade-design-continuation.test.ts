@@ -33,12 +33,39 @@ test("a coplanar course above continues the facet where the two overlap, inset b
 	assert.deepEqual(coplanarContinuations(upper, context([lower, upper])), []);
 });
 
-test("a crease is a fold: three degrees between courses and nothing continues", () => {
-	const creased = { ...upper, outward_normal: [0, Math.cos(3 * Math.PI / 180), Math.sin(3 * Math.PI / 180)] };
-	assert.deepEqual(coplanarContinuations(lower, context([lower, creased])), []);
-	// Half a degree of extractor noise is still one plane.
-	const noisy = { ...upper, outward_normal: [0, Math.cos(0.4 * Math.PI / 180), Math.sin(0.4 * Math.PI / 180)] };
-	assert.equal(coplanarContinuations(lower, context([lower, noisy])).length, 1);
+test("how far, not whether: the reach across a crease is e = d sin(theta)", () => {
+	const at = (degrees: number) => ({
+		...upper,
+		outward_normal: [0, Math.cos((degrees * Math.PI) / 180), Math.sin((degrees * Math.PI) / 180)],
+	});
+	const seam = lower.local_z[1];
+	const budget = 0.03;
+
+	// Three degrees is a real crease, and a member may still cross it - just not far. The
+	// granted rise is exactly the budget divided by the sine, and a member carried that far
+	// stands off the course above by exactly the budget.
+	const [creased] = coplanarContinuations(lower, context([lower, at(3)]));
+	assert.ok(creased, "a crease offers a reach rather than nothing");
+	assert.ok(Math.abs(creased.crease_deg - 3) < 1e-6);
+	const granted = creased.z_max - seam;
+	assert.ok(Math.abs(granted - budget / Math.sin((3 * Math.PI) / 180)) < 1e-6, `granted ${granted}`);
+	assert.ok(Math.abs(granted * Math.sin((3 * Math.PI) / 180) - budget) < 1e-9, "the deviation is the budget");
+
+	// Half a degree of extractor noise is still one plane, so the whole course is offered.
+	const [noisy] = coplanarContinuations(lower, context([lower, at(0.4)]));
+	assert.ok(noisy);
+	assert.equal(noisy.z_max, Math.min(upper.local_z[1], seam + budget / Math.sin((0.4 * Math.PI) / 180)));
+
+	// Exactly coplanar: unbounded reach, so the course above is offered whole - which is what
+	// every grammar written before this rule became a formula was measured against.
+	const [flat] = coplanarContinuations(lower, context([lower, upper]));
+	assert.equal(flat.z_max, upper.local_z[1]);
+	assert.equal(flat.crease_deg, 0);
+
+	// And past the angle where the reach falls under the floor-band clearance there is nothing
+	// worth crossing for, so no continuation is offered at all. asin(0.03 / 0.15) = 11.54 deg.
+	assert.deepEqual(coplanarContinuations(lower, context([lower, at(12)])), []);
+	assert.equal(coplanarContinuations(lower, context([lower, at(11)])).length, 1);
 });
 
 test("a course that does not sit on the seam, or on another face, is not a continuation", () => {

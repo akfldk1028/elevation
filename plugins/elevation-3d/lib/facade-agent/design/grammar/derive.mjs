@@ -207,20 +207,90 @@ function chooseAlternative(alternatives, scope, fields) {
  * Clamped at both ends, so `range_m` reads as "fully `from` this close, fully `to` this far"
  * and a member outside the range takes the nearer endpoint rather than an extrapolation.
  */
-function fieldT(grade, scope, fields) {
-	const place = fields?.find((entry) => entry.id === grade.field);
-	if (!place || !scope.origin_m || !scope.tangent) return 0;
+function fieldPoint(scope) {
 	// The member's own place in the mass's coordinates: its facet's corner, plus its centre
 	// along that facet's own direction, at its own height.
 	const u = (scope.u_min + scope.u_max) / 2;
-	const here = [
+	return [
 		scope.origin_m[0] + scope.tangent[0] * u,
 		scope.origin_m[1] + scope.tangent[1] * u,
 		(scope.z_min + scope.z_max) / 2,
 	];
-	const distance = Math.hypot(here[0] - place.at[0], here[1] - place.at[1], here[2] - place.at[2]);
+}
+
+const dot3 = (left, right) => left[0] * right[0] + left[1] * right[1] + left[2] * right[2];
+const clamp01 = (value) => Math.min(1, Math.max(0, value));
+
+/**
+ * One field's answer at one place, in 0..1. Each kind is a formula the panelization practice
+ * already writes down; `range_m` turns a distance in metres into the 0..1, and `falloff`
+ * bends the response - 1 linear, 2 the inverse-square the attractor tutorials reach for.
+ */
+function fieldValue(field, here, normal, byId, depth = 0) {
+	if (!field || depth > 4) return 0;
+	let raw;
+	switch (field.kind) {
+		case "line": {
+			// Distance to a SEGMENT: project onto it, clamp the parameter to its ends, measure.
+			// s = clamp(((p - a) . (b - a)) / |b - a|^2, 0, 1); d = |p - (a + s(b - a))|
+			const span = [field.to[0] - field.at[0], field.to[1] - field.at[1], field.to[2] - field.at[2]];
+			const lengthSquared = dot3(span, span);
+			const offset = [here[0] - field.at[0], here[1] - field.at[1], here[2] - field.at[2]];
+			const s = lengthSquared <= 1e-12 ? 0 : Math.min(1, Math.max(0, dot3(offset, span) / lengthSquared));
+			raw = Math.hypot(offset[0] - span[0] * s, offset[1] - span[1] * s, offset[2] - span[2] * s);
+			break;
+		}
+		case "plane":
+			// SIGNED distance to a plane: (p - a) . n. One side is negative and clamps to `from`,
+			// which is what makes a plane field a horizon rather than a stripe.
+			raw = dot3([here[0] - field.at[0], here[1] - field.at[1], here[2] - field.at[2]], field.normal);
+			break;
+		case "sun":
+			// LAMBERT. The cosine between the facet's outward normal and the direction the
+			// source lies in, remapped so 0 is facing it and 1 is facing away. Already 0..1,
+			// so it takes no range.
+			return clamp01(((1 - dot3(normal ?? [0, 0, 0], field.direction)) / 2) ** field.falloff);
+		case "mix": {
+			// Two fields answering at once, which is how every built parametric facade works.
+			const [left, right] = field.of.map((id) => fieldValue(byId.get(id), here, normal, byId, depth + 1));
+			const combined = field.op === "min" ? Math.min(left, right)
+				: field.op === "max" ? Math.max(left, right)
+					: field.op === "mean" ? (left + right) / 2
+						: left * right;
+			return clamp01(combined ** field.falloff);
+		}
+		default:
+			raw = Math.hypot(here[0] - field.at[0], here[1] - field.at[1], here[2] - field.at[2]);
+	}
+	// A field that declared its own range normalises itself, which is what lets it go inside a
+	// mix beside a cosine. One that did not returns raw metres for the grade to normalise.
+	if (!field.range_m) return raw;
+	const [near, far] = field.range_m;
+	return clamp01((raw - near) / (far - near)) ** field.falloff;
+}
+
+/**
+ * Where a scope sits in the FIELD, as the 0..1 a grade travels over.
+ *
+ * The parametric literature is unanimous on the shape of this: measure a scalar at each
+ * unit's own position, normalise it over a stated range, remap it onto the parameter. Five
+ * scalars are available now rather than one - distance to a place, to a segment, signed
+ * distance to a plane, the cosine of incidence on a direction, and two of those combined -
+ * and each is the formula the practice writes down.
+ *
+ * Clamped at both ends, so `range_m` reads as "fully `from` this close, fully `to` this far"
+ * and a member outside the range takes the nearer endpoint rather than an extrapolation.
+ */
+function fieldT(grade, scope, fields) {
+	const byId = new Map((fields ?? []).map((entry) => [entry.id, entry]));
+	const field = byId.get(grade.field);
+	if (!field || !scope.origin_m || !scope.tangent) return 0;
+	const here = fieldPoint(scope);
+	const raw = fieldValue(field, here, scope.outward_normal ?? null, byId);
+	// A dimensionless field has already answered in 0..1 and carries no range to travel over.
+	if (!grade.range_m) return clamp01(raw);
 	const [near, far] = grade.range_m;
-	return Math.min(1, Math.max(0, (distance - near) / (far - near)));
+	return clamp01(((clamp01((raw - near) / (far - near))) ** field.falloff));
 }
 
 export function deriveFacadePrimitives({ grammar, segment, storeys, entrance = null, buildingUnderside = null, continuations = [], floorBandClearance = 0 } = {}) {
@@ -534,6 +604,10 @@ export function deriveFacadePrimitives({ grammar, segment, storeys, entrance = n
 		// field: one declared place produced four identical ramps on a four-faced mass.
 		// Inherited by every child scope, like face_offset.
 		origin_m: Array.isArray(segment.origin_m) && segment.origin_m.length === 3 ? segment.origin_m : null,
+		// Which way the facet FACES, for the one field that is not a distance: Lambert's
+		// cosine needs the surface normal and nothing else on a scope carried it.
+		outward_normal: Array.isArray(segment.outward_normal) && segment.outward_normal.length === 3
+			? segment.outward_normal : null,
 		tangent: Array.isArray(segment.outward_normal) && Math.hypot(segment.outward_normal[0], segment.outward_normal[1]) > 0
 			? (() => {
 				const horizontal = Math.hypot(segment.outward_normal[0], segment.outward_normal[1]);
