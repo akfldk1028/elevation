@@ -8,7 +8,7 @@ import {
 } from "../facade-grammar.mjs";
 import { TERMINAL_MATERIALS } from "./facade-vocabulary.mjs";
 import { archGeometry, boxGeometry, climbVector, diagonalGeometry, localPoint } from "./member-geometry.mjs";
-import { polygonPrismGeometry } from "./polygon-prism.mjs";
+import { polygonPrismGeometry, rotateOutline } from "./polygon-prism.mjs";
 
 const EPSILON = 1e-9;
 const GEOMETRY_GAP_M = 1e-4;
@@ -339,8 +339,13 @@ function pushDetail(details, plane, tangent, grammar, bounds, properties, massBa
 	// An OUTLINE wins over every other shape, because it is the most specific thing the author
 	// can have said: a box, an arch and a diagonal half are each one outline the language names
 	// for you, and a written one is the shape they could not name.
+	// A turn is applied here rather than written into the outline, because only here are the
+	// member's real metres known - and a rotation in the unit square shears whatever it turns.
+	const turn = (outline) => (outline && properties.rotate_deg
+		? rotateOutline(outline, properties.rotate_deg, bounds.u1 - bounds.u0, bounds.v1 - bounds.v0)
+		: outline);
 	const geometry = properties.outline
-		? polygonPrismGeometry(plane, tangent, grammar, bounds, properties.outline, localPoint, properties.outline_far ?? null)
+		? polygonPrismGeometry(plane, tangent, grammar, bounds, turn(properties.outline), localPoint, turn(properties.outline_far) ?? null)
 		: properties.kind === "arch"
 			? archGeometry(plane, tangent, grammar, bounds)
 			: properties.diagonal
@@ -1002,6 +1007,8 @@ export function buildTypedFacadeDetails({ mesh, floorGuides, facadePlanes, primi
 			// line parses, validates, derives and draws as a box - which is exactly how 312
 			// spandrels came out rectangular with the diagonal in hand.
 			...(primitive.outline ? { outline: primitive.outline } : {}),
+			// Same whitelist again. A turn that never travels it leaves every cell axis-aligned.
+			...(primitive.rotate_deg ? { rotate_deg: primitive.rotate_deg } : {}),
 			...(primitive.outline_far ? { outline_far: primitive.outline_far } : {}),
 			...(Number.isFinite(primitive.standoff_m) && primitive.standoff_m > 0 ? { standoff_m: primitive.standoff_m } : {}),
 			// The elevation this member is drawn in, beside the `view` above, which is the

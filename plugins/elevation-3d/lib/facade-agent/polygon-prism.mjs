@@ -163,6 +163,33 @@ export function triangulate(points) {
  * linear morph (1-t)a + t b. That makes the cross-sectional AREA a quadratic in t, which is
  * why the prismatoid formula below is exact rather than an approximation.
  */
+/**
+ * Turn a written outline by an angle, about its own centre, IN METRES.
+ *
+ * The outline is written in the member's 0..1 square and that square is not square: a 1.1 m
+ * bay 0.9 m tall stretches every shape by 1.22 across, so rotating in unit coordinates shears
+ * a lozenge into a slanted slot. Rotating in metres and mapping back is a true rotation.
+ *
+ * A turned shape can leave the box it was written in, and a member may not leave its own
+ * scope, so the result is scaled about the centre by the largest factor that still fits. The
+ * shape stays similar to itself; only its size gives way.
+ */
+export function rotateOutline(outline, degrees, boxWidth, boxHeight) {
+	if (!degrees || !Number.isFinite(degrees)) return outline;
+	const radians = (degrees * Math.PI) / 180;
+	const cosine = Math.cos(radians), sine = Math.sin(radians);
+	const turned = outline.map(([u, v]) => {
+		const x = (u - 0.5) * boxWidth, y = (v - 0.5) * boxHeight;
+		return [x * cosine - y * sine, x * sine + y * cosine];
+	});
+	let scale = 1;
+	for (const [x, y] of turned) {
+		if (Math.abs(x) > 1e-12) scale = Math.min(scale, (boxWidth / 2) / Math.abs(x));
+		if (Math.abs(y) > 1e-12) scale = Math.min(scale, (boxHeight / 2) / Math.abs(y));
+	}
+	return turned.map(([x, y]) => [0.5 + (x * scale) / boxWidth, 0.5 + (y * scale) / boxHeight]);
+}
+
 export const morphOutline = (near, far, t) =>
 	near.map(([u, v], index) => [u + (far[index][0] - u) * t, v + (far[index][1] - v) * t]);
 

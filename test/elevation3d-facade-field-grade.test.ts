@@ -3,6 +3,7 @@ import test from "node:test";
 
 import { FACADE_GRAMMAR_V3_SCHEMA } from "../plugins/elevation-3d/lib/facade-agent/design/grammar/prompt.mjs";
 import { parseFacadeGrammar } from "../plugins/elevation-3d/lib/facade-agent/design/grammar/contract.mjs";
+import { rotateOutline } from "../plugins/elevation-3d/lib/facade-agent/polygon-prism.mjs";
 import { deriveFacadePrimitives } from "../plugins/elevation-3d/lib/facade-agent/design/grammar/derive.mjs";
 
 /**
@@ -254,4 +255,70 @@ test("a mix needs a field and a range, and does not share an alternative with a 
 	assert.throws(() => parseFacadeGrammar(program({ mix: { field: "nowhere", range_m: [0, 20] } }) as any), /no declared field/);
 	assert.throws(() => parseFacadeGrammar(program({ mix: { field: "open" } }) as any), /field and range_m|both field and range_m/);
 	assert.doesNotThrow(() => parseFacadeGrammar(program({ mix: { field: "open", range_m: [0, 20] } }) as any));
+});
+
+/**
+ * A field must be able to drive every number a member has, not two of them.
+ *
+ * The practice this operator comes from feeds each panel a value from an attractor and the
+ * panel answers by changing size, depth, ROTATION or which module it is. The grammar had the
+ * first two; `mix` covers the last. This is the turn and the angle of the cut.
+ */
+test("a field drives rotation and the angle of the cut, under the literal's own rules", () => {
+	const LENS = Array.from({ length: 8 }, (_, index) => {
+		const angle = (Math.PI / 4) * index;
+		return [0.5 + 0.44 * Math.cos(angle), 0.5 + 0.22 * Math.sin(angle)];
+	});
+	const program = (grade: unknown, extra: object = {}) => ({
+		schema_version: "arr.elevation3d.facade-grammar.v3", concept_id: "field-attr-probe", start: "F",
+		design_rationale: ["probe"],
+		fields: [{ id: "corner", at: [0, 0, 0] }],
+		rules: [{
+			name: "F",
+			alternatives: [{
+				when: null, split: null, terminal: "glass", inset_m: 0.05, depth_m: -0.3,
+				outline: LENS, grade, ...extra,
+			}],
+		}],
+	});
+	const field = { field: "corner", range_m: [0, 20] };
+	for (const [attr, from, to] of [["rotate_deg", 0, 40], ["scoop_deg", -20, 20], ["inset_m", 0.05, 0.4]] as const) {
+		const parsed = parseFacadeGrammar(program({ attr, from, to, ...field }) as any);
+		assert.equal(parsed.rules.F[0].grade.attr, attr);
+	}
+	// A grade obeys the bound its written literal obeys, and the refusals too - otherwise the
+	// operator is a way round every rule the number could not break.
+	assert.throws(() => parseFacadeGrammar(program({ attr: "scoop_deg", from: 0, to: 80, ...field }) as any), /out of range/);
+	assert.throws(() => parseFacadeGrammar(program({ attr: "standoff_m", from: 0, to: 0.4, ...field }) as any), /hole cannot float/);
+	assert.throws(() => parseFacadeGrammar(program({ attr: "joint_m", from: 0, to: 1, ...field }) as any), /must be one of/);
+	// scoop needs a recess to cut; rotate needs a shape to turn.
+	assert.throws(() => parseFacadeGrammar({
+		...program({ attr: "scoop_deg", from: 0, to: 20, ...field }),
+		rules: [{ name: "F", alternatives: [{ when: null, split: null, terminal: "glass", inset_m: 0.05, depth_m: 0.1, outline: LENS, grade: { attr: "scoop_deg", from: 0, to: 20, ...field } }] }],
+	} as any), /recess to cut/);
+	assert.throws(() => parseFacadeGrammar({
+		...program(null),
+		rules: [{ name: "F", alternatives: [{ when: null, split: null, terminal: "glass", inset_m: 0.05, depth_m: -0.3, grade: { attr: "rotate_deg", from: 0, to: 40, ...field } }] }],
+	} as any), /needs an outline/);
+
+	const alternative = (FACADE_GRAMMAR_V3_SCHEMA as any).$defs.alternative;
+	assert.deepEqual(alternative.properties.grade.properties.attr.enum,
+		["depth_m", "inset_m", "standoff_m", "scoop_deg", "rotate_deg"]);
+	assert.ok(alternative.properties.rotate_deg && alternative.required.includes("rotate_deg"));
+});
+
+test("a turn is a turn, not a shear, and it never leaves the box", () => {
+	// 0.6 m square inside a 2 m x 1 m bay: 0.3 of the width, 0.6 of the height.
+	const square = [[0.35, 0.2], [0.65, 0.2], [0.65, 0.8], [0.35, 0.8]];
+	// In a bay twice as wide as it is tall, turning inside the 0..1 square would stretch the
+	// shape by two; in metres it stays similar to itself.
+	const turned = rotateOutline(square, 45, 2, 1);
+	const metres = turned.map(([u, v]) => [(u - 0.5) * 2, (v - 0.5) * 1]);
+	const side = (a: number[], b: number[]) => Math.hypot(a[0] - b[0], a[1] - b[1]);
+	const lengths = metres.map((point, index) => side(point, metres[(index + 1) % metres.length]));
+	for (const length of lengths) assert.ok(Math.abs(length - lengths[0]) < 1e-9, `sides equal: ${lengths}`);
+	// And every point is still inside the member's own square.
+	for (const [u, v] of turned) assert.ok(u >= -1e-9 && u <= 1 + 1e-9 && v >= -1e-9 && v <= 1 + 1e-9);
+	// Turning by nothing changes nothing, to the reference.
+	assert.equal(rotateOutline(square, 0, 2, 1), square);
 });

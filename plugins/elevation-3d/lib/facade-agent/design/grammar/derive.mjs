@@ -384,8 +384,12 @@ export function deriveFacadePrimitives({ grammar, segment, storeys, entrance = n
 				// does not name.
 				...(alternative.outline ? { outline: alternative.outline } : {}),
 				...(alternative.outline_far ? { outline_far: alternative.outline_far } : {}),
-				...(alternative.standoff_m ? { standoff_m: alternative.standoff_m } : {}),
-				...(alternative.scoop_deg ? { scoop_deg: alternative.scoop_deg } : {}),
+				// Each of these may be a FIELD rather than a number - `graded` returns the
+				// written value when the grade names a different attribute, so a grammar that
+				// grades nothing emits exactly the record it always did.
+				...(graded("standoff_m", alternative.standoff_m) ? { standoff_m: graded("standoff_m", alternative.standoff_m) } : {}),
+				...(graded("scoop_deg", alternative.scoop_deg) ? { scoop_deg: graded("scoop_deg", alternative.scoop_deg) } : {}),
+				...(graded("rotate_deg", alternative.rotate_deg) ? { rotate_deg: graded("rotate_deg", alternative.rotate_deg) } : {}),
 				// WHICH ELEVATION THIS IS DRAWN IN. Distinct from the `view` the detail builder
 				// stamps, which is the dominant axis of the member's own plane - the right
 				// answer for the validation that measures along an axis, and the wrong one for
