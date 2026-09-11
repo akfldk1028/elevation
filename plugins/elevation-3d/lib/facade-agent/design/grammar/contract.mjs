@@ -202,6 +202,8 @@ let declaredMaterialIds = new Set();
 /** The fields the grammar declared, so a grade naming one can be refused where it is written. */
 let declaredFieldIds = new Set();
 let dimensionlessFieldIds = new Set();
+/** The fields whose measurement is SIGNED, and whose range may therefore start below zero. */
+let signedFieldIds = new Set();
 
 /**
  * The two keys that turn a grade from a ramp along a run into a FIELD over the face.
@@ -228,7 +230,13 @@ function parseGradeField(source, label) {
 	const bounds = list(range, `${label}.range_m`, 2, 2);
 	if (!bounds.every((value) => Number.isFinite(value))) fail(`${label}.range_m is not two finite metres [near, far]`);
 	const [near, far] = bounds.map(Number);
-	if (near < 0 || far <= near) fail(`${label}.range_m must run near..far with far greater than near`);
+	// A distance cannot be negative, so a range that starts below zero is a mistake - except on
+	// a `plane`, whose measurement is SIGNED by design. Refusing it there made the two paths
+	// disagree: the field declaration would take [-4, 4] and the grade beside it would not, so
+	// a range straddling the plane could only be written in one of the two places.
+	if ((near < 0 && !signedFieldIds.has(named)) || far <= near) {
+		fail(`${label}.range_m must run near..far with far greater than near${near < 0 ? ", and a range starts below zero only on a plane field, whose distance is signed" : ""}`);
+	}
 	if (far - near < BOUNDS.minFieldRangeM || far > BOUNDS.maxFieldRangeM) {
 		fail(`${label}.range_m spans ${BOUNDS.minFieldRangeM}..${BOUNDS.maxFieldRangeM} m`);
 	}
@@ -818,6 +826,7 @@ export function parseFacadeGrammar(input) {
 				if (!bounds.every((value) => Number.isFinite(value))) fail(`${label}.range_m is not two finite metres [near, far]`);
 				const [near, far] = bounds.map(Number);
 				if (far <= near) fail(`${label}.range_m must run near..far with far greater than near`);
+				if (near < 0 && kind !== "plane") fail(`${label}.range_m starts below zero: only a plane field's distance is signed`);
 				if (far - near < BOUNDS.minFieldRangeM || far > BOUNDS.maxFieldRangeM) {
 					fail(`${label}.range_m spans ${BOUNDS.minFieldRangeM}..${BOUNDS.maxFieldRangeM} m`);
 				}
@@ -832,6 +841,7 @@ export function parseFacadeGrammar(input) {
 	// the first and refused by the second, because normalising a cosine over metres is a
 	// category error and the author who wrote it would get silence.
 	dimensionlessFieldIds = new Set(fields.filter((field) => field.kind === "sun" || field.kind === "mix" || field.range_m).map((field) => field.id));
+	signedFieldIds = new Set(fields.filter((field) => field.kind === "plane").map((field) => field.id));
 	declaredFieldIds = new Set(fields.map((field) => field.id));
 	// A provider that enforces strict structured output cannot describe an open map,
 	// so a grammar may arrive as a list of named rules. Both shapes mean the same graph.

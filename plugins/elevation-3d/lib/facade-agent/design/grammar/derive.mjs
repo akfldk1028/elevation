@@ -188,25 +188,6 @@ function chooseAlternative(alternatives, scope, fields) {
 	return null;
 }
 
-/**
- * Derive a grammar against one segment scope and emit typed facade primitives.
- *
- * The primitives are the same shape `buildTypedFacadeDetails` already consumes, so
- * compilation, mass backing, rendering and scoring are untouched: v3 changes what the
- * model can say, not what the pipeline trusts.
- */
-/**
- * Where a scope sits in the FIELD, as the 0..1 a grade travels over.
- *
- * The parametric literature is unanimous on the shape of this: measure a scalar at each
- * unit's own position, normalise it over a stated range, remap it onto the parameter. The
- * scalar here is the distance from the member's centre to a declared attractor, in the
- * building's own developed face metres - `face_offset_m` plus the local u, so one field
- * spans every facet instead of restarting at each - and world height for z.
- *
- * Clamped at both ends, so `range_m` reads as "fully `from` this close, fully `to` this far"
- * and a member outside the range takes the nearer endpoint rather than an extrapolation.
- */
 function fieldPoint(scope) {
 	// The member's own place in the mass's coordinates: its facet's corner, plus its centre
 	// along that facet's own direction, at its own height.
@@ -293,6 +274,13 @@ function fieldT(grade, scope, fields) {
 	return clamp01(((clamp01((raw - near) / (far - near))) ** field.falloff));
 }
 
+/**
+ * Derive a grammar against one segment scope and emit typed facade primitives.
+ *
+ * The primitives are the same shape `buildTypedFacadeDetails` already consumes, so
+ * compilation, mass backing, rendering and scoring are untouched: v3 changes what the
+ * model can say, not what the pipeline trusts.
+ */
 export function deriveFacadePrimitives({ grammar, segment, storeys, entrance = null, buildingUnderside = null, continuations = [], floorBandClearance = 0 } = {}) {
 	if (!grammar?.rules || !segment) fail("a parsed grammar and a segment scope are required");
 	const primitives = [];
