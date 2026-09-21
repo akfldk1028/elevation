@@ -17,7 +17,7 @@
  * The defaults are the historical paths on purpose. Nothing that works today changes
  * behaviour by this module existing; what changes is that there is now one place to move.
  */
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -27,14 +27,9 @@ export const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", 
 const CONFIG_FILE = join(REPO_ROOT, "elevation-agent.json");
 
 const DEFAULTS = Object.freeze({
-	datasetRoot: "D:/Data/50_ELE/MAAS_ELEVATION_TEST_SET_20260730",
-	outputRoot: "D:/Data/50_ELE/facade-agent-verification/llm-facade-design-agent-20260810",
-	// The third root, and it went undeclared for a week. Ten test files reach into a tree of
-	// finished e2e runs for their fixtures - real enriched GLBs, real rendered views - and
-	// each one had the absolute path typed into it, which is the same eleven-copies problem
-	// this module exists to end. It is data, so it stays outside the folder; it is a location,
-	// so this file is where it is named.
-	fixtureRoot: "D:/Data/50_ELE/elevation-3d-e2e-results",
+	datasetRoot: "./data/datasets",
+	outputRoot: "./output",
+	fixtureRoot: "./test/fixtures",
 });
 
 function fromFile() {
@@ -57,24 +52,28 @@ function fromFile() {
 const anchor = (value) => (value === undefined ? undefined : isAbsolute(value) ? value : join(REPO_ROOT, value));
 
 /**
- * @param {{datasetRoot?: string, outputRoot?: string}} [overrides]
- * @returns {{datasetRoot: string, outputRoot: string, source: object}}
+ * @param {{datasetRoot?: string, outputRoot?: string, fixtureRoot?: string}} [overrides]
+ * @returns {{datasetRoot: string, outputRoot: string, fixtureRoot: string, source: object}}
  */
 export function resolveRoots(overrides = {}) {
 	const file = fromFile();
-	const pick = (name, envName) => {
+	const pick = (name, envName, legacyPath) => {
 		const chain = [
 			["argument", overrides[name]],
 			["environment", process.env[envName]],
 			["elevation-agent.json", file[name]],
 			["default", DEFAULTS[name]],
 		];
-		const [source, value] = chain.find(([, candidate]) => typeof candidate === "string" && candidate.length);
-		return { source, value: anchor(value) };
+		const [source, rawValue] = chain.find(([, candidate]) => typeof candidate === "string" && candidate.length);
+		const resolved = anchor(rawValue);
+		if (!existsSync(resolved) && legacyPath && existsSync(legacyPath)) {
+			return { source: "legacy-fallback", value: legacyPath };
+		}
+		return { source, value: resolved };
 	};
-	const dataset = pick("datasetRoot", "ELEVATION_AGENT_DATASET_ROOT");
-	const output = pick("outputRoot", "ELEVATION_AGENT_OUTPUT_ROOT");
-	const fixture = pick("fixtureRoot", "ELEVATION_AGENT_FIXTURE_ROOT");
+	const dataset = pick("datasetRoot", "ELEVATION_AGENT_DATASET_ROOT", "D:/Data/50_ELE/MAAS_ELEVATION_TEST_SET_20260730");
+	const output = pick("outputRoot", "ELEVATION_AGENT_OUTPUT_ROOT", "D:/Data/50_ELE/facade-agent-verification/llm-facade-design-agent-20260810");
+	const fixture = pick("fixtureRoot", "ELEVATION_AGENT_FIXTURE_ROOT", "D:/Data/50_ELE/elevation-3d-e2e-results");
 	return {
 		datasetRoot: dataset.value,
 		outputRoot: output.value,

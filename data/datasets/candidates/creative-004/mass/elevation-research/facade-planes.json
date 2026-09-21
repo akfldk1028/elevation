@@ -1,0 +1,79 @@
+{
+  "facade_planes": [
+    {
+      "extent_m": [
+        17.295453000000002,
+        16.5
+      ],
+      "normal": [
+        0,
+        -1,
+        0
+      ],
+      "origin": [
+        -8.647726,
+        -8.879196,
+        0.0
+      ],
+      "view": "front"
+    },
+    {
+      "extent_m": [
+        17.758392,
+        16.5
+      ],
+      "normal": [
+        1,
+        0,
+        0
+      ],
+      "origin": [
+        8.647727,
+        -8.879196,
+        0.0
+      ],
+      "view": "right"
+    },
+    {
+      "extent_m": [
+        17.295453000000002,
+        16.5
+      ],
+      "normal": [
+        0,
+        1,
+        0
+      ],
+      "origin": [
+        8.647727,
+        8.879196,
+        0.0
+      ],
+      "view": "back"
+    },
+    {
+      "extent_m": [
+        17.758392,
+        16.5
+      ],
+      "normal": [
+        -1,
+        0,
+        0
+      ],
+      "origin": [
+        -8.647726,
+        8.879196,
+        0.0
+      ],
+      "view": "left"
+    }
+  ],
+  "identity": {
+    "candidate_id": "creative-004",
+    "geometry_hash": "e7ba666451696cc3a88aca436f748fa9e38e23794a8b07a3ce97322a3b128f4b",
+    "pnu": "1168011800104170004",
+    "program_hash": "09d27bdd697c288a49ae8de8734cc2ee69b0e88e51e88f46d9418889e3c9c35f",
+    "run_id": "maas-latest-20-cache-pool-20260730"
+  }
+}

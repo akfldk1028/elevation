@@ -1,4 +1,5 @@
 import { join, resolve } from "node:path";
+import { resolveRoots } from "../../tools/facade-pipeline/config.mjs";
 import { prepareRun, redactSecrets } from "./lib/core.mjs";
 import { executeRun, resumeRun } from "./lib/orchestrator.mjs";
 import { startPreview } from "./lib/preview.mjs";
@@ -9,8 +10,9 @@ import { facadeDesignAgentToolSchema, runFacadeDesignAgentTool } from "./lib/fac
 const briefSchema = { type: "object", properties: { summary_ko: { type: "string" }, materials: { type: "array", items: { type: "string" } }, window_rhythm: { type: "string" }, ground_floor: { type: "string" }, roof: { type: "string" }, negative_constraints: { type: "array", items: { type: "string" } } }, required: ["summary_ko", "materials", "window_rhythm", "ground_floor", "roof", "negative_constraints"] };
 
 export async function register(api) {
-	const datasetRoot = api.config.dataset_root ?? "D:/Data/50_ELE/MAAS_ELEVATION_TEST_SET_20260730";
-	const outputRoot = resolve(api.config.output_root ?? "results");
+	const roots = resolveRoots();
+	const datasetRoot = api.config.dataset_root ?? roots.datasetRoot;
+	const outputRoot = resolve(api.config.output_root ?? roots.outputRoot);
 	const facadeFetch = typeof api.fetch === "function" ? api.fetch : globalThis.fetch?.bind(globalThis);
 	api.addPrompt("For a complete candidate package, prefer elevation_3d_run. An accepted enriched run automatically produces and browser-verifies one selected GLB plus front, back, left, right, plan, top, axon, and opposite-axon views. Exact-MASS fallback is degraded and is never presented as detailed delivery. Optional Tripo PBR texturing runs only when texturing.enabled and texturing.confirm_live are explicitly true; an API key means capability, never consent. The procedural package is always retained. The four legacy tools are experimental only.");
 	api.registerMemoryLayer({ name: "elevation-3d-research", path: "memory/elevation-3d/README.md", description: "Geometry-locked architectural 3D research and decisions" });

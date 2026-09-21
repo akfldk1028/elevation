@@ -12,11 +12,21 @@ import numpy as np
 from PIL import Image
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
-root_50 = os.path.abspath(os.path.join(current_dir, "..", "..", "..", ".."))
+repo_root = os.path.abspath(os.path.join(current_dir, "..", "..", ".."))
+root_50 = os.path.abspath(os.path.join(repo_root, ".."))
 
-# Add Grounded-SAM-2 paths
-sys.path.append(os.path.join(root_50, "clone", "Grounded-SAM-2"))
-sys.path.append(os.path.join(root_50, "clone", "Grounded-SAM-2", "grounding_dino"))
+sam2_search_paths = [
+    os.environ.get("SAM2_PATH"),
+    os.environ.get("GROUNDED_SAM2_PATH"),
+    os.path.join(repo_root, "clone", "Grounded-SAM-2"),
+    os.path.join(repo_root, "clone", "Grounded-SAM-2", "grounding_dino"),
+    os.path.join(repo_root, "vendor", "Grounded-SAM-2"),
+    os.path.join(root_50, "clone", "Grounded-SAM-2"),
+    os.path.join(root_50, "clone", "Grounded-SAM-2", "grounding_dino"),
+]
+for p in sam2_search_paths:
+    if p and os.path.exists(p) and p not in sys.path:
+        sys.path.insert(0, p)
 
 try:
     from sam2.build_sam import build_sam2
@@ -38,6 +48,7 @@ def find_sam2_checkpoint():
     if env_ckpt and os.path.exists(env_ckpt):
         return env_ckpt
     candidates = [
+        os.path.join(repo_root, "checkpoints", "sam2.1_hiera_small.pt"),
         os.path.join(root_50, "clone", "Grounded-SAM-2", "checkpoints", "sam2.1_hiera_small.pt"),
         os.path.join(root_50, "clone", "checkpoints", "sam2.1_hiera_small.pt"),
         os.path.join(root_50, "checkpoints", "sam2.1_hiera_small.pt"),
@@ -49,9 +60,14 @@ def find_sam2_checkpoint():
     return candidates[0]
 
 def find_gdino_checkpoint():
+    env_ckpt = os.environ.get("GDINO_CHECKPOINT")
+    if env_ckpt and os.path.exists(env_ckpt):
+        return env_ckpt
     candidates = [
+        os.path.join(repo_root, "checkpoints", "groundingdino_swint_ogc.pth"),
         os.path.join(root_50, "clone", "Grounded-SAM-2", "gdino_checkpoints", "groundingdino_swint_ogc.pth"),
         os.path.join(root_50, "clone", "checkpoints", "groundingdino_swint_ogc.pth"),
+        os.path.join(root_50, "checkpoints", "groundingdino_swint_ogc.pth"),
     ]
     for c in candidates:
         if os.path.exists(c):
@@ -59,7 +75,11 @@ def find_gdino_checkpoint():
     return candidates[0]
 
 def find_gdino_config():
+    env_cfg = os.environ.get("GDINO_CONFIG")
+    if env_cfg and os.path.exists(env_cfg):
+        return env_cfg
     candidates = [
+        os.path.join(repo_root, "clone", "Grounded-SAM-2", "grounding_dino", "groundingdino", "config", "GroundingDINO_SwinT_OGC.py"),
         os.path.join(root_50, "clone", "Grounded-SAM-2", "grounding_dino", "groundingdino", "config", "GroundingDINO_SwinT_OGC.py"),
         os.path.join(root_50, "groundingdino", "config", "GroundingDINO_SwinT_OGC.py"),
     ]

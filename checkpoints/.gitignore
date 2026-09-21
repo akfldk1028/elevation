@@ -1,0 +1,11 @@
+# Ignore large neural model weights
+*.pt
+*.pth
+*.bin
+*.safetensors
+*.onnx
+*.engine
+
+# Keep instructions and download scripts
+!.gitignore
+!README.md

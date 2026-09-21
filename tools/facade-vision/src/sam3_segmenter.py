@@ -12,8 +12,18 @@ import numpy as np
 from PIL import Image
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
-root_50 = os.path.abspath(os.path.join(current_dir, "..", "..", "..", ".."))
-sys.path.append(os.path.join(root_50, "clone", "sam3"))
+repo_root = os.path.abspath(os.path.join(current_dir, "..", "..", ".."))
+root_50 = os.path.abspath(os.path.join(repo_root, ".."))
+
+sam3_search_paths = [
+    os.environ.get("SAM3_PATH"),
+    os.path.join(repo_root, "clone", "sam3"),
+    os.path.join(repo_root, "vendor", "sam3"),
+    os.path.join(root_50, "clone", "sam3"),
+]
+for p in sam3_search_paths:
+    if p and os.path.exists(p) and p not in sys.path:
+        sys.path.insert(0, p)
 
 try:
     from sam3.model_builder import build_sam3_image_model
@@ -43,6 +53,8 @@ class SAM3FacadeSegmenter:
         # Check local checkpoints
         candidates = [
             checkpoint_path,
+            os.environ.get("SAM3_CHECKPOINT"),
+            os.path.join(repo_root, "checkpoints", "sam3.pt"),
             os.path.join(root_50, "clone", "sam3", "checkpoints", "sam3.pt"),
             os.path.join(root_50, "checkpoints", "sam3.pt"),
         ]

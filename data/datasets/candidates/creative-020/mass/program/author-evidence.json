@@ -1,0 +1,18 @@
+{
+  "author_evidence": {
+    "cache_hit": true,
+    "model": "gpt-5.4-mini",
+    "prompt_contract": "arr.maas.geometry_llm_author.v10_connected_solid_author_gate",
+    "provider": "openai_llm_geometry_author",
+    "response_id": "resp_0de47e9682d3a0d3006a5a4703d0c4819bab1205b36ac0a429",
+    "schema_version": "arr.maas.creative_author_evidence.v1",
+    "source_kind": "llm_authored_geometry_program"
+  },
+  "identity": {
+    "candidate_id": "creative-020",
+    "geometry_hash": "86bb271ffc8e951ff75d813c98fdf4742bc5938970ecc30f4d49c291923dabe1",
+    "pnu": "1168011800104170004",
+    "program_hash": "f108201b896a4df0479d21314d1a04d4bacb27feebf33f0da1e48fb0241f5d2a",
+    "run_id": "maas-latest-20-cache-pool-20260730"
+  }
+}

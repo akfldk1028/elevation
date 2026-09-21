@@ -1,0 +1,18 @@
+{
+  "authority": "authored_prelegal_storey_contract",
+  "floor_guides_m": [
+    0.0,
+    3.3,
+    6.6,
+    9.9,
+    13.2,
+    16.5
+  ],
+  "identity": {
+    "candidate_id": "creative-004",
+    "geometry_hash": "e7ba666451696cc3a88aca436f748fa9e38e23794a8b07a3ce97322a3b128f4b",
+    "pnu": "1168011800104170004",
+    "program_hash": "09d27bdd697c288a49ae8de8734cc2ee69b0e88e51e88f46d9418889e3c9c35f",
+    "run_id": "maas-latest-20-cache-pool-20260730"
+  }
+}

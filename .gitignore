@@ -24,3 +24,16 @@ __pycache__/
 tools/facade-vision/checkpoints/*.pt
 tools/facade-vision/checkpoints/*.pth
 tools/facade-vision/outputs/
+checkpoints/*.pt
+checkpoints/*.pth
+checkpoints/*.bin
+checkpoints/*.safetensors
+output/*
+!output/.gitkeep
+!output/creative-020/
+!output/creative-020/llm-facade-subagent-v1/
+!output/creative-020/llm-facade-subagent-v1/selected.glb
+!output/creative-020/llm-facade-subagent-v1/front.png
+!output/creative-020/llm-facade-subagent-v1/axon.png
+!output/creative-020/llm-facade-subagent-v1/context-summary.json
+

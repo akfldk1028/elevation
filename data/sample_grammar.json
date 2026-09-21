@@ -1,0 +1,860 @@
+{
+  "schema_version": "arr.elevation3d.facade-grammar.v3",
+  "concept_id": "creative-020",
+  "start": "Facet",
+  "materials": [
+    {
+      "id": "pale-board-cast",
+      "substance": "cast",
+      "lightness": "pale",
+      "hue": "warm-neutral",
+      "finish": "matte",
+      "joint_m": 2.75,
+      "reads_as": "Fair-faced in-situ concrete to the whole star - shell, folds and roof coping in one pour, against 2.75 m sawn-board panels with day-joints left visible, lightly acid-etched and sealed matt. There is no separate coping mix and no joint at the head: the wall turns over."
+    },
+    {
+      "id": "shadow-grey-liner",
+      "substance": "cast",
+      "lightness": "mid",
+      "hue": "warm-neutral",
+      "finish": "honed",
+      "joint_m": 1.1,
+      "reads_as": "Honed grey-cement liner cast into the returns of every slot, one module deep; specified a full step below the outer field so the thickness of the wall reads as a distinct grey plane rather than as shadow."
+    },
+    {
+      "id": "slab-edge-charcoal",
+      "substance": "cast",
+      "lightness": "dark",
+      "hue": "neutral",
+      "finish": "matte",
+      "joint_m": 1.55,
+      "reads_as": "Dark pigmented concrete to the head and cill of every opening, forming the closed slab-edge band that is read through the glass at each floor line."
+    },
+    {
+      "id": "deep-vision-glass",
+      "substance": "glazing",
+      "lightness": "mid-dark",
+      "hue": "cool",
+      "finish": "polished",
+      "joint_m": 1.55,
+      "reads_as": "Sealed double glazing with a neutral solar-control coating, 1.55 m pane module, reading grey-blue in reflection with the floor plates legible behind it."
+    }
+  ],
+  "entrance": {
+    "segment_selector": "primary_visible_ground_segment",
+    "preferred_bay": "central_focus",
+    "door_family": "recessed-glazed-lobby-screen",
+    "width_m": 1.6,
+    "height_m": 3.0,
+    "recess_m": 0.45
+  },
+  "rules": [
+    {
+      "name": "Facet",
+      "alternatives": [
+        {
+          "when": "index == 3",
+          "split": {
+            "axis": "z",
+            "parts": [
+              {
+                "size": "~1",
+                "symbol": "BodyHi",
+                "arg": "wide",
+                "repeat": null
+              },
+              {
+                "size": "0.85",
+                "symbol": "Crown",
+                "arg": null,
+                "repeat": null
+              }
+            ]
+          },
+          "terminal": null,
+          "inset_m": 0,
+          "depth_m": 0,
+          "min_u_m": null,
+          "min_z_m": null,
+          "rise_to": null,
+          "reach": null,
+          "material": null,
+          "grade": null
+        },
+        {
+          "when": "index == 4",
+          "split": {
+            "axis": "z",
+            "parts": [
+              {
+                "size": "~1",
+                "symbol": "BodyLo",
+                "arg": "wide",
+                "repeat": null
+              },
+              {
+                "size": "0.85",
+                "symbol": "Crown",
+                "arg": null,
+                "repeat": null
+              }
+            ]
+          },
+          "terminal": null,
+          "inset_m": 0,
+          "depth_m": 0,
+          "min_u_m": null,
+          "min_z_m": null,
+          "rise_to": null,
+          "reach": null,
+          "material": null,
+          "grade": null
+        },
+        {
+          "when": "index == 2",
+          "split": {
+            "axis": "z",
+            "parts": [
+              {
+                "size": "~1",
+                "symbol": "BodyLo",
+                "arg": "narrow",
+                "repeat": null
+              },
+              {
+                "size": "0.85",
+                "symbol": "Crown",
+                "arg": null,
+                "repeat": null
+              }
+            ]
+          },
+          "terminal": null,
+          "inset_m": 0,
+          "depth_m": 0,
+          "min_u_m": null,
+          "min_z_m": null,
+          "rise_to": null,
+          "reach": null,
+          "material": null,
+          "grade": null
+        },
+        {
+          "when": "index == last",
+          "split": {
+            "axis": "z",
+            "parts": [
+              {
+                "size": "~1",
+                "symbol": "BodyLo",
+                "arg": "wide",
+                "repeat": null
+              },
+              {
+                "size": "0.85",
+                "symbol": "Crown",
+                "arg": null,
+                "repeat": null
+              }
+            ]
+          },
+          "terminal": null,
+          "inset_m": 0,
+          "depth_m": 0,
+          "min_u_m": null,
+          "min_z_m": null,
+          "rise_to": null,
+          "reach": null,
+          "material": null,
+          "grade": null
+        },
+        {
+          "when": "face_view == left && index == 0",
+          "split": {
+            "axis": "z",
+            "parts": [
+              {
+                "size": "~1",
+                "symbol": "BodyHi",
+                "arg": "wide",
+                "repeat": null
+              },
+              {
+                "size": "0.85",
+                "symbol": "Crown",
+                "arg": null,
+                "repeat": null
+              }
+            ]
+          },
+          "terminal": null,
+          "inset_m": 0,
+          "depth_m": 0,
+          "min_u_m": null,
+          "min_z_m": null,
+          "rise_to": null,
+          "reach": null,
+          "material": null,
+          "grade": null
+        },
+        {
+          "when": "face_view == right && index == 0",
+          "split": {
+            "axis": "z",
+            "parts": [
+              {
+                "size": "~1",
+                "symbol": "BodyHi",
+                "arg": "wide",
+                "repeat": null
+              },
+              {
+                "size": "0.85",
+                "symbol": "Crown",
+                "arg": null,
+                "repeat": null
+              }
+            ]
+          },
+          "terminal": null,
+          "inset_m": 0,
+          "depth_m": 0,
+          "min_u_m": null,
+          "min_z_m": null,
+          "rise_to": null,
+          "reach": null,
+          "material": null,
+          "grade": null
+        },
+        {
+          "when": null,
+          "split": {
+            "axis": "z",
+            "parts": [
+              {
+                "size": "~1",
+                "symbol": "BodyHi",
+                "arg": "narrow",
+                "repeat": null
+              },
+              {
+                "size": "0.85",
+                "symbol": "Crown",
+                "arg": null,
+                "repeat": null
+              }
+            ]
+          },
+          "terminal": null,
+          "inset_m": 0,
+          "depth_m": 0,
+          "min_u_m": null,
+          "min_z_m": null,
+          "rise_to": null,
+          "reach": null,
+          "material": null,
+          "grade": null
+        }
+      ]
+    },
+    {
+      "name": "BodyHi",
+      "alternatives": [
+        {
+          "when": "param == wide",
+          "split": {
+            "axis": "u",
+            "parts": [
+              {
+                "size": "~1",
+                "symbol": "Field",
+                "arg": null,
+                "repeat": null
+              },
+              {
+                "size": "1.18",
+                "symbol": "SlotZone",
+                "arg": "wide",
+                "repeat": null
+              }
+            ]
+          },
+          "terminal": null,
+          "inset_m": 0,
+          "depth_m": 0,
+          "min_u_m": null,
+          "min_z_m": null,
+          "rise_to": null,
+          "reach": null,
+          "material": null,
+          "grade": null
+        },
+        {
+          "when": null,
+          "split": {
+            "axis": "u",
+            "parts": [
+              {
+                "size": "~1",
+                "symbol": "Field",
+                "arg": null,
+                "repeat": null
+              },
+              {
+                "size": "0.72",
+                "symbol": "SlotZone",
+                "arg": "narrow",
+                "repeat": null
+              }
+            ]
+          },
+          "terminal": null,
+          "inset_m": 0,
+          "depth_m": 0,
+          "min_u_m": null,
+          "min_z_m": null,
+          "rise_to": null,
+          "reach": null,
+          "material": null,
+          "grade": null
+        }
+      ]
+    },
+    {
+      "name": "BodyLo",
+      "alternatives": [
+        {
+          "when": "face_view == left",
+          "split": {
+            "axis": "u",
+            "parts": [
+              {
+                "size": "0.72",
+                "symbol": "SlotZone",
+                "arg": "narrow",
+                "repeat": null
+              },
+              {
+                "size": "0.30",
+                "symbol": "Field",
+                "arg": null,
+                "repeat": null
+              },
+              {
+                "size": "0.36",
+                "symbol": "SlotZone",
+                "arg": null,
+                "repeat": null
+              },
+              {
+                "size": "~1",
+                "symbol": "Field",
+                "arg": null,
+                "repeat": null
+              }
+            ]
+          },
+          "terminal": null,
+          "inset_m": 0,
+          "depth_m": 0,
+          "min_u_m": null,
+          "min_z_m": null,
+          "rise_to": null,
+          "reach": null,
+          "material": null,
+          "grade": null
+        },
+        {
+          "when": "face_view == right",
+          "split": {
+            "axis": "u",
+            "parts": [
+              {
+                "size": "0.72",
+                "symbol": "SlotZone",
+                "arg": "narrow",
+                "repeat": null
+              },
+              {
+                "size": "0.30",
+                "symbol": "Field",
+                "arg": null,
+                "repeat": null
+              },
+              {
+                "size": "0.36",
+                "symbol": "SlotZone",
+                "arg": null,
+                "repeat": null
+              },
+              {
+                "size": "~1",
+                "symbol": "Field",
+                "arg": null,
+                "repeat": null
+              }
+            ]
+          },
+          "terminal": null,
+          "inset_m": 0,
+          "depth_m": 0,
+          "min_u_m": null,
+          "min_z_m": null,
+          "rise_to": null,
+          "reach": null,
+          "material": null,
+          "grade": null
+        },
+        {
+          "when": "param == wide",
+          "split": {
+            "axis": "u",
+            "parts": [
+              {
+                "size": "1.18",
+                "symbol": "SlotZone",
+                "arg": "wide",
+                "repeat": null
+              },
+              {
+                "size": "~1",
+                "symbol": "Field",
+                "arg": null,
+                "repeat": null
+              }
+            ]
+          },
+          "terminal": null,
+          "inset_m": 0,
+          "depth_m": 0,
+          "min_u_m": null,
+          "min_z_m": null,
+          "rise_to": null,
+          "reach": null,
+          "material": null,
+          "grade": null
+        },
+        {
+          "when": null,
+          "split": {
+            "axis": "u",
+            "parts": [
+              {
+                "size": "0.72",
+                "symbol": "SlotZone",
+                "arg": "narrow",
+                "repeat": null
+              },
+              {
+                "size": "~1",
+                "symbol": "Field",
+                "arg": null,
+                "repeat": null
+              }
+            ]
+          },
+          "terminal": null,
+          "inset_m": 0,
+          "depth_m": 0,
+          "min_u_m": null,
+          "min_z_m": null,
+          "rise_to": null,
+          "reach": null,
+          "material": null,
+          "grade": null
+        }
+      ]
+    },
+    {
+      "name": "Field",
+      "alternatives": [
+        {
+          "when": null,
+          "split": null,
+          "terminal": "wall",
+          "inset_m": 0,
+          "depth_m": 0,
+          "min_u_m": null,
+          "min_z_m": null,
+          "rise_to": null,
+          "reach": null,
+          "material": "pale-board-cast",
+          "grade": null
+        }
+      ]
+    },
+    {
+      "name": "SlotZone",
+      "alternatives": [
+        {
+          "when": "param == wide",
+          "split": {
+            "axis": "u",
+            "parts": [
+              {
+                "size": "0.13",
+                "symbol": "Jamb",
+                "arg": null,
+                "repeat": null
+              },
+              {
+                "size": "~1",
+                "symbol": "PaneColWide",
+                "arg": null,
+                "repeat": null
+              },
+              {
+                "size": "0.13",
+                "symbol": "Jamb",
+                "arg": null,
+                "repeat": null
+              }
+            ]
+          },
+          "terminal": null,
+          "inset_m": 0,
+          "depth_m": 0,
+          "min_u_m": null,
+          "min_z_m": null,
+          "rise_to": null,
+          "reach": null,
+          "material": null,
+          "grade": null
+        },
+        {
+          "when": "param == narrow",
+          "split": {
+            "axis": "u",
+            "parts": [
+              {
+                "size": "0.11",
+                "symbol": "Jamb",
+                "arg": null,
+                "repeat": null
+              },
+              {
+                "size": "~1",
+                "symbol": "PaneCol",
+                "arg": null,
+                "repeat": null
+              },
+              {
+                "size": "0.11",
+                "symbol": "Jamb",
+                "arg": null,
+                "repeat": null
+              }
+            ]
+          },
+          "terminal": null,
+          "inset_m": 0,
+          "depth_m": 0,
+          "min_u_m": null,
+          "min_z_m": null,
+          "rise_to": null,
+          "reach": null,
+          "material": null,
+          "grade": null
+        },
+        {
+          "when": null,
+          "split": {
+            "axis": "u",
+            "parts": [
+              {
+                "size": "0.06",
+                "symbol": "SlitJamb",
+                "arg": null,
+                "repeat": null
+              },
+              {
+                "size": "~1",
+                "symbol": "PaneCol",
+                "arg": null,
+                "repeat": null
+              },
+              {
+                "size": "0.06",
+                "symbol": "SlitJamb",
+                "arg": null,
+                "repeat": null
+              }
+            ]
+          },
+          "terminal": null,
+          "inset_m": 0,
+          "depth_m": 0,
+          "min_u_m": null,
+          "min_z_m": null,
+          "rise_to": null,
+          "reach": null,
+          "material": null,
+          "grade": null
+        }
+      ]
+    },
+    {
+      "name": "Jamb",
+      "alternatives": [
+        {
+          "when": null,
+          "split": null,
+          "terminal": "reveal",
+          "inset_m": 0,
+          "depth_m": 0.1,
+          "min_u_m": null,
+          "min_z_m": null,
+          "rise_to": null,
+          "reach": null,
+          "material": "shadow-grey-liner",
+          "grade": null
+        }
+      ]
+    },
+    {
+      "name": "SlitJamb",
+      "alternatives": [
+        {
+          "when": null,
+          "split": null,
+          "terminal": "reveal",
+          "inset_m": 0,
+          "depth_m": 0.06,
+          "min_u_m": null,
+          "min_z_m": null,
+          "rise_to": null,
+          "reach": null,
+          "material": "shadow-grey-liner",
+          "grade": null
+        }
+      ]
+    },
+    {
+      "name": "PaneCol",
+      "alternatives": [
+        {
+          "when": null,
+          "split": {
+            "axis": "storey",
+            "parts": [
+              {
+                "size": "~1",
+                "symbol": "StoreyOpening",
+                "arg": null,
+                "repeat": null
+              }
+            ]
+          },
+          "terminal": null,
+          "inset_m": 0,
+          "depth_m": 0,
+          "min_u_m": null,
+          "min_z_m": null,
+          "rise_to": null,
+          "reach": null,
+          "material": null,
+          "grade": null
+        }
+      ]
+    },
+    {
+      "name": "PaneColWide",
+      "alternatives": [
+        {
+          "when": null,
+          "split": {
+            "axis": "z",
+            "parts": [
+              {
+                "size": "0.20",
+                "symbol": "SillBand",
+                "arg": null,
+                "repeat": null
+              },
+              {
+                "size": "2.90",
+                "symbol": "Pane",
+                "arg": null,
+                "repeat": null
+              },
+              {
+                "size": "0.20",
+                "symbol": "HeadBand",
+                "arg": null,
+                "repeat": null
+              },
+              {
+                "size": "0.30",
+                "symbol": "SillBand",
+                "arg": null,
+                "repeat": null
+              },
+              {
+                "size": "9.30",
+                "symbol": "Pane",
+                "arg": null,
+                "repeat": null
+              },
+              {
+                "size": "0.20",
+                "symbol": "HeadBand",
+                "arg": null,
+                "repeat": null
+              },
+              {
+                "size": "0.30",
+                "symbol": "SillBand",
+                "arg": null,
+                "repeat": null
+              },
+              {
+                "size": "~1",
+                "symbol": "Pane",
+                "arg": null,
+                "repeat": null
+              },
+              {
+                "size": "0.20",
+                "symbol": "HeadBand",
+                "arg": null,
+                "repeat": null
+              }
+            ]
+          },
+          "terminal": null,
+          "inset_m": 0,
+          "depth_m": 0,
+          "min_u_m": null,
+          "min_z_m": null,
+          "rise_to": null,
+          "reach": null,
+          "material": null,
+          "grade": null
+        }
+      ]
+    },
+    {
+      "name": "StoreyOpening",
+      "alternatives": [
+        {
+          "when": null,
+          "split": {
+            "axis": "z",
+            "parts": [
+              {
+                "size": "0.20",
+                "symbol": "SillBand",
+                "arg": null,
+                "repeat": null
+              },
+              {
+                "size": "~1",
+                "symbol": "Pane",
+                "arg": null,
+                "repeat": null
+              },
+              {
+                "size": "0.20",
+                "symbol": "HeadBand",
+                "arg": null,
+                "repeat": null
+              }
+            ]
+          },
+          "terminal": null,
+          "inset_m": 0,
+          "depth_m": 0,
+          "min_u_m": null,
+          "min_z_m": null,
+          "rise_to": null,
+          "reach": null,
+          "material": null,
+          "grade": null
+        }
+      ]
+    },
+    {
+      "name": "SillBand",
+      "alternatives": [
+        {
+          "when": null,
+          "split": null,
+          "terminal": "sill",
+          "inset_m": 0,
+          "depth_m": 0.08,
+          "min_u_m": null,
+          "min_z_m": null,
+          "rise_to": null,
+          "reach": null,
+          "material": "slab-edge-charcoal",
+          "grade": null
+        }
+      ]
+    },
+    {
+      "name": "HeadBand",
+      "alternatives": [
+        {
+          "when": null,
+          "split": null,
+          "terminal": "lintel",
+          "inset_m": 0,
+          "depth_m": 0.08,
+          "min_u_m": null,
+          "min_z_m": null,
+          "rise_to": null,
+          "reach": null,
+          "material": "slab-edge-charcoal",
+          "grade": null
+        }
+      ]
+    },
+    {
+      "name": "Pane",
+      "alternatives": [
+        {
+          "when": null,
+          "split": null,
+          "terminal": "glass",
+          "inset_m": 0,
+          "depth_m": 0,
+          "min_u_m": null,
+          "min_z_m": null,
+          "rise_to": null,
+          "reach": null,
+          "material": "deep-vision-glass",
+          "grade": null
+        }
+      ]
+    },
+    {
+      "name": "Crown",
+      "alternatives": [
+        {
+          "when": null,
+          "split": null,
+          "terminal": "cornice",
+          "inset_m": 0,
+          "depth_m": 0.75,
+          "min_u_m": null,
+          "min_z_m": null,
+          "rise_to": null,
+          "reach": "facet_edge",
+          "material": "pale-board-cast",
+          "grade": null
+        }
+      ]
+    }
+  ],
+  "design_rationale": [
+    "The photograph is one construction repeated sixteen times: a blind board-cast pleated shell, cut only where the star folds inward. This mass is the outline of two squares crossed at 45 degrees, so every facet has exactly one re-entrant edge and one convex point. The grammar puts a glazed slot hard against the re-entrant edge and leaves the point solid, and the elevation reads as concrete piers at the star tips with light in the valleys.",
+    "Which end of a facet is the valley is not a choice, it follows from the outward normals in the technical context: on both six-facet faces the valley sits at high-u on indices 0, 1 and 3 and at low-u on 2, 4 and last, and on the two-facet faces at high-u on index 0 and low-u on index last. The seven start alternatives encode that table and nothing else; BodyHi and BodyLo are one composition mirrored.",
+    "Widths are set so both facets of a valley agree: the wide slot goes to indices 3, 4 and last on the long faces and to index 0 on the flat side faces, which makes all eight valleys symmetric and puts the placed entrance at the foot of a wide shaft. The shaft runs 3.60 to 12.90 across three floors and starts above the door head on purpose - an opening within 0.3 m of the entrance is omitted, and a shaft begun at 0.30 lost three storeys of glass over the door.",
+    "Punched masonry, not a curtain wall. In the photograph the glass sits deep behind a returned concrete jamb with a band of concrete between the pane and the fold: that is a hole cut in a wall, not a skin hung across it. Committing to punched also lets the engine take the 0.3 m fold clearance off the scope before the rule runs, so the concrete cheek at every fold is drawn by the mass and never budgeted twice.",
+    "Both jamb reveals run the full 15.65 m of the shaft, outside the storey split, so the slot is one continuous cut and not five stacked holes. The panes inside are set with a 0.20 m cill and head against a 0.15 m requirement - thinned from 0.30 because at 0.30 the floor bands ate the slot and printed as solid rungs, where the photograph shows a thin dark line at each floor.",
+    "The two flat side faces differ in kind rather than in width. They are the only facets whose plane stands square to the axis and they are read as a paired opening: the valley slot with a 0.24 m companion slit near the star point, 0.47 m of solid concrete between them. That gives a two-facet face a measure it could not otherwise have.",
+    "The cap is the top termination and it is the SAME concrete as the shell. In the photograph the cap's own vertical fascia measures L 126-140 against wall planes at 131-158, and R-B is +15 to +20 on both: one warm-neutral pour, with the bright L=180 reading confined to the near-horizontal top, which is orientation under an overcast dome and not a material. Declaring a whiter, cooler coping put a value step at a junction that has no joint.",
+    "Materials are read off the photograph. One substance for everything solid and one for the glass, both dielectric so the value ladder survives the elevation with no sun. The jamb liner is a full step below the field so the thickness of the wall is a grey plane rather than a shadow, and the head and cill are the dark slab-edge band read through the glass at every floor.",
+    "Nothing is graded and nothing is randomised. The facade has parts - point, valley, shaft, cap - and every variation is between those parts."
+  ]
+}

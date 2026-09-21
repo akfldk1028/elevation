@@ -10,10 +10,10 @@ config:
   properties:
     dataset_root:
       type: string
-      default: "D:/Data/50_ELE/MAAS_ELEVATION_TEST_SET_20260730"
+      default: "./data/datasets"
     output_root:
       type: string
-      default: "results"
+      default: "./output"
     preview_port:
       type: number
       default: 4173

@@ -1,0 +1,1827 @@
+{
+  "activation_graph": {
+    "causal_program_trace": true,
+    "edges": [
+      {
+        "activation": 1.0,
+        "id": "edge:58c8e77d218de18b",
+        "relation": "solid_input",
+        "source": "ast:seed",
+        "target": "ast:seed_matrix4"
+      },
+      {
+        "activation": 0.0,
+        "id": "edge:01f853e2fe6c4745",
+        "relation": "solid_input",
+        "source": "ast:seed_matrix4",
+        "target": "ast:cross"
+      },
+      {
+        "activation": 0.0,
+        "id": "edge:0ca7069a0bcf6aa1",
+        "relation": "solid_input",
+        "source": "ast:cross",
+        "target": "ast:result"
+      },
+      {
+        "activation": 1.0,
+        "id": "edge:158e634f075d89d6",
+        "relation": "solid_input",
+        "source": "ast:result",
+        "target": "ast:creative_physical_storey_capacity_matrix4"
+      },
+      {
+        "activation": 1.0,
+        "id": "edge:d85508bc43d54733",
+        "relation": "solid_input",
+        "source": "ast:seed",
+        "target": "ast:creative_floor_01_cutter_matrix4"
+      },
+      {
+        "activation": 0.0,
+        "id": "edge:83c58cd58eff32e1",
+        "relation": "solid_input",
+        "source": "ast:creative_physical_storey_capacity_matrix4",
+        "target": "ast:creative_floor_01_occupied_plate"
+      },
+      {
+        "activation": 0.0,
+        "id": "edge:8f222305d9694a63",
+        "relation": "solid_input",
+        "source": "ast:creative_floor_01_cutter_matrix4",
+        "target": "ast:creative_floor_01_occupied_plate"
+      },
+      {
+        "activation": 1.0,
+        "id": "edge:83d212ee2a890aa2",
+        "relation": "solid_input",
+        "source": "ast:seed",
+        "target": "ast:creative_floor_02_cutter_matrix4"
+      },
+      {
+        "activation": 0.0,
+        "id": "edge:3c6771c10de68056",
+        "relation": "solid_input",
+        "source": "ast:creative_physical_storey_capacity_matrix4",
+        "target": "ast:creative_floor_02_occupied_plate"
+      },
+      {
+        "activation": 0.0,
+        "id": "edge:0a5e444c4a2f7b4d",
+        "relation": "solid_input",
+        "source": "ast:creative_floor_02_cutter_matrix4",
+        "target": "ast:creative_floor_02_occupied_plate"
+      },
+      {
+        "activation": 1.0,
+        "id": "edge:6a804dc9df9aa6e2",
+        "relation": "solid_input",
+        "source": "ast:seed",
+        "target": "ast:creative_floor_03_cutter_matrix4"
+      },
+      {
+        "activation": 0.0,
+        "id": "edge:8c6a7e40da1b9d14",
+        "relation": "solid_input",
+        "source": "ast:creative_physical_storey_capacity_matrix4",
+        "target": "ast:creative_floor_03_occupied_plate"
+      },
+      {
+        "activation": 0.0,
+        "id": "edge:0666bce31d5e38e4",
+        "relation": "solid_input",
+        "source": "ast:creative_floor_03_cutter_matrix4",
+        "target": "ast:creative_floor_03_occupied_plate"
+      },
+      {
+        "activation": 1.0,
+        "id": "edge:a5d73664f42e2f3d",
+        "relation": "solid_input",
+        "source": "ast:seed",
+        "target": "ast:creative_floor_04_cutter_matrix4"
+      },
+      {
+        "activation": 0.0,
+        "id": "edge:1bf0b0655cdb17f4",
+        "relation": "solid_input",
+        "source": "ast:creative_physical_storey_capacity_matrix4",
+        "target": "ast:creative_floor_04_occupied_plate"
+      },
+      {
+        "activation": 0.0,
+        "id": "edge:3d89c2f8c6d6fb11",
+        "relation": "solid_input",
+        "source": "ast:creative_floor_04_cutter_matrix4",
+        "target": "ast:creative_floor_04_occupied_plate"
+      },
+      {
+        "activation": 1.0,
+        "id": "edge:75a16bf14a91719a",
+        "relation": "solid_input",
+        "source": "ast:seed",
+        "target": "ast:creative_floor_05_cutter_matrix4"
+      },
+      {
+        "activation": 0.0,
+        "id": "edge:54b8e7c478ba8b0b",
+        "relation": "solid_input",
+        "source": "ast:creative_physical_storey_capacity_matrix4",
+        "target": "ast:creative_floor_05_occupied_plate"
+      },
+      {
+        "activation": 0.0,
+        "id": "edge:7b2501a89d18b89c",
+        "relation": "solid_input",
+        "source": "ast:creative_floor_05_cutter_matrix4",
+        "target": "ast:creative_floor_05_occupied_plate"
+      },
+      {
+        "activation": 0.0,
+        "id": "edge:6f860c535ff53cb4",
+        "relation": "solid_input",
+        "source": "ast:creative_physical_storey_capacity_matrix4",
+        "target": "ast:creative_occupied_storeys_union"
+      },
+      {
+        "activation": 0.0,
+        "id": "edge:e082afef56ce9097",
+        "relation": "solid_input",
+        "source": "ast:creative_floor_01_occupied_plate",
+        "target": "ast:creative_occupied_storeys_union"
+      },
+      {
+        "activation": 0.0,
+        "id": "edge:4f47a571d47f6965",
+        "relation": "solid_input",
+        "source": "ast:creative_floor_02_occupied_plate",
+        "target": "ast:creative_occupied_storeys_union"
+      },
+      {
+        "activation": 0.0,
+        "id": "edge:296bb37a424d380c",
+        "relation": "solid_input",
+        "source": "ast:creative_floor_03_occupied_plate",
+        "target": "ast:creative_occupied_storeys_union"
+      },
+      {
+        "activation": 0.0,
+        "id": "edge:04340d1ed6700701",
+        "relation": "solid_input",
+        "source": "ast:creative_floor_04_occupied_plate",
+        "target": "ast:creative_occupied_storeys_union"
+      },
+      {
+        "activation": 0.0,
+        "id": "edge:e6cc62f11ed49e2b",
+        "relation": "solid_input",
+        "source": "ast:creative_floor_05_occupied_plate",
+        "target": "ast:creative_occupied_storeys_union"
+      },
+      {
+        "activation": 0.0,
+        "id": "edge:a9e89e4697fcbfea",
+        "relation": "program_projection_result",
+        "source": "ast:creative_occupied_storeys_union",
+        "target": "flow:program"
+      },
+      {
+        "activation": 1.0,
+        "id": "edge:5e4bf33aa8bcfe06",
+        "relation": "compile",
+        "source": "flow:program",
+        "target": "flow:compiler"
+      },
+      {
+        "activation": 0.0,
+        "id": "edge:a73e2146fa06aa11",
+        "relation": "validate",
+        "source": "flow:compiler",
+        "target": "flow:geometry_gate"
+      },
+      {
+        "activation": 0.0,
+        "id": "edge:4454e87c52023b9a",
+        "relation": "downstream_gate",
+        "source": "flow:geometry_gate",
+        "target": "flow:site"
+      },
+      {
+        "activation": 0.0,
+        "id": "edge:555ce903486136d7",
+        "relation": "downstream_gate",
+        "source": "flow:site",
+        "target": "flow:capacity"
+      },
+      {
+        "activation": 0.0,
+        "id": "edge:243423a2a680f36d",
+        "relation": "downstream_gate",
+        "source": "flow:capacity",
+        "target": "flow:law"
+      },
+      {
+        "activation": 0.0,
+        "id": "edge:19321e8a2617ea42",
+        "relation": "downstream_gate",
+        "source": "flow:law",
+        "target": "flow:parking"
+      },
+      {
+        "activation": 0.0,
+        "id": "edge:fed65219c086253a",
+        "relation": "downstream_gate",
+        "source": "flow:parking",
+        "target": "flow:program_fit"
+      },
+      {
+        "activation": 1.0,
+        "id": "edge:1cd092587c65da49",
+        "relation": "render",
+        "source": "flow:compiler",
+        "target": "flow:render"
+      },
+      {
+        "activation": 1.0,
+        "id": "edge:a62c061ba5c0fbfb",
+        "relation": "view",
+        "source": "flow:render",
+        "target": "render:isometric"
+      },
+      {
+        "activation": 1.0,
+        "id": "edge:bf34293243293046",
+        "relation": "view",
+        "source": "flow:render",
+        "target": "render:opposite"
+      },
+      {
+        "activation": 1.0,
+        "id": "edge:d43b60a74ff4c2cb",
+        "relation": "view",
+        "source": "flow:render",
+        "target": "render:front"
+      },
+      {
+        "activation": 1.0,
+        "id": "edge:3ebf8c905f05f4cc",
+        "relation": "view",
+        "source": "flow:render",
+        "target": "render:top"
+      },
+      {
+        "activation": 1.0,
+        "id": "edge:37ce81f57633203d",
+        "relation": "materialized_png",
+        "source": "flow:render",
+        "target": "render:mass_png"
+      },
+      {
+        "activation": 0.0,
+        "id": "edge:160f79121d124871",
+        "relation": "visual_input",
+        "source": "render:isometric",
+        "target": "flow:vlm"
+      },
+      {
+        "activation": 0.0,
+        "id": "edge:c047e58471e34902",
+        "relation": "visual_input",
+        "source": "render:opposite",
+        "target": "flow:vlm"
+      },
+      {
+        "activation": 0.0,
+        "id": "edge:9492a24bf47af3c4",
+        "relation": "visual_input",
+        "source": "render:front",
+        "target": "flow:vlm"
+      },
+      {
+        "activation": 0.0,
+        "id": "edge:183def78f7d32602",
+        "relation": "visual_input",
+        "source": "render:top",
+        "target": "flow:vlm"
+      },
+      {
+        "activation": 0.0,
+        "id": "edge:0261747b34fa77f8",
+        "relation": "candidate_image_input",
+        "source": "render:mass_png",
+        "target": "flow:vlm"
+      },
+      {
+        "activation": 0.0,
+        "id": "edge:e0a37eb57e51960a",
+        "relation": "hard_gate_input",
+        "source": "flow:program_fit",
+        "target": "flow:selector"
+      },
+      {
+        "activation": 0.0,
+        "id": "edge:4176d055fd793676",
+        "relation": "critic_input",
+        "source": "flow:vlm",
+        "target": "flow:selector"
+      },
+      {
+        "activation": 1.0,
+        "id": "edge:d8689ce6e4a9a1c0",
+        "relation": "generated_result",
+        "source": "render:mass_png",
+        "target": "result:mass"
+      },
+      {
+        "activation": 0.0,
+        "id": "edge:6f1e3b02f94fbf41",
+        "relation": "selection_status",
+        "source": "flow:selector",
+        "target": "result:mass"
+      },
+      {
+        "activation": 0.0,
+        "id": "edge:4c5a9afe3f258e97",
+        "relation": "requests_elevation_handoff",
+        "source": "result:mass",
+        "target": "elevation:mesh_handoff"
+      },
+      {
+        "activation": 0.0,
+        "id": "edge:0cf51cb3ae98b267",
+        "relation": "builds_condition_pack",
+        "source": "elevation:mesh_handoff",
+        "target": "elevation:condition_pack"
+      },
+      {
+        "activation": 0.0,
+        "id": "edge:9a2248b8cf4f6b6b",
+        "relation": "generates_elevation",
+        "source": "elevation:condition_pack",
+        "target": "elevation:result"
+      },
+      {
+        "activation": 0.0,
+        "id": "edge:3207279125878bc6",
+        "relation": "requests_facade_proposal",
+        "source": "elevation:condition_pack",
+        "target": "elevation:image_agent"
+      },
+      {
+        "activation": 0.0,
+        "id": "edge:a413fb05ab158b1d",
+        "relation": "generates_facade_proposal",
+        "source": "elevation:image_agent",
+        "target": "elevation:proposal"
+      }
+    ],
+    "graph_id": "mass-execution:f108201b896a4df0479d21314d1a04d4bacb27feebf33f0da1e48fb0241f5d2a",
+    "internal_neuron_claim": false,
+    "nodes": [
+      {
+        "activation": 0.0,
+        "column": "base",
+        "evidence": {},
+        "id": "ast:seed",
+        "kind": "primitive",
+        "label": "box",
+        "operator": "box",
+        "semantic_role": "base_authority",
+        "source_id": "seed",
+        "status": "failed"
+      },
+      {
+        "activation": 1.0,
+        "column": "base",
+        "evidence": {
+          "matrix4": [
+            [
+              1.0,
+              0.0,
+              0.0,
+              -0.5
+            ],
+            [
+              0.0,
+              1.0,
+              0.0,
+              -0.5
+            ],
+            [
+              0.0,
+              0.0,
+              1.0,
+              -0.5
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ],
+          "node_id": "seed_matrix4",
+          "semantic_role": "base_seed"
+        },
+        "id": "ast:seed_matrix4",
+        "kind": "transform",
+        "label": "matrix4",
+        "operator": "matrix4",
+        "semantic_role": "base_seed",
+        "source_id": "seed_matrix4",
+        "status": "evaluated"
+      },
+      {
+        "activation": 0.0,
+        "column": "geometry",
+        "evidence": {},
+        "id": "ast:cross",
+        "kind": "macro",
+        "label": "cross_mass",
+        "operator": "cross_mass",
+        "semantic_role": "cruciform occupied mass",
+        "source_id": "cross",
+        "status": "failed"
+      },
+      {
+        "activation": 0.0,
+        "column": "geometry",
+        "evidence": {},
+        "id": "ast:result",
+        "kind": "modifier",
+        "label": "cut_corner",
+        "operator": "cut_corner",
+        "semantic_role": "street-facing oblique threshold",
+        "source_id": "result",
+        "status": "failed"
+      },
+      {
+        "activation": 1.0,
+        "column": "geometry",
+        "evidence": {
+          "matrix4": [
+            [
+              7.531992697038688,
+              0.0,
+              0.0,
+              -0.0
+            ],
+            [
+              0.0,
+              7.531992697038688,
+              0.0,
+              -0.0
+            ],
+            [
+              0.0,
+              0.0,
+              16.5,
+              8.25
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ],
+          "node_id": "creative_physical_storey_capacity_matrix4",
+          "semantic_role": "physical_storey_capacity_fit"
+        },
+        "id": "ast:creative_physical_storey_capacity_matrix4",
+        "kind": "transform",
+        "label": "matrix4",
+        "operator": "matrix4",
+        "semantic_role": "physical_storey_capacity_fit",
+        "source_id": "creative_physical_storey_capacity_matrix4",
+        "status": "evaluated"
+      },
+      {
+        "activation": 1.0,
+        "column": "geometry",
+        "evidence": {
+          "matrix4": [
+            [
+              11.077919840000002,
+              0.0,
+              0.0,
+              -5.538959920000001
+            ],
+            [
+              0.0,
+              11.077919840000002,
+              0.0,
+              -5.538959920000001
+            ],
+            [
+              0.0,
+              0.0,
+              0.12,
+              1.5899999999999999
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ],
+          "node_id": "creative_floor_01_cutter_matrix4",
+          "semantic_role": "occupied_floor_cutter"
+        },
+        "id": "ast:creative_floor_01_cutter_matrix4",
+        "kind": "transform",
+        "label": "matrix4",
+        "operator": "matrix4",
+        "semantic_role": "occupied_floor_cutter",
+        "source_id": "creative_floor_01_cutter_matrix4",
+        "status": "evaluated"
+      },
+      {
+        "activation": 0.0,
+        "column": "geometry",
+        "evidence": {},
+        "id": "ast:creative_floor_01_occupied_plate",
+        "kind": "boolean",
+        "label": "intersection",
+        "operator": "intersection",
+        "semantic_role": "occupied_floor_plate",
+        "source_id": "creative_floor_01_occupied_plate",
+        "status": "failed"
+      },
+      {
+        "activation": 1.0,
+        "column": "geometry",
+        "evidence": {
+          "matrix4": [
+            [
+              11.077919840000002,
+              0.0,
+              0.0,
+              -5.538959920000001
+            ],
+            [
+              0.0,
+              11.077919840000002,
+              0.0,
+              -5.538959920000001
+            ],
+            [
+              0.0,
+              0.0,
+              0.12,
+              4.890000000000001
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ],
+          "node_id": "creative_floor_02_cutter_matrix4",
+          "semantic_role": "occupied_floor_cutter"
+        },
+        "id": "ast:creative_floor_02_cutter_matrix4",
+        "kind": "transform",
+        "label": "matrix4",
+        "operator": "matrix4",
+        "semantic_role": "occupied_floor_cutter",
+        "source_id": "creative_floor_02_cutter_matrix4",
+        "status": "evaluated"
+      },
+      {
+        "activation": 0.0,
+        "column": "geometry",
+        "evidence": {},
+        "id": "ast:creative_floor_02_occupied_plate",
+        "kind": "boolean",
+        "label": "intersection",
+        "operator": "intersection",
+        "semantic_role": "occupied_floor_plate",
+        "source_id": "creative_floor_02_occupied_plate",
+        "status": "failed"
+      },
+      {
+        "activation": 1.0,
+        "column": "geometry",
+        "evidence": {
+          "matrix4": [
+            [
+              11.077919840000002,
+              0.0,
+              0.0,
+              -5.538959920000001
+            ],
+            [
+              0.0,
+              11.077919840000002,
+              0.0,
+              -5.538959920000001
+            ],
+            [
+              0.0,
+              0.0,
+              0.12,
+              8.19
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ],
+          "node_id": "creative_floor_03_cutter_matrix4",
+          "semantic_role": "occupied_floor_cutter"
+        },
+        "id": "ast:creative_floor_03_cutter_matrix4",
+        "kind": "transform",
+        "label": "matrix4",
+        "operator": "matrix4",
+        "semantic_role": "occupied_floor_cutter",
+        "source_id": "creative_floor_03_cutter_matrix4",
+        "status": "evaluated"
+      },
+      {
+        "activation": 0.0,
+        "column": "geometry",
+        "evidence": {},
+        "id": "ast:creative_floor_03_occupied_plate",
+        "kind": "boolean",
+        "label": "intersection",
+        "operator": "intersection",
+        "semantic_role": "occupied_floor_plate",
+        "source_id": "creative_floor_03_occupied_plate",
+        "status": "failed"
+      },
+      {
+        "activation": 1.0,
+        "column": "geometry",
+        "evidence": {
+          "matrix4": [
+            [
+              11.077919840000002,
+              0.0,
+              0.0,
+              -5.538959920000001
+            ],
+            [
+              0.0,
+              11.077919840000002,
+              0.0,
+              -5.538959920000001
+            ],
+            [
+              0.0,
+              0.0,
+              0.12,
+              11.49
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ],
+          "node_id": "creative_floor_04_cutter_matrix4",
+          "semantic_role": "occupied_floor_cutter"
+        },
+        "id": "ast:creative_floor_04_cutter_matrix4",
+        "kind": "transform",
+        "label": "matrix4",
+        "operator": "matrix4",
+        "semantic_role": "occupied_floor_cutter",
+        "source_id": "creative_floor_04_cutter_matrix4",
+        "status": "evaluated"
+      },
+      {
+        "activation": 0.0,
+        "column": "geometry",
+        "evidence": {},
+        "id": "ast:creative_floor_04_occupied_plate",
+        "kind": "boolean",
+        "label": "intersection",
+        "operator": "intersection",
+        "semantic_role": "occupied_floor_plate",
+        "source_id": "creative_floor_04_occupied_plate",
+        "status": "failed"
+      },
+      {
+        "activation": 1.0,
+        "column": "geometry",
+        "evidence": {
+          "matrix4": [
+            [
+              11.077919840000002,
+              0.0,
+              0.0,
+              -5.538959920000001
+            ],
+            [
+              0.0,
+              11.077919840000002,
+              0.0,
+              -5.538959920000001
+            ],
+            [
+              0.0,
+              0.0,
+              0.12,
+              14.79
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ],
+          "node_id": "creative_floor_05_cutter_matrix4",
+          "semantic_role": "occupied_floor_cutter"
+        },
+        "id": "ast:creative_floor_05_cutter_matrix4",
+        "kind": "transform",
+        "label": "matrix4",
+        "operator": "matrix4",
+        "semantic_role": "occupied_floor_cutter",
+        "source_id": "creative_floor_05_cutter_matrix4",
+        "status": "evaluated"
+      },
+      {
+        "activation": 0.0,
+        "column": "geometry",
+        "evidence": {},
+        "id": "ast:creative_floor_05_occupied_plate",
+        "kind": "boolean",
+        "label": "intersection",
+        "operator": "intersection",
+        "semantic_role": "occupied_floor_plate",
+        "source_id": "creative_floor_05_occupied_plate",
+        "status": "failed"
+      },
+      {
+        "activation": 0.0,
+        "column": "geometry",
+        "evidence": {},
+        "id": "ast:creative_occupied_storeys_union",
+        "kind": "boolean",
+        "label": "union",
+        "operator": "union",
+        "semantic_role": "connected_mass_with_occupied_floor_plates",
+        "source_id": "creative_occupied_storeys_union",
+        "status": "failed"
+      },
+      {
+        "activation": 0.0,
+        "column": "program",
+        "evidence": {},
+        "id": "flow:program",
+        "kind": "pipeline_stage",
+        "label": "Use / program projection",
+        "status": "not_evaluated"
+      },
+      {
+        "activation": 1.0,
+        "column": "compiler",
+        "evidence": {},
+        "id": "flow:compiler",
+        "kind": "pipeline_stage",
+        "label": "Geometry Compiler",
+        "status": "passed"
+      },
+      {
+        "activation": 1.0,
+        "column": "gate",
+        "evidence": {
+          "issues": [
+            {
+              "code": "self_intersection_unchecked",
+              "message": "self-intersection was not checked by the kernel",
+              "node_id": "",
+              "severity": "error"
+            },
+            {
+              "code": "inverted_normals",
+              "message": "mesh winding does not produce outward normals",
+              "node_id": "",
+              "severity": "error"
+            },
+            {
+              "code": "empty_or_tiny_solid",
+              "message": "compiled volume is below the hard minimum",
+              "node_id": "",
+              "severity": "error"
+            }
+          ]
+        },
+        "id": "flow:geometry_gate",
+        "kind": "pipeline_stage",
+        "label": "Geometry GATE",
+        "status": "failed"
+      },
+      {
+        "activation": 0.0,
+        "column": "site",
+        "evidence": {
+          "reason": "site_evidence_not_supplied",
+          "status": "not_evaluated"
+        },
+        "id": "flow:site",
+        "kind": "pipeline_stage",
+        "label": "Site / parcel",
+        "status": "not_evaluated"
+      },
+      {
+        "activation": 0.0,
+        "column": "capacity",
+        "evidence": {
+          "reason": "capacity_evidence_not_supplied",
+          "status": "not_evaluated"
+        },
+        "id": "flow:capacity",
+        "kind": "pipeline_stage",
+        "label": "FAR / capacity alternatives",
+        "status": "not_evaluated"
+      },
+      {
+        "activation": 0.0,
+        "column": "law",
+        "evidence": {
+          "reason": "law_evidence_not_supplied",
+          "status": "not_evaluated"
+        },
+        "id": "flow:law",
+        "kind": "pipeline_stage",
+        "label": "Legal hard gate",
+        "status": "not_evaluated"
+      },
+      {
+        "activation": 0.0,
+        "column": "parking",
+        "evidence": {
+          "reason": "parking_evidence_not_supplied",
+          "status": "not_evaluated"
+        },
+        "id": "flow:parking",
+        "kind": "pipeline_stage",
+        "label": "Parking hard gate",
+        "status": "not_evaluated"
+      },
+      {
+        "activation": 0.0,
+        "column": "program_fit",
+        "evidence": {
+          "reason": "program_fit_evidence_not_supplied",
+          "status": "not_evaluated"
+        },
+        "id": "flow:program_fit",
+        "kind": "pipeline_stage",
+        "label": "Program-fit gate",
+        "status": "not_evaluated"
+      },
+      {
+        "activation": 1.0,
+        "column": "render",
+        "evidence": {
+          "byte_count": 10242,
+          "path": "D:\\Data\\25_ACE\\docs\\mass\\maas-latest-20-cache-pool-20260730\\renders\\creative-020.png",
+          "sha256": "0d991f12b7c746778e0848a23a990f34d732ab04bff1d5440713996ff5b502e2",
+          "status": "passed",
+          "views": [
+            "isometric",
+            "opposite",
+            "front",
+            "top"
+          ]
+        },
+        "id": "flow:render",
+        "kind": "pipeline_stage",
+        "label": "4-view render",
+        "status": "passed"
+      },
+      {
+        "activation": 1.0,
+        "column": "render",
+        "evidence": {},
+        "id": "render:isometric",
+        "kind": "pipeline_stage",
+        "label": "isometric",
+        "status": "passed"
+      },
+      {
+        "activation": 1.0,
+        "column": "render",
+        "evidence": {},
+        "id": "render:opposite",
+        "kind": "pipeline_stage",
+        "label": "opposite",
+        "status": "passed"
+      },
+      {
+        "activation": 1.0,
+        "column": "render",
+        "evidence": {},
+        "id": "render:front",
+        "kind": "pipeline_stage",
+        "label": "front",
+        "status": "passed"
+      },
+      {
+        "activation": 1.0,
+        "column": "render",
+        "evidence": {},
+        "id": "render:top",
+        "kind": "pipeline_stage",
+        "label": "top",
+        "status": "passed"
+      },
+      {
+        "activation": 1.0,
+        "column": "render",
+        "evidence": {
+          "byte_count": 10242,
+          "path": "D:\\Data\\25_ACE\\docs\\mass\\maas-latest-20-cache-pool-20260730\\renders\\creative-020.png",
+          "sha256": "0d991f12b7c746778e0848a23a990f34d732ab04bff1d5440713996ff5b502e2",
+          "status": "passed",
+          "views": [
+            "isometric",
+            "opposite",
+            "front",
+            "top"
+          ]
+        },
+        "id": "render:mass_png",
+        "kind": "mass_render_result",
+        "label": "Generated MASS PNG",
+        "status": "passed"
+      },
+      {
+        "activation": 0.0,
+        "column": "vlm",
+        "evidence": {
+          "reason": "vlm_not_run",
+          "status": "not_evaluated"
+        },
+        "id": "flow:vlm",
+        "kind": "pipeline_stage",
+        "label": "VLM critic",
+        "status": "not_evaluated"
+      },
+      {
+        "activation": 0.0,
+        "column": "selector",
+        "evidence": {
+          "reason": "selector_evidence_not_supplied",
+          "status": "not_evaluated"
+        },
+        "id": "flow:selector",
+        "kind": "pipeline_stage",
+        "label": "Final selector",
+        "status": "not_evaluated"
+      },
+      {
+        "activation": 1.0,
+        "column": "result",
+        "evidence": {
+          "byte_count": 10242,
+          "path": "D:\\Data\\25_ACE\\docs\\mass\\maas-latest-20-cache-pool-20260730\\renders\\creative-020.png",
+          "sha256": "0d991f12b7c746778e0848a23a990f34d732ab04bff1d5440713996ff5b502e2",
+          "status": "passed",
+          "views": [
+            "isometric",
+            "opposite",
+            "front",
+            "top"
+          ]
+        },
+        "id": "result:mass",
+        "kind": "mass_result",
+        "label": "block_cross_mass_cut_corner__creative_physical",
+        "status": "passed"
+      },
+      {
+        "activation": 0.0,
+        "column": "elevation_handoff",
+        "evidence": {
+          "artifact_exists": false,
+          "geometry_hash": "86bb271ffc8e951ff75d813c98fdf4742bc5938970ecc30f4d49c291923dabe1",
+          "manifest_path": "",
+          "mass_result_node_id": "result:mass",
+          "program_hash": "f108201b896a4df0479d21314d1a04d4bacb27feebf33f0da1e48fb0241f5d2a",
+          "required_payload": [
+            "indexed_mesh",
+            "stable_face_ids",
+            "camera_contract"
+          ]
+        },
+        "id": "elevation:mesh_handoff",
+        "kind": "elevation_mesh_handoff",
+        "label": "Elevation mesh handoff · not_evaluated",
+        "status": "not_evaluated"
+      },
+      {
+        "activation": 0.0,
+        "column": "elevation_condition",
+        "evidence": {
+          "artifact_exists": false,
+          "condition_pack_path": "",
+          "geometry_hash": "86bb271ffc8e951ff75d813c98fdf4742bc5938970ecc30f4d49c291923dabe1",
+          "mass_result_node_id": "result:mass",
+          "program_hash": "f108201b896a4df0479d21314d1a04d4bacb27feebf33f0da1e48fb0241f5d2a",
+          "required_layers": [
+            "silhouette",
+            "metric_depth",
+            "surface_normals",
+            "floor_guides",
+            "facade_planes"
+          ]
+        },
+        "id": "elevation:condition_pack",
+        "kind": "elevation_condition_pack",
+        "label": "Elevation condition pack · not_evaluated",
+        "status": "not_evaluated"
+      },
+      {
+        "activation": 0.0,
+        "column": "elevation_result",
+        "evidence": {
+          "artifact_exists": false,
+          "geometry_hash": "86bb271ffc8e951ff75d813c98fdf4742bc5938970ecc30f4d49c291923dabe1",
+          "mass_result_node_id": "result:mass",
+          "preview_url": "",
+          "program_hash": "f108201b896a4df0479d21314d1a04d4bacb27feebf33f0da1e48fb0241f5d2a",
+          "truth": "deterministic projections of the compiled indexed MASS mesh",
+          "view_count": 0,
+          "views": []
+        },
+        "id": "elevation:result",
+        "kind": "elevation_result",
+        "label": "Generated elevation · 0 views",
+        "status": "not_evaluated"
+      },
+      {
+        "activation": 0.0,
+        "column": "elevation_image_agent",
+        "evidence": {
+          "geometry_hash": "86bb271ffc8e951ff75d813c98fdf4742bc5938970ecc30f4d49c291923dabe1",
+          "issues": [],
+          "mass_result_node_id": "result:mass",
+          "presentation": {},
+          "program_hash": "f108201b896a4df0479d21314d1a04d4bacb27feebf33f0da1e48fb0241f5d2a",
+          "provider": "",
+          "provider_metadata": {},
+          "request_count": 0,
+          "retry_count": 0,
+          "strategy": {}
+        },
+        "id": "elevation:image_agent",
+        "kind": "elevation_image_agent",
+        "label": "Architectural Render Agent · not_evaluated",
+        "status": "not_evaluated"
+      },
+      {
+        "activation": 0.0,
+        "column": "elevation_proposal",
+        "evidence": {
+          "artifact": {},
+          "artifact_exists": false,
+          "geometry_hash": "86bb271ffc8e951ff75d813c98fdf4742bc5938970ecc30f4d49c291923dabe1",
+          "geometry_mutation_allowed": false,
+          "manifest_path": "",
+          "mass_result_node_id": "result:mass",
+          "presentation": {},
+          "preview_url": "",
+          "program_hash": "f108201b896a4df0479d21314d1a04d4bacb27feebf33f0da1e48fb0241f5d2a"
+        },
+        "id": "elevation:proposal",
+        "kind": "elevation_image_proposal",
+        "label": "Render ALT 01 · not_evaluated",
+        "status": "not_evaluated"
+      }
+    ],
+    "query_contract": {
+      "active_edge_predicate": "activation > 0",
+      "book_image_policy": "BOOK is typed language provenance, not raster image evidence",
+      "default_query": "active_ancestors_of_result:mass",
+      "edge_direction": "cause_to_effect",
+      "inactive_evidence_policy": "retain node and edge with activation=0; never infer pass",
+      "node_identity": "stable node.id within program_hash",
+      "selection_unit": "one_executed_mass",
+      "visualization_policy": "render one selected MASS induced subgraph; never create parallel authority graphs",
+      "vlm_image_policy": "materialize only images actually submitted to a recorded VLM evaluation"
+    },
+    "result_node_ids": [
+      "result:mass"
+    ],
+    "root_node_ids": [
+      "ast:seed"
+    ],
+    "schema_version": "arr.maas.mass_activation_graph.v1"
+  },
+  "agent_collaboration": {},
+  "agent_context": {
+    "active_edges": [
+      {
+        "activation": 1.0,
+        "relation": "render",
+        "source": "flow:compiler",
+        "target": "flow:render"
+      },
+      {
+        "activation": 1.0,
+        "relation": "view",
+        "source": "flow:render",
+        "target": "render:isometric"
+      },
+      {
+        "activation": 1.0,
+        "relation": "view",
+        "source": "flow:render",
+        "target": "render:opposite"
+      },
+      {
+        "activation": 1.0,
+        "relation": "view",
+        "source": "flow:render",
+        "target": "render:front"
+      },
+      {
+        "activation": 1.0,
+        "relation": "view",
+        "source": "flow:render",
+        "target": "render:top"
+      },
+      {
+        "activation": 1.0,
+        "relation": "materialized_png",
+        "source": "flow:render",
+        "target": "render:mass_png"
+      },
+      {
+        "activation": 1.0,
+        "relation": "generated_result",
+        "source": "render:mass_png",
+        "target": "result:mass"
+      }
+    ],
+    "active_nodes": [
+      {
+        "activation": 1.0,
+        "column": "base",
+        "id": "ast:seed_matrix4",
+        "label": "matrix4",
+        "operator": "matrix4",
+        "source_id": "seed_matrix4"
+      },
+      {
+        "activation": 1.0,
+        "column": "geometry",
+        "id": "ast:creative_physical_storey_capacity_matrix4",
+        "label": "matrix4",
+        "operator": "matrix4",
+        "source_id": "creative_physical_storey_capacity_matrix4"
+      },
+      {
+        "activation": 1.0,
+        "column": "geometry",
+        "id": "ast:creative_floor_01_cutter_matrix4",
+        "label": "matrix4",
+        "operator": "matrix4",
+        "source_id": "creative_floor_01_cutter_matrix4"
+      },
+      {
+        "activation": 1.0,
+        "column": "geometry",
+        "id": "ast:creative_floor_02_cutter_matrix4",
+        "label": "matrix4",
+        "operator": "matrix4",
+        "source_id": "creative_floor_02_cutter_matrix4"
+      },
+      {
+        "activation": 1.0,
+        "column": "geometry",
+        "id": "ast:creative_floor_03_cutter_matrix4",
+        "label": "matrix4",
+        "operator": "matrix4",
+        "source_id": "creative_floor_03_cutter_matrix4"
+      },
+      {
+        "activation": 1.0,
+        "column": "geometry",
+        "id": "ast:creative_floor_04_cutter_matrix4",
+        "label": "matrix4",
+        "operator": "matrix4",
+        "source_id": "creative_floor_04_cutter_matrix4"
+      },
+      {
+        "activation": 1.0,
+        "column": "geometry",
+        "id": "ast:creative_floor_05_cutter_matrix4",
+        "label": "matrix4",
+        "operator": "matrix4",
+        "source_id": "creative_floor_05_cutter_matrix4"
+      },
+      {
+        "activation": 1.0,
+        "column": "compiler",
+        "id": "flow:compiler",
+        "label": "Geometry Compiler",
+        "operator": "",
+        "source_id": ""
+      },
+      {
+        "activation": 1.0,
+        "column": "gate",
+        "id": "flow:geometry_gate",
+        "label": "Geometry GATE",
+        "operator": "",
+        "source_id": ""
+      },
+      {
+        "activation": 1.0,
+        "column": "render",
+        "id": "flow:render",
+        "label": "4-view render",
+        "operator": "",
+        "source_id": ""
+      },
+      {
+        "activation": 1.0,
+        "column": "render",
+        "id": "render:isometric",
+        "label": "isometric",
+        "operator": "",
+        "source_id": ""
+      },
+      {
+        "activation": 1.0,
+        "column": "render",
+        "id": "render:opposite",
+        "label": "opposite",
+        "operator": "",
+        "source_id": ""
+      },
+      {
+        "activation": 1.0,
+        "column": "render",
+        "id": "render:front",
+        "label": "front",
+        "operator": "",
+        "source_id": ""
+      },
+      {
+        "activation": 1.0,
+        "column": "render",
+        "id": "render:top",
+        "label": "top",
+        "operator": "",
+        "source_id": ""
+      },
+      {
+        "activation": 1.0,
+        "column": "render",
+        "id": "render:mass_png",
+        "label": "Generated MASS PNG",
+        "operator": "",
+        "source_id": ""
+      },
+      {
+        "activation": 1.0,
+        "column": "result",
+        "id": "result:mass",
+        "label": "block_cross_mass_cut_corner__creative_physical",
+        "operator": "",
+        "source_id": ""
+      }
+    ],
+    "agent_rules": [
+      "Treat this as observed execution evidence, never as hidden-neuron data.",
+      "Target only exact editable AST node IDs also present in the current geometry graph contract.",
+      "Repair failed stages; do not infer a pass from a pending stage.",
+      "Recompile, rerender and rerun hard gates after every typed edit."
+    ],
+    "editable_ast_nodes": [
+      {
+        "kind": "transform",
+        "node_id": "seed_matrix4",
+        "operator": "matrix4",
+        "semantic_role": "base_seed",
+        "status": "evaluated"
+      },
+      {
+        "kind": "transform",
+        "node_id": "creative_physical_storey_capacity_matrix4",
+        "operator": "matrix4",
+        "semantic_role": "physical_storey_capacity_fit",
+        "status": "evaluated"
+      },
+      {
+        "kind": "transform",
+        "node_id": "creative_floor_01_cutter_matrix4",
+        "operator": "matrix4",
+        "semantic_role": "occupied_floor_cutter",
+        "status": "evaluated"
+      },
+      {
+        "kind": "transform",
+        "node_id": "creative_floor_02_cutter_matrix4",
+        "operator": "matrix4",
+        "semantic_role": "occupied_floor_cutter",
+        "status": "evaluated"
+      },
+      {
+        "kind": "transform",
+        "node_id": "creative_floor_03_cutter_matrix4",
+        "operator": "matrix4",
+        "semantic_role": "occupied_floor_cutter",
+        "status": "evaluated"
+      },
+      {
+        "kind": "transform",
+        "node_id": "creative_floor_04_cutter_matrix4",
+        "operator": "matrix4",
+        "semantic_role": "occupied_floor_cutter",
+        "status": "evaluated"
+      },
+      {
+        "kind": "transform",
+        "node_id": "creative_floor_05_cutter_matrix4",
+        "operator": "matrix4",
+        "semantic_role": "occupied_floor_cutter",
+        "status": "evaluated"
+      }
+    ],
+    "failed_stages": [
+      {
+        "evidence": {
+          "hard_pass": false,
+          "issues": [
+            {
+              "code": "self_intersection_unchecked",
+              "message": "self-intersection was not checked by the kernel",
+              "node_id": "",
+              "severity": "error"
+            },
+            {
+              "code": "inverted_normals",
+              "message": "mesh winding does not produce outward normals",
+              "node_id": "",
+              "severity": "error"
+            },
+            {
+              "code": "empty_or_tiny_solid",
+              "message": "compiled volume is below the hard minimum",
+              "node_id": "",
+              "severity": "error"
+            }
+          ],
+          "metrics": {
+            "bounds": [
+              [
+                -5.325923,
+                -5.325923,
+                0.0
+              ],
+              [
+                5.325923,
+                5.325923,
+                16.5
+              ]
+            ],
+            "closed_solid": true,
+            "component_count": 1,
+            "connected": true,
+            "manifold": true,
+            "triangle_count": 66,
+            "vertex_count": 35,
+            "watertight": true
+          }
+        },
+        "id": "geometry_gate"
+      }
+    ],
+    "geometry_hash": "86bb271ffc8e951ff75d813c98fdf4742bc5938970ecc30f4d49c291923dabe1",
+    "passport_status": "in_progress",
+    "pending_required_stages": [
+      "program",
+      "site",
+      "capacity",
+      "law",
+      "parking",
+      "program_fit",
+      "vlm",
+      "selector",
+      "agent_collaboration"
+    ],
+    "program_hash": "f108201b896a4df0479d21314d1a04d4bacb27feebf33f0da1e48fb0241f5d2a",
+    "protected_ast_node_ids": [],
+    "purpose": "causal_observation_for_author_critic_repair_selector",
+    "research_method_context": {
+      "active_source_count": 2,
+      "claim_policy": "method_adaptation_provenance_not_paper_reimplementation",
+      "schema_version": "arr.maas.executable_paper_method_context.v1",
+      "source_count": 6,
+      "sources": [
+        {
+          "evidence": {
+            "matched_operators": [],
+            "recursive_geometry": "passed"
+          },
+          "limitation": "cuboid part assembly is not sufficient for architectural bends, profiles, cuts, or legal site adaptation",
+          "maas_adaptation": "typed parametric shape programs whose attachment and symmetry relations generate editable families",
+          "method_layer": "recursive_parametric_assembly",
+          "paper_url": "https://arxiv.org/abs/2009.08026",
+          "runtime_components": [
+            "geometry_language.ast",
+            "geometry_language.compiler",
+            "geometry_language.programs"
+          ],
+          "runtime_status": "registered_not_active_for_this_mass",
+          "source_id": "shapeassembly_siggraph_asia_2020",
+          "title": "ShapeAssembly: Learning to Generate Programs for 3D Shape Structure Synthesis"
+        },
+        {
+          "evidence": {
+            "compiler": "passed",
+            "structural_hash_present": true
+          },
+          "limitation": "semantic architectural program and visual quality objectives remain MAAS-specific",
+          "maas_adaptation": "canonical AST rewriting and equivalence-aware candidate collapse instead of retaining redundant CSG programs",
+          "method_layer": "canonical_program_normalization",
+          "paper_url": "https://arxiv.org/abs/1909.12252",
+          "runtime_components": [
+            "geometry_language.ast",
+            "geometry_language.cost",
+            "geometry_language.compiler"
+          ],
+          "runtime_status": "adaptation_active",
+          "source_id": "szalinski_siggraph_2020",
+          "title": "Synthesizing Structured CAD Models with Equality Saturation and Inverse Transformations"
+        },
+        {
+          "evidence": {
+            "render": "passed",
+            "vlm": "not_evaluated"
+          },
+          "limitation": "CAD visual similarity does not encode architectural program, law, parking, or competition-board diversity",
+          "maas_adaptation": "alternate executable parametric-program learning with rendered visual feedback rather than scoring labels alone",
+          "method_layer": "rendered_visual_feedback",
+          "paper_url": "https://arxiv.org/abs/2501.19054",
+          "runtime_components": [
+            "geometry_language.render",
+            "geometry_language.vlm_adapter",
+            "preference.vlm_scorer"
+          ],
+          "runtime_status": "registered_not_active_for_this_mass",
+          "source_id": "cadfusion_2025",
+          "title": "Text-to-CAD Generation Through Infusing Visual Feedback in Large Language Models"
+        },
+        {
+          "evidence": {
+            "typed_geometry_edit_count": 0,
+            "vlm": "not_evaluated"
+          },
+          "limitation": "near-miss CAD reconstruction repair is narrower than open-ended architectural mass generation",
+          "maas_adaptation": "VLM infers design intent while a symbolic compiler performs typed AST repair and deterministic geometry verification",
+          "method_layer": "neuro_symbolic_typed_repair",
+          "paper_url": "https://openaccess.thecvf.com/content/CVPR2026W/NeXD/html/Zhang_CADLoop_An_Equivariant-Aware_Skill-Grounded_Loop_for_CAD_Data_Curation_CVPRW_2026_paper.html",
+          "runtime_components": [
+            "geometry_language.vlm_adapter",
+            "geometry_language.loop",
+            "geometry_language.gate"
+          ],
+          "runtime_status": "registered_not_active_for_this_mass",
+          "source_id": "cadloop_cvprw_2026",
+          "title": "CADLoop: An Equivariant-Aware Skill-Grounded Loop for CAD Data Curation"
+        },
+        {
+          "evidence": {
+            "recursive_geometry": "passed",
+            "semantic_role_count": 7
+          },
+          "limitation": "semantic comments must remain grounded in compiled geometry and cannot substitute for executable relations",
+          "maas_adaptation": "pair executable graph nodes with architectural semantic roles so agents and users can understand and revise the same program",
+          "method_layer": "semantic_program_trace",
+          "paper_url": "https://openaccess.thecvf.com/content/CVPR2024/html/Yuan_CADTalk_An_Algorithm_and_Benchmark_for_Semantic_Commenting_of_CAD_CVPR_2024_paper.html",
+          "runtime_components": [
+            "geometry_language.ast",
+            "geometry_language.execution_activation",
+            "geometry_language.execution_agent_context"
+          ],
+          "runtime_status": "adaptation_active",
+          "source_id": "cadtalk_cvpr_2024",
+          "title": "CADTalk: An Algorithm and Benchmark for Semantic Commenting of CAD Programs"
+        },
+        {
+          "evidence": {
+            "capacity": "not_evaluated",
+            "selector": "not_evaluated"
+          },
+          "limitation": "MAAS uses a typed geometry compiler and hard gates rather than reproducing the Rhino-Grasshopper EvoMass implementation",
+          "maas_adaptation": "typology-oriented candidate populations with explicit capacity, site, legal, parking and diversity feedback before portfolio selection",
+          "method_layer": "performance_bounded_typology_exploration",
+          "paper_url": "https://doi.org/10.1016/j.foar.2024.06.001",
+          "runtime_components": [
+            "book_language.candidate_generation",
+            "book_language.capacity_alternatives",
+            "book_language.portfolio_selection",
+            "book_language.downstream_hard_gate"
+          ],
+          "runtime_status": "registered_not_active_for_this_mass",
+          "source_id": "evomass_foar_2024",
+          "title": "Optimization-based Design Exploration of Building Massing Typologies—EvoMass"
+        }
+      ]
+    },
+    "schema_version": "arr.maas.mass_execution_agent_context.v1",
+    "stage_status": {
+      "agent_collaboration": "not_evaluated",
+      "base_model": "passed",
+      "book_language": "not_evaluated",
+      "capacity": "not_evaluated",
+      "compiler": "passed",
+      "geometry_gate": "failed",
+      "law": "not_evaluated",
+      "parking": "not_evaluated",
+      "program": "not_evaluated",
+      "program_fit": "not_evaluated",
+      "recursive_geometry": "passed",
+      "render": "passed",
+      "selector": "not_evaluated",
+      "site": "not_evaluated",
+      "vlm": "not_evaluated"
+    },
+    "typed_geometry_edits": [],
+    "vlm_concept_scores": {},
+    "vlm_reference_images": []
+  },
+  "capacity_replay_numeric_transport": {},
+  "elevation_evidence": {},
+  "final_hard_pass": false,
+  "floor_capacity_plan_hash": "FLOOR_CAPACITY_PLAN_HASH_UNRESOLVED",
+  "full_flow_complete": false,
+  "geometry_hash": "86bb271ffc8e951ff75d813c98fdf4742bc5938970ecc30f4d49c291923dabe1",
+  "mass_id": "mass:86bb271ffc8e951ff75d813c98fdf4742bc5938970ecc30f4d49c291923dabe1",
+  "program_hash": "f108201b896a4df0479d21314d1a04d4bacb27feebf33f0da1e48fb0241f5d2a",
+  "program_name": "block_cross_mass_cut_corner__creative_physical",
+  "schema_version": "arr.maas.mass_execution_passport.v1",
+  "stages": [
+    {
+      "evidence": {
+        "operators": [
+          "box",
+          "matrix4"
+        ],
+        "seed_family": ""
+      },
+      "id": "base_model",
+      "label": "Base Model",
+      "node_ids": [
+        "seed",
+        "seed_matrix4"
+      ],
+      "required_for_final": true,
+      "status": "passed"
+    },
+    {
+      "evidence": {
+        "application_order": "",
+        "ordered_verbs": [],
+        "scope_fraction": null,
+        "scope_label": ""
+      },
+      "id": "book_language",
+      "label": "BOOK geometry language",
+      "node_ids": [],
+      "required_for_final": false,
+      "status": "not_evaluated"
+    },
+    {
+      "evidence": {
+        "form_bank_lane": "",
+        "form_bank_variation_page": 0,
+        "issues": [],
+        "node_count": 16,
+        "program_conditioned": false,
+        "root_id": "creative_occupied_storeys_union"
+      },
+      "id": "recursive_geometry",
+      "label": "Recursive Geometry AST",
+      "node_ids": [
+        "seed",
+        "seed_matrix4",
+        "cross",
+        "result",
+        "creative_physical_storey_capacity_matrix4",
+        "creative_floor_01_cutter_matrix4",
+        "creative_floor_01_occupied_plate",
+        "creative_floor_02_cutter_matrix4",
+        "creative_floor_02_occupied_plate",
+        "creative_floor_03_cutter_matrix4",
+        "creative_floor_03_occupied_plate",
+        "creative_floor_04_cutter_matrix4",
+        "creative_floor_04_occupied_plate",
+        "creative_floor_05_cutter_matrix4",
+        "creative_floor_05_occupied_plate",
+        "creative_occupied_storeys_union"
+      ],
+      "required_for_final": true,
+      "status": "passed"
+    },
+    {
+      "evidence": {},
+      "id": "program",
+      "label": "Use / program projection",
+      "node_ids": [],
+      "required_for_final": true,
+      "status": "not_evaluated"
+    },
+    {
+      "evidence": {
+        "reason": "site_evidence_not_supplied",
+        "status": "not_evaluated"
+      },
+      "id": "site",
+      "label": "Site / parcel",
+      "node_ids": [],
+      "required_for_final": true,
+      "status": "not_evaluated"
+    },
+    {
+      "evidence": {
+        "reason": "capacity_evidence_not_supplied",
+        "status": "not_evaluated"
+      },
+      "id": "capacity",
+      "label": "FAR / capacity alternatives",
+      "node_ids": [],
+      "required_for_final": true,
+      "status": "not_evaluated"
+    },
+    {
+      "evidence": {
+        "reason": "law_evidence_not_supplied",
+        "status": "not_evaluated"
+      },
+      "id": "law",
+      "label": "Legal hard gate",
+      "node_ids": [],
+      "required_for_final": true,
+      "status": "not_evaluated"
+    },
+    {
+      "evidence": {
+        "reason": "parking_evidence_not_supplied",
+        "status": "not_evaluated"
+      },
+      "id": "parking",
+      "label": "Parking hard gate",
+      "node_ids": [],
+      "required_for_final": true,
+      "status": "not_evaluated"
+    },
+    {
+      "evidence": {
+        "reason": "program_fit_evidence_not_supplied",
+        "status": "not_evaluated"
+      },
+      "id": "program_fit",
+      "label": "Program-fit gate",
+      "node_ids": [],
+      "required_for_final": true,
+      "status": "not_evaluated"
+    },
+    {
+      "evidence": {
+        "capacity_replay_numeric_transport": {},
+        "issues": [],
+        "status": "compiled",
+        "trace_count": 7
+      },
+      "id": "compiler",
+      "label": "Geometry Compiler",
+      "node_ids": [
+        "seed_matrix4",
+        "creative_physical_storey_capacity_matrix4",
+        "creative_floor_01_cutter_matrix4",
+        "creative_floor_02_cutter_matrix4",
+        "creative_floor_03_cutter_matrix4",
+        "creative_floor_04_cutter_matrix4",
+        "creative_floor_05_cutter_matrix4"
+      ],
+      "required_for_final": true,
+      "status": "passed"
+    },
+    {
+      "evidence": {
+        "hard_pass": false,
+        "issues": [
+          {
+            "code": "self_intersection_unchecked",
+            "message": "self-intersection was not checked by the kernel",
+            "node_id": "",
+            "severity": "error"
+          },
+          {
+            "code": "inverted_normals",
+            "message": "mesh winding does not produce outward normals",
+            "node_id": "",
+            "severity": "error"
+          },
+          {
+            "code": "empty_or_tiny_solid",
+            "message": "compiled volume is below the hard minimum",
+            "node_id": "",
+            "severity": "error"
+          }
+        ],
+        "metrics": {
+          "bounds": [
+            [
+              -5.325923,
+              -5.325923,
+              0.0
+            ],
+            [
+              5.325923,
+              5.325923,
+              16.5
+            ]
+          ],
+          "closed_solid": true,
+          "component_count": 1,
+          "connected": true,
+          "manifold": true,
+          "triangle_count": 66,
+          "vertex_count": 35,
+          "watertight": true
+        }
+      },
+      "id": "geometry_gate",
+      "label": "Geometry GATE",
+      "node_ids": [],
+      "required_for_final": true,
+      "status": "failed"
+    },
+    {
+      "evidence": {
+        "byte_count": 10242,
+        "path": "D:\\Data\\25_ACE\\docs\\mass\\maas-latest-20-cache-pool-20260730\\renders\\creative-020.png",
+        "sha256": "0d991f12b7c746778e0848a23a990f34d732ab04bff1d5440713996ff5b502e2",
+        "status": "passed",
+        "views": [
+          "isometric",
+          "opposite",
+          "front",
+          "top"
+        ]
+      },
+      "id": "render",
+      "label": "Four-view PNG",
+      "node_ids": [],
+      "required_for_final": true,
+      "status": "passed"
+    },
+    {
+      "evidence": {
+        "reason": "vlm_not_run",
+        "status": "not_evaluated"
+      },
+      "id": "vlm",
+      "label": "VLM critic",
+      "node_ids": [],
+      "required_for_final": true,
+      "status": "not_evaluated"
+    },
+    {
+      "evidence": {
+        "reason": "selector_evidence_not_supplied",
+        "status": "not_evaluated"
+      },
+      "id": "selector",
+      "label": "Final selector",
+      "node_ids": [],
+      "required_for_final": true,
+      "status": "not_evaluated"
+    },
+    {
+      "evidence": {},
+      "id": "agent_collaboration",
+      "label": "Specialist agent collaboration",
+      "node_ids": [],
+      "required_for_final": true,
+      "status": "not_evaluated"
+    }
+  ],
+  "status": "in_progress",
+  "structural_hash": "0497fb65f485c2c8d1e34ca50b1adb1f6cabeda754015507eb358ed153f8df4b",
+  "truth_policy": {
+    "causal_program_trace": true,
+    "execution_complete_is_not_acceptance": true,
+    "internal_neuron_claim": false,
+    "unevaluated_is_never_pass": true,
+    "visual_activation_uses_materialized_evidence_only": true
+  },
+  "visual_hash": ""
+}
