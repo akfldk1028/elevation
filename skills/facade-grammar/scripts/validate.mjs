@@ -20,8 +20,9 @@ import { deriveFacadeFaces } from "../../../plugins/elevation-3d/lib/facade-agen
 import { parseFacadeGrammar } from "../../../plugins/elevation-3d/lib/facade-agent/design/grammar/contract.mjs";
 import { deriveFacadePrimitives } from "../../../plugins/elevation-3d/lib/facade-agent/design/grammar/derive.mjs";
 import { deriveFacadeSegmentsFromMass } from "../../../plugins/elevation-3d/lib/facade-agent/punched-facade.mjs";
+import { resolveRoots } from "../../../tools/facade-pipeline/config.mjs";
 
-const [candidateId, programPath, datasetRoot = "D:/Data/50_ELE/MAAS_ELEVATION_TEST_SET_20260730"] = argv.slice(2);
+const [candidateId, programPath, datasetRoot = resolveRoots().datasetRoot] = argv.slice(2);
 if (!candidateId || !programPath) {
 	stdout.write("usage: node validate.mjs <candidate-id> <program.json> [dataset-root]\n");
 	exit(2);
