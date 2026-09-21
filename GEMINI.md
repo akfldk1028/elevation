@@ -93,3 +93,30 @@ IAAC 'From Pixels to Parameters' 및 최신 AI 비전 파운데이션 모델 생
    - **Douglas-Peucker & Convex Hull**: 정규화 [0..1] 외곽선(`outline`) 생성.
    - **2D Field Attractor Fitting**: 오큘러스/유리 개구부 중심점 좌표 및 면적 분포로부터 거리/방위 기반 2차원 파라메트릭 인셋 필드 계수 역산.
    - **문법 합성**: `arr.elevation3d.facade-grammar.v3` 규격 준수 JSON 출력 -> `cli.mjs check` 및 `render`로 100% 무결함 8뷰 CAD 생성.
+
+---
+
+## 4. Image-to-도면 (Mass ➡️ Concept ➡️ Elevation Dressing) 3단계 파이프라인
+
+1. **절대 전제: "The Mass is the Authority"**
+   - 매스는 대지조건 및 법규로 확정된 절대 기준이며, 에이전트가 매스의 체적/형태를 임의로 왜곡하거나 재생성하지 않음.
+   - 사용자가 제시한 컨셉 이미지의 입면 특징(개구부, 루버, 재질, 비례)을 비전 모델로 분석하여 우리가 준 매스 표면에 정밀하게 입히는(Dressing) 것이 유일한 임무.
+
+2. **3단계 실행 플로우**
+   - **Step 1 (Authority Mass)**: 고정 매스(`mass.obj` / `selected.glb`) 확보 ➡️ 16+개 패싯을 2D 좌표계로 언폴딩.
+   - **Step 2 (Vision Concept & Homography)**:
+     - 컨셉 이미지의 소실점 왜곡을 제거하기 위해 4점 호모그래피 정사 투영($H$) 수행.
+     - 정사 보정된 평면 위에서 SAM 3 / Grounded-SAM-2로 개구부 분할 후 VTracer로 정규화 곡선 벡터화.
+   - **Step 3 (Parametric Lattice & Draw)**:
+     - `tools/facade-parametric/`: 곡선 인벤토리로부터 `ModelSpec` 피팅 ➡️ 매스 패싯 런에 투영.
+     - `split_by_facets`: 패싯 경계면 클리핑 시 점 개수가 33개를 초과하여 스키마 검증이 실패하지 않도록 `fit_points`로 3..33개 정밀 클램핑.
+     - `tools/facade-pipeline/`: `apply`로 `grammar.json` 생성 ➡️ `draw`로 8대 정규 도면 및 PBR 3D GLB 출력.
+
+3. **복구 및 정책 (Resilience & Policy)**
+   - **Multi-Stage Resume**: 관측 이전 단계에서 중단된 경우 `observation.json` 누락(ENOENT)으로 중단되지 않고 자동 재관측(re-observe) 후 순차 복구.
+   - **`requireVision` 플래그**: 비전 분석이 필수인 경우 SAM 실패 시 무조건 승인되는 오류를 방지하고 명시적 `vision_ok=false`로 실패 처리.
+   - **컴포넌트 단일 진실 원천**:
+     - `tools/facade-vision`: 비전 모델 래퍼, 투시 보정, 벡터화.
+     - `tools/facade-parametric`: 파라메트릭 격자, 경계 클리핑, 벽체 백킹.
+     - `tools/facade-pipeline`: CLI 오케스트레이션, 문법 검증, 실행 컨텍스트.
+     - `plugins/elevation-3d`: 3D 매스 컴파일, 8대 도면 및 PBR 렌더링.

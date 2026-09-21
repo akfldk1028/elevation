@@ -17,6 +17,65 @@ Everything after it is deterministic local code that refuses what it cannot veri
                              ->  DRAWING (an author transcribes the picture into grammar)
                              ->  gates -> compile -> render
 
+## 🏛️ Core Principles & Architectural Law (10 절대 원칙)
+
+1. **대지 안착 및 매스 배치 절대 원칙 (The Mass is the Authority)**:
+   - 건물의 3D 매스(Mass)는 대지 조건, 용적률, 건폐율, 사선 제한에 의해 사전 확정된 **절대 기준(Authority)**입니다.
+   - 에이전트는 매스의 형태를 임의로 변경하거나 제멋대로 생성할 수 없으며, 주어진 매스 표면에 오차 없이 파사드를 입히는(Dressing) 역할만 수행합니다.
+2. **도로 소요너비 미달 후퇴 및 모퉁이 가각전제**:
+   - **건축법 제46조**: 일반도로 4m 미달 시 중심선 후퇴, 막다른 도로(10m/35m 기준) 폭원 확보, 반대편 경사지/하천 시 반대편 경계선 기준 전폭 후퇴.
+   - **시행령 제31조 (가각전제)**: 2~4m 코너 절단.
+   - 후퇴 면적은 공부상 대지면적에서 공제한 **'유효 대지면적'**을 기준으로 건폐율(BCR)과 용적률(FAR)을 계산.
+3. **최신 정북방향 일조사선 (시행령 제86조)**:
+   - 높이 10m 이하 1.5m 이격, 10m 초과 시 건축물 높이의 1/2 이상 이격 ($H \le 2D$).
+   - 북측이 도로/공원/하천에 접할 경우 반대편 경계선으로 기산선 이동 완화 반영.
+4. **용적률 산정용 연면적 및 지자체 조례 우선**:
+   - 지하층 면적과 지상 주차장 면적은 용적률 산정용 연면적에서 엄격히 제외(시행령 제119조 제1항 제4호).
+   - 전국 17개 광역시도 조례 상한을 국토계획법령 상한보다 최우선 적용.
+5. **층별 건축한계선 (Buildable Envelope)**:
+   - 대지경계선 이격 및 층별 일조사선을 슬라이스한 층별 건축한계선을 정확한 수치/좌표로 산출하여 3D 매스 배치에 직접 연동.
+6. **공동주택 채광창 및 동간 인동거리**:
+   - 채광창 대지경계선 이격거리 $D \ge 0.5H$ (다세대 $0.25H$), 동간 인동거리(남측동 $0.5H$, 측벽 대면 4m/8m) 확보.
+7. **토지이용계획확인원(토지이음) 중첩 규제 전수 검토**:
+   - 지목 전용, 지구단위계획 지침 최우선, 고도지구 절대높이 캡핑, 방화지구, 경관지구 후퇴, 교육환경 50m 절대보호구역, 공개공지(5~10% 확보 시 1.2배 완화).
+8. **LawAgent 24/7 오프라인 무중단 Fallback**:
+   - 외부 서비스(8001)나 Neo4j 유무와 무관하게 `src/legal/` 내장 엔진으로 즉시 자동 전환되어 100% 무중단 건축검토 보고서와 3D Envelope 산출.
+9. **크로스 AI 공통 동기화 (Single Source of Truth)**:
+   - 모든 AI 에이전트(Codex, Claude, Gemini)는 `CLAUDE.md`, `CODEX.md`, `GEMINI.md`, `AGENTS.md`를 단일 진실 원천으로 공유.
+10. **형상 일치성 게이트 (Source Fidelity)**:
+    - 원본 컨셉과 도면 간 일치성 검증 통과 필수 (`SOURCE_COLOUR_INVENTED`, `SOURCE_VARIATION_LOST` 방지).
+
+---
+
+## 🔄 The 3-Stage Pipeline (Mass ➡️ Concept ➡️ Elevation Dressing)
+
+```
+[Step 1: Authority Mass]
+  - Fixed 3D Mass: mass.obj / selected.glb
+  - Chained Facet Run: 16+ facets unfolded into a 2D coordinate space [0..W, 0..H]
+         │
+         ▼
+[Step 2: Vision Concept Analysis]
+  - Concept Image: User idea (--idea) or architectural photo (e.g. The Broad)
+  - 4-Point Homography Perspective Rectification: H maps perspective -> ortho plane
+  - Neural Foundation Segmentation: SAM 3 (concept prompt) or Grounded-SAM-2 (DINO + SAM 2.1)
+  - Lossless Vectorization: VTracer / Douglas-Peucker -> normalized [0..1] curve outlines
+         │
+         ▼
+[Step 3: Parametric Lattice Fitting & Elevation Dressing]
+  - Fit: Curve inventory -> ModelSpec (basis_a, basis_b, field attractors, scoop/depth)
+  - Apply: Lay ModelSpec onto Mass Facet Run
+    * split_by_facets: Boundary clipping clamped via fit_points (strictly 3..33 points)
+    * Backing: Wall backing & polygon glass generation
+  - Grammar Synthesis: Emits arr.elevation3d.facade-grammar.v3
+  - Verification & Render:
+    * Deterministic Three.js/WebGL compilation -> enriched.glb
+    * 8 Orthographic & Axonometric Technical Views (Front, Back, Left, Right, Plan, Top, Axon, Opposite-Axon)
+    * PBR Perspective Hero Render
+```
+
+---
+
 ## What we are actually trying to do
 
 One sentence: **a picture of a facade, and any mass, come in; a drawing of that facade on that
