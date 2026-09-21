@@ -190,7 +190,14 @@ export function validateCompetitionAxonManifest(manifest) {
 	// and two roles nobody can tell apart - and the code alone says neither which nor by how
 	// much. The detail rides along so the rejection is readable.
 	const detail = [];
-	const absent = REQUIRED_ROLES.filter((role) => !(manifest.material_roles[role]?.visible_pixels > 0));
+	// The roles this drawing must show: what its declared materials carry when the manifest
+	// says so (a veil with no metal has no bronze to show), else the policy's list - the same
+	// rule the elevation and PBR gates read, and the axon was the one gate left demanding a
+	// role nobody declared (the Broad's opposite-axon passed on 5 bronze pixels).
+	const required = Array.isArray(manifest.required_material_roles) && manifest.required_material_roles.length
+		? manifest.required_material_roles
+		: manifest.material_role_policy === "source-faithful" ? REQUIRED_ROLES.filter(role => role !== "opaque") : REQUIRED_ROLES;
+	const absent = required.filter((role) => !(manifest.material_roles[role]?.visible_pixels > 0));
 	if (absent.length) { codes.push("MATERIAL_ROLE_COLLAPSE"); detail.push(`no pixels for ${absent.join(", ")}`); }
 	const separation = manifest.material_color_separation?.minimum_pairwise_distance;
 	if (!(separation >= MIN_ROLE_COLOR_DISTANCE)) {
@@ -202,7 +209,7 @@ export function validateCompetitionAxonManifest(manifest) {
 	return { schema_version: "arr.elevation3d.competition-axon-validation.v1", accepted: codes.length === 0, codes, ...(detail.length ? { detail: detail.join("; ") } : {}) };
 }
 
-async function renderView({ runDir, glbPath, palette, cameras, candidateId, view, selectedGlbSha256, signal, lifecycle }) {
+async function renderView({ runDir, glbPath, palette, cameras, candidateId, view, selectedGlbSha256, signal, lifecycle, materialRolePolicy, requiredMaterialRoles }) {
 	const root = join(resolve(runDir), "views", view);
 	await prepareSafeDirectory(resolve(runDir), root, "competition axon directory");
 	const config = {
@@ -259,6 +266,8 @@ async function renderView({ runDir, glbPath, palette, cameras, candidateId, view
 		const pixelEvidence = measureCompetitionAxonPixels({ base: decoded.data, materialId: decodedMaterial.data, width: decodedMaterial.info.width, height: decodedMaterial.info.height });
 		const materialRoles = Object.fromEntries(SEMANTIC_ROLES.map((role) => [role, { ...palette.roles[role], geometry_vertices: browserArtifact.material_roles[role].geometry_vertices, ...pixelEvidence.material_roles[role] }]));
 		const manifest = {
+			...(materialRolePolicy ? {material_role_policy: materialRolePolicy} : {}),
+			...(requiredMaterialRoles ? {required_material_roles: requiredMaterialRoles} : {}),
 			schema_version: "arr.elevation3d.competition-axon.v1", view, candidate_id: candidateId,
 			selected_glb: { path: resolve(glbPath), sha256: selectedGlbSha256 }, selected_glb_sha256: selectedGlbSha256,
 			palette: { preset: palette.preset, sha256: palette.sha256 }, viewer_config_sha256: viewerConfigSha256,
@@ -291,13 +300,13 @@ async function renderView({ runDir, glbPath, palette, cameras, candidateId, view
 	}
 }
 
-export async function renderCompetitionAxons({ runDir, glbPath, palette, cameras, candidateId, signal, lifecycle = {} }) {
+export async function renderCompetitionAxons({ runDir, glbPath, palette, cameras, candidateId, signal, lifecycle = {}, materialRolePolicy, requiredMaterialRoles }) {
 	assertInputs({ glbPath, palette, cameras, candidateId });
 	const selectedGlbSha256 = sha256(await readFile(glbPath));
 	const views = {};
 	for (const view of VIEW_NAMES) {
 		signal?.throwIfAborted();
-		views[view] = await renderView({ runDir, glbPath, palette, cameras, candidateId, view, selectedGlbSha256, signal, lifecycle });
+		views[view] = await renderView({ runDir, glbPath, palette, cameras, candidateId, view, selectedGlbSha256, signal, lifecycle, materialRolePolicy, requiredMaterialRoles });
 	}
 	const oppositionDot = dot(views.axon.camera.depth, views["opposite-axon"].camera.depth);
 	const codes = [];

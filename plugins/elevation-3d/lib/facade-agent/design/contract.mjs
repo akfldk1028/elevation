@@ -1,4 +1,5 @@
 import { parseFacadeGrammar } from "./grammar/contract.mjs";
+import { TERMINAL_MATERIAL_CHOICES } from "../facade-vocabulary.mjs";
 
 export class FacadeDesignContractError extends Error {
 	constructor(code, message) {
@@ -15,7 +16,7 @@ const TOP_KEYS = new Set([
 	"bay_rules", "articulation", "materials", "design_rationale",
 ]);
 const SOURCE_KEYS = new Set(["candidate_id", "candidate_sha256", "selected_glb_sha256", "context_sha256"]);
-const ENTRANCE_KEYS = new Set(["segment_selector", "preferred_bay", "door_family", "width_m", "height_m", "recess_m"]);
+const ENTRANCE_KEYS = new Set(["segment_selector", "preferred_bay", "door_family", "width_m", "height_m", "recess_m", "segment_id", "u_min_m", "material"]);
 const ZONE_KEYS = new Set(["id", "storeys", "treatment"]);
 const WINDOW_KEYS = new Set(["id", "width_m", "height_m", "sill_m"]);
 const BAY_KEYS = new Set(["id", "zone_id", "pattern", "repeat", "views"]);
@@ -141,9 +142,17 @@ function deepFreeze(value) {
 function parseEntrance(value) {
 	const fields = record(value, "entrance", ENTRANCE_KEYS);
 	return {
+		...(fields.segment_id != null ? {segment_id:id(fields.segment_id,"entrance.segment_id")} : {}),
+		...(fields.u_min_m != null ? {u_min_m:finite(fields.u_min_m,"entrance.u_min_m",0,10000)} : {}),
 		segment_selector: enumeration(fields.segment_selector, "entrance.segment_selector", new Set(["primary_visible_ground_segment"])),
 		preferred_bay: enumeration(fields.preferred_bay, "entrance.preferred_bay", new Set(["central_or_corner_focus", "central_focus", "corner_focus"])),
 		door_family: id(fields.door_family, "entrance.door_family"),
+		// The pane the placed entrance is glazed with. The resolver builds this door, not the
+		// grammar, so it was the one opening an author could never put a declared material
+		// on: on a building whose every window was declared bronze-grey glazing, the door
+		// rendered in the legacy blue-tinted `glass`, and a reviewer holding the two pictures
+		// side by side called it a different door. Optional; absent keeps the legacy word.
+		...(fields.material != null ? { material: id(fields.material, "entrance.material") } : {}),
 		width_m: finite(fields.width_m, "entrance.width_m", 0.8, 6),
 		height_m: finite(fields.height_m, "entrance.height_m", 1.8, 6),
 		// Deliberately wider than the exclusions' max_recess_m (0.5). Tightening this to
@@ -171,7 +180,12 @@ export function parseFacadeDesign(input, options = {}) {
 	let grammar;
 	try { grammar = parseFacadeGrammar(rest); }
 	catch (error) { fail(`facade grammar is invalid: ${error.message}`); }
-	const program = deepFreeze({ ...grammar, entrance: parseEntrance(rawEntrance), source });
+	const entrance = parseEntrance(rawEntrance);
+	if (entrance.material && !TERMINAL_MATERIAL_CHOICES.includes(entrance.material)
+		&& !(grammar.materials ?? []).some((material) => material.id === entrance.material)) {
+		fail(`entrance.material must be one of ${TERMINAL_MATERIAL_CHOICES.join(", ")} or a material this grammar declares`);
+	}
+	const program = deepFreeze({ ...grammar, entrance, source });
 	verifiedProgramAuthorities.set(program, Object.freeze({ ...source }));
 	return program;
 }

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { buildTypedFacadeDetails } from "../plugins/elevation-3d/lib/facade-agent/punched-facade.mjs";
-import { polygonArea, verifyPrism } from "../plugins/elevation-3d/lib/facade-agent/polygon-prism.mjs";
+import { funnelModuleGeometry, polygonArea, verifyPrism } from "../plugins/elevation-3d/lib/facade-agent/polygon-prism.mjs";
 import { parseFacadeGrammar } from "../plugins/elevation-3d/lib/facade-agent/design/grammar/contract.mjs";
 import { deriveFacadePrimitives } from "../plugins/elevation-3d/lib/facade-agent/design/grammar/derive.mjs";
 import { FACADE_GRAMMAR_V3_SCHEMA } from "../plugins/elevation-3d/lib/facade-agent/design/grammar/prompt.mjs";
@@ -134,6 +134,27 @@ test("standoff and taper travel the same four links", async (t) => {
 	assert.ok(verified.volume < verifyPrism(build({ outline: mouth })).volume);
 });
 
+test("an outlined recessed window has a closed contour frame, not rectangular jambs outside its hole", async (t) => {
+	const {mesh,floorGuides,facadeSegmentAuthority,context}=await createFacadeDesignFixture(t);
+	const details=buildTypedFacadeDetails({mesh,floorGuides,facadePlanes:facadeSegmentAuthority,
+		primitives:[{kind:"window",segment_id:context.facade_segments[0].segment_id,
+			local_bounds:{u_min:0.6,u_max:1.6,z_min:0.6,z_max:1.6},depth_m:-0.2,outline:HEXAGON}]});
+	const frames=details.filter(d=>d.kind==="window-frame");
+	assert.equal(frames.length,1);
+	assert.equal(frames[0].positions.length,HEXAGON.length*4);
+	const measured=verifyPrism(frames[0]);
+	assert.equal(measured.closed,true);
+	assert.equal(measured.euler,0,"a ring has a real aperture");
+	assert.equal(measured.outward,true);
+	assert.ok(frames[0].local_bounds.n1<0,"frame sits at the recessed pane");
+	const returns=details.filter(d=>d.jamb);
+	assert.equal(returns.length,1,"the curved hole needs a continuous reveal to stop oblique rays escaping through the hollow mass");
+	assert.equal(returns[0].semantic_role,"concrete");
+	assert.equal(returns[0].local_bounds.n0,0);
+	assert.equal(returns[0].local_bounds.n1,-0.2);
+	assert.equal(verifyPrism(returns[0]).closed,true);
+});
+
 /**
  * The angle a hole is cut at, walked the same way - and the last link here is the RENDERER,
  * which is the fifth and the one `outline` itself stopped at: it parsed, derived, cleared the
@@ -184,4 +205,58 @@ test("scoop_deg travels to the cut axis, and is refused where there is no hole",
 	const cosine = axis.reduce((sum, value, index) => sum + value * normal[index], 0);
 	assert.ok(Math.abs(Math.acos(cosine) * 180 / Math.PI - 20) < 1e-9, `tilted ${Math.acos(cosine) * 180 / Math.PI}`);
 	assert.ok(axis[2] > 0, "positive scoops upward");
+});
+
+// A cell as a solid module: the tile prism less the funnel, closed and outward-wound, with the
+// volume the divergence theorem predicts: A_tile * h - (h/3)(A_mouth + A_throat + sqrt(A_mouth A_throat)).
+test("a funnel module is a closed solid with the tile's volume less the funnel's", () => {
+	const plane = { normal: [0, -1, 0], origin: [0, 0, 0], extent_m: [4, 4], segment_id: "s", view: "front" };
+	const tangent = [1, 0, 0];
+	const localPoint = (_plane, _tangent, u, v, n) => [u, -n, v];
+	const grammar = { brick_module_m: [0.2, 0.1] };
+	const n = 16;
+	const ring = (r) => Array.from({ length: n }, (_, k) => [0.5 + r * Math.cos((2 * Math.PI * k) / n), 0.5 + r * Math.sin((2 * Math.PI * k) / n)]);
+	const tile = ring(0.5), mouth = ring(0.45), throat = ring(0.2);
+	const bounds = { u0: 0, u1: 1, v0: 0, v1: 1, n0: 0, n1: 0.5 };
+	const built = funnelModuleGeometry(plane, tangent, grammar, bounds, tile, mouth, throat, localPoint);
+	const area = (r) => polygonArea(r);
+	const h = 0.5;
+	const expected = area(tile) * h - (h / 3) * (area(mouth) + area(throat) + Math.sqrt(area(mouth) * area(throat)));
+	const verified = verifyPrism(built, expected);
+	assert.equal(verified.closed, true, "every edge shared by exactly two faces");
+	assert.equal(verified.outward, true, `wound outward: ${verified.volume}`);
+	assert.ok(Math.abs(verified.volume - expected) < 0.02 * expected, `volume ${verified.volume} against ${expected}`);
+	assert.equal(built.positions.length, 4 * n);
+	assert.equal(built.indices.length, 8 * n);
+});
+
+// The funnel's SECTION: a linear profile through intermediate rings is the same straight loft
+// (same volume to the millilitre); a quarter-ellipse cove is tangent to the face at the rim and
+// holds more solid; both stay closed and outward-wound with 4 + rings vertex blocks.
+test("a profiled funnel module is closed, outward, and the cove holds more solid than the cone", () => {
+	const plane = { normal: [0, -1, 0], origin: [0, 0, 0], extent_m: [4, 4], segment_id: "s", view: "front" };
+	const tangent = [1, 0, 0];
+	const localPoint = (_plane, _tangent, u, v, n) => [u, -n, v];
+	const grammar = { brick_module_m: [0.2, 0.1] };
+	const n = 16;
+	const ring = (r) => Array.from({ length: n }, (_, k) => [0.5 + r * Math.cos((2 * Math.PI * k) / n), 0.5 + r * Math.sin((2 * Math.PI * k) / n)]);
+	const tile = ring(0.5), mouth = ring(0.45), throat = ring(0.2);
+	const bounds = { u0: 0, u1: 1, v0: 0, v1: 1, n0: 0, n1: 0.5 };
+	const h = 0.5;
+	const cone = polygonArea(tile) * h - (h / 3) * (polygonArea(mouth) + polygonArea(throat) + Math.sqrt(polygonArea(mouth) * polygonArea(throat)));
+	const straight = verifyPrism(funnelModuleGeometry(plane, tangent, grammar, bounds, tile, mouth, throat, localPoint, { kind: "linear", rings: 3 }), cone);
+	assert.equal(straight.closed, true); assert.equal(straight.outward, true);
+	assert.ok(Math.abs(straight.volume - cone) < 0.02 * cone, `linear sections keep the cone: ${straight.volume} vs ${cone}`);
+	const built = funnelModuleGeometry(plane, tangent, grammar, bounds, tile, mouth, throat, localPoint, { kind: "quarter_ellipse", rings: 4 });
+	assert.equal(built.positions.length, (4 + 4) * n, "one vertex block per ring");
+	assert.equal(built.indices.length, (8 + 2 * 4) * n, "front, back, side and mouth strips plus one strip per section, two triangles each");
+	const cove = verifyPrism(built, cone);
+	assert.equal(cove.closed, true, "every edge shared by exactly two faces");
+	assert.equal(cove.outward, true, `wound outward: ${cove.volume}`);
+	assert.ok(cove.volume > cone * 1.05, `the cove bulges into the hollow: ${cove.volume} vs cone ${cone}`);
+	// the first section sits nearly on the face (tangent rim) and already well inside the mouth
+	// (localPoint maps n to -y; the outer face is at n = 0.5, the wall at n = 0)
+	const first = built.positions.slice(2 * n, 3 * n);
+	const fromFace = Math.max(...first.map((p) => 0.5 - (-p[1])));
+	assert.ok(fromFace < 0.1 * h, `first section sits ${fromFace} below the face, of ${h}`);
 });

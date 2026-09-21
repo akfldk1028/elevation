@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { parseFacadeDesign } from "../plugins/elevation-3d/lib/facade-agent/design/contract.mjs";
 
 import {
 	FacadeDesignResolverError,
@@ -14,6 +15,42 @@ import {
 function typedRejection(error: unknown) {
 	return error instanceof FacadeDesignResolverError && error.code === "FACADE_DESIGN_RESOLUTION_INVALID";
 }
+
+test("a source transcription retains authored ground doors beside the primary entrance", async t=>{
+	const {context,program:base}=await createFacadeDesignFixture(t);
+	const program=parseFacadeDesign({schema_version:"arr.elevation3d.facade-grammar.v3",concept_id:"paired-entry",source_photograph:"concept.png",start:"F",entrance:base.entrance,
+		rules:{F:[{split:{axis:"z",parts:[{size:"2.4",symbol:"D"},{size:"~1",symbol:"W"}]}}],
+			D:[{terminal:"door",depth_m:-0.15,inset_m:0}],W:[{terminal:"wall"}]}},{sourceAuthority:context.source});
+	const resolved=resolveFacadeProgram(program,context);
+	const doors=resolved.primitives.filter(p=>p.kind==="door");
+	assert.ok(doors.length>1,"authored entrance panels must survive resolution");
+	assert.equal(doors.filter(p=>p.role==="primary_entrance").length,1);
+	for(const door of doors) {assert.equal(door.local_bounds.z_min,0);assert.ok(door.depth_m<0);}
+});
+
+test("a photographed entrance can select an actual ground facet and local position without moving the mass",async t=>{
+	const {context,program:base}=await createFacadeDesignFixture(t);
+	const target=context.facade_segments.find(s=>s.face_view==="back") ?? context.facade_segments.at(-1);
+	const raw={schema_version:"arr.elevation3d.facade-grammar.v3",concept_id:"source-entry",source_photograph:"concept.png",start:"W",
+		entrance:{...base.entrance,segment_id:target.segment_id,u_min_m:0.4},rules:{W:[{terminal:"wall"}]}};
+	const resolve=(value)=>resolveFacadeProgram(parseFacadeDesign(value,{sourceAuthority:context.source}),context);
+	const door=resolve(raw).primitives[0];
+	assert.equal(door.segment_id,target.segment_id);assert.equal(door.local_bounds.u_min,0.4);
+	assert.throws(()=>resolve({...raw,entrance:{...raw.entrance,segment_id:"nonexistent"}}));
+	assert.throws(()=>resolve({...raw,entrance:{...raw.entrance,u_min_m:target.length_m}}));
+});
+
+test("source entrance trim inside the primary door survives automatic entrance exclusion",async t=>{
+	const {context,program:base}=await createFacadeDesignFixture(t);
+	const segment=context.facade_segments.find(s=>s.length_m===8);
+	const raw={schema_version:"arr.elevation3d.facade-grammar.v3",concept_id:"entry-trim",source_photograph:"concept.png",start:"F",
+		entrance:{...base.entrance,segment_id:segment.segment_id,u_min_m:0.3},
+		rules:{F:[{split:{axis:"z",parts:[{size:"2.4",symbol:"B"},{size:"~1",symbol:"W"}]}}],
+			B:[{split:{axis:"u",parts:[{size:"0.1",symbol:"T"},{size:"~1",symbol:"W"}]}}],
+			T:[{terminal:"reveal",depth_m:-0.12,inset_m:0}],W:[{terminal:"wall"}]}};
+	const resolved=resolveFacadeProgram(parseFacadeDesign(raw,{sourceAuthority:context.source}),context);
+	assert.ok(resolved.primitives.some(p=>p.segment_id===segment.segment_id&&p.kind==="reveal"&&p.local_bounds.z_min===0));
+});
 
 test("resolves one ground-floor entrance onto the highest-ranked eligible segment", async (t) => {
 	const { context, program } = await createFacadeDesignFixture(t);
@@ -158,4 +195,22 @@ test("exposes resolution authority only for the exact resolver output", async (t
 		resolution_sha256: resolved.resolution_sha256,
 	});
 	assert.equal(readVerifiedResolvedFacadeAuthority(structuredClone(resolved)), null);
+});
+
+// The resolver builds the placed entrance, not the grammar, so it was the one opening an
+// author could put no declared material on: every window declared bronze-grey glazing and
+// the door rendered in the legacy blue-tinted `glass`. A reviewer holding the perspective
+// beside the axon called it a different door. `entrance.material` travels resolver ->
+// typed builder (which reads `material` off any primitive) -> GLB, like a terminal's does.
+test("the placed entrance takes a declared glazing through entrance.material", async t => {
+	const { context, program: base } = await createFacadeDesignFixture(t);
+	const raw = (material: string | null) => ({ schema_version: "arr.elevation3d.facade-grammar.v3", concept_id: "glazed-entry",
+		source_photograph: "concept.png", start: "W", entrance: { ...base.entrance, material },
+		materials: [{ id: "amber-glazing", substance: "glazing", lightness: "mid-dark", hue: "warm", finish: "satin", joint_m: null, reads_as: null }],
+		rules: { W: [{ terminal: "wall" }] } });
+	const resolve = (value: object) => resolveFacadeProgram(parseFacadeDesign(value, { sourceAuthority: context.source }), context);
+	const door = resolve(raw("amber-glazing")).primitives.find((p: any) => p.role === "primary_entrance");
+	assert.equal(door.material, "amber-glazing");
+	assert.equal(resolve(raw(null)).primitives.find((p: any) => p.role === "primary_entrance").material, undefined, "null keeps the legacy word");
+	assert.throws(() => resolve(raw("undeclared")), /entrance.material/);
 });

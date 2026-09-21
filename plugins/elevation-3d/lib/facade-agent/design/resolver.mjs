@@ -1,3 +1,4 @@
+import { MAX_LATTICE_CELLS } from '../lattice-budgets.mjs';
 import { sha256, stableJson } from "../../core.mjs";
 import { readVerifiedFacadeDesignContextAuthority } from "./context.mjs";
 import { readVerifiedFacadeProgramAuthority } from "./contract.mjs";
@@ -49,7 +50,8 @@ export function rankedSegments(context, minimumWidth, groundOnly = false) {
 }
 
 function entrancePrimitive(program, context) {
-	const candidates = rankedSegments(context, program.entrance.width_m, true);
+	const candidates = rankedSegments(context, program.entrance.width_m, true)
+		.filter(segment=>!program.entrance.segment_id || segment.segment_id===program.entrance.segment_id);
 	if (!candidates.length) fail("no ground-access facade segment can contain the primary entrance");
 	const segment = candidates[0];
 	const fold = context.exclusions.fold_clearance_m;
@@ -58,6 +60,9 @@ function entrancePrimitive(program, context) {
 	else if (program.entrance.preferred_bay === "central_or_corner_focus"
 		&& segment.length_m < program.entrance.width_m * 2 + fold * 2) uMin = fold;
 	else uMin = (segment.length_m - program.entrance.width_m) / 2;
+	if (program.entrance.u_min_m != null) uMin=program.entrance.u_min_m;
+	if (uMin<fold-1e-8 || uMin+program.entrance.width_m>segment.length_m-fold+1e-8)
+		fail("specified entrance position exceeds the selected facet's fold clearance");
 	const ground = context.storeys[0];
 	if (!ground || ground.z_min + program.entrance.height_m > ground.z_max) fail("primary entrance does not fit within storey 1");
 	return {
@@ -77,6 +82,9 @@ function entrancePrimitive(program, context) {
 		// lining it, with the mass cut away in front. A `recess_m` of 0 stays a flush door.
 		depth_m: -program.entrance.recess_m,
 		family_id: program.entrance.door_family,
+		// The typed builder reads `material` off a primitive and falls back to the legacy
+		// word for its kind; without this line the placed door could only ever be that word.
+		...(program.entrance.material ? { material: program.entrance.material } : {}),
 		role: "primary_entrance",
 		storey: 1,
 	};
@@ -271,8 +279,14 @@ function grammarPrimitives(program, context, entrance) {
 			else if (segment.length_m < fold * 2) derived = [];
 			else throw inset.error;
 		}
-		for (const primitive of derived) {
-			if (primitive.kind === "door") continue;
+		for (let primitive of derived) {
+			if (primitive.kind === "door") {
+				if (!program.source_photograph) continue;
+				if (!segment.ground_access || Math.abs(primitive.local_bounds.z_min-grade)>1e-8)
+					fail("authored secondary entrance must meet an accessible ground facade");
+				if (displacedByEntrance(entrance,segment.segment_id,primitive.local_bounds,gap)) continue;
+				primitive={...primitive,role:"secondary_entrance",depth_m:-Math.abs(primitive.depth_m)};
+			}
 			// The horizontal gap is breathing room between the door and other OPENINGS. Applying
 			// it to solid members deleted a full-height corner mullion whose bottom 2.6 m merely
 			// shared the entrance storey - the skin lost its fold framing on the entrance facet
@@ -286,6 +300,12 @@ function grammarPrimitives(program, context, entrance) {
 			if (primitive.kind === "window") {
 				if (displacedByEntrance(entrance, segment.segment_id, primitive.local_bounds, gap)) continue;
 			} else if (displacedByEntrance(entrance, segment.segment_id, primitive.local_bounds, 0)) {
+				const b=primitive.local_bounds,d=entrance.local_bounds;
+				if (program.source_photograph && primitive.kind==="reveal" && primitive.depth_m<0
+					&& b.u_min>=d.u_min-1e-8 && b.u_max<=d.u_max+1e-8
+					&& b.z_min>=d.z_min-1e-8 && b.z_max<=d.z_max+1e-8) {
+					primitives.push(primitive); continue;
+				}
 				const doorTop = entrance.local_bounds.z_max;
 				if (primitive.local_bounds.z_max <= doorTop + 1e-8) continue;
 				primitives.push({ ...primitive, local_bounds: { ...primitive.local_bounds, z_min: Math.max(primitive.local_bounds.z_min, doorTop) } });
@@ -322,7 +342,13 @@ export function resolveFacadeProgram(program, context) {
 				...windowPrimitives(program, context, entrance),
 				...articulationPrimitives(program, context, entrance.segment_id),
 			];
-		if (primitives.length > 2_048) fail("resolved facade primitive budget exceeded");
+		// Authored members keep the budget they always had; lattice cells are counted against the
+		// contract's own cap (4,096 instances an evaluation), because a veil over sixteen facets of
+		// the star prism is two thousand cells before a single authored member - and the GLB byte
+		// projection, not this count, is the gate that decides whether it can be written.
+		const authored = primitives.filter((primitive) => !primitive.lattice).length;
+		if (authored > 2_048) fail("resolved facade primitive budget exceeded");
+		if (primitives.length - authored > MAX_LATTICE_CELLS) fail(`resolved lattice cell budget exceeded (${MAX_LATTICE_CELLS} cells)`);
 		const resolution = {
 			schema_version: "arr.elevation3d.resolved-facade-program.v1",
 			concept_id: program.concept_id,

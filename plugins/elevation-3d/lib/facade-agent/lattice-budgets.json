@@ -1,0 +1,12 @@
+{
+  "maxGlbBytes": 16777216,
+  "maxVertices": 419430,
+  "maxIndices": 2097152,
+  "maxDetails": 10000,
+  "fixedBytes": 65536,
+  "vertexBytes": 20,
+  "indexBytes": 4,
+  "detailJsonBytes": 640,
+  "minimumPrismVertices": 6,
+  "minimumPrismIndices": 24
+}

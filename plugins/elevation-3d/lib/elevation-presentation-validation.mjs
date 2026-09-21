@@ -452,7 +452,7 @@ function inspectSvg(svg, authoritative, contentBounds) {
 	return { mismatch, overlap, pageViolation, source_count: bySource.size };
 }
 
-export async function validateCompetitionElevation({ artifacts, sourceMesh, facadePlanes, facadeSegmentAuthority, facadeValidation, facadeValidationReceipt, designFacadeManifest, floorGuides, view, selectedGlbPath, waive = [] }) {
+export async function validateCompetitionElevation({ artifacts, sourceMesh, facadePlanes, facadeSegmentAuthority, facadeValidation, facadeValidationReceipt, designFacadeManifest, floorGuides, view, selectedGlbPath, waive = [], materialRolePolicy, requiredMaterialRoles }) {
 	const codes = [];
 	const grammarEvidence = await verifiedTypedFacadeArtifact(selectedGlbPath, facadeValidation, facadeValidationReceipt, sourceMesh, facadeSegmentAuthority);
 	const designEvidence = grammarEvidence.typed
@@ -527,7 +527,10 @@ export async function validateCompetitionElevation({ artifacts, sourceMesh, faca
 	}
 	add(codes, "ELEVATION_CONTENT_CLIPPED", !bounds || size !== 2400 || artifacts.base?.height !== 2400
 		|| bounds.min_x < size * 0.08 || bounds.max_x > size * 0.92 - 1 || bounds.min_y < 48 || bounds.max_y > size - 48);
-	add(codes, "MATERIAL_ROLE_MISSING", ["concrete", "glass", "bronze", "opaque"].some((role) => !(diagnostics.role_pixel_counts?.[role] > 0)));
+	// A transcription is held to the roles its declared materials carry (always the wall and the
+	// glass); a design from an intent is held to the full punched-window set as before.
+	const requiredRoles = requiredMaterialRoles ?? (materialRolePolicy === "source-faithful" ? ["concrete", "glass", "bronze"] : ["concrete", "glass", "bronze", "opaque"]);
+	add(codes, "MATERIAL_ROLE_MISSING", requiredRoles.some((role) => !(diagnostics.role_pixel_counts?.[role] > 0)));
 	add(codes, "MATERIAL_VISIBILITY_INVALID", diagnostics.dark_pixel_fraction > (typedFacadeArtifact ? PRESENTATION_BOUNDS.darkPixelFraction.typed : PRESENTATION_BOUNDS.darkPixelFraction.untyped)
 		|| computedDark?.invalid_pixels > 0);
 	add(codes, "LINE_DENSITY_EXCEEDED", diagnostics.total_edge_density > PRESENTATION_BOUNDS.totalEdgeDensity
@@ -628,6 +631,7 @@ export async function validateCompetitionElevation({ artifacts, sourceMesh, faca
 	const kept = codes.filter((code) => !waive.includes(code));
 	return {
 		schema_version: "arr.elevation3d.presentation-validation.v1",
+		...(materialRolePolicy ? {material_role_policy:materialRolePolicy,required_material_roles:requiredRoles} : {}),
 		accepted: kept.length === 0,
 		codes: kept,
 		...(waived.length ? { waived } : {}),
@@ -694,8 +698,14 @@ export async function validateCompetitionPlanTopArtifact({ artifact, sourceMesh,
 	const expectedBounds = normalizedProjectedBounds(camera?.projected_bounds_m);
 	add(codes, "PLAN_TOP_EXACT_MASS_OUTLINE_INVALID", !sameJson(manifest?.exact_mass_projected_bounds_m, expectedBounds));
 	const content = manifest?.content_bounds_px;
+	// Two questions under one code, and they used to be one test: is the drawing inside the
+	// sheet, and does it fill the frame? The sheet is scaled to the plan's LONGER side, so only
+	// that side can be asked to fill its band; the shorter side spans whatever the plan's aspect
+	// makes it. Asking both sides to fill the middle 40% was calibrated on a square prism and
+	// refused a 30 x 8 m bar for being a bar (measured: y 869..1530 on a 12 x 4 box).
+	const longerIsX = !expectedBounds || (expectedBounds.max[0] - expectedBounds.min[0]) >= (expectedBounds.max[1] - expectedBounds.min[1]);
 	add(codes, "PLAN_TOP_OUTLINE_CLIPPED", !content || content.min_x < 0 || content.min_y < 0 || content.max_x >= 2400 || content.max_y >= 2400
-		|| content.min_x > 360 || content.max_x < 2039 || content.min_y > 720 || content.max_y < 1679);
+		|| (longerIsX ? (content.min_x > 360 || content.max_x < 2039) : (content.min_y > 720 || content.max_y < 1679)));
 	if (mode === "plan") {
 		add(codes, "PLAN_CUT_PROVENANCE_INVALID", !Number.isFinite(cutElevationM) || manifest?.cut?.enabled !== true
 			|| manifest.cut.elevation_m !== cutElevationM || !sameJson(manifest.cut.plane_world, [0, 0, 1, -cutElevationM])

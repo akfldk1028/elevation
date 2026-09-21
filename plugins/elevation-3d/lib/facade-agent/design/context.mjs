@@ -7,8 +7,11 @@ import { facadeCandidateHash } from "../candidate-authority.mjs";
 import { MAX_TERMINAL_PROJECTION } from "../facade-vocabulary.mjs";
 import { readVerifiedFacadeEvidenceAuthority } from "../evidence.mjs";
 import { containedPath, safeRead } from "../path-safety.mjs";
-import { assertCanonicalFacadeSegmentAuthority } from "../punched-facade.mjs";
+import { assertCanonicalFacadeSegmentAuthority, deriveFacadeWallPatches } from "../punched-facade.mjs";
 import { deriveFacadeFaces } from "./geometry/faces.mjs";
+
+/** How far above the lowest floor a facet may sill and still be on the ground: one step. */
+export const GROUND_ACCESS_TOLERANCE_M = 0.15;
 
 export class FacadeDesignContextError extends Error {
 	constructor(message, cause) {
@@ -206,7 +209,9 @@ export async function buildFacadeDesignContext(input) {
 		let faceAuthority;
 		try { faceAuthority = deriveFacadeFaces(canonicalSegments.facade_planes, elevationDepths); }
 		catch (error) { fail("candidate facade faces could not be derived", error); }
+		const patches = new Map(deriveFacadeWallPatches({mesh:candidate.mesh}).map(p=>[p.segment_id,p]));
 		const facadeSegments = canonicalSegments.facade_planes.map((segment) => ({
+			wall_patch: patches.get(segment.segment_id),
 			segment_id: segment.segment_id,
 			view: segment.view,
 			local_u: [0, segment.extent_m[0]],
@@ -221,7 +226,12 @@ export async function buildFacadeDesignContext(input) {
 			outward_normal: [...segment.normal],
 			length_m: segment.extent_m[0],
 			visibility_score: visibilityScore(segment.normal, depth),
-			ground_access: Math.abs(segment.origin[2] - floors[0]) <= 1e-7,
+			// A facet has ground access when it STANDS on the lowest floor, and that is a statement
+			// about a building, not about floating point: 1e-7 m asked a measured mass to land on
+			// the datum exactly, so a facet whose sill sits 30 mm above it - which is what a mass
+			// taken from a photograph's silhouette gives, and what a real threshold looks like -
+			// had no ground access and the building could take no door at all. One step (0.15 m).
+			ground_access: Math.abs(segment.origin[2] - floors[0]) <= GROUND_ACCESS_TOLERANCE_M,
 			...faceAuthority.bySegment[segment.segment_id],
 		}));
 		const storeys = floors.slice(0, -1).map((zMin, index) => ({ storey: index + 1, z_min: zMin, z_max: floors[index + 1] }));

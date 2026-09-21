@@ -1,0 +1,8 @@
+{
+  "parameters": {"scale_u": 0.85, "scale_v": 0.85, "spacing_u": 0.97, "spacing_v": 0.97},
+  "fields": [{"id": "design-focus", "kind": "radial", "center_m": [15, 6.1], "radius_m": 9, "falloff": 1.5}],
+  "grades": [
+    {"field": "design-focus", "attribute": "scale_u", "from": 1, "to": 0.6},
+    {"field": "design-focus", "attribute": "rotation_deg", "from": 0, "to": 20}
+  ]
+}

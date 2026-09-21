@@ -1,3 +1,4 @@
+import { PUNCHED_FACADE_BUDGETS } from "../plugins/elevation-3d/lib/facade-agent/punched-facade.mjs";
 import assert from "node:assert/strict";
 import { access, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -214,11 +215,11 @@ test("rejects projected vertex and final GLB byte budgets without leaving partia
 	const root = await mkdtemp(join(tmpdir(), "elevation3d-punched-budget-"));
 	temporaryRoots.push(root);
 	const vertexOutput = join(root, "too-many-vertices.glb");
-	const oversizedBase = { positions: Array.from({ length: 80_001 }, () => [0, 0, 0]), indices: [[0, 0, 0]] };
+	const oversizedBase = { positions: Array.from({ length: PUNCHED_FACADE_BUDGETS.maxTotalVertices + 1 }, () => [0, 0, 0]), indices: [[0, 0, 0]] };
 	await assert.rejects(() => writeEnrichedGlb({ base: oversizedBase, details: [] }, vertexOutput), /vertex budget exceeded/i);
 	await assert.rejects(() => access(vertexOutput), { code: "ENOENT" });
 	const indexOutput = join(root, "too-many-indices.glb");
-	const oversizedIndices = { positions: [[0, 0, 0], [1, 0, 0], [0, 1, 0]], indices: [Array.from({ length: 360_003 }, (_, index) => index % 3)] };
+	const oversizedIndices = { positions: [[0, 0, 0], [1, 0, 0], [0, 1, 0]], indices: [Array.from({ length: PUNCHED_FACADE_BUDGETS.maxTotalIndices + 3 }, (_, index) => index % 3)] };
 	await assert.rejects(() => writeEnrichedGlb({ base: oversizedIndices, details: [] }, indexOutput), /index budget exceeded/i);
 	await assert.rejects(() => access(indexOutput), { code: "ENOENT" });
 	const primitiveOutput = join(root, "too-many-primitives.glb");

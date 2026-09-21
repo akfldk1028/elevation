@@ -63,13 +63,13 @@ test("renders and accepts a dimensioned creative-013 front with complete provena
 	// base pass was encoded to sRGB - the dark test is a luminance threshold, so a correct
 	// transfer function reshapes which pixels fall under it. The property is what mattered.
 	const evidence = artifacts.presentation.authored_dark_geometry.component_evidence;
-	const silhouettes = evidence.filter((item) => item.classification === "selected-glb-depth-silhouette");
-	assert.ok(silhouettes.length > 0, "no dark component was traced to the selected GLB depth buffer");
+	// Exact diagnostic sampling and slope-aware ink can leave every small dark
+	// component on a semantic member. Require geometric coverage for ALL remaining
+	// components, rather than requiring a non-semantic dark speck to survive.
+	assert.ok(evidence.length > 0, "no authored dark geometry was measured");
 	for (const item of evidence) {
 		assert.ok(["selected-glb-depth-silhouette", "semantic-bronze-opaque"].includes(item.classification), `unclassified dark component at ${item.bbox_px}`);
-	}
-	for (const item of silhouettes) {
-		assert.equal(item.finite_depth_pixels, item.pixels, `silhouette at ${item.bbox_px} is not fully covered by the depth buffer`);
+		assert.equal(item.finite_depth_pixels, item.pixels, `dark geometry at ${item.bbox_px} is not fully covered by the depth buffer`);
 	}
 	assert.notEqual(artifacts.base_manifest.path, artifacts.render_manifest.path);
 	assert.match(artifacts.base_manifest.path, /front-base-render-manifest\.json$/);

@@ -11,6 +11,7 @@
   "scripts": {
     "test": "node --test test/*.test.ts --experimental-strip-types",
     "facade:agent": "node scripts/elevation-3d-facade.mjs",
+    "facade:perspective": "node tools/facade-pipeline/cli.mjs agent",
     "render:pbr-daylight": "node scripts/render-competition-daylight-pbr.mjs",
     "test:tripo-pbr": "node scripts/test-tripo-pbr-texturing.mjs"
   },

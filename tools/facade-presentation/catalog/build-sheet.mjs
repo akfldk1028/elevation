@@ -16,6 +16,7 @@ import { fileURLToPath } from "node:url";
 
 import { checkAuthoredGrammar } from "../../../plugins/elevation-3d/lib/facade-agent/design/authoring-kit.mjs";
 import { resolveRoots } from "../../facade-pipeline/config.mjs";
+import { readAuthoredGrammar } from "../../facade-pipeline/lattice.mjs";
 import { prepareFacadeContext } from "../../facade-pipeline/prepare.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -108,7 +109,7 @@ async function buildCard(card, candidate, context, sheetDir) {
 	const grammarPath = join(VERIFICATION_ROOT, candidate.runRoot, card.grammar);
 	let check = null;
 	try {
-		check = checkAuthoredGrammar({ context, grammar: JSON.parse(await readFile(grammarPath, "utf8")) });
+		check = checkAuthoredGrammar({ context, grammar: await readAuthoredGrammar(grammarPath) });
 	} catch (error) {
 		check = { stage: `unreadable (${String(error?.message ?? error).slice(0, 80)})` };
 	}

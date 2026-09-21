@@ -1,4 +1,5 @@
 import { TRANSCRIPTION_WAIVERS } from "./grammar/contract.mjs";
+import { polygonArea } from "../polygon-prism.mjs";
 
 /**
  * Composition metrics: the difference between a designed elevation and a housing block,
@@ -131,8 +132,37 @@ function levelsOfScale(areas) {
  * meaning what it says.
  */
 function area(bounds, primitive) {
+	if (primitive?.wall_opening) return polygonArea(openingPolygon(primitive));
 	const rectangle = Math.max(0, bounds.u_max - bounds.u_min) * Math.max(0, bounds.z_max - bounds.z_min);
 	return primitive?.diagonal ? rectangle / 2 : rectangle;
+}
+
+function openingPolygon(primitive) {
+	const b = primitive.local_bounds;
+	return primitive.outline.map(([u, z]) => [b.u_min + u * (b.u_max - b.u_min), b.z_min + z * (b.z_max - b.z_min)]);
+}
+
+// Clip in actual wall coordinates, not by scaling its bounding rectangle. The
+// source triangles partition the wall, so their clipped areas also preserve holes.
+function clippedArea(polygon, zMin, zMax) {
+	let ring = polygon;
+	for (const [height, sign] of [[zMin, 1], [zMax, -1]]) {
+		if (!Number.isFinite(height)) continue;
+		const output = [];
+		if (!ring.length) return 0;
+		let previous = ring.at(-1), previousDistance = sign * (previous[1] - height);
+		for (const point of ring) {
+			const distance = sign * (point[1] - height);
+			if ((distance >= 0) !== (previousDistance >= 0)) {
+				const t = previousDistance / (previousDistance - distance);
+				output.push([previous[0] + t * (point[0] - previous[0]), height]);
+			}
+			if (distance >= 0) output.push(point);
+			previous = point; previousDistance = distance;
+		}
+		ring = output;
+	}
+	return ring.length >= 3 ? polygonArea(ring) : 0;
 }
 
 function median(values) {
@@ -155,6 +185,18 @@ export function measureComposition({ context, resolved, program = null } = {}) {
 	const waive = program?.source_photograph ? TRANSCRIPTION_WAIVERS : [];
 	const waived = [];
 	const segments = new Map(context.facade_segments.map((segment) => [segment.segment_id, segment]));
+	// Only the source-polygon lane changes area authority. Merely attaching source
+	// patch metadata to a legacy segment must not change any historical metrics.
+	const patchSegments = new Set(resolved.primitives.filter((p) => p.wall_opening || p.wall_patch).map((p) => p.segment_id));
+	const wallArea = (segment, zMin = -Infinity, zMax = Infinity) => {
+		if (patchSegments.has(segment.segment_id)) {
+			if (!segment.wall_patch?.triangles?.length) throw new TypeError("wall-patch composition requires source wall triangles");
+			return segment.wall_patch.triangles.reduce((sum, triangle) => sum + clippedArea(triangle, zMin, zMax), 0);
+		}
+		const low = Math.max(segment.local_z?.[0] ?? 0, zMin);
+		const high = Math.min(segment.local_z?.[1] ?? 0, zMax);
+		return segment.length_m * Math.max(0, high - low);
+	};
 
 	// Opening share is read per elevation, not over the whole building. One generous
 	// street face averaging out three blank ones is exactly the facade this is here to
@@ -162,8 +204,7 @@ export function measureComposition({ context, resolved, program = null } = {}) {
 	const wallByView = new Map();
 	for (const segment of context.facade_segments) {
 		const view = segment.face_view ?? segment.view;
-		const height = (segment.local_z?.[1] ?? 0) - (segment.local_z?.[0] ?? 0);
-		wallByView.set(view, (wallByView.get(view) ?? 0) + segment.length_m * height);
+		wallByView.set(view, (wallByView.get(view) ?? 0) + wallArea(segment));
 	}
 	const openByView = new Map();
 	// Ground-storey glazing, kept separate from the rest.
@@ -220,6 +261,11 @@ export function measureComposition({ context, resolved, program = null } = {}) {
 	// behaviour a reader of the number expects.
 	const skinExtentByView = new Map();
 	const terminatedViews = new Set();
+	// A VEIL of solid modules (lattice cells with a tile, standing proud): a construction in its
+	// own right, read like a skin - its uniformity is the system, it runs the height of the
+	// building the way a mullion grid does, and where it reaches the top storey it is the edge
+	// the building stops at (The Broad's parapet is the veil's own sawtooth).
+	const veilExtentByView = new Map();
 	for (const primitive of resolved.primitives) {
 		if (primitive.kind === "cornice") hasTermination = true;
 		const primitiveView = segments.get(primitive.segment_id)?.face_view ?? segments.get(primitive.segment_id)?.view;
@@ -230,6 +276,12 @@ export function measureComposition({ context, resolved, program = null } = {}) {
 			// building has to be within the top storey of it.
 			if (primitive.kind === "cornice" && topStorey
 				&& primitive.local_bounds.z_max >= topStorey.z_min - 1e-6) terminatedViews.add(primitiveView);
+			if (primitive.lattice && (primitive.tile || primitive.wall_patch && primitive.mesh_uzn) && (primitive.depth_m ?? 0) > 0) {
+				const extent = veilExtentByView.get(primitiveView) ?? { z_min: Infinity, z_max: -Infinity };
+				extent.z_min = Math.min(extent.z_min, primitive.local_bounds.z_min);
+				extent.z_max = Math.max(extent.z_max, primitive.local_bounds.z_max);
+				veilExtentByView.set(primitiveView, extent);
+			}
 			if (!kindsByView.has(primitiveView)) kindsByView.set(primitiveView, new Set());
 			// The entrance is placed by deterministic code, always on the most visible ground
 			// segment, so it appears on one face whatever the grammar says. Counting it makes
@@ -270,7 +322,9 @@ export function measureComposition({ context, resolved, program = null } = {}) {
 			const overlap = Math.min(primitive.local_bounds.z_max, groundStorey.z_max) - Math.max(primitive.local_bounds.z_min, groundStorey.z_min);
 			if (overlap > 0) {
 				const width = Math.max(0, primitive.local_bounds.u_max - primitive.local_bounds.u_min);
-				groundOpenByView.set(view, (groundOpenByView.get(view) ?? 0) + width * overlap);
+				const groundArea = primitive.wall_opening
+					? clippedArea(openingPolygon(primitive), groundStorey.z_min, groundStorey.z_max) : width * overlap;
+				groundOpenByView.set(view, (groundOpenByView.get(view) ?? 0) + groundArea);
 			}
 		}
 	}
@@ -278,9 +332,8 @@ export function measureComposition({ context, resolved, program = null } = {}) {
 	if (groundStorey) {
 		for (const segment of context.facade_segments) {
 			const view = segment.face_view ?? segment.view;
-			const low = Math.max(segment.local_z?.[0] ?? 0, groundStorey.z_min);
-			const high = Math.min(segment.local_z?.[1] ?? 0, groundStorey.z_max);
-			if (high > low) groundWallByView.set(view, (groundWallByView.get(view) ?? 0) + segment.length_m * (high - low));
+			const value = wallArea(segment, groundStorey.z_min, groundStorey.z_max);
+			if (value > 0) groundWallByView.set(view, (groundWallByView.get(view) ?? 0) + value);
 		}
 	}
 	const openingRatios = {};
@@ -317,6 +370,10 @@ export function measureComposition({ context, resolved, program = null } = {}) {
 	// commercial typology reads a facade's zones off the horizontal members that divide it,
 	// which is only meaningful if the members are actually on the face being read
 	// (The Buildings of Main Street, Preservation Press, 1987).
+	for (const [view, extent] of veilExtentByView) {
+		maxStoreySpan = Math.max(maxStoreySpan, storeySpan(extent));
+		if (topStorey && extent.z_max >= topStorey.z_min - 1e-6) terminatedViews.add(view);
+	}
 	const unterminated = [...wallByView.keys()].filter((view) => !terminatedViews.has(view));
 	if (unterminated.length) {
 		note("TOP_TERMINATION_MISSING", unterminated.length === wallByView.size
@@ -347,7 +404,9 @@ export function measureComposition({ context, resolved, program = null } = {}) {
 		// its glass.
 		const blind = (openingRatios[view] ?? 1) <= COMPOSITION_BOUNDS.maxSolidFaceRatio;
 		if (!kinds.has("window") && !hasDoor && !blind) missing.push(["glass", "a window (or the placed entrance)"]);
-		if (!["sill", "band", "transom"].some((kind) => kinds.has(kind))) missing.push(["opaque", "a sill, a band or a transom - they are the only kinds that carry it, so a pure skin needs its transom"]);
+		// The wall already supplies solid material. A source transcription must not
+		// invent trim merely to exhibit an additional presentation palette role.
+		if (!program?.source_photograph && !["sill", "band", "transom"].some((kind) => kinds.has(kind))) missing.push(["opaque", "a sill, a band or a transom - they are the only kinds that carry it, so a pure skin needs its transom"]);
 		if (!["mullion", "reveal", "window", "louvre"].some((kind) => kinds.has(kind)) && !hasDoor && !blind) missing.push(["bronze", "a mullion, a reveal or a louvre (a window without a reveal grows its own bronze frame)"]);
 		for (const [role, source] of missing) {
 			note("MATERIAL_ROLE_MISSING", `the ${view} elevation has no kind that can produce the ${role} role, and the render gate requires all four roles on every elevation; it needs ${source}`);
@@ -358,16 +417,14 @@ export function measureComposition({ context, resolved, program = null } = {}) {
 	const skinTransparency = {};
 	for (const view of wallByView.keys()) {
 		const kinds = kindsByView.get(view) ?? new Set();
-		const skin = [...kinds].some((kind) => SKIN_KINDS.has(kind));
+		const skin = [...kinds].some((kind) => SKIN_KINDS.has(kind)) || veilExtentByView.has(view);
 		construction[view] = skin ? "skin" : "punched";
 		const extent = skinExtentByView.get(view);
 		if (skin && extent && extent.z_max > extent.z_min) {
 			let field = 0;
 			for (const segment of context.facade_segments) {
 				if ((segment.face_view ?? segment.view) !== view) continue;
-				const low = Math.max(segment.local_z?.[0] ?? 0, extent.z_min);
-				const high = Math.min(segment.local_z?.[1] ?? 0, extent.z_max);
-				if (high > low) field += segment.length_m * (high - low);
+				field += wallArea(segment, extent.z_min, extent.z_max);
 			}
 			if (field > 0) skinTransparency[view] = Number(((openByView.get(view) ?? 0) / field).toFixed(6));
 		}

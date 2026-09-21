@@ -2,9 +2,8 @@
  * Photoreal pass over a showcase render through the free codex lane.
  *
  * Runs `codex exec` with a geometry-locking img2img prompt against an input
- * PNG. Codex's sandbox cannot write outside its home, so the generated image
- * lands under ~/.codex/generated_images/<id>/ and is found by mtime and copied
- * to the requested output path.
+ * PNG. Generated images are read only from the invocation's session directory
+ * under CODEX_HOME (or ~/.codex when unset), then copied to the output path.
  *
  * CLI: node codex-photo.mjs <input-png> <output-png> "<subject>"
  */
@@ -13,11 +12,12 @@ import { copyFile, mkdir, readdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { codexExecutable, terminateCodex } from '../../facade-pipeline/codex-task.mjs';
 
 export const NO_IMAGE_TOOL = "NO_IMAGE_TOOL";
 
-export function defaultGeneratedImagesDir() {
-	return join(homedir(), ".codex", "generated_images");
+export function defaultGeneratedImagesDir(env = process.env) {
+	return join(env.CODEX_HOME || join(homedir(), '.codex'), 'generated_images');
 }
 
 /** The image tool codex exposes. Named in the prompt because the model denies having it. */
@@ -38,6 +38,9 @@ const PROMPT_BY_MODE = Object.freeze({
 	concept: [
 		"architectural photograph of that exact mass with a facade designed onto it. Keep the",
 		"silhouette, storey count and every facet exactly as rendered; the facade is the subject.",
+		"Preserve the supplied camera, projection and framing. Show the entire building clearly in one image.",
+		"Keep repeated curved openings, diagonal layouts and spatial variation legible for subsequent architectural drawing reconstruction.",
+		"Do not hide facade edges or entrances with trees, people or vehicles; do not add text, dimensions or a collage.",
 	],
 });
 
@@ -57,8 +60,8 @@ export function buildCodexPrompt(inputPng, subject, mode = "photo") {
 	].join(" ");
 }
 
-export function buildCodexCommand(prompt) {
-	return { command: "codex", args: ["exec", "--skip-git-repo-check", prompt] };
+export function buildCodexCommand(prompt, inputImage) {
+	return { command: "codex", args: ["exec", "--skip-git-repo-check", ...(inputImage ? ['--image',resolve(inputImage)] : []), prompt] };
 }
 
 /**
@@ -73,7 +76,8 @@ export function buildCodexCommand(prompt) {
  * able to find only its own image.
  */
 export function parseCodexSessionId(output) {
-	return /^\s*session id:\s*([0-9a-f-]{36})\s*$/im.exec(String(output ?? ""))?.[1] ?? null;
+	return /^\s*session id:\s*([0-9a-f-]{36})\s*$/im.exec(String(output ?? ""))?.[1]
+		?? /"type"\s*:\s*"thread.started"[^\n]*"thread_id"\s*:\s*"([0-9a-f-]{36})"/.exec(String(output ?? ''))?.[1] ?? null;
 }
 
 // Newest PNG under rootDir (recursive) whose mtime is after sinceMs, or null.
@@ -116,18 +120,17 @@ export function shellQuoteArgs(args, platform = process.platform) {
 	return args.map((arg) => (/^[\w.\-\/:=]+$/.test(arg) ? arg : `"${String(arg).replace(/"/g, '\\"')}"`));
 }
 
-function runCodex({ command, args }, timeoutMs = 15 * 60 * 1000) {
+async function runCodex({ args }, timeoutMs = 15 * 60 * 1000) {
+	const {command, prefix} = await codexExecutable();
 	return new Promise((resolvePromise, rejectPromise) => {
-		const useShell = process.platform === "win32";
-		// stdin ignored, and a deadline. With an inherited-but-empty stdin codex waits for
-		// input that never arrives: the first run through this module sat for four days and
-		// left four codex processes behind. A photo pass that cannot finish in the timeout
-		// has failed, and saying so beats hanging the caller.
-		const child = spawn(command, shellQuoteArgs(args), {
-			shell: useShell, windowsVerbatimArguments: false, stdio: ["ignore", "pipe", "pipe"],
+		// Deliver the exact prompt on stdin and close it; bound the child process lifetime.
+		const child = spawn(command, [...prefix,...args.slice(0,-1),'-'], {
+			shell: false, windowsHide: true, stdio: ["pipe", "pipe", "pipe"],
 		});
+		child.stdin.on('error',()=>{});
+		child.stdin.end(args.at(-1));
 		const deadline = setTimeout(() => {
-			child.kill();
+			terminateCodex(child);
 			rejectPromise(new Error(`codex exec exceeded ${Math.round(timeoutMs / 1000)}s and was killed; the photo lane is not usable from this process`));
 		}, timeoutMs);
 		child.on("close", () => clearTimeout(deadline));
@@ -146,7 +149,7 @@ export async function codexPhoto({ inputPng, outputPng, subject, mode = "photo",
 	}
 	const startMs = Date.now();
 	const prompt = buildCodexPrompt(inputPng, subject, mode);
-	const { code, output } = await runCodex(buildCodexCommand(prompt));
+	const { code, output } = await runCodex(buildCodexCommand(prompt, inputPng));
 	// Success is the file, not the model's account of itself. This used to ask codex to print a
 	// sentinel when it had no image tool, and then search the whole transcript for that word -
 	// but codex echoes the prompt it was given, so the detector kept finding its own
@@ -160,11 +163,10 @@ export async function codexPhoto({ inputPng, outputPng, subject, mode = "photo",
 		const limit = output.split(/\r?\n/).find((line) => /usage limit/i.test(line));
 		throw new Error(`codex exec exited with code ${code}${limit ? ` - ${limit.trim()}` : ""}: ${output.slice(-2000)}`);
 	}
-	// Only this session's own directory. A run that cannot name its session falls back to
-	// the whole tree, which is the racing search, so it says which one answered rather than
-	// leaving the caller unable to tell a bound result from a borrowed one.
+	// Never borrow another invocation's image from the shared generated-images tree.
 	const session = parseCodexSessionId(output);
-	const searchDir = session ? join(generatedDir, session) : generatedDir;
+	if (!session) throw new Error('UNBOUND_GENERATED_IMAGE: Codex did not identify its session; refusing shared-directory image fallback');
+	const searchDir = join(generatedDir, session);
 	const generated = await findNewestPng(searchDir, startMs);
 	if (!generated) {
 		throw new Error(`codex exec finished but no new PNG appeared under ${searchDir}; output tail: ${output.slice(-2000)}`);

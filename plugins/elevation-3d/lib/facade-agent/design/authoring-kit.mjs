@@ -67,6 +67,27 @@ export function grammarBriefIsStale({ context, onDisk } = {}) {
 	return onDisk !== buildFacadeGrammarPrompt({ context, correctionCodes: [], attempt: 1, previous: null }).prompt;
 }
 
+/**
+ * The codes a VEIL records instead of failing. A veil of solid modules (a lattice terminal with a
+ * tile and a thickness) is a screen: its crests ink every cell edge, and the line-density bounds
+ * were derived on punched walls ("how busy a drawing may look" - PRESENTATION_BOUNDS). The Broad's
+ * veil measured 0.151 against 0.035 on the star prism, four times over, on a drawing whose every
+ * line is the design. Every other gate holds.
+ *
+ * The test is ANY cell with a tile, never the first one: a veil that finishes its host puts solid
+ * panels where an edge cut a cell past its funnel, and one of those landing first silently took
+ * the waiver away - the front then failed LINE_DENSITY_EXCEEDED on a drawing that had carried the
+ * same veil the day before.
+ */
+export function veilWaivers(program) {
+	const alternatives = Array.isArray(program?.rules)
+		? program.rules.flatMap((rule) => rule.alternatives ?? [])
+		: Object.values(program?.rules ?? {}).flat();
+	const carriesVeil = alternatives.some((alternative) => alternative?.lattice && (alternative.depth_m ?? 0) > 0
+		&& (alternative.lattice.instances ?? []).some((cell) => cell?.tile_m || alternative.lattice.scope === "wall_patch" && cell?.mesh_uzn));
+	return carriesVeil ? ["LINE_DENSITY_EXCEEDED", "PLAN_TOP_LINE_DENSITY_EXCEEDED"] : [];
+}
+
 export async function writeGrammarBrief({ runDir, context } = {}) {
 	if (!context?.facade_segments || !context?.storeys) throw new TypeError("a verified facade design context is required");
 	const built = buildFacadeGrammarPrompt({ context, correctionCodes: [], attempt: 1, previous: null });
@@ -88,6 +109,7 @@ export async function writeGrammarBrief({ runDir, context } = {}) {
 			// not derive it from this file at all and had to measure the operator's semantics
 			// by moving a point and re-running `check` four times.
 			origin_m: segment.origin_m ?? null, outward_normal: segment.outward_normal ?? null,
+            wall_patch: segment.wall_patch ?? null,
 		})),
 		exclusions: context.exclusions,
 		existing_openings: context.existing_openings,
@@ -169,9 +191,15 @@ export async function renderAuthoredFacade({
 		throw new Error(`grammar was rejected at ${checked.stage}: ${detail}`);
 	}
 	const { program, resolved, validation } = checked;
-	// A transcription names its photograph; the sheet and PBR gates in TRANSCRIPTION_WAIVERS
-	// then record instead of refuse. Every other gate on the way holds.
-	const waive = program.source_photograph ? [...TRANSCRIPTION_WAIVERS] : [];
+	const waive = program.source_photograph ? [...TRANSCRIPTION_WAIVERS] : veilWaivers(program);
+	// A design shows the roles its DECLARED materials carry - the wall and the glass always,
+	// metal or panel only where the author declared one. The Broad's veil has no metal in it,
+	// and a gate asking every elevation for bronze would have refused the photograph; the same
+	// veil carried onto our mass as a base model declares the same materials and owes no bronze
+	// either. A grammar in the legacy four-word materials keeps the punched-window set.
+	const requiredMaterialRoles = program.materials?.length
+		? [...new Set(["concrete", "glass", ...program.materials.map((material) => material.role).filter(Boolean)])]
+		: undefined;
 	const compiled = await compileFacadeDesign({
 		outputRoot: join(runDir, "compiled"), candidate, context, program, resolved, validation,
 	});
@@ -185,6 +213,8 @@ export async function renderAuthoredFacade({
 		designFacadeManifest: { path: designManifestPath, sha256: sha256(await readFile(designManifestPath)) },
 		palette: resolveMaterialPalette(palette),
 		candidateId: candidate.candidate?.candidate_id ?? candidate.candidate_id, cutElevationM: 1.2, signal, waive,
+		...(program.source_photograph ? {materialRolePolicy:"source-faithful"} : {}),
+		...(requiredMaterialRoles ? { requiredMaterialRoles } : {}),
 	});
 	const pbrRoot = join(runDir, "pbr-render");
 	const technicalCameraAuthority = await technicalCameraAuthorityFromGlb({ bytes: await readFile(compiled.output.path), cameras });
@@ -194,8 +224,15 @@ export async function renderAuthoredFacade({
 		expectedTechnicalCameras: technicalCameraAuthority.cameras,
 		baselineRunDir: technicalRoot, baselineManifestRecord: technical.manifest_record,
 		outputSize, renderStyleOverrides, signal, waive,
+		...(requiredMaterialRoles ? { requiredRoles: requiredMaterialRoles } : {}),
 	});
-	if (!pbr.validation.accepted) throw new Error(`PBR validation rejected: ${pbr.validation.codes.join(", ")}`);
+	if (!pbr.validation.accepted) {
+		const evidence=Object.fromEntries(Object.entries(pbr.semantic_role_evidence??{}).map(([view,e])=>[view,{
+			roles:Object.fromEntries(Object.entries(e.roles??{}).map(([role,r])=>[role,{pixels:r.pixelCount,coverage:r.coverageFraction}])),
+			color_distances:Object.fromEntries(Object.entries(e.pairwise??{}).map(([pair,p])=>[pair,p.colorDistance])),
+		}]));
+		throw new Error(`PBR validation rejected: ${pbr.validation.codes.join(", ")}; measured per-view role evidence: ${JSON.stringify(evidence)}`);
+	}
 	const heroPath = join(pbrRoot, "perspective-hero.png");
 	const heroBytes = await composePerspectiveHero({ sourceBytes: await readFile(pbr.views.axon.path) });
 	await writeFile(heroPath, heroBytes);

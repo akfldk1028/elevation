@@ -1,3 +1,4 @@
+import { validateModuleMesh, moduleFitsWallPatch, openingFitsWallPatch } from '../wall-patch.mjs';
 import { sha256, stableJson } from "../../core.mjs";
 import { KIND_PROJECTION } from "../facade-vocabulary.mjs";
 import { readVerifiedFacadeDesignContextAuthority } from "./context.mjs";
@@ -124,7 +125,18 @@ export function validateResolvedFacadeProgram({ program, context, resolved } = {
 			const primitive = resolved.primitives[index];
 			const segment = segments.get(primitive.segment_id);
 			const bounds = primitive.local_bounds;
-			if (!segment || !bounds || ![bounds.u_min, bounds.u_max, bounds.z_min, bounds.z_max].every(Number.isFinite)
+            let patchValid=false;
+            if(primitive.wall_opening) {
+                const points=primitive.outline.map(([u,z])=>[bounds.u_min+u*(bounds.u_max-bounds.u_min),bounds.z_min+z*(bounds.z_max-bounds.z_min)]);
+                patchValid=primitive.kind==='window' && openingFitsWallPatch(points,segment?.wall_patch,context.exclusions.fold_clearance_m);
+                if(!patchValid) {measure('SEGMENT_BOUNDS_INVALID',index,1,0);continue;}
+            }
+            if(primitive.wall_patch) {
+                try {validateModuleMesh(primitive.mesh_uzn);patchValid=primitive.kind==='louvre' && !!primitive.lattice && moduleFitsWallPatch(primitive.mesh_uzn,segment?.wall_patch);}
+                catch {patchValid=false;}
+                if(!patchValid) {measure('SEGMENT_BOUNDS_INVALID',index,1,0);continue;}
+            }
+            if (!patchValid && (!segment || !bounds || ![bounds.u_min, bounds.u_max, bounds.z_min, bounds.z_max].every(Number.isFinite)
 				|| bounds.u_min < 0 || bounds.u_max > (segment?.length_m ?? 0) || bounds.u_min >= bounds.u_max
 				// A member that named a rise datum is allowed above its facet, and only up to
 				// that line - the loosening is a parapet levelling a stepped mass, not a licence
@@ -145,7 +157,7 @@ export function validateResolvedFacadeProgram({ program, context, resolved } = {
 				|| (primitive.rises_to === "building_top" || primitive.rises_to === "storey_line"
 					? bounds.z_max > buildingTop + 1e-6
 					: bounds.z_max > segment?.local_z?.[1])
-				|| bounds.z_min >= bounds.z_max) {
+				|| bounds.z_min >= bounds.z_max)) {
 				measure("SEGMENT_BOUNDS_INVALID", index, bounds?.u_max ?? Number.MAX_SAFE_INTEGER, segment?.length_m ?? 0);
 				continue;
 			}
@@ -175,7 +187,12 @@ export function validateResolvedFacadeProgram({ program, context, resolved } = {
 				// requirement is not 0.3 m of bare mass, it is that the strip be framed - a
 				// mullion that runs to the facet edge and overlaps the pane in height.
 				const edge = Math.min(bounds.u_min, segment.length_m - bounds.u_max);
-				if (edge + 1e-8 < context.exclusions.fold_clearance_m
+				// A lattice cell keeps the fold rule: it is a hole cut into the mass like any other,
+				// and a scope widened to the whole facet by a skin word would otherwise let the
+				// deriver clip a cell onto the fold with nothing firing (review, 2026-09-16). The
+				// floor-band and same-family clearance rules stand aside for cells below, because a
+				// veil crosses slab lines by construction and its evaluator holds its cells apart.
+				if (!primitive.wall_opening && edge + 1e-8 < context.exclusions.fold_clearance_m
 					&& !(primitive.kind === "window" && skinSegments.has(primitive.segment_id)
 						&& framedToFold(primitive, segment, bounds.u_min <= segment.length_m - bounds.u_max))) {
 					measure("FOLD_CLEARANCE_INVALID", index, edge, context.exclusions.fold_clearance_m);
@@ -204,8 +221,8 @@ export function validateResolvedFacadeProgram({ program, context, resolved } = {
 				const slabDistance = (z) => Math.min(...context.storeys.flatMap((storey) => [Math.abs(z - storey.z_min), Math.abs(z - storey.z_max)]));
 				if (bounds.z_min < context.storeys[0].z_min - 1e-8 || bounds.z_max > top + 1e-8) {
 					measure("FLOOR_BAND_INTRUSION", index, bounds.z_max, top);
-				} else if (inBand(bounds.z_min)) measure("FLOOR_BAND_INTRUSION", index, slabDistance(bounds.z_min), clearance);
-				else if (inBand(bounds.z_max)) measure("FLOOR_BAND_INTRUSION", index, slabDistance(bounds.z_max), clearance);
+				} else if ((!primitive.lattice || primitive.wall_opening) && inBand(bounds.z_min)) measure("FLOOR_BAND_INTRUSION", index, slabDistance(bounds.z_min), clearance);
+				else if ((!primitive.lattice || primitive.wall_opening) && inBand(bounds.z_max)) measure("FLOOR_BAND_INTRUSION", index, slabDistance(bounds.z_max), clearance);
 			}
 			// A door is recessed rather than built out, so it keeps the context's recess bound.
 			// Everything else is bounded by what it is: KIND_PROJECTION gives a cornice the
@@ -265,6 +282,13 @@ export function validateResolvedFacadeProgram({ program, context, resolved } = {
 				// over its glass. Within one layer everything collides exactly as before, and
 				// a grammar without layer splits tags nothing, so nothing already written moves.
 				if ((left.layer ?? 0) !== (right.layer ?? 0)) continue;
+				// Two cells of ONE evaluation: their rotated outlines may share a bounding box while
+				// the shapes do not touch, and that evaluation's own overlap check refused touching
+				// cells. Cells of different evaluations (or families) know nothing of each other and
+				// collide here like any two members.
+				const sameLattice = left.lattice && right.lattice && left.lattice.family === right.lattice.family
+					&& left.lattice.model_hash === right.lattice.model_hash;
+				if (sameLattice) continue;
 				const overlap = rectanglesOverlap(left.local_bounds, right.local_bounds);
 				if (overlap > 0) measure("PRIMITIVE_OVERLAP", rightIndex, overlap, 0);
 				else if ((left.kind === "door" || left.kind === "window") && (right.kind === "door" || right.kind === "window")) {

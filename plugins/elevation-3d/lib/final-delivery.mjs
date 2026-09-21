@@ -84,7 +84,11 @@ function browserAccepted(report, cameras, buildingBounds) {
 		}))
 		&& stability?.transparent_depth_writers === 0
 		&& stability?.facade_detail_meshes > 0
-		&& stability?.polygon_offset_facade_details === stability.facade_detail_meshes
+		&& Number.isInteger(stability?.polygon_offset_facade_details)
+		&& stability.polygon_offset_facade_details >= 0
+		&& Number.isInteger(stability?.unbiased_closed_module_meshes ?? 0)
+		&& (stability?.unbiased_closed_module_meshes ?? 0) >= 0
+		&& stability?.polygon_offset_facade_details + (stability?.unbiased_closed_module_meshes ?? 0) === stability.facade_detail_meshes
 		&& stability?.deterministic_render_order === true
 		&& report.settled_frames_identical === true
 		&& Array.isArray(report.settled_frame_hashes)

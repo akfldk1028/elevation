@@ -17,14 +17,74 @@ Everything after it is deterministic local code that refuses what it cannot veri
                              ->  DRAWING (an author transcribes the picture into grammar)
                              ->  gates -> compile -> render
 
+## What we are actually trying to do
+
+One sentence: **a picture of a facade, and any mass, come in; a drawing of that facade on that
+mass comes out, and a person agrees it is the same building.**
+
+Four things follow from that sentence, and every argument in this repo has been settled by one
+of them:
+
+- **The mass is not ours.** It is authored by the mass agent and it is the authority. This
+  agent designs the elevation on whatever arrives. It never edits a mass, and the
+  `synthetic-*` candidates exist only so the engine can be tested without a design.
+- **The picture is the brief, and it must not be closed.** A prompt names the constraint and
+  the question — never the style, the palette, the material or a list of elements.
+- **A green gate is not the acceptance test.** The gates stop what is unbuildable or
+  unreadable; they have passed drawings that no one would hand in, five times. A run is done
+  when a person looks at the drawing beside the picture and says it is the same building.
+- **Nothing is tuned per building.** Every constant carries the derivation that produced it.
+  If a rule only works on one mass, it is not a rule yet.
+
+Since 2026-09-16 the parametric half of this is a **lattice**, not a grammar of splits: a
+family (one unit curve + shape modes), a lattice basis, fields over the surface, and
+exceptions. `fit` reads that spec off an observed facade; `apply` lays it onto a mass as a
+facet run; the cells compile to 3D funnel MODULES standing on a glass box. Spec and plan:
+`docs/superpowers/plans/2026-09-16-parametric-lattice.md`.
+
+## Where this stands, and what to pick up next (2026-09-20)
+
+Working end to end: photograph → trace → fit → apply → gates → eight views + PBR + hero, with
+**two** designs (The Broad, and a second authored one recovered from its own picture to 1 mm)
+on **four** masses. The veil now sizes itself to the mass — no `--scale` or `--points` by hand.
+
+The open item, and the next task for whoever picks this up:
+**`docs/superpowers/plans/2026-09-20-cell-budget-on-a-pleated-mass.md`.** On a mass pleated
+finer than the design's own cell (creative-004, 113 facets at 1.76 m), the self-sizing veil
+passes every gate and the drawing reads as confetti — 60.4% of it is solid panel — because the
+cell cap counts fold PARTS and is spent over all four faces at once. That file carries every
+measurement already taken, the acceptance numbers, and the rules. Do not re-derive what is in
+its table.
+
+Also open, smaller: the crest lines in the 2D export; the parapet sawtooth; the homography
+before the fit; a second real photograph through the lane.
+
+Handing that task to Codex is one line:
+
+    codex exec --cd D:\Data\50_ELE\ElevationAgent --sandbox workspace-write \
+      "Read AGENTS.md, then docs/superpowers/plans/2026-09-20-cell-budget-on-a-pleated-mass.md, and do it."
+
+As of 2026-09-20 that lane is refused by the account — `codex login status` says logged in and
+every model comes back `not supported when using Codex with a ChatGPT account`, which is an
+entitlement, not a model name. Re-authenticate with `codex login` before commissioning. The
+same task hands to a Claude subagent unchanged; only image GENERATION has no substitute.
+
 ## Run it
 
+    npm run facade:perspective -- <candidate> <run-name> --idea "..."  # mass -> generated perspective -> SAM -> grammar -> drawings -> visual correction
     node tools/facade-pipeline/cli.mjs roots                       # where the data lives
     node tools/facade-pipeline/cli.mjs prepare  <candidate>        # mass -> verified context
     node tools/facade-pipeline/cli.mjs brief    <candidate>        # the brief + schema an author answers
     node tools/facade-pipeline/cli.mjs check    <candidate> <grammar.json>
     node tools/facade-pipeline/cli.mjs render   <candidate> <grammar.json> <run-name> --palette competition-material
     node tools/facade-pipeline/cli.mjs concept  <candidate> <name> --idea "..."   # mass -> perspective (codex image lane)
+    node tools/facade-pipeline/cli.mjs trace    <candidate> <concept.png> <name> --roi <roi.json> --engine sam3 --tile-size 512  # observed curves -> SVG/DXF
+    node tools/facade-pipeline/cli.mjs lattice  <spec.json> <out-dir>   # ModelSpec (family + lattice + fields) -> instances.json + SVG + DXF, one model hash
+    node tools/facade-pipeline/cli.mjs fit      <curves.json> <spec.json> # observed cells (a `trace` facade_model.json) -> a fitted ModelSpec + recovery numbers
+    node tools/facade-pipeline/cli.mjs apply    <candidate> <base-spec.json> <name> [--scale --pitch --thickness --web --rotate --faces]  # a BASE MODEL onto a mass: facet run, spec, grammar, gates
+    node tools/facade-pipeline/cli.mjs prepare  synthetic-box-12x8x6.6  # a box candidate built on the fly, for engine tests that need a mass and not a design
+    node tools/facade-pipeline/cli.mjs edit     <facade_model.json> <output-directory> --edits <edits.json>
+    node tools/facade-pipeline/cli.mjs cad      <facade_model.json> <output-directory>
     node tools/facade-pipeline/cli.mjs draw     <candidate> <grammar.json> <run-name>   # check + render, one verdict
     node tools/facade-pipeline/cli.mjs photo    <in.png> <out.png> --subject "..."
 
@@ -44,7 +104,31 @@ Three roles do the work an engineer cannot do by reading code, and each is a fil
 | `facade-transcriber.md` | turns a concept photograph into a grammar with `source_photograph` set; the standard lane | the photograph, brief, schema, context, mass pictures | the engine |
 | `facade-reviewer.md` | says YES / ROUGHLY / NO to "same building?" from a manifest of concept / elevation / hero paths | images only | code, grammars, reports, notes |
 
-The standard lane is `prepare` -> `brief` -> `concept` -> transcriber -> `draw` -> reviewer,
+The standard automatic perspective-to-drawing lane is `agent` (`facade:perspective`). Its harness and prompts live in
+`tools/facade-pipeline/perspective-workflow.mjs` and `workflow-prompts.mjs`. It binds the generated image by hash,
+passes the image plus measured SAM observations into v3 transcription, renders all eight technical views and the hero,
+and feeds an independent visual review back into transcription. Technical acceptance alone does not finish this lane.
+See `tools/facade-pipeline/README.md` for commands, receipts and limitations.
+
+The older `scripts/elevation-3d-facade.mjs` paid harness is a specialized brick/punched-window workflow;
+its fixed brick prompts are not the general curved-facade authoring route. The design-only director receives
+a mass thumbnail; it is not a perspective transcriber. Do not present either as equivalent to `agent`.
+
+The auxiliary 2D lane is `concept` -> `trace` (explicit ROI, SAM3 or Grounding DINO + SAM2) -> editable curve CAD -> visual review.
+
+**The parametric lane is a LATTICE, not a split** (2026-09-16, spec `docs/superpowers/specs/2026-09-16-parametric-facade-lattice-design.md`,
+plan `docs/superpowers/plans/2026-09-16-parametric-lattice.md`). A ModelSpec - a family (piecewise cubic Bezier unit + shape modes),
+a lattice (two basis vectors, origin, stagger, edge policy) and fields (constant / linear / grid / point over the host) - is evaluated ONCE,
+in Python (`tools/facade-parametric/`), to instances with a model hash. The same instances write the 2D CAD (through `tools/facade-vision`)
+and drive the 3D: a grammar terminal carries `lattice: {model_hash, family, instances: "<file>"}` and is drawn once per cell inside its
+scope with host (0,0) at the FACET origin (the same origin the SVG/DXF use - the review of 2026-09-16 found it pinned to the
+fold-inset scope origin, 0.3 m off the DXF under the same hash), cells clipped at the scope edge, standing aside only from the
+floor-band gate and from overlap within one evaluation; the fold and opening-clearance rules hold for a cell as for any hole.
+Every command reads a grammar file through `readAuthoredGrammar` (tools/facade-pipeline/lattice.mjs), which inlines the cells.
+Node never evaluates a spec, so the hash cannot fork. First proof: `synthetic-box-12x8x6.6/render-lattice-001`,
+72 lens cells per 12 m face, eight views + PBR + hero accepted, GLB / instances / DXF on one hash.
+Trace does not emit a heuristic 3D grammar; see `tools/facade-vision/README.md` for its schema, parameters and limits.
+The authored 3D lane is `prepare` -> `brief` -> `concept` -> `transcriber` -> `draw` -> `reviewer`,
 and it loops: the reviewer's list of what a person could still point at goes back to the
 transcriber (a defect or an honest limit) or to the engineer (a missing capability). The
 reviewer's manifest is a JSON file of relative paths per building - `concept`, `elevation`,
@@ -141,7 +225,7 @@ same axes and `draw` reports `source_fidelity`: SOURCE_COLOUR_INVENTED (the draw
 surface is far more saturated than anything in the photograph) and SOURCE_VARIATION_LOST (the
 photograph changes markedly along its length and the drawing does not). Checked against three
 runs a person had already judged: the one called the same building is clean, the one called
-not the same trips both, the one called roughly trips one. It is a report, not a refusal.
+not the same trips both, the one called roughly trips one. Missing/failed source comparisons now reject a claimed transcription; passing these coarse measurements still does not prove geometric fidelity.
 
 ## How this goes wrong, every time
 

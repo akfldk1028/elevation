@@ -1,0 +1,4 @@
+numpy>=1.26
+# 2D export reuses tools/facade-vision (svgpathtools, ezdxf); see its requirements.txt.
+shapely>=2.0   # aperture overlap check (evaluate) and the ROI complement (fit)
+manifold3d>=3.0  # closed module intersections with exact wall patch domains

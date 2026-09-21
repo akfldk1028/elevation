@@ -37,6 +37,14 @@ test("a concept without an idea is refused - the brief is the commissioner's, ne
 	assert.throws(() => massFacts({ storeys: [], facade_segments: [] }), /prepared context/);
 });
 
+test('a nonuniform elevated mass does not invent equal floor heights or count ground offset as building height',()=>{
+  const elevated={...context,storeys:[{z_min:4,z_max:8},{z_min:8,z_max:11}]};
+  const subject=buildConceptSubject({context:elevated,idea:'curved screen'});
+  assert.match(subject,/EXACTLY 7 METRES TALL/);
+  assert.match(subject,/4, 3 m/);
+  assert.doesNotMatch(subject,/4 m each/);
+});
+
 // A transcriber playing the role file could not find where the mass's material is said,
 // because the brief never said it - the compiler read it off `wall` and no author could
 // know. A field no author can read about does not exist (AGENTS.md), so the brief and

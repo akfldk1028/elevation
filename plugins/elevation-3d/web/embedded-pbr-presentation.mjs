@@ -94,16 +94,29 @@ function namedRole(value) {
 }
 
 function userDataRole(userData) {
-	for (const field of ["material", "semantic_role", "semanticRole", "material_role", "materialRole", "role"]) {
+	for (const field of ["semantic_role", "semanticRole", "material_role", "materialRole", "role"]) {
 		const role = namedRole(userData?.[field]);
 		if (role) return { role, field };
 	}
+	// A legacy literal is a role; an authored ID such as bronze-grey-glazing is
+	// only a name. Its substring must not override the actual window primitive.
+	const literal=String(userData?.material??"").toLowerCase();
+	if (SEMANTIC_ROLES.includes(literal)) return {role:literal,field:"material"};
 	const kind = String(userData?.kind ?? "").toLowerCase();
-	return KIND_ROLES[kind] ? { role: KIND_ROLES[kind], field: "kind" } : null;
+	if (KIND_ROLES[kind]) return {role:KIND_ROLES[kind],field:"kind"};
+	return null;
 }
 
 export function resolveSemanticRole({ object, material, primitiveExtras }) {
 	const primitiveData = userDataRole(primitiveExtras);
+	// A role the builder named on the primitive wins. A role read off the primitive's KIND does
+	// not beat a DECLARED material: the declaration's role rides in the material's extras (see
+	// the enrichment) and is the author's word on what the member is made of - a louvre veil
+	// declared as stone is stone, not the kind table's window-frame bronze, which is how a
+	// veil of 231 stone modules measured as 76% bronze and collapsed against the wall.
+	if (primitiveData && primitiveData.field !== "kind") return { role: primitiveData.role, source: `primitive.extras.${primitiveData.field}` };
+	const declared = material?.userData?.declared_material ? namedRole(material.userData.semantic_role) : null;
+	if (declared) return { role: declared, source: "material.userData.semantic_role" };
 	if (primitiveData) return { role: primitiveData.role, source: `primitive.extras.${primitiveData.field}` };
 	const objectData = userDataRole(object?.userData);
 	if (objectData) return { role: objectData.role, source: `object.userData.${objectData.field}` };

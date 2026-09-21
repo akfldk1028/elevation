@@ -1,9 +1,9 @@
 /**
  * Read the photograph a grammar says it transcribes, and say how far the drawing is from it.
  *
- * This is deliberately a REPORT and not a refusal. It is new, it is two coarse statistics, and
- * this project has been bitten before by a threshold fitted to one building. What it is not is
- * optional: a transcription's whole claim is the photograph, and until now the pipeline never
+ * These two coarse statistics are a necessary gate, not proof of geometric fidelity.
+ * Missing source evidence and failed comparisons reject a claimed transcription.
+ * A transcription's whole claim is the photograph, and until now the pipeline never
  * opened the file. Both measurements below were checked against three runs a person had
  * already judged - the one they called the same building comes back clean, the one they called
  * not the same trips both, and the one they called roughly trips one.
@@ -36,6 +36,8 @@ export async function compareDrawingToSource({ runDir, grammar, heroPath } = {})
 		});
 		return {
 			source_fidelity: {
+				accepted: compared.codes.length === 0,
+				checked: true,
 				photograph: named,
 				codes: compared.codes,
 				says: compared.codes.map((code) => EXPLANATIONS[code] ?? code),
@@ -44,8 +46,8 @@ export async function compareDrawingToSource({ runDir, grammar, heroPath } = {})
 			},
 		};
 	} catch (error) {
-		// A missing or unreadable photograph is not a drawing fault, and must not fail a render
-		// that otherwise succeeded - but it must not pass silently either.
-		return { source_fidelity: { photograph: named, unread: String(error?.message ?? error).slice(0, 160) } };
+		// Rendering may have succeeded, but a claimed transcription cannot pass
+		// without readable source evidence.
+		return { source_fidelity: { accepted: false, checked: false, codes: ["SOURCE_IMAGE_UNREADABLE"], photograph: named, unread: String(error?.message ?? error).slice(0, 160) } };
 	}
 }

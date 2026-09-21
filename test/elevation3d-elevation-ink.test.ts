@@ -27,6 +27,35 @@ function sheet(fill: number[], depthM: number) {
 	return { pixels, materialId, depth };
 }
 
+function encodePreciseDepth(metres: number) {
+	const value = Math.round(metres / FAR * 255 ** 3);
+	return [Math.floor(value / 255 ** 2), Math.floor(value / 255) % 255, value % 255];
+}
+
+test("a steep planar depth gradient is not a member edge; a true step on that plane remains outlined", () => {
+	for (const axis of ["x", "y"]) for (const direction of [-1, 1]) {
+		const raster = sheet([200, 200, 200], 10);
+		const normal = Buffer.alloc(W * H * 3);
+		for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+			const coordinate = axis === "x" ? x : y;
+			raster.depth.set(encodePreciseDepth(10 + direction * .043 * coordinate), (y * W + x) * 3);
+			// Smoothed normals can face the camera more than the true steep face.
+			normal.set(encodeNormal(.96, 0, .28), (y * W + x) * 3);
+		}
+		const run = () => inkElevation({ ...raster, normal, width: W, height: H, near: NEAR, far: FAR, camera, projectedBounds });
+		assert.equal(run().report.member_edge_pixels, 0, `${axis}/${direction}: a plane predicts its own next depth`);
+		for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+			const coordinate = axis === "x" ? x : y;
+			raster.depth.set(encodePreciseDepth(10 + direction * .043 * coordinate - (coordinate >= 50 ? .45 : 0)), (y * W + x) * 3);
+		}
+		const result = run();
+		assert.ok(result.report.member_edge_pixels > 0);
+		assert.equal(result.mask[50 * W + 50], 1, "the near side of the 450 mm step remains drawn");
+		assert.equal(result.mask[40 * W + 40], 0, "the plane away from the member remains blank");
+		assert.equal(result.mask[60 * W + 60], 0);
+	}
+});
+
 test("a declared module draws as joints over its own fill only, in the sheet's metres", () => {
 	const fill = [200, 200, 200];
 	const { pixels, materialId, depth } = sheet(fill, 10);

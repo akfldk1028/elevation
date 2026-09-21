@@ -22,6 +22,7 @@ import { buildFacadeDesignContext } from "../../plugins/elevation-3d/lib/facade-
 import { buildFacadeEvidencePack, verifyFacadeEvidencePack } from "../../plugins/elevation-3d/lib/facade-agent/evidence.mjs";
 import { deriveFacadeSegmentsFromMass } from "../../plugins/elevation-3d/lib/facade-agent/punched-facade.mjs";
 import { resolveRoots, runDirFor } from "./config.mjs";
+import { isSyntheticCandidate, materializeSyntheticCandidate, seedSyntheticRun } from "./synthetic-candidate.mjs";
 
 // A checker re-preparing an already prepared run passes the run's own files back in; Node's
 // cp throws EINVAL on src === dest before errorOnExist can turn it into a skip.
@@ -42,13 +43,17 @@ export async function prepareFacadeContext({
 	const runDir = runDirFor(candidateId, { outputRoot: roots.outputRoot });
 	await mkdir(runDir, { recursive: true });
 
-	const loaded = await loadCandidatePackage(roots.datasetRoot, candidateId);
+	// A synthetic box (synthetic-box-WxDxH) is built here rather than read from the test set:
+	// the engine tests of the lattice lane need a mass whose facets are known planes.
+	const synthetic = isSyntheticCandidate(candidateId);
+	const loaded = synthetic ? await materializeSyntheticCandidate({ candidateId, runDir }) : await loadCandidatePackage(roots.datasetRoot, candidateId);
 	const candidate = { ...loaded, facade_segment_authority: deriveFacadeSegmentsFromMass({ mesh: loaded.mesh }) };
 
 	const manifestPath = join(runDir, "evidence", "evidence-manifest.json");
 	const built = await readFile(manifestPath).then(() => true, () => false);
 	if (!built) await buildFacadeEvidencePack({ input: candidate, runDir });
 	const evidence = await verifyFacadeEvidencePack({ manifestPath, input: candidate });
+	if (synthetic) await seedSyntheticRun({ candidate, runDir, evidenceColorDir: join(runDir, "evidence", "color") });
 
 	// A run that has already been prepared carries its own seeds, so re-preparing it needs no
 	// arguments at all. Only the first preparation of a candidate has to be handed them.

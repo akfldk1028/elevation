@@ -1,0 +1,259 @@
+{
+  "schema_version": "arr.elevation3d.facade-grammar.v3",
+  "concept_id": "vision-broad-parametric",
+  "source_photograph": "the_broad.jpg",
+  "entrance": {
+    "segment_selector": "primary_visible_ground_segment",
+    "preferred_bay": "central_focus",
+    "door_family": "main_door",
+    "width_m": 1.2,
+    "height_m": 2.4,
+    "recess_m": 0.3
+  },
+  "start": "VeilFace",
+  "fields": [
+    {
+      "id": "oculus_attractor",
+      "kind": "point",
+      "at": [
+        0.0,
+        0.0,
+        8.25
+      ],
+      "range_m": [
+        2.0,
+        20.0
+      ],
+      "falloff": 1.5
+    }
+  ],
+  "rules": [
+    {
+      "name": "VeilFace",
+      "alternatives": [
+        {
+          "when": null,
+          "split": {
+            "axis": "storey",
+            "parts": [
+              {
+                "size": "1",
+                "symbol": "StoreyFace"
+              }
+            ]
+          },
+          "terminal": null
+        }
+      ]
+    },
+    {
+      "name": "StoreyFace",
+      "alternatives": [
+        {
+          "when": "storey == 5",
+          "split": {
+            "axis": "z",
+            "parts": [
+              {
+                "size": "0.20",
+                "symbol": "SlabBand"
+              },
+              {
+                "size": "1",
+                "symbol": "StoreyVeil"
+              },
+              {
+                "size": "0.30",
+                "symbol": "CorniceBand"
+              }
+            ]
+          },
+          "terminal": null
+        },
+        {
+          "when": null,
+          "split": {
+            "axis": "z",
+            "parts": [
+              {
+                "size": "0.20",
+                "symbol": "SlabBand"
+              },
+              {
+                "size": "1",
+                "symbol": "StoreyVeil"
+              },
+              {
+                "size": "0.20",
+                "symbol": "SlabBand"
+              }
+            ]
+          },
+          "terminal": null
+        }
+      ]
+    },
+    {
+      "name": "CorniceBand",
+      "alternatives": [
+        {
+          "when": null,
+          "split": null,
+          "terminal": "cornice",
+          "depth_m": 0.25,
+          "reach": "facet_edge"
+        }
+      ]
+    },
+    {
+      "name": "SlabBand",
+      "alternatives": [
+        {
+          "when": null,
+          "split": null,
+          "terminal": "spandrel",
+          "depth_m": 0.05,
+          "reach": "facet_edge"
+        }
+      ]
+    },
+    {
+      "name": "TransomBand",
+      "alternatives": [
+        {
+          "when": null,
+          "split": null,
+          "terminal": "transom",
+          "depth_m": 0.08,
+          "inset_m": 0.0
+        }
+      ]
+    },
+    {
+      "name": "StoreyVeil",
+      "alternatives": [
+        {
+          "when": null,
+          "split": {
+            "axis": "z",
+            "parts": [
+              {
+                "size": "~1",
+                "symbol": "VeilRow"
+              },
+              {
+                "size": "0.08",
+                "symbol": "TransomBand"
+              },
+              {
+                "size": "~1",
+                "symbol": "VeilRow"
+              }
+            ]
+          },
+          "terminal": null
+        }
+      ]
+    },
+    {
+      "name": "VeilRow",
+      "alternatives": [
+        {
+          "when": null,
+          "split": {
+            "axis": "u",
+            "parts": [
+              {
+                "size": "0.32",
+                "symbol": "SlabBand"
+              },
+              {
+                "size": "0.06",
+                "symbol": "MullionBar"
+              },
+              {
+                "size": "~1",
+                "symbol": "VeilCell"
+              },
+              {
+                "size": "0.06",
+                "symbol": "MullionBar"
+              },
+              {
+                "size": "~1",
+                "symbol": "VeilCell"
+              },
+              {
+                "size": "0.06",
+                "symbol": "MullionBar"
+              },
+              {
+                "size": "0.32",
+                "symbol": "SlabBand"
+              }
+            ]
+          },
+          "terminal": null
+        }
+      ]
+    },
+    {
+      "name": "MullionBar",
+      "alternatives": [
+        {
+          "when": null,
+          "split": null,
+          "terminal": "mullion",
+          "depth_m": 0.12,
+          "inset_m": 0.0
+        }
+      ]
+    },
+    {
+      "name": "VeilCell",
+      "alternatives": [
+        {
+          "when": null,
+          "split": null,
+          "terminal": "glass",
+          "depth_m": -0.22,
+          "inset_m": 0.04,
+          "scoop_deg": 22.0,
+          "outline": [
+            [
+              0.5,
+              0.05
+            ],
+            [
+              0.85,
+              0.25
+            ],
+            [
+              0.85,
+              0.75
+            ],
+            [
+              0.5,
+              0.95
+            ],
+            [
+              0.15,
+              0.75
+            ],
+            [
+              0.15,
+              0.25
+            ]
+          ],
+          "grade": {
+            "attr": "inset_m",
+            "from": 0.02,
+            "to": 0.2,
+            "field": "oculus_attractor",
+            "range_m": null
+          }
+        }
+      ]
+    }
+  ]
+}

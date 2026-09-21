@@ -413,10 +413,16 @@ function denseArray(value) {
 	return true;
 }
 
+// What a detail's extras will cost in the GLB's JSON chunk. The first version charged six
+// bytes a character and sixteen a number - a safety margin written before any scene carried
+// two thousand outlined cells, and on the first veil it projected 16.7 MB for a file that
+// writes at about 11. glTF extras are UTF-8 JSON: a character is a byte, a number is its
+// decimal text (a 6-decimal metre is about ten characters), a key is its name plus quotes and
+// a colon. The projection now says that, and the actual-byte check after writing still binds.
 function projectedValueBytes(value, seen = new Set(), depth = 0) {
 	if (value === null || value === undefined) return 4n;
-	if (typeof value === "string") return BigInt(value.length) * 6n + 2n;
-	if (typeof value === "number" || typeof value === "boolean") return 16n;
+	if (typeof value === "string") return BigInt(Buffer.byteLength(value, "utf8")) + 2n;
+	if (typeof value === "number" || typeof value === "boolean") return 12n;
 	if (typeof value !== "object" || depth > 12) throw new TypeError("invalid facade extras for GLB projection");
 	if (seen.has(value)) throw new TypeError("invalid cyclic facade extras for GLB projection");
 	seen.add(value);
@@ -425,7 +431,8 @@ function projectedValueBytes(value, seen = new Set(), depth = 0) {
 	const descriptors = Object.getOwnPropertyDescriptors(value);
 	for (const [key, descriptor] of Object.entries(descriptors)) {
 		if (!Object.hasOwn(descriptor, "value")) throw new TypeError("facade extras cannot contain accessors");
-		bytes += BigInt(key.length) * 6n + 3n + projectedValueBytes(descriptor.value, seen, depth + 1);
+		// A key is its name in quotes plus a colon; an array index is not written at all.
+		bytes += (Array.isArray(value) ? 1n : BigInt(Buffer.byteLength(key, "utf8")) + 3n) + projectedValueBytes(descriptor.value, seen, depth + 1);
 	}
 	seen.delete(value);
 	return bytes;
@@ -470,9 +477,19 @@ function assertEnrichedSceneBudget(scene) {
 	if (vertices > BigInt(PUNCHED_FACADE_BUDGETS.maxTotalVertices)) throw new RangeError("facade vertex budget exceeded");
 	if (indices > BigInt(PUNCHED_FACADE_BUDGETS.maxTotalIndices)) throw new RangeError("facade index budget exceeded");
 	const textureProjection = scene.details.length && scene.grammar?.system === PUNCHED_FACADE_SYSTEM ? 2n * 1024n * 1024n : 0n;
+	// A detail is one glTF primitive: its accessors, buffer views and primitive record. Measured
+	// on a written 693-primitive GLB (synthetic-box-12x8x6.6/render-lattice-001): 0.37 MB of
+	// JSON outside the extras, 534 bytes a primitive. 2 KB was the hardening guess before any
+	// scene had more than a few hundred; on a veil it alone was a third of the budget.
+	const PER_DETAIL_JSON_BYTES = 640n;
 	const projectedBytes = 64n * 1024n + vertices * 20n + indices * 4n
-		+ BigInt(scene.details.length + 1) * 2048n + extrasBytes + textureProjection;
-	if (projectedBytes > BigInt(PUNCHED_FACADE_BUDGETS.maxProjectedGlbBytes)) throw new RangeError("projected GLB byte budget exceeded");
+		+ BigInt(scene.details.length + 1) * PER_DETAIL_JSON_BYTES + extrasBytes + textureProjection;
+	if (projectedBytes > BigInt(PUNCHED_FACADE_BUDGETS.maxProjectedGlbBytes)) {
+		// Say what was spent where: a refusal with no numbers sent the first veil through three
+		// guesses about which of its costs was the one to cut.
+		const mb = (value) => (Number(value) / 1048576).toFixed(2);
+		throw new RangeError(`projected GLB byte budget exceeded: ${mb(projectedBytes)} MB against ${mb(PUNCHED_FACADE_BUDGETS.maxProjectedGlbBytes)} (vertices ${mb(vertices * 20n)}, indices ${mb(indices * 4n)}, ${scene.details.length} details ${mb(BigInt(scene.details.length + 1) * PER_DETAIL_JSON_BYTES)}, extras ${mb(extrasBytes)}, textures ${mb(textureProjection)})`);
+	}
 	return { vertices, indices, projectedBytes };
 }
 

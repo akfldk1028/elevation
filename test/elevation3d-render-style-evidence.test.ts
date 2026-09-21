@@ -71,6 +71,36 @@ async function evidence(options = {}) {
 	return analyzePresentationPng({ png: await fixturePng(options), buildingBounds: BUILDING_BOUNDS, background: BACKGROUND });
 }
 
+test("authoritative silhouette detects a contact shadow within concave building bounds without counting facade shading", async () => {
+	const pixels = Buffer.alloc(WIDTH * HEIGHT * 3);
+	const mask = Buffer.alloc(WIDTH * HEIGHT * 3);
+	for (let pixel = 0; pixel < WIDTH * HEIGHT; pixel++) pixels.set([250, 250, 247], pixel * 3);
+	for (let y = 6; y <= 23; y++) for (let x = 8; x <= 23; x++) {
+		if (x < 13 || y >= 18) {
+			pixels.set([220 + x % 5 * 4, 220 + x % 5 * 4, 220 + x % 5 * 4], (y * WIDTH + x) * 3);
+			// Mixed role IDs and partially covered edge fragments are still building.
+			mask.set(x % 2 ? [128, 128, 0] : [64, 0, 0], (y * WIDTH + x) * 3);
+		}
+	}
+	const encode = (data: Buffer, width = WIDTH) => sharp(data, { raw: { width, height: HEIGHT, channels: 3 } }).png().toBuffer();
+	const roleMaskPng = await encode(mask);
+	const noShadow = await analyzePresentationPng({ png: await encode(pixels), roleMaskPng, buildingBounds: BUILDING_BOUNDS, background: BACKGROUND });
+	assert.equal(noShadow.contactShadow.pixelCount, 0, "neutral facade shading belongs to the building");
+	for (let y = 12; y < 18; y++) for (let x = 13; x < 18; x++) {
+		const shade = [238, 228, 218, 232, 241][x - 13];
+		pixels.set([shade, shade, shade], (y * WIDTH + x) * 3);
+	}
+	const png = await encode(pixels);
+	const legacy = await analyzePresentationPng({ png, buildingBounds: BUILDING_BOUNDS, background: BACKGROUND });
+	assert.equal(legacy.contactShadow.detected, false, "bbox exclusion loses the entire real ground shadow");
+	const measured = await analyzePresentationPng({ png, roleMaskPng, buildingBounds: BUILDING_BOUNDS, background: BACKGROUND });
+	assert.equal(measured.contactShadow.detected, true);
+	assert.equal(measured.contactShadow.pixelCount, 30);
+	assert.equal(measured.contactShadow.insideBuildingPixels, 0);
+	assert.equal(measured.building.sampleCount, 156);
+	await assert.rejects(analyzePresentationPng({ png, roleMaskPng: await encode(Buffer.alloc(16 * HEIGHT * 3), 16), buildingBounds: BUILDING_BOUNDS, background: BACKGROUND }), /dimensions must match/);
+});
+
 async function scaleAwareShadowEvidence(buildingWidth: number) {
 	const width = 64, height = 64;
 	const bounds = { minX: 10, minY: 10, maxX: 9 + buildingWidth, maxY: 19 };
@@ -328,4 +358,31 @@ test("legacy improvement requires both grounded axons to improve role-aware mate
 	round3Regression["opposite-axon"].pairwise["concrete:bronze"].colorDistance = 200;
 	round3Regression["opposite-axon"].pairwise["glass:bronze"].colorDistance = 200;
 	assert.equal(evaluatePresentationImprovement({ current, baseline, semantic: round3Regression, baselineSemantic: round3Baseline }).accepted, true, "both axons must gain at least one point");
+});
+
+// One definition of "visible" in both clauses of the role gate. A role under the coverage floor is
+// not in the picture: 184 pixels of grazing glass on a roof (0.034% of the view), blown out to the
+// tone of the roof beside it, failed a whole drawing for not being separable - while the clause
+// that asks whether a role is SHOWN would not have counted it as shown at all.
+test("a role below the coverage floor is not asked to separate from the others", async () => {
+	const { validateSemanticRoleEvidence } = await import("../plugins/elevation-3d/lib/texturing/render-style-evidence.mjs");
+	const roles = (glassPixels, glassCoverage) => ({
+		concrete: { pixelCount: 540000, coverageFraction: 0.9996 },
+		glass: { pixelCount: glassPixels, coverageFraction: glassCoverage },
+	});
+	const view = (glassPixels, glassCoverage) => ({
+		roles: roles(glassPixels, glassCoverage),
+		pairwise: { "concrete:glass": { colorDistance: 0.48 } },
+	});
+	const views = {};
+	for (const name of ["front", "back", "left", "right", "axon", "opposite-axon", "plan"]) {
+		views[name] = { roles: { concrete: { pixelCount: 500000, coverageFraction: 0.9 }, glass: { pixelCount: 60000, coverageFraction: 0.1 } },
+			pairwise: { "concrete:glass": { colorDistance: 120 } } };
+	}
+	views.top = view(184, 0.00034);
+	const sliver = validateSemanticRoleEvidence({ views, requiredRoles: ["concrete", "glass"] });
+	assert.equal(sliver.codes.includes("PBR_SEMANTIC_ROLE_COLLAPSED"), false, "a sliver of a role is not in the picture");
+	views.top = view(60000, 0.1);
+	const real = validateSemanticRoleEvidence({ views, requiredRoles: ["concrete", "glass"] });
+	assert.equal(real.codes.includes("PBR_SEMANTIC_ROLE_COLLAPSED"), true, "two roles that fill the view must still be told apart");
 });

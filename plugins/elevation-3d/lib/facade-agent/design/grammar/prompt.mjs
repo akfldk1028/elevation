@@ -48,8 +48,11 @@ export const FACADE_GRAMMAR_V3_SCHEMA = Object.freeze({
 			required: ["segment_selector", "preferred_bay", "door_family", "width_m", "height_m", "recess_m"],
 			properties: {
 				segment_selector: { type: "string", const: "primary_visible_ground_segment" },
+				segment_id: {type:["string","null"],description:"Optional exact ground-access segment_id from the context. Overrides visibility ranking to reproduce a photographed entrance location; never invent an ID."},
+				u_min_m: {type:["number","null"],minimum:0,description:"Optional local u coordinate of the door's left edge in metres on the selected segment. Must preserve fold clearance."},
 				preferred_bay: { type: "string", enum: ["central_or_corner_focus", "central_focus", "corner_focus"] },
 				door_family: { type: "string", pattern: "^[a-z0-9](?:[a-z0-9._-]{0,126}[a-z0-9])?$" },
+				material: { type: ["string", "null"], description: "The glazing of the placed entrance: the id of a material this grammar declares (normally the glazing the windows use), or null for the legacy `glass`. The resolver draws this door, so this is the only way its pane takes a declared material." },
 				width_m: { type: "number", minimum: 0.8, maximum: 6 },
 				height_m: { type: "number", minimum: 1.8, maximum: 6 },
 				// 0.5 is the exclusions' max_recess_m. The schema used to allow 1.5 while the
@@ -149,7 +152,7 @@ export const FACADE_GRAMMAR_V3_SCHEMA = Object.freeze({
 			// 400 from the provider before any model output. min_u_m and min_z_m drifted out
 			// of this list on 2026-08-31 and rise_to, material and reach followed - no live
 			// call ran in between, which is the only reason it never fired.
-			required: ["when", "split", "terminal", "inset_m", "depth_m", "min_u_m", "min_z_m", "rise_to", "reach", "material", "grade", "diagonal", "outline", "outline_far", "standoff_m", "scoop_deg", "rotate_deg", "mix"],
+			required: ["when", "split", "terminal", "inset_m", "depth_m", "min_u_m", "min_z_m", "rise_to", "reach", "material", "grade", "diagonal", "outline", "outline_far", "standoff_m", "scoop_deg", "rotate_deg", "mix", "lattice"],
 			properties: {
 				when: {
 					type: ["string", "null"],
@@ -269,6 +272,24 @@ export const FACADE_GRAMMAR_V3_SCHEMA = Object.freeze({
 					},
 				},
 				terminal: { type: ["string", "null"], enum: [...TERMINALS, null] },
+				lattice: {
+					type: ["object", "null"],
+					description: "THE PARAMETRIC OPERATOR. Cells placed by an evaluated ModelSpec (tools/facade-parametric: family + lattice basis vectors + fields), carried on this terminal: the member is drawn once per cell inside the scope, each cell bringing its own outline in host metres with host (0,0) at the FACET's origin (u = 0, z = the facet's bottom) - the same origin the evaluator's SVG/DXF use. Cells crossing the scope edge (the fold clearance) are clipped there. Write the evaluation's model_hash so the 2D CAD and this drawing are provably one model. Refused on wall and arch, and beside outline/diagonal/rotate_deg. Cells stand aside from the fold, floor-band and opening-clearance gates - a veil ignores slab lines by construction; the lattice contract keeps its cells apart. Null for an ordinary member. Normally produced by cli.mjs lattice, not typed by hand.",
+					properties: {
+						model_hash: { type: "string", pattern: "^[a-f0-9]{64}$" },
+						family: { type: "string" },
+						scope: { type: "string", enum: ["wall_patch", "wall_openings"], description: "wall_patch: evaluated positive-depth solid louvres, using mesh_uzn clipped to the actual MASS wall polygon. wall_openings: evaluated plain glass polygons on the true source wall instead of its inscribed rectangle; source boundary/fold clearance and slab-end clearance remain enforced. Both require the whole facet scope, explicit segment_id and independently verified source containment. Neither changes the mass." },
+						z_datum_m: { type: "number" },
+						instances: { type: "array", items: { type: "object", properties: { id: { type: "string" }, center_m: { type: "array", items: { type: "number" } }, outline_m: { type: "array", items: { type: "array", items: { type: "number" } } }, attributes: { type: "object" },
+                            mesh_uzn: {type:"object",additionalProperties:false,properties:{
+                                vertices:{type:"array",minItems:4,maxItems:1024,items:{type:"array",minItems:3,maxItems:3,items:{type:"number"}}},
+                                triangles:{type:"array",minItems:4,maxItems:2048,items:{type:"array",minItems:3,maxItems:3,items:{type:"integer",minimum:0}}}
+                            },required:["vertices","triangles"],description:"Closed clipped solid in canonical segment u, host z and fractional outward depth 0..1. Produced by the evaluator, never authored as new mass."},
+                            aperture_area_m2:{type:"number",minimum:0},segment_id:{type:"string"}
+                        }, required: ["id", "center_m", "outline_m"] } },
+					},
+					required: ["model_hash", "family", "instances"],
+				},
 				material: {
 					// An enum here listed only the four legacy words while the description told the
 					// author to name a declared id, so the schema forbade the thing it asked for -
@@ -449,7 +470,7 @@ this datum is not for it.
 
 If the mass does not step, none of the three datums changes anything and none costs anything.
 
-If you are TRANSCRIBING A PHOTOGRAPH, name it: "source_photograph": "<file name>". Four
+If you are TRANSCRIBING A PHOTOGRAPH, name it: "source_photograph": "<file name>". Design
 gates then record their measurement instead of refusing - HIERARCHY_MISSING (a top storey
 with no opening), OPENING_RATIO_LOW (a face under 10% glass), PBR_PRESENTATION_RANGE_INVALID
 (a face with too little tonal spread for a hero) and LINE_DENSITY_EXCEEDED (a sheet with more
@@ -458,7 +479,28 @@ since refused a thing a client's photograph showed: a blank crown, a closed mono
 narrow slots, a pale face with ten windows, fifteen fins per facet. The picture is the
 decision; draw what it shows and let the report say what was waived. Every other gate
 holds exactly as before - buildability, bounds, collisions, the plan cut - and a grammar
-designed from an intent, with no photograph, leaves the field null and faces all four.
+designed from an intent, with no photograph, leaves the field null and faces those gates.
+For source transcription, SCALE_HIERARCHY_FLAT, SCALE_STEP_BROKEN, STOREY_LOCKSTEP and
+TOP_TERMINATION_MISSING are also recorded rather than rejected. Preserve repeated floors,
+equal-sized windows and a flush roof when the source shows them. Do not invent a dominant
+bay, cross-floor pier, cornice or opaque trim just to satisfy design-composition advice.
+
+The primary entrance may name an exact existing ground-access entrance.segment_id and an
+optional entrance.u_min_m to reproduce its position in the source. Without them the usual
+visibility-ranked placement applies. entrance.material names the declared glazing the door
+is made of; left null the door renders in the legacy blue-tinted "glass", which on a
+building whose windows are declared bronze glazing reads as a different door. An additional ground-level door terminal survives in
+a source transcription as a secondary entrance, unless it overlaps the primary. Its bottom
+must touch an accessible ground facet. Use this for the second panel of a corner entrance;
+do not approximate a floor-touching door with a window lifted above the ground.
+
+An outlined window without authored reveal/mullion trim automatically receives a closed
+bronze perimeter frame following the same contour and rotation, at the recessed pane.
+It is a ring with an open centre, not rectangular jamb boxes. Do not add rectangular trim
+outside a curved aperture. Internal glazing bars are separate drawable details.
+A reveal terminal with negative depth_m is a thin metal trim at that recess depth (up to
+20 mm thick), suitable for perimeter profiles and glazing bars behind the wall face. The
+engine separately builds the wall-material returns from the facade plane to the glazing.
 
 The same idea runs sideways. On a punched wall the derivation scope is pre-inset by the
 fold clearance, so a course written across the full scope still pauses 0.3 m short of every
@@ -898,7 +940,10 @@ Before answering, check the rule graph closes: every symbol named by any part mu
 also appear as a rule name. A part pointing at a symbol you never defined is the
 single most common way this answer is rejected.`;
 
-const GUIDANCE = `Compose an elevation, do not vary a pattern.
+const GUIDANCE = `The following composition advice is for a new design from intent.
+For a source_photograph transcription the image is authoritative: preserve its counts,
+repetition, proportions and roof edge even where the design advice below suggests changes.
+Compose an elevation, do not vary a pattern.
 
 Alternating opening sizes floor by floor is the device critics call pseudo-random
 windows. It raises the variety count and still reads as a housing block, because the
@@ -1179,7 +1224,7 @@ export function buildFacadeGrammarPrompt({ context, correctionCodes = [], attemp
 		entranceFace
 			? (entranceIsContested
 				? `On this candidate the entrance is CONTESTED between the ${entranceFace} and ${runnerUp.face_view ?? runnerUp.view} faces: their best ground segments tie on visibility and are separated by less than a micrometre of length, so which one gets the door depends on the width you declare and you cannot know it from here. Do not design a street face around either. Either keep both plausible, or resolve the ambiguity in your own design by giving one of them something the other has not.`
-				: `On this candidate the entrance lands on the ${entranceFace} face - it holds the ground segment that ranks first on the visibility-then-length ordering the placement code uses, and only a door too wide for that segment could move it. Treat ${entranceFace} as the street face; the differ-in-kind asked for above is between it and the face opposite.`)
+				: `By default the entrance lands on the ${entranceFace} face: its ground segment ranks first by visibility and length. A source transcription may override this with entrance.segment_id and entrance.u_min_m from the verified context to preserve the photographed location.`)
 			: "",
 		facetAdvisory,
 		`Attempt: ${attempt}.`,

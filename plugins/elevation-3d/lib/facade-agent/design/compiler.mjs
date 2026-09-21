@@ -112,8 +112,15 @@ export async function compileFacadeDesign({ outputRoot, candidate, context, prog
 			shellMaterial: shellMaterialId(program),
 		});
 		const glb = await writeEnrichedGlb(scene, join(versionDir, "facade.glb"), { approvedRoot: root });
+		// Every lattice evaluation this design draws, once: the SVG/DXF written from the same
+		// evaluation carry the same hash, which is what makes the 2D and the 3D one model. It
+		// used to ride on every cell's extras - 64 bytes times two thousand cells is a tenth
+		// of a megabyte of a 16 MB budget spent saying one thing.
+		const latticeModelHashes = [...new Set((Array.isArray(program.rules) ? program.rules.flatMap((rule) => rule.alternatives ?? []) : Object.values(program.rules ?? {}).flat())
+			.map((alternative) => alternative?.lattice?.model_hash).filter(Boolean))];
 		const manifestBase = {
 			schema_version: "arr.elevation3d.compiled-facade.v1",
+			...(latticeModelHashes.length ? { lattice_model_hashes: latticeModelHashes } : {}),
 			source: { ...contextAuthority },
 			concept_id: program.concept_id,
 			resolution_sha256: resolved.resolution_sha256,

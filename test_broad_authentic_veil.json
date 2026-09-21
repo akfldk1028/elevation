@@ -1,0 +1,375 @@
+{
+  "schema_version": "arr.elevation3d.facade-grammar.v3",
+  "concept_id": "broad-authentic-veil-v1",
+  "start": "Facet",
+  "design_rationale": [
+    "Authentic transcription of The Broad (Diller Scofidio + Renfro): a continuous GFRC diamond honeycomb veil.",
+    "Staggered rows create a true 45-degree diagrid lattice pattern across all 16 folded facets.",
+    "Prominent central Oculus indentation on Storey 3 of the front apex facet (Facet 12).",
+    "Lifted veil ground lobby on Storey 1 with arched base and transparent glazing revealing the public realm."
+  ],
+  "source_photograph": "the_broad.jpg",
+  "materials": [
+    {
+      "id": "gfrc-veil",
+      "substance": "cast",
+      "lightness": "pale",
+      "hue": "neutral",
+      "finish": "matte",
+      "joint_m": 1.1,
+      "reads_as": "Glass-fiber reinforced concrete (GFRC) off-white matte veil panels."
+    },
+    {
+      "id": "veil-web",
+      "substance": "sheet",
+      "lightness": "pale",
+      "hue": "neutral",
+      "finish": "matte",
+      "joint_m": null,
+      "reads_as": "Sculpted GFRC diagrid mullions and ribs."
+    },
+    {
+      "id": "oculus-cave",
+      "substance": "glazing",
+      "lightness": "dark",
+      "hue": "cool-neutral",
+      "finish": "polished",
+      "joint_m": null,
+      "reads_as": "The deep, shadowed vision glass and inward funnel of the central Oculus."
+    },
+    {
+      "id": "gallery-glow",
+      "substance": "glazing",
+      "lightness": "mid-dark",
+      "hue": "neutral",
+      "finish": "satin",
+      "joint_m": null,
+      "reads_as": "Vision glass set deeply behind the veil scoops."
+    }
+  ],
+  "entrance": {
+    "segment_selector": "primary_visible_ground_segment",
+    "preferred_bay": "central_focus",
+    "door_family": "portal",
+    "width_m": 1.4,
+    "height_m": 2.1,
+    "recess_m": 0.35
+  },
+  "fields": [
+    {
+      "id": "oculus_field",
+      "kind": "point",
+      "at": [
+        0,
+        5.33,
+        8.25
+      ],
+      "range_m": [
+        1.5,
+        12
+      ],
+      "falloff": 1.8
+    }
+  ],
+  "rules": {
+    "Facet": [
+      {
+        "split": {
+          "axis": "storey",
+          "parts": [
+            {
+              "size": "~1",
+              "symbol": "StoreyLevel"
+            }
+          ]
+        }
+      }
+    ],
+    "StoreyLevel": [
+      {
+        "when": "storey == 1",
+        "split": {
+          "axis": "z",
+          "parts": [
+            {
+              "size": "2.8",
+              "symbol": "LiftedBase"
+            },
+            {
+              "size": "~1",
+              "symbol": "LobbyBand"
+            }
+          ]
+        }
+      },
+      {
+        "when": "storey == 3",
+        "split": {
+          "axis": "z",
+          "parts": [
+            {
+              "size": "0.15",
+              "symbol": "WallBand"
+            },
+            {
+              "size": "~1",
+              "symbol": "StoreyThreeBody"
+            },
+            {
+              "size": "0.15",
+              "symbol": "WallBand"
+            }
+          ]
+        }
+      },
+      {
+        "split": {
+          "axis": "z",
+          "parts": [
+            {
+              "size": "0.15",
+              "symbol": "WallBand"
+            },
+            {
+              "size": "~1",
+              "symbol": "VeilCourse"
+            },
+            {
+              "size": "0.15",
+              "symbol": "WallBand"
+            }
+          ]
+        }
+      }
+    ],
+    "LiftedBase": [
+      {
+        "split": {
+          "axis": "u",
+          "parts": [
+            {
+              "size": "0.2",
+              "symbol": "WallBand"
+            },
+            {
+              "size": "~1",
+              "symbol": "BaseArch"
+            },
+            {
+              "size": "0.2",
+              "symbol": "WallBand"
+            }
+          ]
+        }
+      }
+    ],
+    "BaseArch": [
+      {
+        "terminal": "arch",
+        "material": "gfrc-veil",
+        "depth_m": 0.15,
+        "inset_m": 0.05
+      }
+    ],
+    "LobbyBand": [
+      {
+        "terminal": "spandrel",
+        "material": "gfrc-veil",
+        "depth_m": 0.1
+      }
+    ],
+    "OculusEye": [
+      {
+        "terminal": "glass",
+        "material": "oculus-cave",
+        "depth_m": -0.45,
+        "inset_m": 0.05,
+        "outline": [
+          [
+            0.5,
+            0.05
+          ],
+          [
+            0.85,
+            0.25
+          ],
+          [
+            0.95,
+            0.5
+          ],
+          [
+            0.85,
+            0.75
+          ],
+          [
+            0.5,
+            0.95
+          ],
+          [
+            0.15,
+            0.75
+          ],
+          [
+            0.05,
+            0.5
+          ],
+          [
+            0.15,
+            0.25
+          ]
+        ]
+      }
+    ],
+    "VeilCourse": [
+      {
+        "when": "storey % 2 == 0",
+        "split": {
+          "axis": "u",
+          "parts": [
+            {
+              "size": "0.55",
+              "symbol": "HalfCell"
+            },
+            {
+              "size": "~1.1",
+              "symbol": "FullCell",
+              "repeat": true
+            },
+            {
+              "size": "0.55",
+              "symbol": "HalfCell"
+            }
+          ]
+        }
+      },
+      {
+        "split": {
+          "axis": "u",
+          "parts": [
+            {
+              "size": "~1.1",
+              "symbol": "FullCell",
+              "repeat": true
+            }
+          ]
+        }
+      }
+    ],
+    "FullCell": [
+      {
+        "split": {
+          "axis": "z",
+          "parts": [
+            {
+              "size": "~1",
+              "symbol": "DiamondAperture",
+              "repeat": true
+            }
+          ]
+        }
+      }
+    ],
+    "HalfCell": [
+      {
+        "split": {
+          "axis": "z",
+          "parts": [
+            {
+              "size": "~1",
+              "symbol": "HalfAperture",
+              "repeat": true
+            }
+          ]
+        }
+      }
+    ],
+    "DiamondAperture": [
+      {
+        "terminal": "glass",
+        "material": "gallery-glow",
+        "inset_m": 0.05,
+        "depth_m": -0.35,
+        "scoop_deg": 24,
+        "outline": [
+          [
+            0.5,
+            0.05
+          ],
+          [
+            0.85,
+            0.25
+          ],
+          [
+            0.95,
+            0.5
+          ],
+          [
+            0.85,
+            0.75
+          ],
+          [
+            0.5,
+            0.95
+          ],
+          [
+            0.15,
+            0.75
+          ],
+          [
+            0.05,
+            0.5
+          ],
+          [
+            0.15,
+            0.25
+          ]
+        ]
+      }
+    ],
+    "HalfAperture": [
+      {
+        "terminal": "spandrel",
+        "material": "veil-web",
+        "depth_m": 0.08
+      }
+    ],
+    "WallBand": [
+      {
+        "terminal": "wall"
+      }
+    ],
+    "StoreyThreeBody": [
+      {
+        "when": "face_view == front && index == 12",
+        "split": {
+          "axis": "u",
+          "parts": [
+            {
+              "size": "0.15",
+              "symbol": "WallBand"
+            },
+            {
+              "size": "~1",
+              "symbol": "OculusEye"
+            },
+            {
+              "size": "0.15",
+              "symbol": "WallBand"
+            }
+          ]
+        }
+      },
+      {
+        "split": {
+          "axis": "u",
+          "parts": [
+            {
+              "size": "~1",
+              "symbol": "VeilCourse"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

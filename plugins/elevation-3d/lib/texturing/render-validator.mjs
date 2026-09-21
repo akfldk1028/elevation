@@ -116,6 +116,7 @@ export function validateEmbeddedPbrRender({
 	// Codes a transcription of a photograph stands aside from; see the design contract's
 	// TRANSCRIPTION_WAIVERS. Recorded as `waived`, never dropped.
 	waive = [],
+	requiredRoles,
 }) {
 	const codes = [];
 	const records = VIEW_NAMES.map((name) => views?.[name]).filter(Boolean);
@@ -148,7 +149,7 @@ export function validateEmbeddedPbrRender({
 	if (renderStyle !== undefined || renderStyleSha256 !== undefined || presentationEvidence !== undefined) {
 		codes.push(...validatePresentationEvidence({ views: presentationEvidence, style: renderStyle, styleHash: renderStyleSha256 }).codes);
 		if (!validCameraIdentity(views)) codes.push("CAMERA_IDENTITY_MISMATCH");
-		codes.push(...validateSemanticRoleEvidence({ views: semanticRoleEvidence }).codes);
+		codes.push(...validateSemanticRoleEvidence({ views: semanticRoleEvidence, ...(requiredRoles ? { requiredRoles } : {}) }).codes);
 	}
 	if (presentationEnvironment?.status === "failed") codes.push("PBR_ENVIRONMENT_FAILED");
 	if (baselineComparison?.status === "compared_legacy_reanalyzed" && baselineComparison.decision?.accepted !== true) {
@@ -416,7 +417,7 @@ export async function renderEmbeddedPbrViews({
 	authoritativeCameras, expectedTechnicalCameras,
 	outputSize = 1600, signal, lifecycle = {},
 	renderStyleId = "competition-daylight-v1", renderStyleOverrides, presentationBaselineRunDir,
-	requirePresentationBaselineComparison = false, canonicalSelection, waive = [],
+	requirePresentationBaselineComparison = false, canonicalSelection, waive = [], requiredRoles,
 } = {}) {
 	const root = resolve(runDir);
 	await prepareSafeDirectory(root, root, "embedded-PBR render root");
@@ -486,6 +487,7 @@ export async function renderEmbeddedPbrViews({
 			throw error;
 		}
 		const views = {};
+		await page.evaluate(() => globalThis.__ELEVATION3D_TEST_CONTROLS__.setContinuousRendering?.(false));
 		const presentationEvidence = {};
 		const semanticRoleEvidence = {}, semanticRoleMasks = {};
 		const semanticGeometryEvidence = await page.evaluate(() => globalThis.__ELEVATION3D_TEST_CONTROLS__.semanticRoleGeometry());
@@ -522,6 +524,7 @@ export async function renderEmbeddedPbrViews({
 			await atomicWrite(semanticRoleMaskPath, semanticRoleMask, root);
 			const imagePresentation = await analyzePresentationPng({
 				png: await readFile(path), buildingBounds: evidence.projectedBoundsPx, background: renderStyle.background,
+				roleMaskPng: semanticRoleMask,
 			});
 			presentationEvidence[name] = { browser: browserPresentation ?? browserState.presentation, image: imagePresentation };
 			semanticRoleEvidence[name] = await analyzeSemanticRolePng({ finalPng: second, roleMaskPng: semanticRoleMask, geometry: semanticGeometryEvidence });
@@ -580,6 +583,7 @@ export async function renderEmbeddedPbrViews({
 			baselineComparison,
 			requirePresentationBaselineComparison,
 			waive,
+			requiredRoles,
 		});
 		const thumbnails = await Promise.all(VIEW_NAMES.map((name) => sharp(views[name].path).resize(500, 500).png().toBuffer()));
 		const contactSheetPath = join(root, "contact-sheet.png");

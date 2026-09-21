@@ -377,7 +377,7 @@ test("rejects opposite-winding subdivided MASS triangles that counterfeit full b
 });
 
 test("counts authoritative MASS vertices and indices in the pre-allocation output budget", () => {
-	const largeMass = { ...mesh, vertices: mesh.vertices.concat(Array.from({ length: 79_692 }, () => [0, 0, 0])) };
+	const largeMass = { ...mesh, vertices: mesh.vertices.concat(Array.from({ length: (punchedFacade as any).PUNCHED_FACADE_BUDGETS.maxTotalVertices + 1 }, () => [0, 0, 0])) };
 	assert.throws(
 		() => buildPunchedFacadeDetails({ mesh: largeMass, floorGuides, facadePlanes: (punchedFacade as any).deriveFacadeSegmentsFromMass({ mesh: largeMass }), grammar }),
 		/facade vertex budget exceeded/i,

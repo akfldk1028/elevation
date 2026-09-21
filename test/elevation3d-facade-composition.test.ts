@@ -15,6 +15,34 @@ const opening = (uMin: number, uMax: number, zMin: number, zMax: number) => ({
 
 const cornice = { kind: "cornice", segment_id: "seg-front", local_bounds: { u_min: 0, u_max: 10, z_min: 16.2, z_max: 16.5 } };
 
+test("wall-patch opening, ground and skin shares use actual polygons instead of inscribed rectangles", () => {
+	const context = {
+		facade_segments: [{ segment_id: "seg-front", face_view: "front", length_m: 4, local_z: [0, 4],
+			wall_patch: { triangles: [[[0, 0], [10, 0], [0, 10]]] } }],
+		storeys: [{ storey: 1, z_min: 0, z_max: 5 }, { storey: 2, z_min: 5, z_max: 10 }],
+	};
+	const pane = { ...opening(0, 8, 0, 8), wall_opening: true, outline: [[0, 0], [1, 0], [0, 1]] };
+	const mullion = { ...opening(0, 0.1, 0, 8), kind: "mullion" };
+	const { metrics } = measureComposition({ context, resolved: { primitives: [pane, mullion] } });
+	assert.equal(metrics.largest_opening_m2, 32);
+	assert.equal(metrics.opening_ratio_by_view.front, 0.64); // 32 / 50
+	assert.equal(metrics.ground_transparency_by_view.front, 0.733333); // 27.5 / 37.5
+	assert.equal(metrics.skin_transparency_by_view.front, 0.666667); // 32 / 48
+	for (const value of [metrics.opening_ratio_by_view.front, metrics.ground_transparency_by_view.front, metrics.skin_transparency_by_view.front]) assert.ok(value <= 1);
+	// A module on the source patch also selects its true wall denominator, even when
+	// the pane itself is an ordinary rectangular opening within the old rectangle.
+	const module = { ...mullion, kind: "panel", wall_patch: true };
+	const patched = measureComposition({ context, resolved: { primitives: [opening(0, 2, 0, 2), module] } });
+	assert.equal(patched.metrics.opening_ratio_by_view.front, 0.08);
+});
+
+test("source patch metadata alone leaves every legacy composition metric unchanged", () => {
+	const resolved = { primitives: [{ ...opening(1, 4, 1, 5), outline: [[0, 0], [1, 0], [0, 1]] }, cornice] };
+	const context = structuredClone(CONTEXT);
+	context.facade_segments[0].wall_patch = { triangles: [[[0, 0], [100, 0], [0, 100]]] };
+	assert.deepEqual(measureComposition({ context, resolved }), measureComposition({ context: CONTEXT, resolved }));
+});
+
 // The v6 live facade in miniature: many identical slits, no top, 5 percent of the wall.
 const WAREHOUSE = Array.from({ length: 30 }, (_, index) => {
 	const column = index % 6;
@@ -39,9 +67,9 @@ test("a wall of identical slits with no top fails every check", () => {
 test("a transcription stands aside from OPENING_RATIO_LOW, and only from the waivable gates", () => {
 	const program = { source_photograph: "concept.png" };
 	const { codes, faults, waived } = measureComposition({ context: CONTEXT, resolved: { primitives: WAREHOUSE }, program });
-	assert.deepEqual([...codes].sort(), ["MATERIAL_ROLE_MISSING", "SCALE_HIERARCHY_FLAT", "STOREY_LOCKSTEP", "TOP_TERMINATION_MISSING"]);
+	assert.deepEqual(codes, []);
 	assert.equal(faults.some((fault) => fault.startsWith("OPENING_RATIO_LOW")), false);
-	assert.equal(waived.length, 1);
+	assert.equal(waived.length, 4);
 	assert.match(waived[0], /^OPENING_RATIO_LOW: openings are/);
 	// Without a photograph the record is exactly what it was, `waived` included.
 	const plain = measureComposition({ context: CONTEXT, resolved: { primitives: WAREHOUSE } });

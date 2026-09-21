@@ -49,6 +49,26 @@ function syntheticManifest(measured, width: number, height: number) {
 	};
 }
 
+test("source transcription does not invent opaque trim, while missing glass still fails", () => {
+	const pixels = syntheticPixels({colors:{concrete:[220,210,190],glass:[90,130,150],bronze:[130,90,50],opaque:[180,170,160]}});
+	const measured = measureCompetitionAxonPixels(pixels);
+	const manifest = syntheticManifest(measured, 2400, 2400);
+	manifest.material_roles.opaque.visible_pixels = 0;
+	assert.ok(validateCompetitionAxonManifest(manifest).codes.includes("MATERIAL_ROLE_COLLAPSE"));
+	const source = {...manifest, material_role_policy:"source-faithful"};
+	assert.equal(validateCompetitionAxonManifest(source).codes.includes("MATERIAL_ROLE_COLLAPSE"), false);
+	source.material_roles.glass.visible_pixels = 0;
+	assert.ok(validateCompetitionAxonManifest(source).codes.includes("MATERIAL_ROLE_COLLAPSE"));
+	// Declared materials name the roles: a stone-and-glass building owes no bronze.
+	// (re-measured: the manifests above share one material_roles object and glass was just zeroed)
+	const declared = {...syntheticManifest(measureCompetitionAxonPixels(pixels), 2400, 2400), material_role_policy:"source-faithful", required_material_roles:["concrete","glass"]};
+	declared.material_roles.bronze.visible_pixels = 0;
+	declared.material_roles.opaque.visible_pixels = 0;
+	assert.equal(validateCompetitionAxonManifest(declared).codes.includes("MATERIAL_ROLE_COLLAPSE"), false);
+	declared.material_roles.glass.visible_pixels = 0;
+	assert.ok(validateCompetitionAxonManifest(declared).codes.includes("MATERIAL_ROLE_COLLAPSE"));
+});
+
 test("renders opposing presentation cameras from one GLB", { timeout: 180_000 }, async () => {
 	const palette = resolveMaterialPalette("competition-warm");
 	const result = await renderCompetitionAxons({

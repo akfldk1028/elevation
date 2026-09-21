@@ -1,0 +1,726 @@
+{
+    "schema_version":  "arr.elevation3d.facade-grammar.v3",
+    "concept_id":  "vision-broad-veil-oculus-rotation",
+    "start":  "Facet",
+    "design_rationale":  [
+                             "a GFRC veil whose cell turns to answer two fields at once: how far it sits from the street corner and how squarely it faces the afternoon sun, averaged so both reasons move every cell"
+                         ],
+    "fields":  [
+                   {
+                       "falloff":  1.5,
+                       "at":  [
+                                  0,
+                                  0,
+                                  8.25
+                              ],
+                       "range_m":  [
+                                       2,
+                                       20
+                                   ],
+                       "id":  "oculus_attractor",
+                       "kind":  "point"
+                   }
+               ],
+    "materials":  [
+                      {
+                          "id":  "gfrc-veil",
+                          "substance":  "cast",
+                          "lightness":  "pale",
+                          "hue":  "neutral",
+                          "finish":  "matte",
+                          "joint_m":  1.25
+                      },
+                      {
+                          "id":  "veil-fold",
+                          "substance":  "sheet",
+                          "lightness":  "pale",
+                          "hue":  "neutral",
+                          "finish":  "matte"
+                      },
+                      {
+                          "id":  "gallery-glow",
+                          "substance":  "glazing",
+                          "lightness":  "dark",
+                          "hue":  "neutral",
+                          "finish":  "satin"
+                      },
+                      {
+                          "id":  "veil-rib",
+                          "substance":  "extrusion",
+                          "lightness":  "mid",
+                          "hue":  "neutral",
+                          "finish":  "satin"
+                      },
+                      {
+                          "id":  "veil-shadow",
+                          "substance":  "sheet",
+                          "lightness":  "mid-dark",
+                          "hue":  "neutral",
+                          "finish":  "matte"
+                      }
+                  ],
+    "entrance":  {
+                     "segment_selector":  "primary_visible_ground_segment",
+                     "preferred_bay":  "central_focus",
+                     "door_family":  "portal",
+                     "width_m":  1.4,
+                     "height_m":  2.0,
+                     "recess_m":  0.3
+                 },
+    "rules":  [
+                  {
+                      "name":  "Facet",
+                      "alternatives":  [
+                                           {
+                                               "when":  null,
+                                               "split":  {
+                                                             "axis":  "z",
+                                                             "parts":  [
+                                                                           {
+                                                                               "size":  "~1",
+                                                                               "symbol":  "Body",
+                                                                               "arg":  null,
+                                                                               "repeat":  false,
+                                                                               "grade":  null
+                                                                           },
+                                                                           {
+                                                                               "size":  "0.34",
+                                                                               "symbol":  "Head",
+                                                                               "arg":  null,
+                                                                               "repeat":  false,
+                                                                               "grade":  null
+                                                                           }
+                                                                       ]
+                                                         },
+                                               "terminal":  null,
+                                               "inset_m":  0,
+                                               "depth_m":  0,
+                                               "min_u_m":  null,
+                                               "min_z_m":  null,
+                                               "rise_to":  null,
+                                               "reach":  null,
+                                               "material":  null,
+                                               "grade":  null,
+                                               "diagonal":  null,
+                                               "outline":  null,
+                                               "outline_far":  null,
+                                               "standoff_m":  null,
+                                               "mix":  null
+                                           }
+                                       ]
+                  },
+                  {
+                      "name":  "Body",
+                      "alternatives":  [
+                                           {
+                                               "when":  null,
+                                               "split":  {
+                                                             "axis":  "layer",
+                                                             "parts":  [
+                                                                           {
+                                                                               "size":  "~1",
+                                                                               "symbol":  "Levels",
+                                                                               "arg":  null,
+                                                                               "repeat":  false,
+                                                                               "grade":  null
+                                                                           },
+                                                                           {
+                                                                               "size":  "~1",
+                                                                               "symbol":  "Webs",
+                                                                               "arg":  null,
+                                                                               "repeat":  false,
+                                                                               "grade":  null
+                                                                           }
+                                                                       ]
+                                                         },
+                                               "terminal":  null,
+                                               "inset_m":  0,
+                                               "depth_m":  0,
+                                               "min_u_m":  null,
+                                               "min_z_m":  null,
+                                               "rise_to":  null,
+                                               "reach":  null,
+                                               "material":  null,
+                                               "grade":  null,
+                                               "diagonal":  null,
+                                               "outline":  null,
+                                               "outline_far":  null,
+                                               "standoff_m":  null,
+                                               "mix":  null
+                                           }
+                                       ]
+                  },
+                  {
+                      "name":  "Webs",
+                      "alternatives":  [
+                                           {
+                                               "when":  null,
+                                               "split":  {
+                                                             "axis":  "u",
+                                                             "parts":  [
+                                                                           {
+                                                                               "size":  "0.20",
+                                                                               "symbol":  "Web",
+                                                                               "arg":  null,
+                                                                               "repeat":  false,
+                                                                               "grade":  null
+                                                                           },
+                                                                           {
+                                                                               "size":  "~1",
+                                                                               "symbol":  "Void",
+                                                                               "arg":  null,
+                                                                               "repeat":  false,
+                                                                               "grade":  null
+                                                                           },
+                                                                           {
+                                                                               "size":  "0.20",
+                                                                               "symbol":  "Web",
+                                                                               "arg":  null,
+                                                                               "repeat":  false,
+                                                                               "grade":  null
+                                                                           }
+                                                                       ]
+                                                         },
+                                               "terminal":  null,
+                                               "inset_m":  0,
+                                               "depth_m":  0,
+                                               "min_u_m":  0.7,
+                                               "min_z_m":  null,
+                                               "rise_to":  null,
+                                               "reach":  null,
+                                               "material":  null,
+                                               "grade":  null,
+                                               "diagonal":  null,
+                                               "outline":  null,
+                                               "outline_far":  null,
+                                               "standoff_m":  null,
+                                               "mix":  null
+                                           },
+                                           {
+                                               "when":  null,
+                                               "split":  null,
+                                               "terminal":  "wall",
+                                               "inset_m":  0,
+                                               "depth_m":  0,
+                                               "min_u_m":  null,
+                                               "min_z_m":  null,
+                                               "rise_to":  null,
+                                               "reach":  null,
+                                               "material":  null,
+                                               "grade":  null,
+                                               "diagonal":  null,
+                                               "outline":  null,
+                                               "outline_far":  null,
+                                               "standoff_m":  null,
+                                               "mix":  null
+                                           }
+                                       ]
+                  },
+                  {
+                      "name":  "Web",
+                      "alternatives":  [
+                                           {
+                                               "when":  null,
+                                               "split":  null,
+                                               "terminal":  "mullion",
+                                               "inset_m":  0,
+                                               "depth_m":  0.02,
+                                               "min_u_m":  null,
+                                               "min_z_m":  null,
+                                               "rise_to":  null,
+                                               "reach":  "facet_edge",
+                                               "material":  "veil-rib",
+                                               "grade":  null,
+                                               "diagonal":  null,
+                                               "outline":  null,
+                                               "outline_far":  null,
+                                               "standoff_m":  null,
+                                               "mix":  null
+                                           }
+                                       ]
+                  },
+                  {
+                      "name":  "Levels",
+                      "alternatives":  [
+                                           {
+                                               "when":  null,
+                                               "split":  {
+                                                             "axis":  "storey",
+                                                             "parts":  [
+                                                                           {
+                                                                               "size":  "~1",
+                                                                               "symbol":  "Level",
+                                                                               "arg":  null,
+                                                                               "repeat":  false,
+                                                                               "grade":  null
+                                                                           }
+                                                                       ]
+                                                         },
+                                               "terminal":  null,
+                                               "inset_m":  0,
+                                               "depth_m":  0,
+                                               "min_u_m":  null,
+                                               "min_z_m":  null,
+                                               "rise_to":  null,
+                                               "reach":  null,
+                                               "material":  null,
+                                               "grade":  null,
+                                               "diagonal":  null,
+                                               "outline":  null,
+                                               "outline_far":  null,
+                                               "standoff_m":  null,
+                                               "mix":  null
+                                           }
+                                       ]
+                  },
+                  {
+                      "name":  "Level",
+                      "alternatives":  [
+                                           {
+                                               "when":  null,
+                                               "split":  {
+                                                             "axis":  "z",
+                                                             "parts":  [
+                                                                           {
+                                                                               "size":  "0.16",
+                                                                               "symbol":  "Sill",
+                                                                               "arg":  null,
+                                                                               "repeat":  false,
+                                                                               "grade":  null
+                                                                           },
+                                                                           {
+                                                                               "size":  "~1",
+                                                                               "symbol":  "Rows",
+                                                                               "arg":  null,
+                                                                               "repeat":  false,
+                                                                               "grade":  null
+                                                                           },
+                                                                           {
+                                                                               "size":  "0.16",
+                                                                               "symbol":  "Sill",
+                                                                               "arg":  null,
+                                                                               "repeat":  false,
+                                                                               "grade":  null
+                                                                           }
+                                                                       ]
+                                                         },
+                                               "terminal":  null,
+                                               "inset_m":  0,
+                                               "depth_m":  0,
+                                               "min_u_m":  null,
+                                               "min_z_m":  0.9,
+                                               "rise_to":  null,
+                                               "reach":  null,
+                                               "material":  null,
+                                               "grade":  null,
+                                               "diagonal":  null,
+                                               "outline":  null,
+                                               "outline_far":  null,
+                                               "standoff_m":  null,
+                                               "mix":  null
+                                           },
+                                           {
+                                               "when":  null,
+                                               "split":  null,
+                                               "terminal":  "wall",
+                                               "inset_m":  0,
+                                               "depth_m":  0,
+                                               "min_u_m":  null,
+                                               "min_z_m":  null,
+                                               "rise_to":  null,
+                                               "reach":  null,
+                                               "material":  null,
+                                               "grade":  null,
+                                               "diagonal":  null,
+                                               "outline":  null,
+                                               "outline_far":  null,
+                                               "standoff_m":  null,
+                                               "mix":  null
+                                           }
+                                       ]
+                  },
+                  {
+                      "name":  "Rows",
+                      "alternatives":  [
+                                           {
+                                               "when":  null,
+                                               "split":  {
+                                                             "axis":  "z",
+                                                             "parts":  [
+                                                                           {
+                                                                               "size":  "~0.98",
+                                                                               "symbol":  "Row",
+                                                                               "arg":  null,
+                                                                               "repeat":  true,
+                                                                               "grade":  null
+                                                                           }
+                                                                       ]
+                                                         },
+                                               "terminal":  null,
+                                               "inset_m":  0,
+                                               "depth_m":  0,
+                                               "min_u_m":  null,
+                                               "min_z_m":  null,
+                                               "rise_to":  null,
+                                               "reach":  null,
+                                               "material":  null,
+                                               "grade":  null,
+                                               "diagonal":  null,
+                                               "outline":  null,
+                                               "outline_far":  null,
+                                               "standoff_m":  null,
+                                               "mix":  null
+                                           }
+                                       ]
+                  },
+                  {
+                      "name":  "Row",
+                      "alternatives":  [
+                                           {
+                                               "when":  null,
+                                               "split":  {
+                                                             "axis":  "u",
+                                                             "parts":  [
+                                                                           {
+                                                                               "size":  "~1.10",
+                                                                               "symbol":  "Bay",
+                                                                               "arg":  null,
+                                                                               "repeat":  true,
+                                                                               "grade":  null
+                                                                           }
+                                                                       ]
+                                                         },
+                                               "terminal":  null,
+                                               "inset_m":  0,
+                                               "depth_m":  0,
+                                               "min_u_m":  null,
+                                               "min_z_m":  null,
+                                               "rise_to":  null,
+                                               "reach":  null,
+                                               "material":  null,
+                                               "grade":  null,
+                                               "diagonal":  null,
+                                               "outline":  null,
+                                               "outline_far":  null,
+                                               "standoff_m":  null,
+                                               "mix":  null
+                                           }
+                                       ]
+                  },
+                  {
+                      "name":  "Cell",
+                      "alternatives":  [
+                                           {
+                                               "when":  null,
+                                               "split":  null,
+                                               "terminal":  "glass",
+                                               "inset_m":  0.03,
+                                               "depth_m":  -0.36,
+                                               "min_u_m":  0.6,
+                                               "min_z_m":  0.45,
+                                               "rise_to":  null,
+                                               "reach":  null,
+                                               "material":  "gallery-glow",
+                                               "grade":  {
+                                                             "field":  "oculus_attractor",
+                                                             "from":  -42,
+                                                             "to":  42,
+                                                             "attr":  "rotate_deg",
+                                                             "range_m":  null
+                                                         },
+                                               "diagonal":  null,
+                                               "outline":  [
+                                                               [
+                                                                   0.885197,
+                                                                   0.697974
+                                                               ],
+                                                               [
+                                                                   0.828302,
+                                                                   0.743831
+                                                               ],
+                                                               [
+                                                                   0.714269,
+                                                                   0.775379
+                                                               ],
+                                                               [
+                                                                   0.572266,
+                                                                   0.777015
+                                                               ],
+                                                               [
+                                                                   0.437858,
+                                                                   0.749742
+                                                               ],
+                                                               [
+                                                                   0.3515,
+                                                                   0.705359
+                                                               ],
+                                                               [
+                                                                   0.248355,
+                                                                   0.610539
+                                                               ],
+                                                               [
+                                                                   0.162153,
+                                                                   0.491616
+                                                               ],
+                                                               [
+                                                                   0.115538,
+                                                                   0.377503
+                                                               ],
+                                                               [
+                                                                   0.114803,
+                                                                   0.302026
+                                                               ],
+                                                               [
+                                                                   0.171698,
+                                                                   0.256169
+                                                               ],
+                                                               [
+                                                                   0.285731,
+                                                                   0.224621
+                                                               ],
+                                                               [
+                                                                   0.427734,
+                                                                   0.222985
+                                                               ],
+                                                               [
+                                                                   0.562142,
+                                                                   0.250258
+                                                               ],
+                                                               [
+                                                                   0.6485,
+                                                                   0.294641
+                                                               ],
+                                                               [
+                                                                   0.751645,
+                                                                   0.389461
+                                                               ],
+                                                               [
+                                                                   0.837847,
+                                                                   0.508384
+                                                               ],
+                                                               [
+                                                                   0.884462,
+                                                                   0.622497
+                                                               ]
+                                                           ],
+                                               "outline_far":  null,
+                                               "standoff_m":  null,
+                                               "mix":  null,
+                                               "scoop_deg":  26,
+                                               "rotate_deg":  0
+                                           },
+                                           {
+                                               "when":  null,
+                                               "split":  null,
+                                               "terminal":  "wall",
+                                               "inset_m":  0,
+                                               "depth_m":  0,
+                                               "min_u_m":  null,
+                                               "min_z_m":  null,
+                                               "rise_to":  null,
+                                               "reach":  null,
+                                               "material":  null,
+                                               "grade":  null,
+                                               "diagonal":  null,
+                                               "outline":  null,
+                                               "outline_far":  null,
+                                               "standoff_m":  null,
+                                               "mix":  null
+                                           }
+                                       ]
+                  },
+                  {
+                      "name":  "Sill",
+                      "alternatives":  [
+                                           {
+                                               "when":  null,
+                                               "split":  null,
+                                               "terminal":  "wall",
+                                               "inset_m":  0,
+                                               "depth_m":  0,
+                                               "min_u_m":  null,
+                                               "min_z_m":  null,
+                                               "rise_to":  null,
+                                               "reach":  null,
+                                               "material":  null,
+                                               "grade":  null,
+                                               "diagonal":  null,
+                                               "outline":  null,
+                                               "outline_far":  null,
+                                               "standoff_m":  null,
+                                               "mix":  null
+                                           }
+                                       ]
+                  },
+                  {
+                      "name":  "Void",
+                      "alternatives":  [
+                                           {
+                                               "when":  null,
+                                               "split":  null,
+                                               "terminal":  "wall",
+                                               "inset_m":  0,
+                                               "depth_m":  0,
+                                               "min_u_m":  null,
+                                               "min_z_m":  null,
+                                               "rise_to":  null,
+                                               "reach":  null,
+                                               "material":  null,
+                                               "grade":  null,
+                                               "diagonal":  null,
+                                               "outline":  null,
+                                               "outline_far":  null,
+                                               "standoff_m":  null,
+                                               "mix":  null
+                                           }
+                                       ]
+                  },
+                  {
+                      "name":  "Head",
+                      "alternatives":  [
+                                           {
+                                               "when":  null,
+                                               "split":  {
+                                                             "axis":  "z",
+                                                             "parts":  [
+                                                                           {
+                                                                               "size":  "~1",
+                                                                               "symbol":  "Rail",
+                                                                               "arg":  null,
+                                                                               "repeat":  false,
+                                                                               "grade":  null
+                                                                           },
+                                                                           {
+                                                                               "size":  "0.12",
+                                                                               "symbol":  "Coping",
+                                                                               "arg":  null,
+                                                                               "repeat":  false,
+                                                                               "grade":  null
+                                                                           }
+                                                                       ]
+                                                         },
+                                               "terminal":  null,
+                                               "inset_m":  0,
+                                               "depth_m":  0,
+                                               "min_u_m":  null,
+                                               "min_z_m":  null,
+                                               "rise_to":  null,
+                                               "reach":  null,
+                                               "material":  null,
+                                               "grade":  null,
+                                               "diagonal":  null,
+                                               "outline":  null,
+                                               "outline_far":  null,
+                                               "standoff_m":  null,
+                                               "mix":  null
+                                           }
+                                       ]
+                  },
+                  {
+                      "name":  "Rail",
+                      "alternatives":  [
+                                           {
+                                               "when":  null,
+                                               "split":  null,
+                                               "terminal":  "band",
+                                               "inset_m":  0,
+                                               "depth_m":  0.05,
+                                               "min_u_m":  null,
+                                               "min_z_m":  null,
+                                               "rise_to":  null,
+                                               "reach":  "facet_edge",
+                                               "material":  "veil-shadow",
+                                               "grade":  null,
+                                               "diagonal":  null,
+                                               "outline":  null,
+                                               "outline_far":  null,
+                                               "standoff_m":  null,
+                                               "mix":  null
+                                           }
+                                       ]
+                  },
+                  {
+                      "name":  "Coping",
+                      "alternatives":  [
+                                           {
+                                               "when":  null,
+                                               "split":  null,
+                                               "terminal":  "cornice",
+                                               "inset_m":  0,
+                                               "depth_m":  0.12,
+                                               "min_u_m":  null,
+                                               "min_z_m":  null,
+                                               "rise_to":  null,
+                                               "reach":  "facet_edge",
+                                               "material":  "veil-fold",
+                                               "grade":  null,
+                                               "diagonal":  null,
+                                               "outline":  null,
+                                               "outline_far":  null,
+                                               "standoff_m":  null,
+                                               "mix":  null
+                                           }
+                                       ]
+                  },
+                  {
+                      "name":  "Bay",
+                      "alternatives":  [
+                                           {
+                                               "when":  null,
+                                               "split":  {
+                                                             "axis":  "u",
+                                                             "parts":  [
+                                                                           {
+                                                                               "size":  "0.06",
+                                                                               "symbol":  "Web",
+                                                                               "arg":  null,
+                                                                               "repeat":  false,
+                                                                               "grade":  null
+                                                                           },
+                                                                           {
+                                                                               "size":  "~1",
+                                                                               "symbol":  "Cell",
+                                                                               "arg":  null,
+                                                                               "repeat":  false,
+                                                                               "grade":  null
+                                                                           }
+                                                                       ]
+                                                         },
+                                               "terminal":  null,
+                                               "inset_m":  0,
+                                               "depth_m":  0,
+                                               "min_u_m":  0.7,
+                                               "min_z_m":  null,
+                                               "rise_to":  null,
+                                               "reach":  null,
+                                               "material":  null,
+                                               "grade":  null,
+                                               "diagonal":  null,
+                                               "outline":  null,
+                                               "outline_far":  null,
+                                               "standoff_m":  null,
+                                               "mix":  null
+                                           },
+                                           {
+                                               "when":  null,
+                                               "split":  null,
+                                               "terminal":  "wall",
+                                               "inset_m":  0,
+                                               "depth_m":  0,
+                                               "min_u_m":  null,
+                                               "min_z_m":  null,
+                                               "rise_to":  null,
+                                               "reach":  null,
+                                               "material":  null,
+                                               "grade":  null,
+                                               "diagonal":  null,
+                                               "outline":  null,
+                                               "outline_far":  null,
+                                               "standoff_m":  null,
+                                               "mix":  null
+                                           }
+                                       ]
+                  }
+              ],
+    "source_photograph":  "concept-broad-veil.jpg"
+}

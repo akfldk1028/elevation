@@ -281,6 +281,140 @@ export function polygonPrismGeometry(plane, tangent, grammar, bounds, outline, l
 }
 
 /**
+ * The WALL of a funnel: the lateral surface between a mouth at n0 and a throat at n1, no caps,
+ * wound so its normals point INTO the funnel - the side a viewer sees down the hole. It lines a
+ * recess the way the contour jamb ring lined a straight hole; the mass inside the mouth-to-throat
+ * volume is cut away at render time, so nothing but this surface is left to see there.
+ */
+export function funnelWallGeometry(plane, tangent, grammar, bounds, outline, farOutline, localPoint) {
+	const { u0, u1, v0, v1, n0, n1 } = bounds;
+	if (!Array.isArray(outline) || !Array.isArray(farOutline) || outline.length !== farOutline.length
+		|| outline.length < MIN_OUTLINE_POINTS || outline.length > MAX_OUTLINE_POINTS) {
+		throw new TypeError("invalid funnel: the mouth and the throat need the same number of points, between the outline bounds");
+	}
+	const counterClockwise = shoelace(outline) > 0;
+	if ((shoelace(farOutline) > 0) !== counterClockwise) throw new TypeError("invalid funnel: the throat winds the opposite way to the mouth");
+	const loop = counterClockwise ? outline.slice() : outline.slice().reverse();
+	const farLoop = counterClockwise ? farOutline.slice() : farOutline.slice().reverse();
+	const place = (points) => points.map(([u, v]) => [u0 + (u1 - u0) * u, v0 + (v1 - v0) * v]);
+	const near = Math.max(n0, n1), far = Math.min(n0, n1);
+	const coordinates = [...place(loop).map(([u, v]) => [u, v, near]), ...place(farLoop).map(([u, v]) => [u, v, far])];
+	const count = loop.length;
+	const positions = coordinates.map(([u, v, n]) => localPoint(plane, tangent, u, v, n));
+	// Each quad wound on its own so its normal points INTO the funnel - toward the axis - in
+	// world space, whatever handedness the plane frame has. Wound by the loop's order alone,
+	// half the walls (the ones the lens's lean turns the other way) faced the mass and were
+	// culled, and the front elevation looked straight through them into the cut.
+	const centroid = (points) => points.reduce((sum, p) => [sum[0] + p[0], sum[1] + p[1], sum[2] + p[2]], [0, 0, 0]).map((v) => v / points.length);
+	const axisNear = centroid(positions.slice(0, count)), axisFar = centroid(positions.slice(count));
+	const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+	const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+	const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+	const indices = [];
+	for (let index = 0; index < count; index += 1) {
+		const next = (index + 1) % count;
+		for (const [a, b, c] of [[index, next, next + count], [index, next + count, index + count]]) {
+			const A = positions[a], B = positions[b], C = positions[c];
+			const normal = cross(sub(B, A), sub(C, A));
+			const middle = centroid([A, B, C]);
+			// the axis point at this triangle's own depth, between the mouth's and the throat's centres
+			const t = (a >= count) + (b >= count) + (c >= count);
+			const axis = [0, 1, 2].map((k) => axisNear[k] + (axisFar[k] - axisNear[k]) * (t / 3));
+			// Both windings: the wall is a surface seen from inside the funnel AND, where the
+			// parapet or a fold cuts through a cell, from outside. Two coincident faces wound
+			// against each other never fight - the culling picks one - and the wall stops
+			// depending on which way a thin lens's partner vertices happen to turn.
+			const inward = dot(normal, sub(axis, middle)) >= 0;
+			indices.push(inward ? [a, b, c] : [a, c, b]);
+			indices.push(inward ? [a, c, b] : [a, b, c]);
+		}
+	}
+	return {
+		positions,
+		indices,
+		uvs: coordinates.map(([u, v]) => [u / grammar.brick_module_m[0], (plane.origin[2] + v) / grammar.brick_module_m[1]]),
+	};
+}
+
+/**
+ * A cell as a SOLID MODULE: the tile prism less the funnel, closed. Three rings with one point
+ * count in one angular order - tile (the footprint), mouth (tile less half a web) and throat
+ * (the family curve) - give four quad strips: the front annulus tile->mouth on the outer face,
+ * the funnel wall mouth->throat from the outer face to the inner, the back annulus throat->tile
+ * on the inner face, and the tile's own sides. Every strip is quads between partnered vertices,
+ * so the solid is watertight by construction and needs no cap triangulation. This is the veil
+ * as a VOLUME standing on (or off) the wall, with real crests and a real thickness - not a hole
+ * carved into the mass (the user: "3차원 볼륨이 입혀져야 하는 거 아님?").
+ */
+export function funnelSections(profile) {
+	// The funnel's section as (blend toward the throat, depth fraction) pairs between the mouth
+	// (0, 0) and the throat (1, 1). `linear` keeps the straight loft whatever the ring count;
+	// `quarter_ellipse` is the cove: tangent to the face at the rim (depth grows as 1 - cos while
+	// the ring already moves inward as sin), diving into the throat.
+	const rings = Math.max(0, Math.min(6, Math.trunc(profile?.rings ?? 0)));
+	const kind = profile?.kind ?? "linear";
+	return Array.from({ length: rings }, (_, k) => {
+		const t = (k + 1) / (rings + 1);
+		return kind === "quarter_ellipse"
+			? [Math.sin((t * Math.PI) / 2), 1 - Math.cos((t * Math.PI) / 2)]
+			: [t, t];
+	});
+}
+
+export function funnelModuleGeometry(plane, tangent, grammar, bounds, tile, mouth, throat, localPoint, profile = null) {
+	const { u0, u1, v0, v1, n0, n1 } = bounds;
+	for (const [name, ring] of [["tile", tile], ["mouth", mouth], ["throat", throat]]) {
+		if (!Array.isArray(ring) || ring.length !== tile.length || ring.length < MIN_OUTLINE_POINTS || ring.length > MAX_OUTLINE_POINTS) {
+			throw new TypeError(`invalid funnel module: the ${name} needs the same number of points as the tile, between the outline bounds`);
+		}
+	}
+	const counterClockwise = shoelace(tile) > 0;
+	if ((shoelace(mouth) > 0) !== counterClockwise || (shoelace(throat) > 0) !== counterClockwise) {
+		throw new TypeError("invalid funnel module: the three rings must wind the same way");
+	}
+	const orient = (ring) => (counterClockwise ? ring.slice() : ring.slice().reverse());
+	const T = orient(tile), M = orient(mouth), R = orient(throat);
+	const place = (points) => points.map(([u, v]) => [u0 + (u1 - u0) * u, v0 + (v1 - v0) * v]);
+	const near = Math.min(n0, n1), far = Math.max(n0, n1);
+	const count = T.length;
+	const sections = funnelSections(profile);
+	// vertex blocks: 0 tile@far, 1 mouth@far, 2..(1+s) the profile's sections, 2+s throat@near,
+	// 3+s tile@near. A section is the mouth blended toward the throat, vertex i to vertex i, at
+	// its depth between the faces.
+	const PM = place(M), PR = place(R);
+	const coordinates = [
+		...place(T).map(([u, v]) => [u, v, far]),
+		...PM.map(([u, v]) => [u, v, far]),
+		...sections.flatMap(([blend, depth]) => PM.map(([u, v], i) => [u + (PR[i][0] - u) * blend, v + (PR[i][1] - v) * blend, far - (far - near) * depth])),
+		...PR.map(([u, v]) => [u, v, near]),
+		...place(T).map(([u, v]) => [u, v, near]),
+	];
+	const throatBlock = 2 + sections.length, nearTileBlock = 3 + sections.length;
+	const at = (block, index) => block * count + (index % count);
+	const indices = [];
+	// One convention for every strip: a quad (outerA, outerB, innerB, innerA) between ring A
+	// (this vertex, next vertex) and ring B, wound so its normal leaves the solid. The far cap
+	// of the plain prism is wound [a, b, c] on a CCW loop (normal +n); the annulus on the far
+	// face follows it; the near annulus is the mirror; the outer wall is the prism's wall; the
+	// funnel wall is the outer wall's mirror, because its solid side is the other one.
+	const quad = (a0, a1, b1, b0) => { indices.push([a0, a1, b1]); indices.push([a0, b1, b0]); };
+	for (let i = 0; i < count; i += 1) {
+		const j = i + 1;
+		quad(at(0, i), at(0, j), at(1, j), at(1, i));                                  // front annulus, +n
+		quad(at(nearTileBlock, j), at(nearTileBlock, i), at(throatBlock, i), at(throatBlock, j));  // back annulus, -n
+		quad(at(nearTileBlock, i), at(nearTileBlock, j), at(0, j), at(0, i));          // outer side, away from the axis
+		for (let block = 1; block < throatBlock; block += 1) {
+			quad(at(block, i), at(block, j), at(block + 1, j), at(block + 1, i));     // funnel wall, section to section, toward the axis
+		}
+	}
+	return {
+		positions: coordinates.map(([u, v, n]) => localPoint(plane, tangent, u, v, n)),
+		indices,
+		uvs: coordinates.map(([u, v]) => [u / grammar.brick_module_m[0], (plane.origin[2] + v) / grammar.brick_module_m[1]]),
+	};
+}
+
+/**
  * Everything the docstring claims, measured on a built prism.
  *
  * Exported because the claims are the reason to trust the builder, and a claim nobody can

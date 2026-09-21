@@ -1,3 +1,6 @@
+import { validateModuleMesh, moduleFitsWallPatch, openingFitsWallPatch } from './wall-patch.mjs';
+import { MAX_LATTICE_CELLS } from './lattice-budgets.mjs';
+import { buildWallMiter } from './wall-miter.mjs';
 import { createHash } from "node:crypto";
 import { stableJson } from "../core.mjs";
 import { boundaryPolygons } from "./design/geometry/face-polygon.mjs";
@@ -6,15 +9,17 @@ import {
 	PUNCHED_FACADE_MATERIALS, PUNCHED_FACADE_SURFACES, PUNCHED_FACADE_SYSTEM,
 	validatePunchedFacadeGrammar,
 } from "../facade-grammar.mjs";
-import { TERMINAL_MATERIALS } from "./facade-vocabulary.mjs";
+import { TERMINAL_MATERIALS, KIND_PROJECTION } from "./facade-vocabulary.mjs";
 import { archGeometry, boxGeometry, climbVector, diagonalGeometry, localPoint } from "./member-geometry.mjs";
-import { polygonPrismGeometry, rotateOutline } from "./polygon-prism.mjs";
+import { funnelModuleGeometry, funnelWallGeometry, polygonPrismGeometry, rotateOutline } from "./polygon-prism.mjs";
+import { outlineFrameGeometry } from "./outline-frame.mjs";
+import { LATTICE_BUDGETS } from "./lattice-budgets.mjs";
 
 const EPSILON = 1e-9;
 const GEOMETRY_GAP_M = 1e-4;
 const DETAIL_PRIMITIVES_PER_BAY = 15;
 /** |normal_z| at 15 degrees off vertical: the wall/roof discriminator. See the derive filter. */
-const WALL_TILT_NZ_LIMIT = Math.sin((15 * Math.PI) / 180);
+export const WALL_TILT_NZ_LIMIT = Math.sin((15 * Math.PI) / 180);
 
 export const PUNCHED_FACADE_BUDGETS = Object.freeze({
 	maxFacadeWidthM: 120,
@@ -23,13 +28,22 @@ export const PUNCHED_FACADE_BUDGETS = Object.freeze({
 	maxBaysPerPlane: 128,
 	maxFloorGuides: 65,
 	maxStoreys: 64,
-	maxDetailPrimitives: 10_000,
-	maxTotalVertices: 80_000,
-	maxTotalIndices: 360_000,
+	maxDetailPrimitives: LATTICE_BUDGETS.maxDetails,
+	// The vertex and index caps were two bare literals (80,000 / 360,000) fitted to the
+	// punched-window bay grammar, while the byte budget beside them already carries the
+	// formula every GLB is measured by (enrichment.mjs: 64 KB + 20 B per vertex + 4 B per index
+	// + 2 KB per detail + extras). A lattice skin is what the literals refused: 229 lens cells
+	// at three prisms each (pane, jamb ring, frame ring; ~1,870 indices a cell) is 428,000
+	// indices and 4.3 MB of GLB - a quarter of the budget that is supposed to decide. So each
+	// cap is now half the byte budget spent on that one thing - either cap still fires on its
+	// own before the projection does, and the byte projection stays the gate that binds a
+	// real scene.
+	maxTotalVertices: LATTICE_BUDGETS.maxVertices,
+	maxTotalIndices: LATTICE_BUDGETS.maxIndices,
 	maxSourceTriangles: 120_000,
 	maxTextureBytes: 100_700_000,
-	maxProjectedGlbBytes: 16 * 1024 * 1024,
-	maxFinalGlbBytes: 16 * 1024 * 1024,
+	maxProjectedGlbBytes: LATTICE_BUDGETS.maxGlbBytes,
+	maxFinalGlbBytes: LATTICE_BUDGETS.maxGlbBytes,
 });
 
 function sha256(value) {
@@ -344,15 +358,33 @@ function pushDetail(details, plane, tangent, grammar, bounds, properties, massBa
 	const turn = (outline) => (outline && properties.rotate_deg
 		? rotateOutline(outline, properties.rotate_deg, bounds.u1 - bounds.u0, bounds.v1 - bounds.v0)
 		: outline);
-	const geometry = properties.outline
+	const geometry = properties.evaluated_mesh
+        ? {positions:properties.evaluated_mesh.vertices.map(([u,z,n])=>{
+            const depth=bounds.n0+n*(bounds.n1-bounds.n0);
+            if(!properties.wall_miter)return localPoint(plane,tangent,u,z-plane.origin[2],depth);
+            const base=localPoint(plane,tangent,u,z-plane.origin[2],0),d=properties.wall_miter.displacement(plane.segment_id,[u,z]);
+            return base.map((x,i)=>x+depth*d[i]);
+        }),
+           indices:properties.evaluated_mesh.triangles,
+           uvs:properties.evaluated_mesh.vertices.map(([u,z])=>[u/grammar.brick_module_m[0],z/grammar.brick_module_m[1]])}
+        : properties.module
+		? funnelModuleGeometry(plane, tangent, grammar, bounds, turn(properties.module.tile), turn(properties.module.mouth), turn(properties.module.throat), localPoint, properties.module.profile ?? null)
+		: properties.funnel
+		? funnelWallGeometry(plane, tangent, grammar, bounds, turn(properties.funnel.mouth), turn(properties.funnel.throat), localPoint)
+		: properties.frame_outline
+		? outlineFrameGeometry(plane,tangent,grammar,bounds,turn(properties.frame_outline),properties.frame_width_m,localPoint)
+		: properties.outline
 		? polygonPrismGeometry(plane, tangent, grammar, bounds, turn(properties.outline), localPoint, turn(properties.outline_far) ?? null)
 		: properties.kind === "arch"
 			? archGeometry(plane, tangent, grammar, bounds)
 			: properties.diagonal
 				? diagonalGeometry(plane, tangent, grammar, bounds, properties.diagonal)
 				: boxGeometry(plane, tangent, grammar, bounds);
+	// The funnel's two loops built the wall above; they are geometry, not a record, and would
+	// cost two 24-point arrays of extras per cell.
+	const { funnel: _funnel, module: _module, evaluated_mesh: _evaluatedMesh, wall_miter: _wallMiter, ...recorded } = properties;
 	details.push({
-		...properties,
+		...recorded,
 		...massBackingProperties,
 		view: plane.view,
 		...(plane.segment_id ? {
@@ -660,6 +692,7 @@ function usableFaceRectangle(mesh, indexes, tangent, normal) {
 	return {
 		u0: rectangle.u_min, u1: rectangle.u_max, z0: rectangle.z_min, z1: rectangle.z_max,
 		start: [...corner(rectangle.u_min, rectangle.z_min)], end: [...corner(rectangle.u_max, rectangle.z_min)],
+		rings: rings.map(({polygon}) => polygon.map(([u,z]) => [u - rectangle.u_min,z])),
 	};
 }
 
@@ -732,6 +765,16 @@ function connectedTriangleGroups(mesh, triangleIndexes) {
 }
 
 export function deriveFacadeSegmentsFromMass({ mesh } = {}) {
+	return deriveFacadeGeometry(mesh).authority;
+}
+
+/** Full coplanar boundaries in canonical segment u / absolute z. Separate from the
+ * rectangle authority: adding a veil domain never changes existing segment ids. */
+export function deriveFacadeWallPatches({ mesh } = {}) {
+	return deriveFacadeGeometry(mesh).patches;
+}
+
+function deriveFacadeGeometry(mesh) {
 	const orientation = closedShellOrientation(mesh);
 	// Coplanarity is a tolerance, not a string. Grouping by the rounded normal-and-offset
 	// key fractured one plane of a stepped mass into several groups a few nanometres apart
@@ -774,7 +817,7 @@ export function deriveFacadeSegmentsFromMass({ mesh } = {}) {
 		group.normal = representative.normal.map((value) => Number(value.toFixed(8)));
 		group.indexes = group.members.map((member) => member.triangleIndex);
 	}
-	const unsorted = [];
+	const unsorted = [], patches = [];
 	for (const group of planeGroups.values()) for (const indexes of connectedTriangleGroups(mesh, group.indexes)) {
 		const normal = group.normal;
 		const tangent = wallTangent(normal);
@@ -792,6 +835,8 @@ export function deriveFacadeSegmentsFromMass({ mesh } = {}) {
 			mass_backed: Math.abs(backing.coveredArea - backing.targetArea) <= Math.max(EPSILON, backing.targetArea * 1e-6),
 			outward: true,
 		});
+		patches.push({segment_id:unsorted.at(-1).segment_id, normal:[...normal], rings:usable.rings,
+			triangles:indexes.map(i=>mesh.triangles[i].map(v=>[dot(mesh.vertices[v],tangent)-u0,mesh.vertices[v][2]]))});
 	}
 	if (!unsorted.length || unsorted.length > PUNCHED_FACADE_BUDGETS.maxFacadeSegments) throw new RangeError("facade segment budget exceeded");
 	const byStart = new Map(unsorted.map((segment) => [segment.start_corner_id, segment]));
@@ -825,7 +870,7 @@ export function deriveFacadeSegmentsFromMass({ mesh } = {}) {
 		segments,
 		facade_lengths_m: facadeLengths,
 	};
-	return { ...value, sha256: sha256(stableJson(value)) };
+	return { authority:{ ...value, sha256: sha256(stableJson(value)) }, patches };
 }
 
 export function assertCanonicalFacadeSegmentAuthority({ mesh, facadeSegmentAuthority } = {}) {
@@ -917,8 +962,16 @@ export function buildTypedFacadeDetails({ mesh, floorGuides, facadePlanes, primi
 	validateFloorGuideBudget(floorGuides);
 	validateSourceMesh(mesh);
 	const authority = verifiedFacadeSegmentAuthority(mesh, facadePlanes);
-	if (!denseArray(primitives) || primitives.length > 2_048) throw new TypeError("invalid typed facade primitive collection");
+	if (!denseArray(primitives)) throw new TypeError("invalid typed facade primitive collection");
+	// Authored members keep their cap; lattice cells have the contract's own (4,096 an evaluation),
+	// and the detail count and the GLB byte projection below are what decide the build.
+	const authored = primitives.filter((primitive) => !primitive?.lattice).length;
+	if (authored > 2_048 || primitives.length - authored > MAX_LATTICE_CELLS) throw new TypeError("invalid typed facade primitive collection");
 	const planes = new Map(authority.facade_planes.map((plane) => [plane.segment_id, plane]));
+    const wallPatches=primitives.some(p=>p.wall_patch || p.wall_opening) ? new Map(deriveFacadeWallPatches({mesh}).map(p=>[p.segment_id,p])) : null;
+    const modules=primitives.filter(p=>p.wall_patch);
+    const wallMiter=modules.length?buildWallMiter({patches:[...wallPatches.values()],planes:authority,
+        depth_m:Math.max(...modules.map(p=>p.depth_m+(p.standoff_m??0))),max_projection_m:KIND_PROJECTION.louvre}):null;
 	const componentOrientations = massComponentOrientations(mesh);
 	const backing = new Map();
 	const details = [];
@@ -943,7 +996,19 @@ export function buildTypedFacadeDetails({ mesh, floorGuides, facadePlanes, primi
 		const local = primitive?.local_bounds;
 		if (!plane || !material || !local) throw new TypeError("invalid typed facade primitive authority");
 		const tangent = wallTangent(plane.normal);
-		if (!backing.has(plane.segment_id)) backing.set(
+        if(primitive.wall_patch) {
+            validateModuleMesh(primitive.mesh_uzn);
+            if(primitive.kind!=='louvre' || !primitive.lattice || !moduleFitsWallPatch(primitive.mesh_uzn,wallPatches?.get(plane.segment_id)))
+                throw new TypeError('wall-patch module is outside verified MASS boundary');
+        }
+        if(primitive.wall_opening) {
+            const contour=primitive.outline?.map(([u,z])=>[local.u_min+u*(local.u_max-local.u_min),local.z_min+z*(local.z_max-local.z_min)]);
+            // Same 0.3 m fold clearance as the verified design context; the true
+            // source polygon replaces the rectangle, never the clearance rule.
+            if(primitive.kind!=='window' || !contour || !openingFitsWallPatch(contour,wallPatches?.get(plane.segment_id),0.3))
+                throw new TypeError('wall opening is outside verified MASS or its fold clearance');
+        }
+        if (!backing.has(plane.segment_id)) backing.set(
 			plane.segment_id, validateMassBacking(mesh, plane, tangent, componentOrientations),
 		);
 		// An opening needs a thickness to be a solid at all, but the SIGN is the author's: a
@@ -977,6 +1042,13 @@ export function buildTypedFacadeDetails({ mesh, floorGuides, facadePlanes, primi
 			v0: local.z_min - plane.origin[2], v1: local.z_max - plane.origin[2],
 			n0: recessed ? depth + PANE_THICKNESS_M : standoff, n1: recessed ? depth : standoff + depth,
 		};
+		// A recessed metal frame/bar is placed at its specified depth. Extruding it
+		// from the wall face to that depth makes a 25 cm fin across a curved window.
+		// Wall-thickness returns are generated separately below in the shell material.
+		if (primitive.kind === "reveal" && depth<0) {
+			bounds.n0=depth;
+			bounds.n1=depth+Math.min(0.02,-depth/2);
+		}
 		// A member that named a rise datum is the one thing allowed to stand above its own
 		// plane rectangle, because that rectangle is the facet's mesh face and a parapet is by
 		// definition the wall that continues past it. Its height is still not the author's to
@@ -989,13 +1061,14 @@ export function buildTypedFacadeDetails({ mesh, floorGuides, facadePlanes, primi
 		// rectangle is the facet's mesh face, and a soffit line is by definition the wall that
 		// continues past it. `derive.mjs` still owns how far.
 		const vFloor = primitive.rises_to ? Math.min(0, bounds.v0) : 0;
-		if (bounds.u0 < -EPSILON || bounds.u1 > plane.extent_m[0] + EPSILON
-			|| bounds.v0 < vFloor - EPSILON || bounds.v1 > vLimit + EPSILON) {
+		if (!primitive.wall_patch && !primitive.wall_opening && (bounds.u0 < -EPSILON || bounds.u1 > plane.extent_m[0] + EPSILON
+			|| bounds.v0 < vFloor - EPSILON || bounds.v1 > vLimit + EPSILON)) {
 			throw new TypeError("invalid typed facade primitive bounds");
 		}
 		pushDetail(details, plane, tangent, TYPED_FACADE_GRAMMAR, bounds, {
 			kind: primitive.kind, material, slot: `typed-${index}`,
 			design_primitive_index: index,
+            ...(primitive.wall_patch ? {evaluated_mesh:primitive.mesh_uzn,wall_miter:wallMiter,module_cell:true,wall_patch:true} : {}),
 			...(primitive.role ? { role: primitive.role } : {}),
 			// The cut that makes a member a triangle. This list is a whitelist, so a field the
 			// deriver sets and this line does not name is silently dropped - which is exactly
@@ -1006,10 +1079,22 @@ export function buildTypedFacadeDetails({ mesh, floorGuides, facadePlanes, primi
 			// The same whitelist, and the same reason. A written outline that never travels this
 			// line parses, validates, derives and draws as a box - which is exactly how 312
 			// spandrels came out rectangular with the diagonal in hand.
-			...(primitive.outline ? { outline: primitive.outline } : {}),
+			// A MODULE (a lattice cell with a tile, standing proud) is one closed solid: the tile
+			// prism less the funnel, built in place of the outline prism. The wall behind shows
+			// through the throat, so a veil in front of glass is a glass layer plus this.
+			...(primitive.tile && primitive.outline_far && !recessed
+				? { module: { tile: primitive.tile, mouth: primitive.outline, throat: primitive.outline_far, ...(primitive.profile ? { profile: primitive.profile } : {}) }, module_cell: true }
+				: {}),
+			// A FUNNEL (a recessed opening whose far outline is its throat) puts its pane at the
+			// throat and hands the mouth to the renderer, which cuts the frustum between them.
+			...(primitive.outline && !(primitive.tile && !recessed) ? { outline: recessed && primitive.outline_far ? primitive.outline_far : primitive.outline } : {}),
 			// Same whitelist again. A turn that never travels it leaves every cell axis-aligned.
 			...(primitive.rotate_deg ? { rotate_deg: primitive.rotate_deg } : {}),
-			...(primitive.outline_far ? { outline_far: primitive.outline_far } : {}),
+			...(primitive.outline_far && !recessed ? { outline_far: primitive.outline_far } : {}),
+			...(recessed && primitive.outline && primitive.outline_far ? {
+				recess_mouth: primitive.outline.map(([u, v]) => localPoint(plane, tangent,
+					bounds.u0 + (bounds.u1 - bounds.u0) * u, bounds.v0 + (bounds.v1 - bounds.v0) * v, 0).map((value) => Number(value.toFixed(5)))),
+			} : {}),
 			...(Number.isFinite(primitive.standoff_m) && primitive.standoff_m > 0 ? { standoff_m: primitive.standoff_m } : {}),
 			// The elevation this member is drawn in, beside the `view` above, which is the
 			// dominant axis of its own plane. See the note in derive.mjs: the two are different
@@ -1019,6 +1104,9 @@ export function buildTypedFacadeDetails({ mesh, floorGuides, facadePlanes, primi
 			...(primitive.family_id ? { family_id: primitive.family_id } : {}),
 			...(primitive.zone_id ? { zone_id: primitive.zone_id } : {}),
 			...(primitive.material_id ? { material_id: primitive.material_id } : {}),
+			// Which lattice cell this is and which evaluation placed it: the GLB carries the same
+			// model_hash the SVG/DXF carry, which is what makes the 2D and the 3D one model.
+			...(primitive.lattice ? { lattice: { family: primitive.lattice.family, cell: primitive.lattice.cell } } : {}),
 			// The renderers read this to cut the mass in front of the pane. Only a recess is
 			// a hole; a proud pane keeps the exact record it always had.
 			// The renderer rebuilds the hole VOLUME from the pane: its back face extruded
@@ -1041,8 +1129,63 @@ export function buildTypedFacadeDetails({ mesh, floorGuides, facadePlanes, primi
 		// are the returns of a RECTANGULAR hole; against an outlined pane they lie in solid mass
 		// outside the hole the renderer actually cuts, z-fight the wall face they start on, and
 		// cost four details each - which is what put a dense veil over the GLB byte projection.
-		// An outlined opening therefore lines itself: the hole is cut on the pane's own polygon
-		// and what shows inside it is the pane.
+		// An outlined hole still needs returns. Without them an oblique ray passes between
+		// the cut wall and the recessed pane and sees the background through the mass.
+		// A ring around an outlined opening, and what happens when the opening cannot hold it.
+		// A lattice cell clipped at a facet edge is a fragment, and a fragment thinner than
+		// twice the ring is what a mitred inset folds on. For such a cell the ring is retried
+		// at half and a quarter of its width and, if none fits, left out: the fragment stays a
+		// hole - which is what a veil does at a wall's edge - and only its ring is missing. A
+		// whole cell, and every outlined member that is not a lattice cell, keeps the loud
+		// failure, because there a collapsed ring is an authoring error the author must see.
+		// A veil is hundreds of cells and every one of them costs three meshes. The pane keeps its
+		// full outline (it is the drawing); a lattice cell's ring, which is a lining seen only in
+		// the hero and the axons, carries every other point past sixteen. Measured on The Broad's
+		// front face: 576 cells at three 32-point prisms projected past the 16 MB GLB budget.
+		const ringOutline = (outline) => {
+			if (!primitive.lattice || outline.length <= 16) return outline;
+			const step = Math.ceil(outline.length / 16);
+			return outline.filter((_, k) => k % step === 0);
+		};
+		const pushRing = (ringBounds, properties) => {
+			properties = { ...properties, frame_outline: ringOutline(properties.frame_outline) };
+			// A thin arm of any outline (a cruciform's 50 mm bar against a 30 mm ring) folds the
+			// ring the same way a clipped fragment does, so every outlined member gets the ladder;
+			// a lattice fragment may end ringless, an authored member still fails loudly - at the
+			// narrowest width tried - because there the shape is the author's to change.
+			const widths = [properties.frame_width_m, properties.frame_width_m / 2, properties.frame_width_m / 4];
+			let last = null;
+			for (const width of widths) {
+				try {
+					pushDetail(details, plane, tangent, TYPED_FACADE_GRAMMAR, ringBounds,
+						{ ...properties, frame_width_m: width, ...(width < properties.frame_width_m ? { ring_width_reduced_from_m: properties.frame_width_m } : {}) },
+						backing.get(plane.segment_id));
+					return true;
+				} catch (error) {
+					if (!/OUTLINE_FRAME_COLLAPSED/.test(String(error?.message))) throw error;
+					last = error;
+				}
+			}
+			if (primitive.lattice) return false;
+			throw new Error(`${last.message} (design primitive ${index}, ${primitive.kind} at u ${bounds.u0.toFixed(3)}..${bounds.u1.toFixed(3)} z ${bounds.v0.toFixed(3)}..${bounds.v1.toFixed(3)} on ${plane.segment_id}; the outline has a part thinner than twice the ring)`);
+		};
+		if (recessed && primitive.outline && primitive.outline_far) {
+			// The funnel's own wall, from the mouth on the wall face down to the throat at the pane.
+			pushDetail(details, plane, tangent, TYPED_FACADE_GRAMMAR, {...bounds, n0: 0, n1: depth},
+				{kind:"reveal",material:shellMaterial??"concrete",semantic_role:"concrete",jamb:true,
+					slot:`typed-${index}-contour-funnel`,design_primitive_index:index,source_kind:primitive.kind,
+					funnel:{mouth:primitive.outline,throat:primitive.outline_far},
+					...(primitive.rotate_deg?{rotate_deg:primitive.rotate_deg}:{}),
+					...(primitive.face_view?{face_view:primitive.face_view}:{})},
+				backing.get(plane.segment_id));
+		} else if (recessed && primitive.outline) {
+			pushRing({...bounds,n0:0,n1:depth},
+				{kind:"reveal",material:shellMaterial??"concrete",semantic_role:"concrete",jamb:true,
+					slot:`typed-${index}-contour-jamb`,design_primitive_index:index,source_kind:primitive.kind,
+					frame_outline:primitive.outline,frame_width_m:Math.min(JAMB_THICKNESS_M,(bounds.u1-bounds.u0)/8,(bounds.v1-bounds.v0)/8),
+					...(primitive.rotate_deg?{rotate_deg:primitive.rotate_deg}:{}),
+					...(primitive.face_view?{face_view:primitive.face_view}:{})});
+		}
 		if (recessed && !primitive.outline) {
 			const jamb = Math.min(JAMB_THICKNESS_M, (bounds.u1 - bounds.u0) / 8, (bounds.v1 - bounds.v0) / 8);
 			const sides = [
@@ -1069,11 +1212,30 @@ export function buildTypedFacadeDetails({ mesh, floorGuides, facadePlanes, primi
 		// pushed inside the first: the opening ends up as a frame within a frame and
 		// reads as a heavy black border rather than a window. The entrance is placed by
 		// the resolver rather than the grammar, so it keeps its frame either way.
-		if (primitive.kind === "door" || (!authorsOwnTrim && primitive.kind === "window")) {
+		// A lattice cell is a hole in a skin - The Broad's veil has no metal frame in any cell -
+		// so the generated frame that every punched window gets stands down here. An author who
+		// wants a framed cell writes the frame as a layer; the gates then see the metal they
+		// declared, not one the engine invented.
+		if (primitive.kind === "door" || (!authorsOwnTrim && primitive.kind === "window" && !primitive.lattice)) {
 			const frameWidth = Math.min(
 				TYPED_FACADE_GRAMMAR.frame_width_m, (bounds.u1 - bounds.u0) / 4, (bounds.v1 - bounds.v0) / 4,
 			);
 			const frameDepth = Math.max(bounds.n1 + 0.02, 0.035);
+			if (primitive.outline) {
+				// At a 20 mm recess the ring's near and far faces meet (n0 = depth + 15 mm, n1 = -5 mm);
+				// a ring thinner than 5 mm is written as zero-area triangles and z-fights the pane.
+				const ringN0 = recessed ? depth + PANE_THICKNESS_M : bounds.n1;
+				const ringN1 = recessed ? Math.min(-0.005, depth + 0.035) : bounds.n1 + 0.035;
+				if (Math.abs(ringN1 - ringN0) < 0.005) continue;
+				pushRing({...bounds,n0:ringN0,n1:ringN1},
+					{kind:"window-frame",material:"window-frame",slot:`typed-${index}-contour-frame`,
+						design_primitive_index:index,source_kind:primitive.kind,frame_outline:primitive.outline,
+						frame_width_m:frameWidth,...(primitive.rotate_deg?{rotate_deg:primitive.rotate_deg}:{}),
+						...(primitive.role ? { role: primitive.role } : {}),
+						...(primitive.family_id ? { family_id: primitive.family_id } : {}),
+						...(primitive.face_view?{face_view:primitive.face_view}:{})});
+				continue;
+			}
 			const frameBounds = [
 				{ u0: bounds.u0, u1: bounds.u0 + frameWidth, v0: bounds.v0 + frameWidth, v1: bounds.v1 - frameWidth },
 				{ u0: bounds.u1 - frameWidth, u1: bounds.u1, v0: bounds.v0 + frameWidth, v1: bounds.v1 - frameWidth },
@@ -1090,5 +1252,35 @@ export function buildTypedFacadeDetails({ mesh, floorGuides, facadePlanes, primi
 			));
 		}
 	}
-	return details;
+	return packWallPatchDetails(details);
+}
+
+/** One mesh per verified facet/material. Cell ranges retain provenance without
+ * repeating the same plane, material and authority record thousands of times. */
+function packWallPatchDetails(details) {
+    const result=[],groups=new Map();
+    for(const detail of details) {
+        if(!detail.wall_patch) {result.push(detail);continue;}
+        const key=JSON.stringify([detail.segment_id,detail.material,detail.kind,detail.lattice.family,detail.local_bounds.n0,detail.local_bounds.n1]);
+        let packed=groups.get(key);
+        if(!packed) {
+            // Column names belong to the table, not every cell. Retain every
+            // provenance value and geometry range without paying six JSON keys
+            // per fragment in the fixed GLB byte budget.
+            packed={...detail,positions:[],indices:[],uvs:[],local_bounds:{...detail.local_bounds},lattice:{family:detail.lattice.family,
+                cell_columns:['cell','vertex_start','vertex_count','triangle_start','triangle_count','design_primitive_index'],cells:[]}};
+            delete packed.design_primitive_index;
+            packed.slot='wall-patch-modules';
+            groups.set(key,packed);result.push(packed);
+        }
+        const vertexStart=packed.positions.length,triangleStart=packed.indices.length;
+        packed.lattice.cells.push([detail.lattice.cell,vertexStart,detail.positions.length,
+            triangleStart,detail.indices.length,detail.design_primitive_index]);
+        packed.positions.push(...detail.positions);packed.uvs.push(...detail.uvs);
+        packed.indices.push(...detail.indices.map(t=>t.map(i=>i+vertexStart)));
+        for(const k of ['u0','v0'])packed.local_bounds[k]=Math.min(packed.local_bounds[k],detail.local_bounds[k]);
+        for(const k of ['u1','v1'])packed.local_bounds[k]=Math.max(packed.local_bounds[k],detail.local_bounds[k]);
+    }
+    for(const d of groups.values())d.geometry_signature=sha256(JSON.stringify({positions:d.positions,indices:d.indices}));
+    return result;
 }

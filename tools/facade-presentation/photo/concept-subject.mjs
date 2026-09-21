@@ -22,7 +22,7 @@ export function massFacts(context) {
 	if (storeys.length === 0 || segments.length === 0) {
 		throw new Error("massFacts needs a prepared context with storeys and facade_segments");
 	}
-	const height = Math.max(...storeys.map((storey) => storey.z_max));
+	const height = Math.max(...storeys.map((storey) => storey.z_max)) - Math.min(...storeys.map((storey) => storey.z_min));
 	const storeyHeight = (storeys[0].z_max - storeys[0].z_min);
 	return {
 		storeys: storeys.length,
@@ -42,13 +42,15 @@ export function buildConceptSubject({ context, idea }) {
 		throw new Error("a concept needs an idea - the open brief for the facade, in the commissioner's words");
 	}
 	const facts = massFacts(context);
+	const heights=context.storeys.map(s=>Number((s.z_max-s.z_min).toFixed(2)));
+	const storeyDescription=new Set(heights).size===1 ? `of ${facts.storey_height_m} m each` : `with successive storey heights ${heights.join(', ')} m`;
 	const ground = facts.facets_on_ground === facts.facets
 		? "standing on the ground along its whole perimeter"
 		: `touching the ground on only ${facts.facets_on_ground} of its ${facts.facets} facets, the rest of its underside above grade`;
 	return [
 		"An architectural photograph of EXACTLY this building:",
 		`a ${facts.facets}-facet faceted mass EXACTLY ${facts.height_m} METRES TALL and EXACTLY ${facts.storeys} STOREYS`,
-		`of ${facts.storey_height_m} m each, ${ground}.`,
+		`${storeyDescription}, ${ground}.`,
 		"Its silhouette, storey count and facets are fixed and must not change.",
 		`The facade: ${idea.trim()}`,
 	].join(" ");

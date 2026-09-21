@@ -1,6 +1,8 @@
+import { validateModuleMesh } from '../../wall-patch.mjs';
 import { TERMINAL_MATERIAL_CHOICES, TERMINAL_PROJECTION, TERMINAL_WORDS } from "../../facade-vocabulary.mjs";
 import { deriveDeclaredMaterials } from "../../declared-material.mjs";
 import { MAX_OUTLINE_POINTS, MIN_OUTLINE_POINTS, isSimplePolygon } from "../../polygon-prism.mjs";
+import { MAX_LATTICE_CELLS as MAX_LATTICE_INSTANCES } from "../../lattice-budgets.mjs";
 
 export class FacadeGrammarError extends Error {
 	constructor(message) {
@@ -401,7 +403,7 @@ function parseGuard(alternative, label) {
 }
 
 function parseAlternative(value, label, symbols) {
-	const alternative = record(value, label, new Set(["when", "split", "terminal", "inset_m", "depth_m", "min_u_m", "min_z_m", "rise_to", "reach", "material", "grade", "diagonal", "outline", "outline_far", "standoff_m", "scoop_deg", "rotate_deg", "mix"]));
+	const alternative = record(value, label, new Set(["when", "split", "terminal", "inset_m", "depth_m", "min_u_m", "min_z_m", "rise_to", "reach", "material", "grade", "diagonal", "outline", "outline_far", "standoff_m", "scoop_deg", "rotate_deg", "mix", "lattice"]));
 	const when = alternative.when === undefined || alternative.when === null ? null : parsePredicate(alternative.when, `${label}.when`);
 	const guard = parseGuard(alternative, label);
 	if (alternative.terminal !== undefined && alternative.terminal !== null) {
@@ -637,7 +639,95 @@ function parseAlternative(value, label, symbols) {
 			if (!isSimplePolygon(points)) fail(`${label}.outline_far crosses itself or encloses no area`);
 			return Object.freeze(points);
 		})();
-		return Object.freeze({ when, guard, terminal: alternative.terminal, inset_m: inset, depth_m: depth, rise_to: riseTo, reach, material, grade, diagonal, ...(outline ? { outline } : {}), ...(outlineFar ? { outline_far: outlineFar } : {}), ...(standoff > 0 ? { standoff_m: standoff } : {}), ...(scoop !== 0 ? { scoop_deg: scoop } : {}), ...(rotate !== 0 ? { rotate_deg: rotate } : {}), ...(mix ? { mix } : {}) });
+		// THE LATTICE: cells placed by an evaluated ModelSpec, not by this grammar. The terminal
+		// is instantiated once per cell inside its scope, each cell bringing its own outline in
+		// host metres (grammar/lattice.mjs maps them). The split grammar divides a scope and
+		// cannot put a cell where a basis vector says, which is why The Broad came out as one
+		// column of cells per facet; the cells are evaluated in tools/facade-parametric and the
+		// model_hash is what ties this drawing to the 2D CAD written from the same evaluation.
+		const lattice = (alternative.lattice ?? null) === null ? null : (() => {
+			if (alternative.terminal === "wall" || alternative.terminal === "arch") fail(`${label}.lattice on ${alternative.terminal}: a lattice needs a terminal that draws its cell's outline`);
+			if (outline || alternative.diagonal || rotate !== 0) fail(`${label}.lattice carries every cell's own shape: outline, diagonal and rotate_deg belong to a single member`);
+			const spec = record(alternative.lattice, `${label}.lattice`, new Set(["model_hash", "family", "instances", "z_datum_m", "scope"]));
+			if (typeof spec.model_hash !== "string" || !/^[a-f0-9]{64}$/.test(spec.model_hash)) fail(`${label}.lattice.model_hash must be the evaluation's sha256`);
+			if (typeof spec.family !== "string" || !spec.family) fail(`${label}.lattice.family names the family the cells came from`);
+			// The height the cells' z is measured from. A lattice laid over a RUN of facets shares one
+			// datum, so its rows line up across a mass that steps; without it every facet started its
+			// own row 0 at its own bottom and the veil stepped with the mass instead of running level.
+			// Absent means the facet's own bottom, which is what a single-plane host has always meant.
+			const datum = spec.z_datum_m;
+			if (datum !== undefined && datum !== null && !Number.isFinite(datum)) fail(`${label}.lattice.z_datum_m must be a height in metres`);
+			if (spec.scope !== undefined && !['wall_patch','wall_openings'].includes(spec.scope)) fail(`${label}.lattice.scope must be wall_patch or wall_openings`);
+            if (spec.scope === 'wall_patch' && (alternative.terminal !== 'louvre' || depth <= 0 || inset !== 0)) fail(`${label}.lattice.scope wall_patch is for positive-depth solid louvres without inset`);
+            if (spec.scope === 'wall_openings' && (alternative.terminal !== 'glass' || inset !== 0 || alternative.grade || alternative.scoop_deg || alternative.rotate_deg)) fail(`${label}.wall_openings requires untransformed glass without inset; clearances remain enforced`);
+            const seen = new Set();
+            const instances = list(spec.instances, `${label}.lattice.instances`, 1, MAX_LATTICE_INSTANCES).map((value, index) => {
+				const cell = record(value, `${label}.lattice.instances[${index}]`, new Set(["id", "center_m", "outline_m", "outline_far_m", "tile_m", "throat_scale", "profile", "attributes", "lattice_index", "provenance", "segment_id", "part", "outline_chord_error_m", "unit", "width_m", "height_m", "scale_u", "scale_v", "rotation_deg", "offset_m", "mesh_uzn", "aperture_area_m2"]));
+				if (typeof cell.id !== "string" || !cell.id || seen.has(cell.id)) fail(`${label}.lattice.instances[${index}].id must be a unique string`);
+				seen.add(cell.id);
+				const centre = list(cell.center_m, `${label}.lattice.instances[${index}].center_m`, 2, 2).map(Number);
+				if (!centre.every(Number.isFinite)) fail(`${label}.lattice.instances[${index}].center_m must be finite`);
+				const points = list(cell.outline_m, `${label}.lattice.instances[${index}].outline_m`, MIN_OUTLINE_POINTS, MAX_OUTLINE_POINTS + 1)
+					.map((point, k) => {
+						const pair = list(point, `${label}.lattice.instances[${index}].outline_m[${k}]`, 2, 2).map(Number);
+						if (!pair.every(Number.isFinite)) fail(`${label}.lattice.instances[${index}].outline_m[${k}] must be finite metres`);
+						return Object.freeze(pair);
+					});
+				// A funnel: the cell's mouth is `outline_m` and its THROAT, at the bottom of the recess,
+				// is `outline_far_m` - the same number of points in the same order, vertex i travelling
+				// to vertex i, which is the form the tapered prism reads.
+				const far = (cell.outline_far_m ?? null) === null ? null
+					: list(cell.outline_far_m, `${label}.lattice.instances[${index}].outline_far_m`, points.length, points.length).map((point, k) => {
+						const pair = list(point, `${label}.lattice.instances[${index}].outline_far_m[${k}]`, 2, 2).map(Number);
+						if (!pair.every(Number.isFinite)) fail(`${label}.lattice.instances[${index}].outline_far_m[${k}] must be finite metres`);
+						return Object.freeze(pair);
+					});
+				// The cell's whole footprint, when the cell is a solid module (a tile prism less the
+				// funnel) rather than a hole: the same count again, vertex i over vertex i.
+				const tile = (cell.tile_m ?? null) === null ? null
+					: list(cell.tile_m, `${label}.lattice.instances[${index}].tile_m`, points.length, points.length).map((point, k) => {
+						const pair = list(point, `${label}.lattice.instances[${index}].tile_m[${k}]`, 2, 2).map(Number);
+						if (!pair.every(Number.isFinite)) fail(`${label}.lattice.instances[${index}].tile_m[${k}] must be finite metres`);
+						return Object.freeze(pair);
+					});
+				if (tile && !far) fail(`${label}.lattice.instances[${index}].tile_m needs an outline_far_m: a module is a tile less a funnel`);
+				// The funnel's SECTION between mouth and throat: linear (one straight loft) or a
+				// quarter-ellipse cove through `rings` intermediate sections. Only a funnel has one.
+				let profile = null;
+				if ((cell.profile ?? null) !== null) {
+					if (!far) fail(`${label}.lattice.instances[${index}].profile needs an outline_far_m: a profile is the funnel's section`);
+					const p = record(cell.profile, `${label}.lattice.instances[${index}].profile`, new Set(["kind", "rings"]));
+					if (!["linear", "quarter_ellipse"].includes(p.kind)) fail(`${label}.lattice.instances[${index}].profile.kind must be linear or quarter_ellipse`);
+					const rings = p.rings === undefined ? 3 : p.rings;
+					if (!Number.isInteger(rings) || rings < 0 || rings > 6) fail(`${label}.lattice.instances[${index}].profile.rings must be an integer 0..6`);
+					profile = Object.freeze({ kind: p.kind, rings });
+				}
+				// depth_m, scoop_deg and standoff_m are read by the deriver; every other key is a shape
+				// mode the evaluator already spent on the outline (any name the spec declared), riding
+				// along as the record of what the cell answered.
+				const attributes = cell.attributes === undefined || cell.attributes === null ? {} : cell.attributes;
+				if (typeof attributes !== "object" || Array.isArray(attributes)) fail(`${label}.lattice.instances[${index}].attributes must be an object`);
+				for (const [key, number] of Object.entries(attributes)) {
+					if (!/^[a-z][a-z0-9_]{0,39}$/.test(key)) fail(`${label}.lattice.instances[${index}].attributes.${key} is not an attribute name`);
+					if (!Number.isFinite(number)) fail(`${label}.lattice.instances[${index}].attributes.${key} must be finite`);
+				}
+				let mesh = null;
+                if (cell.mesh_uzn) {
+                    if (spec.scope !== 'wall_patch') fail(`${label}: mesh_uzn requires a verified wall_patch scope`);
+                    const sourceMesh=record(cell.mesh_uzn,`${label}.mesh_uzn`,new Set(['vertices','triangles']));
+                    mesh={vertices:list(sourceMesh.vertices,`${label}.mesh_uzn.vertices`,4,1024).map(v=>list(v,`${label}.mesh_uzn.vertex`,3,3)),
+                        triangles:list(sourceMesh.triangles,`${label}.mesh_uzn.triangles`,4,2048).map(t=>list(t,`${label}.mesh_uzn.triangle`,3,3))};
+                    try { validateModuleMesh(mesh); } catch(error) { fail(`${label}: ${error.message}`); }
+                    mesh = Object.freeze({vertices:Object.freeze(mesh.vertices.map(v=>Object.freeze([...v]))),triangles:Object.freeze(mesh.triangles.map(t=>Object.freeze([...t])))});
+                } else if (spec.scope === 'wall_patch') fail(`${label}: wall_patch requires a closed evaluated module mesh`);
+                if(spec.scope === 'wall_openings' && (far || tile || typeof cell.segment_id!=='string')) fail(`${label}: wall_openings requires a segment-bound plain polygon`);
+                if (mesh && (!Number.isFinite(cell.aperture_area_m2) || cell.aperture_area_m2<0)) fail(`${label}: aperture_area_m2 must be a nonnegative measured area`);
+                return Object.freeze({ ...(mesh ? {mesh_uzn:mesh,aperture_area_m2:cell.aperture_area_m2 ?? 0} : {}), id: cell.id, center_m: Object.freeze(centre), outline_m: Object.freeze(points), ...(far ? { outline_far_m: Object.freeze(far) } : {}), ...(tile ? { tile_m: Object.freeze(tile) } : {}), ...(profile ? { profile } : {}), attributes: Object.freeze({ ...attributes }), ...(typeof cell.segment_id === "string" ? { segment_id: cell.segment_id } : {}) });
+			});
+			return Object.freeze({ model_hash: spec.model_hash, family: spec.family, instances: Object.freeze(instances), ...(spec.scope ? {scope:spec.scope} : {}),
+				...(Number.isFinite(datum) ? { z_datum_m: Number(datum) } : {}) });
+		})();
+		return Object.freeze({ when, guard, terminal: alternative.terminal, inset_m: inset, depth_m: depth, rise_to: riseTo, reach, material, grade, diagonal, ...(outline ? { outline } : {}), ...(outlineFar ? { outline_far: outlineFar } : {}), ...(standoff > 0 ? { standoff_m: standoff } : {}), ...(scoop !== 0 ? { scoop_deg: scoop } : {}), ...(rotate !== 0 ? { rotate_deg: rotate } : {}), ...(mix ? { mix } : {}), ...(lattice ? { lattice } : {}) });
 	}
 	// Strict structured output forces both fields onto a split too, where zero is the
 	// only sensible answer. Only a real offset here means the model confused the two.
@@ -648,6 +738,7 @@ function parseAlternative(value, label, symbols) {
 	if ((alternative.reach ?? null) !== null) fail(`${label}.reach belongs to a terminal`);
 	if ((alternative.grade ?? null) !== null) fail(`${label}.grade belongs to a terminal`);
 	if ((alternative.diagonal ?? null) !== null) fail(`${label}.diagonal belongs to a terminal`);
+	if ((alternative.lattice ?? null) !== null) fail(`${label}.lattice belongs to a terminal: the cells need a member to be drawn as`);
 	if ((alternative.split ?? null) === null) fail(`${label} is neither a split nor a terminal`);
 	const split = record(alternative.split, `${label}.split`, new Set(["axis", "parts"]));
 	if (!AXES.includes(split.axis)) fail(`${label}.split.axis must be u, z, storey or layer`);
@@ -901,6 +992,12 @@ export function parseFacadeGrammar(input) {
  * the plan cut, camera identity and every other gate hold exactly as before.
  */
 export const TRANSCRIPTION_WAIVERS = Object.freeze([
+	// These are design preferences, not reconstruction errors. A source may show
+	// equal openings on each floor and a flush roof without an added cornice.
+	"SCALE_HIERARCHY_FLAT",
+	"SCALE_STEP_BROKEN",
+	"STOREY_LOCKSTEP",
+	"TOP_TERMINATION_MISSING",
 	"HIERARCHY_MISSING",
 	"OPENING_RATIO_LOW",
 	"PBR_PRESENTATION_RANGE_INVALID",

@@ -47,12 +47,16 @@ function isInside(x, y, bounds) {
 	return x >= bounds.minX && x <= bounds.maxX && y >= bounds.minY && y <= bounds.maxY;
 }
 
-export async function analyzePresentationPng({ png, buildingBounds, background }) {
+export async function analyzePresentationPng({ png, buildingBounds, background, roleMaskPng = null }) {
 	const backgroundRgb = parseBackground(background);
 	const decoded = await sharp(png)
 		.flatten({ background: { r: backgroundRgb[0], g: backgroundRgb[1], b: backgroundRgb[2] } })
 		.removeAlpha().raw().toBuffer({ resolveWithObject: true });
 	const { width, height } = decoded.info;
+	const roleMask = roleMaskPng == null ? null : await sharp(roleMaskPng).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+	if (roleMask && (roleMask.info.width !== width || roleMask.info.height !== height)) {
+		throw new RangeError("semantic role mask dimensions must match the final PNG");
+	}
 	const bounds = normalizeBounds(buildingBounds, width, height);
 	const backgroundLuminance = luminance(...backgroundRgb);
 	const buildingLuminance = [];
@@ -72,7 +76,15 @@ export async function analyzePresentationPng({ png, buildingBounds, background }
 		pixelLuminance[pixel] = luminance(red, green, blue);
 		pixelDelta[pixel] = Math.hypot(red - backgroundRgb[0], green - backgroundRgb[1], blue - backgroundRgb[2]);
 		pixelChroma[pixel] = Math.max(red, green, blue) - Math.min(red, green, blue);
-		if (isInside(x, y, bounds) && pixelDelta[pixel] >= 4) {
+		// The rectangle contains visible ground around sloped/concave silhouettes. The
+		// renderer's role pass identifies actual building fragments independently of
+		// their final colour; neither ground shadow nor neutral facade shade can swap roles.
+		// That pass clears to exact black. Include every nonblack fragment, including
+		// antialiased mixtures between roles which cannot be assigned one role ID.
+		const insideBuilding = roleMask
+			? roleMask.data[offset] > 0 || roleMask.data[offset + 1] > 0 || roleMask.data[offset + 2] > 0
+			: isInside(x, y, bounds);
+		if (insideBuilding && (roleMask || pixelDelta[pixel] >= 4)) {
 			foregroundMask[pixel] = 1;
 			buildingLuminance.push(pixelLuminance[pixel]);
 			buildingChroma.push(pixelChroma[pixel]);
@@ -80,7 +92,7 @@ export async function analyzePresentationPng({ png, buildingBounds, background }
 		const darkening = backgroundLuminance - pixelLuminance[pixel];
 		const adjacent = x >= bounds.minX - adjacency && x <= bounds.maxX + adjacency
 			&& y >= bounds.minY - adjacency && y <= bounds.maxY + adjacency;
-		if (!isInside(x, y, bounds) && adjacent && darkening >= 5 && darkening <= 90
+		if (!insideBuilding && adjacent && darkening >= 5 && darkening <= 90
 			&& pixelDelta[pixel] >= 5 && pixelDelta[pixel] <= 120) shadowCandidateMask[pixel] = 1;
 	}
 
@@ -232,10 +244,12 @@ export async function analyzeSemanticRolePng({ finalPng, roleMaskPng, geometry =
  */
 export const PBR_MIN_ROLE_COLOR_DISTANCE = 5;
 
-export function validateSemanticRoleEvidence({ views }) {
+// The roles every PBR view must show. The default is the punched-window trio; a transcription
+// passes the roles its DECLARED materials carry instead, because a veil with no metal in it
+// (The Broad) has no bronze to show and a gate demanding one is deciding the architecture.
+export function validateSemanticRoleEvidence({ views, requiredRoles = ["concrete", "glass", "bronze"] }) {
 	const codes = [];
 	const requiredViews = ["front", "back", "left", "right", "axon", "opposite-axon"];
-	const requiredRoles = ["concrete", "glass", "bronze"];
 	const minimumPixels = 4, minimumCoverageFraction = 0.0005;
 	if (requiredViews.some((name) => requiredRoles.some((role) => {
 		const record = views?.[name]?.roles?.[role];
@@ -246,7 +260,16 @@ export function validateSemanticRoleEvidence({ views }) {
 	for (const name of [...requiredViews, "plan", "top"]) {
 		const evidence = views?.[name];
 		if (!evidence) { codes.push("PBR_SEMANTIC_ROLE_MISSING"); continue; }
-		const visible = Object.entries(evidence.roles ?? {}).filter(([, record]) => record.pixelCount >= 4).map(([role]) => role);
+		// ONE definition of visible for both clauses. The clause above says a role is shown when it
+		// has both the pixels and the coverage; this one counted four pixels as shown and then
+		// demanded that they be told apart from every other role. A roof seen from straight above
+		// showed 184 pixels of grazing glass (0.034% of the view) blown out to the tone of the roof
+		// beside it, and a drawing the clause above would not have counted as showing glass at all
+		// failed for not separating it. Below the coverage floor a role is not in the picture.
+		const visible = Object.entries(evidence.roles ?? {})
+			.filter(([, record]) => record.pixelCount >= minimumPixels
+				&& (record.coverageFraction == null || record.coverageFraction >= minimumCoverageFraction))
+			.map(([role]) => role);
 		for (let left = 0; left < visible.length; left++) for (let right = left + 1; right < visible.length; right++) {
 			const direct = `${visible[left]}:${visible[right]}`, reverse = `${visible[right]}:${visible[left]}`;
 			const separation = evidence.pairwise?.[direct] ?? evidence.pairwise?.[reverse];

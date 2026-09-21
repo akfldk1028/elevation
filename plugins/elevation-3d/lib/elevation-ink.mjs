@@ -220,7 +220,27 @@ export function inkElevation({ pixels, materialId, depth, normal = null, creaseN
 		return Math.min(distance, pitch - distance) * pxPerM <= 0.5;
 	};
 
-	// 1. Member edges: a depth step of a member's thickness or more, drawn on the nearer side.
+	// A plane can recede more than 30 mm per pixel without having an edge. Require
+	// the candidate jump to depart from the adjacent one-sided depth gradients.
+	// Test both available sides so a real edge does not also ink the smooth plane
+	// one pixel beside it. A one-pixel fin still departs from both gradients.
+	const discontinuityBetween = (x, y, dx, dy, here, there) => {
+		const jump = there - here;
+		let samples = 0;
+		for (const [sx, sy, origin, sign] of [
+			[x - dx, y - dy, here, -1], [x + 2 * dx, y + 2 * dy, there, 1],
+		]) {
+			if (sx < 0 || sx >= width || sy < 0 || sy >= height) continue;
+			const offset = (sy * width + sx) * 3;
+			if (isBackground(offset)) continue;
+			const gradient = sign * (decodeDepthMetres(depth, offset, near, far) - origin);
+			if (Math.abs(jump - gradient) < MEMBER_EDGE_STEP_M) return false;
+			samples++;
+		}
+		return samples > 0;
+	};
+
+	// 1. Member edges: a depth discontinuity, drawn on the nearer side.
 	for (let y = 1; y < height - 1; y++) for (let x = 1; x < width - 1; x++) {
 		const offset = (y * width + x) * 3;
 		if (isBackground(offset)) continue;
@@ -231,6 +251,8 @@ export function inkElevation({ pixels, materialId, depth, normal = null, creaseN
 			const other = ((y + dy) * width + x + dx) * 3;
 			if (isBackground(other)) continue;
 			const there = decodeDepthMetres(depth, other, near, far);
+			if (Math.abs(there - here) < MEMBER_EDGE_STEP_M
+				|| !discontinuityBetween(x, y, dx, dy, here, there)) continue;
 			// Draw on whichever of the pair is nearer the camera (smaller depth).
 			if (there - here >= MEMBER_EDGE_STEP_M) edge = true;
 			else if (here - there >= MEMBER_EDGE_STEP_M && facing(normal, other) >= MIN_FACING_FOR_EDGES) {

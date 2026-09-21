@@ -1,4 +1,5 @@
 import { TERMINAL_KINDS } from "../../facade-vocabulary.mjs";
+import { latticeCells } from "./lattice.mjs";
 import { continuationHolding } from "../geometry/continuation.mjs";
 import { BOUNDS, FacadeGrammarError, predicateHolds } from "./contract.mjs";
 
@@ -377,11 +378,109 @@ export function deriveFacadePrimitives({ grammar, segment, storeys, entrance = n
 			const graded = (attr, base) => alternative.grade?.attr === attr
 				? round(alternative.grade.from + (alternative.grade.to - alternative.grade.from) * gradeT)
 				: base;
+            if (alternative.lattice?.scope === 'wall_openings') {
+                if(!segment.wall_patch)fail('wall_openings requires verified source geometry');
+                if(scope.z_min!==segment.local_z[0] || scope.z_max!==segment.local_z[1]
+                    || scope.u_min!==placeable.u_min || scope.u_max!==placeable.u_max)
+                    fail('wall_openings requires the whole facet scope');
+                const datum=alternative.lattice.z_datum_m ?? 0;
+                for(const cell of alternative.lattice.instances.filter(c=>c.segment_id===segment.segment_id)) {
+                    const points=cell.outline_m.map(([u,z])=>[u,z+datum]);
+                    if(points.length>3 && points[0].every((x,k)=>x===points.at(-1)[k]))points.pop();
+                    const us=points.map(p=>p[0]),zs=points.map(p=>p[1]);
+                    const u0=Math.min(...us),u1=Math.max(...us),z0=Math.min(...zs),z1=Math.max(...zs);
+                    primitives.push({kind:'window',segment_id:segment.segment_id,wall_opening:true,
+                        local_bounds:{u_min:u0,u_max:u1,z_min:z0,z_max:z1},
+                        outline:points.map(([u,z])=>[(u-u0)/(u1-u0),(z-z0)/(z1-z0)]),
+                        depth_m:cell.attributes.depth_m ?? alternative.depth_m,material:alternative.material,
+                        family_id:familyId(symbol,scope.param),storey:storeyOf(z0),layer:scope.layer ?? 0,face_view:segment.face_view,
+                        lattice:{family:alternative.lattice.family,cell:cell.id,model_hash:alternative.lattice.model_hash}});
+                }
+                return;
+            }
+            if (alternative.lattice?.scope === 'wall_patch') {
+                if (!segment.wall_patch) fail('wall_patch scope requires verified source geometry');
+                if(scope.z_min!==segment.local_z[0] || scope.z_max!==segment.local_z[1]
+                    || scope.u_min!==placeable.u_min || scope.u_max!==placeable.u_max)
+                    fail('wall_patch modules require the whole facet scope (a layer is allowed)');
+                const datum=alternative.lattice.z_datum_m ?? 0;
+                for(const cell of alternative.lattice.instances.filter(c=>c.segment_id===segment.segment_id)) {
+                    const mesh={vertices:cell.mesh_uzn.vertices.map(([u,z,n])=>[u,z+datum,n]),triangles:cell.mesh_uzn.triangles};
+                    const us=mesh.vertices.map(v=>v[0]),zs=mesh.vertices.map(v=>v[1]);
+                    primitives.push({kind:'louvre',segment_id:segment.segment_id,
+                        local_bounds:{u_min:Math.min(...us),u_max:Math.max(...us),z_min:Math.min(...zs),z_max:Math.max(...zs)},
+                        depth_m:cell.attributes.depth_m ?? graded('depth_m',alternative.depth_m),material:alternative.material,
+                        standoff_m:cell.attributes.standoff_m ?? graded('standoff_m',alternative.standoff_m),
+                        mesh_uzn:mesh,wall_patch:true,aperture_area_m2:cell.aperture_area_m2,
+                        family_id:familyId(symbol,scope.param),storey:storeyOf(Math.min(...zs)),layer:scope.layer ?? 0,
+                        face_view:segment.face_view,
+                        lattice:{family:alternative.lattice.family,cell:cell.id,model_hash:alternative.lattice.model_hash}});
+                }
+                return;
+            }
 			const inset = graded("inset_m", alternative.inset_m);
 			const uMin = scope.u_min + inset, uMax = scope.u_max - inset;
 			const zMin = scope.z_min + inset, zMax = scope.z_max - inset;
 			if (uMax - uMin <= 1e-6 || zMax - zMin <= 1e-6) return;
 			const kind = TERMINAL_KINDS[alternative.terminal];
+			// A lattice terminal is not one member: it is every cell the evaluation placed inside
+			// this scope, each with its own outline. Nothing else about the member changes - the
+			// depth, material, scoop and standoff are the alternative's (a cell may carry its own
+			// depth/scoop/standoff from a field), and the cell is clamped and stamped exactly as a
+			// single member is. `lattice` on the primitive is what the validator reads to stand
+			// down the floor-band rule (a veil crosses slab lines by construction) and, between
+			// cells of ONE evaluation, the overlap and clearance rules its evaluator already
+			// enforced; the fold rule holds, and so do both rules against everything else.
+			if (alternative.lattice) {
+				// A veil of solid MODULES (cells with a tile, standing proud of the wall) turns the
+				// corner: it is not a hole through the turn, so the fold clearance is the wrong
+				// constraint for it, and its cells run to the facet's edge while the rest of the
+				// scope - the glass box behind, say - keeps its inset. The fold rule reads doors
+				// and windows only, so nothing is silenced by this.
+				const module = alternative.lattice.instances.some((cell) => cell.tile_m) && (alternative.depth_m ?? 0) > 0;
+				const cellScope = module
+					? { u_min: Math.min(uMin, 0), u_max: Math.max(uMax, segment.length_m), z_min: zMin, z_max: zMax }
+					: { u_min: uMin, u_max: uMax, z_min: zMin, z_max: zMax };
+				const attr = (cell, name, base) => Number.isFinite(cell.attributes[name]) ? round(cell.attributes[name]) : base;
+				// A facet-run evaluation hands each cell to ITS facet by segment id, in that facet's own
+				// u; a plane evaluation names none and every facet takes the whole set.
+				const own = alternative.lattice.instances.some((cell) => cell.segment_id)
+					? { ...alternative.lattice, instances: alternative.lattice.instances.filter((cell) => cell.segment_id === segment.segment_id) }
+					: alternative.lattice;
+				if (!own.instances.length) return;
+				// The run's own datum when the lattice names one (a veil over facets at different
+				// heights is one veil, not one per facet), else this facet's own bottom.
+				const zDatum = Number.isFinite(alternative.lattice.z_datum_m)
+					? alternative.lattice.z_datum_m : (segment.local_z?.[0] ?? cellScope.z_min);
+				for (const cell of latticeCells(own, cellScope, fail, { u: 0, z: zDatum })) {
+					const b = cell.local_bounds;
+					const standoff = attr(cell, "standoff_m", graded("standoff_m", alternative.standoff_m));
+					const scoop = attr(cell, "scoop_deg", graded("scoop_deg", alternative.scoop_deg));
+					primitives.push({
+						kind,
+						segment_id: segment.segment_id,
+						local_bounds: {
+							u_min: Math.max(0, round(b.u_min)), u_max: Math.min(segment.length_m, round(b.u_max)),
+							z_min: Math.max(segment.local_z?.[0] ?? -Infinity, round(b.z_min)),
+							z_max: Math.min(segment.local_z?.[1] ?? Infinity, round(b.z_max)),
+						},
+						depth_m: attr(cell, "depth_m", graded("depth_m", alternative.depth_m)),
+						...(alternative.material ? { material: alternative.material } : {}),
+						outline: cell.outline,
+						...(cell.outline_far ? { outline_far: cell.outline_far } : {}),
+						...(cell.tile ? { tile: cell.tile } : {}),
+						...(cell.profile ? { profile: cell.profile } : {}),
+						...(standoff ? { standoff_m: standoff } : {}),
+						...(scoop ? { scoop_deg: scoop } : {}),
+						...(segment.face_view ? { face_view: segment.face_view } : {}),
+						family_id: familyId(symbol, scope.param),
+						storey: storeyOf(b.z_min),
+						...(scope.layer ? { layer: scope.layer } : {}),
+						lattice: { family: alternative.lattice.family, cell: cell.id, model_hash: alternative.lattice.model_hash },
+					});
+				}
+				return;
+			}
 			// A skin member flush with the edge of the placeable field is carried out to the
 			// facet itself, so the framing runs past the structure and turns the corner the way
 			// a curtain wall does. It has to be flush already: a member the grammar deliberately

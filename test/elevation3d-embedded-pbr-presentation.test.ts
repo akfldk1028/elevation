@@ -272,6 +272,14 @@ test("resolves a window-frame kind as bronze without a viewer-local override", (
 	);
 });
 
+test("a declared glazing name containing bronze cannot reclassify all window panes as metal",()=>{
+	const resolve=(embeddedPresentationModule as any).resolveSemanticRole;
+	assert.deepEqual(resolve({primitiveExtras:{kind:"window",material:"bronze-grey-glazing"}}),
+		{role:"glass",source:"primitive.extras.kind"});
+	assert.deepEqual(resolve({primitiveExtras:{kind:"reveal",material:"bronze-toned-stone",semantic_role:"concrete"}}),
+		{role:"concrete",source:"primitive.extras.semantic_role"});
+});
+
 test("keeps a softened physical receiver shadow visible from both axon cameras", () => {
 	const values = fixture();
 	const presentation = createEmbeddedPbrPresentation({ THREE, RoomEnvironment, ...values });

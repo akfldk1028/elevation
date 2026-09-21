@@ -447,13 +447,16 @@ test("render-only v2 delivery persists resolved style, per-view evidence, baseli
 	const translatedDiagnostic = await Promise.all(names.map((_, index) => presentationPng(index, true, false, 15)));
 	const translatedRoleMask = await semanticRoleMaskPng(15);
 	let activeView = "axon", embeddedMaps = true, presentationVisible = true, tamperRuntimeCamera = false, translatedRaster = false;
+	let continuousRendering = true;
 	const dataUrl = (bytes: Buffer) => `data:image/png;base64,${bytes.toString("base64")}`;
 	const page = {
 		on: () => {}, setViewport: async () => {}, goto: async () => {}, waitForFunction: async () => {}, close: async () => {},
 		evaluate: async (callback: Function, argument?: string) => {
 			const source = callback.toString();
+			if (source.includes("setContinuousRendering?.(false)")) { continuousRendering = false; return; }
 			if (source.includes("activateView")) { activeView = argument!; return; }
 			if (source.includes("const first =")) {
+				assert.equal(continuousRendering, false, "automated still capture pauses redundant live rendering");
 				const sourceImages = translatedRaster ? translatedTextured : textured;
 				return [dataUrl(sourceImages[names.indexOf(activeView)]), dataUrl(sourceImages[names.indexOf(activeView)])];
 			}

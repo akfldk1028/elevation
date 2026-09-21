@@ -19,3 +19,8 @@ results/
 memory/.latest-frame.jpg
 memory/.latest-screen.jpg
 .DS_Store
+__pycache__/
+*.pyc
+tools/facade-vision/checkpoints/*.pt
+tools/facade-vision/checkpoints/*.pth
+tools/facade-vision/outputs/

@@ -4,6 +4,8 @@ import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { resolvePbrRenderStyle } from "../lib/texturing/render-style.mjs";
 import { triangulate } from "../lib/facade-agent/polygon-prism.mjs";
+import { facadeDepthBias } from "./facade-depth-bias.mjs";
+import { diagnosticRasterPng } from "./diagnostic-raster.mjs";
 import {
 	deriveCompetitionAxonCameraAuthority, deriveCompetitionElevationCameraAuthority, deriveCompetitionPlanCameraAuthority,
 } from "../lib/technical-camera-authority.mjs";
@@ -77,7 +79,12 @@ function renderInteractiveAllViews(root, gltf = null) {
 	const embeddedMaps = new Map();
 	root.traverse((object) => {
 		if (!object.isMesh) return;
-		const materials = Array.isArray(object.material) ? object.material : [object.material];
+		const materialArray = Array.isArray(object.material);
+		// A GLTF material may be shared by both a flush panel and a closed module.
+		// Per-primitive depth bias must not mutate another object's material.
+		const materials = (materialArray ? object.material : [object.material])
+			.map((material) => materialMode === "embedded-pbr" ? material.clone() : material);
+		if (materialMode === "embedded-pbr") object.material = materialArray ? materials : materials[0];
 		let ancestor = object;
 		let facadeDetail = false;
 		while (ancestor) {
@@ -85,6 +92,7 @@ function renderInteractiveAllViews(root, gltf = null) {
 			ancestor = ancestor.parent;
 		}
 		const primitiveExtras = resolveGltfPrimitiveExtras({ gltf, object });
+		const depthBias = facadeDepthBias({ facadeDetail, primitiveExtras });
 		const resolvedRoles = materials.map((material) => resolveSemanticRole({ object, material, primitiveExtras }));
 		materialRecords.push({
 			object,
@@ -92,6 +100,7 @@ function renderInteractiveAllViews(root, gltf = null) {
 			roleSources: resolvedRoles.map((entry) => entry.source),
 			array: Array.isArray(object.material),
 			facadeDetail,
+			depthBias,
 			currentMaterials: materials,
 		});
 		if (materialMode === "embedded-pbr") {
@@ -102,9 +111,7 @@ function renderInteractiveAllViews(root, gltf = null) {
 				});
 				material.depthWrite = !material.transparent;
 				material.side = THREE.DoubleSide;
-				material.polygonOffset = true;
-				material.polygonOffsetFactor = facadeDetail ? -4 : 4;
-				material.polygonOffsetUnits = facadeDetail ? -4 : 4;
+				Object.assign(material, depthBias);
 				material.needsUpdate = true;
 			}
 			object.renderOrder = materials.some((material) => material.transparent) ? 2 : facadeDetail ? 1 : 0;
@@ -126,6 +133,7 @@ function renderInteractiveAllViews(root, gltf = null) {
 		let transparentMaterials = 0;
 		let transparentDepthWriters = 0;
 		let polygonOffsetFacadeDetails = 0;
+		let unbiasedClosedModuleMeshes = 0;
 		let deterministicRenderOrder = true;
 		for (const record of materialRecords) {
 			const materials = Array.isArray(record.object.material) ? record.object.material : [record.object.material];
@@ -133,6 +141,7 @@ function renderInteractiveAllViews(root, gltf = null) {
 			transparentMaterials += materials.filter((material) => material.transparent).length;
 			transparentDepthWriters += materials.filter((material) => material.transparent && material.depthWrite).length;
 			if (record.facadeDetail && materials.every((material) => material.polygonOffset && material.polygonOffsetFactor === -4 && material.polygonOffsetUnits === -4)) polygonOffsetFacadeDetails++;
+			if (record.facadeDetail && !record.depthBias.polygonOffset && materials.every((material) => !material.polygonOffset && material.polygonOffsetFactor === 0 && material.polygonOffsetUnits === 0)) unbiasedClosedModuleMeshes++;
 			const expectedRenderOrder = transparent ? 2 : record.facadeDetail ? 1 : 0;
 			if (record.object.renderOrder !== expectedRenderOrder) deterministicRenderOrder = false;
 		}
@@ -142,6 +151,7 @@ function renderInteractiveAllViews(root, gltf = null) {
 			transparent_materials: transparentMaterials,
 			transparent_depth_writers: transparentDepthWriters,
 			polygon_offset_facade_details: polygonOffsetFacadeDetails,
+			unbiased_closed_module_meshes: unbiasedClosedModuleMeshes,
 			deterministic_render_order: deterministicRenderOrder,
 		};
 	}
@@ -224,7 +234,6 @@ function renderInteractiveAllViews(root, gltf = null) {
 			const replacements = record.roles.map((role) => {
 				const values = palette.roles[role];
 				const transparent = values.opacity < 1;
-				const polygonOffsetFactor = record.facadeDetail ? -4 : 4;
 				const material = new THREE.MeshStandardMaterial({
 					color: values.axon_pbr,
 					roughness: values.roughness,
@@ -233,9 +242,7 @@ function renderInteractiveAllViews(root, gltf = null) {
 					transparent,
 					depthWrite: !transparent,
 					side: THREE.DoubleSide,
-					polygonOffset: true,
-					polygonOffsetFactor,
-					polygonOffsetUnits: polygonOffsetFactor,
+					...record.depthBias,
 				});
 				material.forceSinglePass = transparent;
 				return material;
@@ -268,6 +275,9 @@ function renderInteractiveAllViews(root, gltf = null) {
 	for (const artifact of allViews.artifacts ?? []) { const link = document.createElement("a"); link.href = artifact.path; link.textContent = artifact.label; link.target = "_blank"; links.append(link); }
 	addEventListener("resize", () => { if (camera.isPerspectiveCamera) camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight, false); });
 	globalThis.__ELEVATION3D_TEST_CONTROLS__ = {
+		// Automated stills render explicitly in settledPng. Do not keep submitting
+		// identical software-GPU shadow passes while Node analyses the previous PNG.
+		setContinuousRendering(enabled) { renderer.setAnimationLoop(enabled ? renderLive : null); },
 		rotateAndZoom() { controls.rotateLeft(0.25); controls.dollyIn(1.2); controls.update(); state(); },
 		reset() { activateView(currentView); }, toggleFullscreen, activateView,
 		presentationEvidence() { return presentation?.evidence() ?? null; },
@@ -297,7 +307,8 @@ function renderInteractiveAllViews(root, gltf = null) {
 	};
 	if (materialMode !== "embedded-pbr") applyPalette("warm");
 	activateView("axon");
-	renderer.setAnimationLoop(() => { controls.update(); holeCut.apply(camera); renderer.render(scene, camera); });
+	function renderLive() { controls.update(); holeCut.apply(camera); renderer.render(scene, camera); }
+	renderer.setAnimationLoop(renderLive);
 }
 
 function projectedMeshes() {
@@ -402,7 +413,9 @@ function competitionMaterials(root, palette, options = {}) {
 			ancestor = ancestor.parent;
 		}
 		typedFacade ||= facadeDetail;
-		const polygonOffsetFactor = facadeDetail ? (options.facadeDetailPolygonOffsetFactor ?? -4) : 4;
+		const depthBias = facadeDepthBias({ facadeDetail,
+			primitiveExtras: resolveGltfPrimitiveExtras({ gltf: loadedGltf, object }),
+			detailFactor: options.facadeDetailPolygonOffsetFactor ?? -4 });
 		const originals = Array.isArray(object.material) ? object.material : [object.material];
 		const roles = originals.map((material) => semanticRole(object, material));
 		for (const role of roles) counts[role] += object.geometry.getAttribute("position")?.count ?? 0;
@@ -433,12 +446,10 @@ function competitionMaterials(root, palette, options = {}) {
 			side: THREE.DoubleSide,
 			depthWrite: true,
 			transparent: false,
-			polygonOffset: true,
-			polygonOffsetFactor,
-			polygonOffsetUnits: polygonOffsetFactor,
+			...depthBias,
 		}));
-		const ids = roles.map((role) => new THREE.MeshBasicMaterial({ color: roleColors[role], side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor, polygonOffsetUnits: polygonOffsetFactor }));
-		const normals = roles.map(() => new THREE.MeshNormalMaterial({ side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor, polygonOffsetUnits: polygonOffsetFactor }));
+		const ids = roles.map((role) => new THREE.MeshBasicMaterial({ color: roleColors[role], side: THREE.DoubleSide, ...depthBias }));
+		const normals = roles.map(() => new THREE.MeshNormalMaterial({ side: THREE.DoubleSide, ...depthBias }));
 		// The same raster, FLAT-shaded, and it is a second raster rather than a change to the
 		// first on purpose.
 		//
@@ -459,12 +470,10 @@ function competitionMaterials(root, palette, options = {}) {
 		// triangulation seam. That is worth knowing and is not this pass's to decide, so the
 		// crease test gets its own raster and every existing reader keeps the one it was
 		// measured against.
-		const flatNormals = roles.map(() => new THREE.MeshNormalMaterial({ flatShading: true, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor, polygonOffsetUnits: polygonOffsetFactor }));
+		const flatNormals = roles.map(() => new THREE.MeshNormalMaterial({ flatShading: true, side: THREE.DoubleSide, ...depthBias }));
 		const depths = roles.map(() => new THREE.ShaderMaterial({
 			side: THREE.DoubleSide,
-			polygonOffset: true,
-			polygonOffsetFactor,
-			polygonOffsetUnits: polygonOffsetFactor,
+			...depthBias,
 			vertexShader: `void main(){gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}`,
 			fragmentShader: `void main(){float d=gl_FragCoord.z;vec3 packed=fract(d*vec3(1.,255.,65025.));packed-=packed.yzz*vec3(1./255.,1./255.,0.);gl_FragColor=vec4(packed,1.);}`,
 		}));
@@ -565,18 +574,33 @@ const holeCut = (() => {
 			const offset = point.clone().sub(centre);
 			return [offset.dot(axisU), offset.dot(axisV)];
 		}));
-		const front = back.map((point) => point.clone().addScaledVector(axis, extras.recess_m / Math.max(1e-6, axis.dot(normal))));
+		// A FUNNEL hands the renderer its mouth: the cut is then the frustum from the mouth on
+		// the wall face to the throat at the pane, not the throat extruded straight out. The mouth
+		// points are sorted about the same centre by the same angle, so vertex i pairs with
+		// vertex i of the back face (both loops are star-shaped about the throat's centre).
+		const front = Array.isArray(extras.recess_mouth) && extras.recess_mouth.length === back.length
+			? extras.recess_mouth.map((point) => new THREE.Vector3(...point).applyMatrix4(pane.matrixWorld)).sort((left, right) => angle(left) - angle(right))
+			: back.map((point) => point.clone().addScaledVector(axis, extras.recess_m / Math.max(1e-6, axis.dot(normal))));
 		const corners = [...front, ...back];
 		// Wind the prism outward whichever way the corners came out: the entry pass culls back
 		// faces and the exit pass front faces, so an inside-out volume draws nothing and cuts
 		// nothing - which is exactly what happened on the first render of this version.
 		const boxCentre = corners.reduce((sum, point) => sum.add(point), new THREE.Vector3()).multiplyScalar(1 / corners.length);
-		const [capA, capB, capC] = capTriangles[0];
-		const faceNormal = new THREE.Vector3().crossVectors(front[capB].clone().sub(front[capA]), front[capC].clone().sub(front[capA]));
-		const faceCentre = front.reduce((sum, point) => sum.add(point.clone()), new THREE.Vector3()).multiplyScalar(1 / front.length);
-		const outward = faceNormal.dot(faceCentre.sub(boxCentre)) > 0;
+		// Every triangle wound outward on its own, against the volume's centre. One global flip
+		// keyed on the front cap was enough for a straight prism; a FRUSTUM (mouth to throat)
+		// has caps and walls that the angle sort can wind against each other, and a volume with
+		// one inward face draws an entry with no exit and cuts nothing - which is what the first
+		// funnel render showed. The volumes are convex (a convex mouth, a lens throat, one axis),
+		// so "away from the centre" is the outward side of every face.
 		const wound = holePrismIndices(back.length, capTriangles);
-		const indices = outward ? wound : wound.map((value, index, all) => all[index - (index % 3) + (2 - (index % 3))]);
+		const indices = [];
+		for (let k = 0; k < wound.length; k += 3) {
+			const [a, b, c] = [wound[k], wound[k + 1], wound[k + 2]];
+			const A = corners[a], B = corners[b], C = corners[c];
+			const faceNormal = new THREE.Vector3().crossVectors(B.clone().sub(A), C.clone().sub(A));
+			const faceCentre = A.clone().add(B).add(C).multiplyScalar(1 / 3);
+			if (faceNormal.dot(faceCentre.sub(boxCentre)) >= 0) indices.push(a, b, c); else indices.push(a, c, b);
+		}
 		const geometry = new THREE.BufferGeometry();
 		geometry.setAttribute("position", new THREE.Float32BufferAttribute(corners.flatMap((point) => [point.x, point.y, point.z]), 3));
 		geometry.setIndex(indices);
@@ -655,6 +679,10 @@ function renderCompetition(root, view) {
 	const settings = config.competition_elevation;
 	const fitted = createCompetitionCamera(root, view, outputSize, settings.margin_ratio, settings.pixels_per_metre);
 	const semantic = competitionMaterials(root, settings.palette);
+	const diagnosticTarget = new THREE.WebGLRenderTarget(outputSize, outputSize, {
+		samples: 0, minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter,
+		format: THREE.RGBAFormat, type: THREE.UnsignedByteType,
+	});
 	const renderTarget = new THREE.WebGLRenderTarget(outputSize, outputSize, {
 		minFilter: THREE.LinearFilter,
 		magFilter: THREE.LinearFilter,
@@ -693,13 +721,16 @@ function renderCompetition(root, view) {
 		renderer.outputColorSpace = mode === "base" ? THREE.SRGBColorSpace : THREE.LinearSRGBColorSpace;
 		if (mode === "material-id") {
 			applyMaterials(semantic.meshes, "ids"); holeCut.apply(fitted.camera);
-			renderer.setRenderTarget(null); renderer.setClearColor(0x000000, 1); renderer.render(scene, fitted.camera);
+			renderer.setClearColor(0x000000, 1);
+			return diagnosticRasterPng({renderer,target:diagnosticTarget,scene,camera:fitted.camera});
 		} else if (mode === "normal" || mode === "normal-flat") {
 			applyMaterials(semantic.meshes, mode === "normal-flat" ? "flatNormals" : "normals"); holeCut.apply(fitted.camera);
-			renderer.setRenderTarget(null); renderer.setClearColor(0x000000, 1); renderer.render(scene, fitted.camera);
+			renderer.setClearColor(0x000000, 1);
+			return diagnosticRasterPng({renderer,target:diagnosticTarget,scene,camera:fitted.camera});
 		} else if (mode === "depth") {
 			applyMaterials(semantic.meshes, "depths"); holeCut.apply(fitted.camera);
-			renderer.setRenderTarget(null); renderer.setClearColor(0xffffff, 1); renderer.render(scene, fitted.camera);
+			renderer.setClearColor(0xffffff, 1);
+			return diagnosticRasterPng({renderer,target:diagnosticTarget,scene,camera:fitted.camera});
 		} else {
 			applyMaterials(semantic.meshes, "fills"); holeCut.apply(fitted.camera); renderer.setClearColor(settings.background, 1);
 			renderer.setRenderTarget(renderTarget); renderer.clear(); renderer.render(scene, fitted.camera);
@@ -717,6 +748,7 @@ function renderCompetition(root, view) {
 	globalThis.__ELEVATION3D_ARTIFACT__ = {
 		camera: fitted.manifest,
 		depth_encoding: { type: "orthographic-linear-rgb24", near_m: fitted.camera.near, far_m: fitted.camera.far },
+		diagnostic_sampling: { samples: 1, export: "raw-rgba-readback", row_order: "top-down", color_transform: "none" },
 		projected_bounds_m: { min: [fitted.bounds.minH, fitted.bounds.minV], max: [fitted.bounds.maxH, fitted.bounds.maxV] },
 		annotation_lanes: {
 			level: { min_x: maxX + 49, max_x: outputSize - 48 },
@@ -801,6 +833,10 @@ function renderCompetitionPlan(root, view) {
 	const clippingPlanes = isPlan ? [new THREE.Plane(new THREE.Vector3(0, 0, -1), settings.cut_elevation_m)] : [];
 	renderer.localClippingEnabled = isPlan;
 	const semantic = competitionMaterials(root, settings.palette, { facadeDetailPolygonOffsetFactor: isPlan ? -4 : 8 });
+	const diagnosticTarget = new THREE.WebGLRenderTarget(outputSize, outputSize, {
+		samples: 0, minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter,
+		format: THREE.RGBAFormat, type: THREE.UnsignedByteType,
+	});
 	for (const record of semantic.meshes) for (const key of ["fills", "ids", "normals", "depths"]) {
 		for (const material of record[key]) material.clippingPlanes = clippingPlanes;
 	}
@@ -840,11 +876,14 @@ function renderCompetitionPlan(root, view) {
 		renderer.outputColorSpace = mode === "base" ? THREE.SRGBColorSpace : THREE.LinearSRGBColorSpace;
 		cutMesh.visible = mode === "base" && isPlan;
 		if (mode === "material-id") {
-			applyMaterials(semantic.meshes, "ids"); holeCut.apply(fitted.camera, clippingPlanes); renderer.setRenderTarget(null); renderer.setClearColor(0x000000, 1); renderer.render(scene, fitted.camera);
+			applyMaterials(semantic.meshes, "ids"); holeCut.apply(fitted.camera, clippingPlanes); renderer.setClearColor(0x000000, 1);
+			return diagnosticRasterPng({renderer,target:diagnosticTarget,scene,camera:fitted.camera});
 		} else if (mode === "normal" || mode === "normal-flat") {
-			applyMaterials(semantic.meshes, mode === "normal-flat" ? "flatNormals" : "normals"); holeCut.apply(fitted.camera, clippingPlanes); renderer.setRenderTarget(null); renderer.setClearColor(0x000000, 1); renderer.render(scene, fitted.camera);
+			applyMaterials(semantic.meshes, mode === "normal-flat" ? "flatNormals" : "normals"); holeCut.apply(fitted.camera, clippingPlanes); renderer.setClearColor(0x000000, 1);
+			return diagnosticRasterPng({renderer,target:diagnosticTarget,scene,camera:fitted.camera});
 		} else if (mode === "depth") {
-			applyMaterials(semantic.meshes, "depths"); holeCut.apply(fitted.camera, clippingPlanes); renderer.setRenderTarget(null); renderer.setClearColor(0xffffff, 1); renderer.render(scene, fitted.camera);
+			applyMaterials(semantic.meshes, "depths"); holeCut.apply(fitted.camera, clippingPlanes); renderer.setClearColor(0xffffff, 1);
+			return diagnosticRasterPng({renderer,target:diagnosticTarget,scene,camera:fitted.camera});
 		} else {
 			applyMaterials(semantic.meshes, "fills"); holeCut.apply(fitted.camera, clippingPlanes); renderer.setClearColor(settings.background, 1); renderer.setRenderTarget(renderTarget); renderer.clear(); renderer.autoClear = false;
 			if (isPlan) { renderer.render(overheadScene, fitted.camera); renderer.clearDepth(); }

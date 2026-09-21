@@ -15,7 +15,6 @@
  */
 import { readdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-
 import { codexPhoto } from "../facade-presentation/photo/codex-photo.mjs";
 import { buildConceptSubject } from "../facade-presentation/photo/concept-subject.mjs";
 import { runCli as runShowcase } from "../facade-presentation/showcase/cli.mjs";
@@ -23,6 +22,10 @@ import { resolveRoots, runDirFor } from "./config.mjs";
 import { prepareFacadeContext } from "./prepare.mjs";
 import { briefIsStale, checkFacadeGrammar, renderFacadeScheme, writeFacadeBrief } from "./index.mjs";
 import { compareDrawingToSource } from "./source-check.mjs";
+import { traceFacade, exportFacadeCAD } from "./vision.mjs";
+import { runPerspectiveWorkflow } from './perspective-workflow.mjs';
+import { evaluateLattice, fitLattice, readAuthoredGrammar } from "./lattice.mjs";
+import { applyBaseModel } from "./apply.mjs";
 
 /**
  * The compiled GLB of a rendered scheme.
@@ -46,8 +49,13 @@ function flags(argv) {
 	const out = {};
 	const rest = [];
 	for (let i = 0; i < argv.length; i += 1) {
-		if (argv[i].startsWith("--")) out[argv[i].slice(2)] = argv[i + 1], i += 1;
-		else rest.push(argv[i]);
+		if (argv[i].startsWith("--")) {
+			// A flag with no value of its own is a switch: `--keep-voids` used to swallow whatever
+			// came next (or end up undefined at the end of the line) and read as false.
+			const next = argv[i + 1];
+			if (next === undefined || next.startsWith("--")) out[argv[i].slice(2)] = true;
+			else { out[argv[i].slice(2)] = next; i += 1; }
+		} else rest.push(argv[i]);
 	}
 	return { out, rest };
 }
@@ -55,11 +63,18 @@ function flags(argv) {
 const say = (value) => process.stdout.write(`${JSON.stringify(value)}\n`);
 
 const USAGE = "usage: cli.mjs roots | prepare <candidate> | brief <candidate>"
+	+ " | agent <candidate> <name> --idea <design-intent> [--concept existing.png --engine sam3 --attempts 3]"
 	+ " | check <candidate> <grammar.json> | draw <candidate> <grammar.json> <name> [--palette preset|palette.json]"
 	+ " | render <candidate> <grammar.json> <name> [--palette preset|palette.json]"
 	+ " | showcase <candidate> <name> <out.png> [--wall --glass --frame --mood --face]"
 	+ " | photo <in.png> <out.png> [--subject s]"
-	+ " | concept <candidate> <name> --idea \"...\"";
+	+ " | concept <candidate> <name> --idea \"...\""
+	+ " | lattice <spec.json> <out-dir>   (evaluate a ModelSpec: instances.json + SVG + DXF under one model hash)"
+	+ " | mass <roi.json> <name> --depth <m>   (TEST FIXTURE ONLY: a mass from a photograph's silhouette, for judging a drawing before the mass agent delivers. The mass is the authority and comes from the mass agent; this agent never designs one.) | fit <curves.json> <spec-out.json> [--depth -0.36 --scoop 25]   (observed cells from `trace` -> a ModelSpec, with recovery numbers)"
+	+ " | apply <candidate> <base-spec.json> <name> [--scale 1 --pitch 1 --thickness 0.45 --web 0.05 --rotate 0 --points 24 --faces front,back --keep-voids]   (a base model onto a mass: facet run, spec, grammar, gates)"
+	+ " | trace <candidate> <image> [name] --roi <polygon-and-scale.json> [--engine sam3|sam2|classical]"
+	+ " | cad <facade_model.json> <output-directory>"
+	+ " | edit <facade_model.json> <output-directory> --edits <design-edits.json>";
 
 // A palette is a design decision, and until now this CLI could only pass one of four preset
 // NAMES - so an author could say which member is brick but never what brick looks like, and
@@ -78,6 +93,71 @@ export async function runPipelineCli(argv) {
 	const roots = { datasetRoot: flag.dataset, outputRoot: flag.output };
 
 	if (command === "roots") { say(resolveRoots(roots)); return 0; }
+	if (command === 'agent') {
+		const report = await runPerspectiveWorkflow({candidateId,name:args[0],idea:flag.idea,conceptPath:flag.concept,
+			resume:Boolean(flag.resume),
+			rerender:Boolean(flag.rerender),
+			requireVision:Boolean(flag['require-vision'] || flag.requireVision),
+			engine:flag.engine ?? 'sam3',tileSize:Number(flag['tile-size'] ?? 512),maxAttempts:Number(flag.attempts ?? 3),...roots});
+		say({ok:report.ok,stage:report.stage,candidate:report.candidate,vision_ok:report.vision_ok ?? false,manifest:report.manifest,
+			source:report.source,views:report.views,attempts:report.attempts.map(a=>({attempt:a.attempt,stage:a.stage}))});
+		return report.ok ? 0 : 1;
+	}
+	if (command === "lattice") {
+		const [specPath, outDir] = [candidateId, ...args];
+		if (!specPath || !outDir) { say({ ok: false, error: USAGE }); return 2; }
+		const report = await evaluateLattice({ specPath, outDir });
+		say(report); return report.ok ? 0 : 1;
+	}
+	if (command === "apply") {
+		const [specPath, name] = args;
+		if (!candidateId || !specPath || !name) { say({ ok: false, error: USAGE }); return 2; }
+		const edits = Object.fromEntries(["scale", "pitch", "thickness", "web", "rotate", "points"].filter((k) => flag[k] !== undefined).map((k) => [k, Number(flag[k])]));
+		// A design void is the SOURCE building's (an oculus belongs to the photograph, not to our
+		// mass), so apply drops it - except when the mass IS that building and the base model is
+		// being laid back onto it, which is how the source's own drawing covers its whole facet.
+		if (flag["keep-voids"] || flag.keepVoids) edits.keep_voids = true;
+		// The fitted size field is the SOURCE building's; keep it only when the base model is being
+		// laid back onto that building (its own mass), which is also when its voids are kept.
+		if (flag["keep-fields"] || flag.keepFields) edits.flat_fields = false;
+		if (flag.face) edits.face = String(flag.face);
+		const report = await applyBaseModel({ candidateId, specPath, name, edits, faces: flag.faces ? String(flag.faces).split(",") : undefined });
+		say(report); return report.ok ? 0 : 1;
+	}
+	// A TEST FIXTURE, in the same class as `synthetic-box-WxDxH`: the mass a picture's silhouette
+	// gives, so a drawing can be judged against the photograph before the mass agent has delivered
+	// anything. THE MASS IS THE AUTHORITY AND IT COMES FROM THE MASS AGENT - this agent designs the
+	// elevation on whatever mass it is handed and never makes one for a delivery. It exists because
+	// the answer to "why does the Broad's veil not look like the Broad" was the box we had chosen,
+	// and that is shown by putting the same veil on the photograph's own form, not by arguing it.
+	if (command === "mass") {
+		const [roiPath, name] = [candidateId, ...args];
+		if (!roiPath || !name) { say({ ok: false, error: USAGE }); return 2; }
+		const { massFromOutline } = await import("./outline-mass.mjs");
+		const report = await massFromOutline({ roiPath, name, depthM: Number(flag.depth),
+			bulgeM: flag.bulge === undefined ? 0 : Number(flag.bulge),
+			leanM: flag.lean === undefined ? 0 : Number(flag.lean),
+			columns: flag.columns === undefined ? 20 : Number(flag.columns), outputRoot: flag.output });
+		if (report.ok) await prepareFacadeContext({ candidateId: report.candidate, ...roots });
+		say(report); return report.ok ? 0 : 1;
+	}
+	if (command === "fit") {
+		const [curvesPath, specOut] = [candidateId, ...args];
+		if (!curvesPath || !specOut) { say({ ok: false, error: USAGE }); return 2; }
+		const report = await fitLattice({ curvesPath, specOut, depthM: flag.depth, scoopDeg: flag.scoop });
+		say(report); return report.ok ? 0 : 1;
+	}
+	if (command === "cad" || command === "edit") {
+		if (!candidateId || !args[0]) { say({ok: false, error: USAGE}); return 2; }
+		if (command === 'edit' && !flag.edits) { say({ok:false, error:'EDIT_SPEC_REQUIRED'}); return 2; }
+		const report = await exportFacadeCAD(candidateId, args[0], command === 'edit' ? flag.edits : undefined);
+		say(report); return report.ok ? 0 : 1;
+	}
+	if (command === "trace") {
+		if (!candidateId || !args[0]) { say({ok: false, error: USAGE}); return 2; }
+		const report = await traceFacade({candidateId, imagePath: args[0], name: args[1], flags: flag});
+		say(report); return report.ok ? 0 : 1;
+	}
 	// The photoreal pass takes a picture, not a mass, so it needs no context and must not pay
 	// for preparing one. It is the free lane: the user's Codex CLI, not a paid image API.
 	if (command === "photo") {
@@ -145,10 +225,9 @@ export async function runPipelineCli(argv) {
 		say({ ok: true, candidate: candidateId, scheme: name, glb, out: resolve(outPng) });
 		return 0;
 	}
-
 	const [grammarPath, name] = args;
 	if (!grammarPath) { say({ ok: false, error: USAGE }); return 2; }
-	const grammar = JSON.parse(await readFile(resolve(grammarPath), "utf8"));
+	const grammar = await readAuthoredGrammar(grammarPath);
 	// Is the brief in this run directory still the brief the engine would write?
 	//
 	// `brief` writes a file per candidate and nothing regenerates it when the prompt changes,
@@ -194,8 +273,10 @@ export async function runPipelineCli(argv) {
 			palette: await resolvePaletteFlag(flag.palette),
 		});
 		await writeFile(join(runDir, name, "composition.json"), `${JSON.stringify(drawn.composition, null, 2)}\n`, "utf8");
+		const sourceComparison = await compareDrawingToSource({runDir, grammar, heroPath: drawn.hero.path});
+		const sourceOK = sourceComparison.source_fidelity?.accepted !== false;
 		say({
-			ok: true, stage: "drawn", drew: true, candidate: candidateId, out: join(runDir, name),
+			ok: sourceOK, stage: sourceOK ? "drawn" : "source_rejected", drew: true, candidate: candidateId, out: join(runDir, name),
 			hero: drawn.hero.path, metrics: checked.metrics, composition: drawn.composition,
 			// The one measurement that reads the photograph. `source_photograph` had eleven uses
 			// in this engine and every one of them spent it turning a gate OFF; nothing opened
@@ -203,10 +284,10 @@ export async function runPipelineCli(argv) {
 			// drawing agrees they are the same building - was enforced by nobody, while eight
 			// gates checked the drawing against itself and passed a drawing that was brown where
 			// its photograph was grey and one note where its photograph ran shut to open.
-			...(await compareDrawingToSource({ runDir, grammar, heroPath: drawn.hero.path })),
+			...sourceComparison,
 			...(briefStale ? { brief_stale: briefStale } : {}),
 		});
-		return 0;
+		return sourceOK ? 0 : 1;
 	}
 
 	if (command === "render") {
@@ -216,11 +297,13 @@ export async function runPipelineCli(argv) {
 			palette: await resolvePaletteFlag(flag.palette),
 		});
 		await writeFile(join(runDir, name, "composition.json"), `${JSON.stringify(rendered.composition, null, 2)}\n`, "utf8");
+		const sourceComparison = await compareDrawingToSource({runDir, grammar, heroPath: rendered.hero.path});
+		const sourceOK = sourceComparison.source_fidelity?.accepted !== false;
 		say({
-			ok: true, candidate: candidateId, out: join(runDir, name),
+			ok: sourceOK, candidate: candidateId, out: join(runDir, name), ...sourceComparison,
 			hero: rendered.hero.path, composition: rendered.composition,
 		});
-		return 0;
+		return sourceOK ? 0 : 1;
 	}
 
 	say({ ok: false, error: USAGE });
