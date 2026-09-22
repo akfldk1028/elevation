@@ -8,6 +8,8 @@ import pathlib
 import sys
 import math
 import ezdxf
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from src.curve_document import transformed_loops
 
 

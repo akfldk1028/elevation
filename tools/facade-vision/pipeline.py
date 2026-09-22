@@ -1,6 +1,9 @@
 """Command entry point for source-preserving facade tracing."""
 import json
+import pathlib
 import sys
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from trace_runner import main
 
 if __name__ == '__main__':

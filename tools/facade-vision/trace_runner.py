@@ -12,6 +12,8 @@ import sys
 import tempfile
 import cv2
 import numpy as np
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from src.observations import select_cells, classical_masks, roi_mask
 from src.curve_document import build_curve_document, export_curve_document, measure_curve_fidelity
 from src.outline_extractor import extract_normalized_outline
