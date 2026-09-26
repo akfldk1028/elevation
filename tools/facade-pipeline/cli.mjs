@@ -19,6 +19,7 @@ import { codexPhoto } from "../facade-presentation/photo/codex-photo.mjs";
 import { buildConceptSubject } from "../facade-presentation/photo/concept-subject.mjs";
 import { runCli as runShowcase } from "../facade-presentation/showcase/cli.mjs";
 import { resolveRoots, runDirFor } from "./config.mjs";
+import { makeConcept } from "./concept.mjs";
 import { prepareFacadeContext } from "./prepare.mjs";
 import { briefIsStale, checkFacadeGrammar, renderFacadeScheme, writeFacadeBrief } from "./index.mjs";
 import { compareDrawingToSource } from "./source-check.mjs";
@@ -68,7 +69,7 @@ const USAGE = "usage: cli.mjs roots | prepare <candidate> | brief <candidate>"
 	+ " | render <candidate> <grammar.json> <name> [--palette preset|palette.json]"
 	+ " | showcase <candidate> <name> <out.png> [--wall --glass --frame --mood --face]"
 	+ " | photo <in.png> <out.png> [--subject s]"
-	+ " | concept <candidate> <name> --idea \"...\""
+	+ " | concept <candidate> <name> --idea \"...\" [--engine codex|sdxl --seed 7 --scale 0.6 --steps 30]"
 	+ " | lattice <spec.json> <out-dir>   (evaluate a ModelSpec: instances.json + SVG + DXF under one model hash)"
 	+ " | mass <roi.json> <name> --depth <m>   (TEST FIXTURE ONLY: a mass from a photograph's silhouette, for judging a drawing before the mass agent delivers. The mass is the authority and comes from the mass agent; this agent never designs one.) | fit <curves.json> <spec-out.json> [--depth -0.36 --scoop 25]   (observed cells from `trace` -> a ModelSpec, with recovery numbers)"
 	+ " | apply <candidate> <base-spec.json> <name> [--scale 1 --pitch 1 --thickness 0.45 --web 0.05 --rotate 0 --points 24 --faces front,back --keep-voids]   (a base model onto a mass: facet run, spec, grammar, gates)"
@@ -205,7 +206,8 @@ export async function runPipelineCli(argv) {
 		if (!name || !flag.idea) { say({ ok: false, error: USAGE }); return 2; }
 		const subject = buildConceptSubject({ context, idea: flag.idea });
 		const outputPng = join(runDir, `concept-${name}.png`);
-		const photo = await codexPhoto({ inputPng: join(runDir, "evidence", "color", "axon.png"), outputPng, subject, mode: "concept" });
+		const photo = await makeConcept({ engine: flag.engine ?? "codex", runDir, outputPng, subject,
+			seed: flag.seed, scale: flag.scale, steps: flag.steps });
 		say({ ok: true, candidate: candidateId, concept: name, subject, ...photo });
 		return 0;
 	}

@@ -1,0 +1,9 @@
+# The concept engine runs SDXL with a ControlNet locally. The two models it names are ungated
+# and download themselves on first use (about 9 GB); set HF_HOME to share one cache.
+torch>=2.4            # CUDA build; see https://pytorch.org for the right index-url
+diffusers>=0.31
+transformers>=4.44
+accelerate>=0.33
+safetensors>=0.4
+huggingface_hub>=0.24  # snapshot ids for the provenance file
+pillow>=10.0
