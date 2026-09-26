@@ -101,32 +101,78 @@ exceptions. `fit` reads that spec off an observed facade; `apply` lays it onto a
 facet run; the cells compile to 3D funnel MODULES standing on a glass box. Spec and plan:
 `docs/superpowers/plans/2026-09-16-parametric-lattice.md`.
 
-## Where this stands, and what to pick up next (2026-09-20)
+## With this folder alone
 
-Working end to end: photograph → trace → fit → apply → gates → eight views + PBR + hero, with
-**two** designs (The Broad, and a second authored one recovered from its own picture to 1 mm)
-on **four** masses. The veil now sizes itself to the mass — no `--scale` or `--points` by hand.
+Measured on 2026-09-26 by copying exactly what a clone carries (548 files, 19 MB) into an
+unrelated directory and running it there. Nothing below is an expectation; each line was run.
+
+**Runs with nothing but this repository** — the three candidate masses are in
+`data/datasets/candidates/`, their four run seeds in `output/<candidate>/…` (`prepare` rebuilds
+the 37-file evidence pack from them), the sample grammar in `data/sample_grammar.json`:
+
+    cli.mjs roots | prepare <candidate> | brief <candidate>
+    cli.mjs check creative-020 data/sample_grammar.json     # accepted, 273 primitives
+    cli.mjs draw  creative-020 data/sample_grammar.json x   # eight views + PBR + hero
+    cli.mjs fit | apply | lattice                           # python evaluator, in-repo
+
+**Needs one environment variable** — the full test suite. The five finished e2e runs it reads
+weigh ~420 MB and are deliberately not here: `ELEVATION_AGENT_FIXTURE_ROOT=/path/to/
+elevation-3d-e2e-results`. With it, 951/951. Without it, 890 pass, 15 fail and eleven files stop
+at load, each naming what is missing — a clone with no fixture root is red on purpose.
+
+**Needs a download** — only the two neural steps:
+
+| step | what | size | gated |
+|---|---|---|---|
+| `trace --engine sam3` | the sam3 PACKAGE (`SAM3_PATH`, `vendor/sam3`, …) | 71 MB | no |
+| | its weights (`SAM3_CHECKPOINT`) | 3.3 GB | **yes** — request access, `hf auth login` |
+| `concept --engine sdxl` | RealVisXL + ControlNet union, fetched automatically | 9 GB | no |
+
+`trace --engine classical` needs neither and is refused on a real photograph at `mask_iou 0.802`
+against a floor of 0.90 (tiled SAM 3 scores 0.924) — the gate working, not a broken install.
+`checkpoints/README.md` carries the source, size and sha256 of every weight file this project's
+drawings were made with.
+
+**Is NOT here, on purpose**: source photographs (this repository is public, so the pictures a
+design was read from are supplied locally — their ROI files are tracked and record each image's
+sha256); the design corpus of 173 authored grammars and specs (3 MB) and 25 concept images
+(53 MB); and ~25 GB of retained renders, which are output and regenerable.
+
+## Where this stands, and what to pick up next (2026-09-26)
+
+The lane runs end to end from a picture, in a copy of this repo, with no closed account in it:
+
+    concept --engine sdxl   local SDXL + ControlNet over the mass's own depth raster
+    trace --engine sam3 --tile-size 512
+    fit -> apply -> draw    eight views + PBR + hero
+
+Proven twice this week. From a **photograph** (The Broad): 581 apertures at IoU 0.924, fit 536
+cells at RMS 0.089 m, 1,969 cells applied with zero faults, drawn. From a **generated concept**:
+264 apertures at IoU 0.966, 251 cells at 0.070 m, 2,681 cells, drawn. The photograph is still
+the better input — fit inliers 0.821 against 0.315, because a generated field is less regular
+than it looks — so the generator's job is to PROPOSE, and proposing is now free.
 
 The open item, and the next task for whoever picks this up:
 **`docs/superpowers/plans/2026-09-20-cell-budget-on-a-pleated-mass.md`.** On a mass pleated
 finer than the design's own cell (creative-004, 113 facets at 1.76 m), the self-sizing veil
 passes every gate and the drawing reads as confetti — 60.4% of it is solid panel — because the
 cell cap counts fold PARTS and is spent over all four faces at once. That file carries every
-measurement already taken, the acceptance numbers, and the rules. Do not re-derive what is in
-its table.
+measurement already taken, the acceptance numbers, and the rules. Do not re-derive its table.
 
 Also open, smaller: the crest lines in the 2D export; the parapet sawtooth; the homography
-before the fit; a second real photograph through the lane.
+before the fit (the fit has no perspective correction, so a concept must be near-frontal or
+assigned a frame); a second real photograph; and the star prism's roof seam, which needs a PALE
+veil to clear the seam detector on that mass.
 
-Handing that task to Codex is one line:
+Handing a task to Codex is one line:
 
     codex exec --cd D:\Data\50_ELE\ElevationAgent --sandbox workspace-write \
       "Read AGENTS.md, then docs/superpowers/plans/2026-09-20-cell-budget-on-a-pleated-mass.md, and do it."
 
-As of 2026-09-20 that lane is refused by the account — `codex login status` says logged in and
-every model comes back `not supported when using Codex with a ChatGPT account`, which is an
-entitlement, not a model name. Re-authenticate with `codex login` before commissioning. The
-same task hands to a Claude subagent unchanged; only image GENERATION has no substitute.
+As of 2026-09-24 that account is refused — `codex login status` says logged in and every model
+comes back `not supported when using Codex with a ChatGPT account`, which is an entitlement, not
+a model name. Re-authenticate with `codex login` before commissioning. Every task here hands to
+a Claude subagent unchanged, and image generation is no longer a reason to wait for it.
 
 ## What has to be on the machine, and what is in the repo
 
@@ -315,6 +361,27 @@ runs a person had already judged: the one called the same building is clean, the
 not the same trips both, the one called roughly trips one. Missing/failed source comparisons now reject a claimed transcription; passing these coarse measurements still does not prove geometric fidelity.
 
 ## How this goes wrong, every time
+
+**What the lane can be ASKED for is narrower than what an image model can draw.** Measured
+2026-09-24, each costing a run, and none of them is about the model:
+
+- The open brief handed to a diffusion model verbatim — *"what facade does a building of this
+  shape want?"* — returns a **blank massing model**. It renders a description; it does not
+  answer a question. Name the programme; style, palette and material still must not be named.
+  (The rule was written for a model that INTERPRETS a commission, and it still holds there.)
+- A **front** depth raster of a prism is nearly featureless, so a ControlNet holds nothing and
+  the model returns a wall texture with no building in it. Condition on the three-quarter axon.
+- The trace reads **cells, not glass**: SAM 3 finds zero apertures in a continuous glazed skin,
+  and the lattice fit refuses a sparse punched grid outright — *the inlier cells lie on one
+  line; a lattice needs two directions.* What this lane reads back is a dense, doubly periodic
+  field. And untiled SAM 3 found 4 apertures where `--tile-size 512` found 581, while the
+  fidelity gate scored BOTH well: it measures whether the curves were drawn accurately, never
+  whether they were all found.
+
+**A path can be the bug.** A copy of this repo at a 272-character path (Windows stops at 260)
+failed every draw with `DIMENSION_SOURCE_MISSING` while the mass, the context and the compiled
+GLB matched to the byte. The validator now records `dimension_source_error` beside the code, so
+the next one costs a minute rather than an afternoon.
 
 **A green gate is not evidence the drawing is right.** Measured examples from one day:
 

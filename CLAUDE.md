@@ -2644,3 +2644,86 @@ a budget one; nothing here is a defect.
 Open, in the plan's order: the cell budget on a pleated mass (above); the crest lines in the 2D export;
 the parapet sawtooth (the top row past the roof line); the homography before the fit; Task 5's A vs B on
 one ROI with the fit as B.
+
+## 2026-09-22/26 the repo learned to leave home, and the lane's entrance opened
+
+Three rounds, each started by one question, each ending in a measurement.
+
+**"이 레포 하나로 다 되나? 다른 레포로 옮기게."** Copied exactly what a clone carries (548 files,
+19 MB, `git ls-files -c -o --exclude-standard`) into an unrelated directory and ran the suite
+there: 951 tests, 932 pass, **19 fail**. Five things were true only while this repository sat
+inside `D:\Data(_ELE`, and none of them could be seen from here:
+
+- the dataset held creative-004 and creative-020 and not creative-013 (five tests, ENOENT);
+- only creative-020 had the four seeds `prepare` needs, so the other two masses could not be
+  prepared. `prepare` rebuilds the 37-file evidence pack from those four - tested by moving the
+  folder aside - so only the seeds travel;
+- `.gitignore` un-ignored creative-020's seeds ALONE, so copying the others in would not have
+  survived a clone. Nothing was visibly wrong here; the leak was in what a clone carries;
+- `config.mjs`'s legacy fallback overrode an EXPLICIT argument - a path that did not exist yet
+  was silently redirected to a hardcoded one. That is also why the repo looked portable from
+  inside this machine. It now applies only when the value came from the default;
+- the test helpers found the dataset and the finished runs by walking UP the filesystem, and
+  composed the results tree from the DATASET's parent. Eleven files stopped at load in a copy
+  elsewhere. They ask the configured roots first now, and ten hand-built paths go through
+  `fixture()`, which names what is missing and which variable sets it.
+
+The moved copy is **951/951** with `ELEVATION_AGENT_FIXTURE_ROOT` set. The 420 MB of finished
+e2e runs stay outside by the user's call; a clone without them is red on purpose and says so.
+
+**"도면도 다 되는지 봐야 하는 거 아님?"** Right, and the suite is not the deliverable. The moved
+copy drew `data/sample_grammar.json` end to end (eight views + PBR + hero) and then the whole
+lane from a photograph: trace 581 apertures at IoU 0.924, fit 536 cells at RMS 0.089 m, apply
+1,969 cells with zero faults, drawn. Two earlier draws in that copy failed on
+`DIMENSION_SOURCE_MISSING` while every input matched to the byte - the difference was that the
+copy sat 116 characters deep, putting artifacts at **272 characters** against the Windows limit
+of 260. From `D:\mvt` the same grammar drew everything. The repository was never at fault; the
+harness was. `deriveElevationDimensions` throws six distinct sentences and the catch turned all
+of them into one bare code, so it records `dimension_source_error` now - only when there is one,
+so every accepted receipt stays byte-identical.
+
+**"가중치는 어디서 나옴?"** One question, two false claims and a verification gap.
+`checkpoints/README.md` said the system downloads `facebook/sam3` from Hugging Face when
+authenticated: there is no `hf_hub_download`, `snapshot_download` or `from_pretrained` anywhere
+in `tools/facade-vision`. The README offered `scripts/download_checkpoints.py` as the way to get
+the weights, and that script only linked what was already beside the repo or printed a URL - and
+it reported a machine configured through `SAM3_CHECKPOINT` as MISSING, because it never read the
+environment. SAM 3 is a **gated** release (request access, `hf auth login`, then download), so
+the script now says that in four steps, actually fetches the two that are not gated with
+`--download`, and `--verify` hashes what it found in about ten seconds against digests that are
+now recorded: `sam3.pt` 3,450,062,241 B `9999e234…`, `sam2.1_hiera_small.pt` 184,416,285 B
+`6d1aa6f3…`, `groundingdino_swint_ogc.pth` 693,997,677 B `3b3ca256…`. Everything else in this
+lane is hash-checked; the weights were the one input nobody could verify. Also recorded: the
+sam3 PACKAGE is a second thing from the weights (`import sam3` is Meta's repository, 71 MB of
+source, not a PyPI install), and nothing here can tell SAM 3 from SAM 3.1.
+
+**"gpt 안 되면 오픈소스라도 되어야 하는 거 아님?"** The lane had exactly one closed dependency and
+it was the first step. `tools/facade-concept` runs Stable Diffusion XL with a ControlNet over
+the depth raster the evidence pack already renders for the bare mass: RealVisXL and
+controlnet-union were already in the cache and neither is gated, so **no new disk, no key, 25 s
+an image** on a 12 GB card. The conditioning is the architecture of it, not the cost - a
+commission DESCRIBES the mass and asks the model to respect it, which is how a five-storey prism
+once came back as a star-plan tower, while a ControlNet takes the geometry as an input. Proven
+end to end on creative-020: 264 apertures at IoU 0.966, 251 cells at RMS 0.070 m, 2,681 cells
+applied with zero faults, drawn and accepted.
+
+Three things the pictures taught, all about what the lane can be ASKED for:
+
+- the open brief drawn verbatim returns a BLANK MASS. A diffusion model renders a description,
+  it does not answer a question, so the programme has to be named - style, palette and material
+  still must not be, and a test holds the camera setup to that;
+- a FRONT depth raster of a prism is nearly featureless: the ControlNet holds nothing and the
+  model returns a wall texture. Condition on the axon;
+- the trace reads cells, not glass. SAM 3 found zero apertures in a continuous glazed skin, and
+  the fit refused a sparse punched grid - *the inlier cells lie on one line; a lattice needs two
+  directions*. Untiled SAM 3 found 4 apertures where `--tile-size 512` found 581, and the
+  fidelity gate scored both well: it measures whether curves were drawn accurately, never
+  whether they were all found.
+
+The honest gap: fit inliers **0.315** for a generated field against **0.821** for the
+photograph. Diffusion drifts a row here and a column there, and it shows in the drawing - the
+cells came out blobby where the concept's were crisp. A photograph is still the better input;
+the generator's job is to propose, and proposing is now free.
+
+Sheets: https://claude.ai/artifact/KGaFmPBybgVMLUeSGTyo9U (the move) and
+https://claude.ai/artifact/1Zn2NJbZgzrz6GhvHXD4Xp (the open entrance).
