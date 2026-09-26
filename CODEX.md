@@ -77,7 +77,9 @@ ElevationAgent의 핵심은 8개 모든 뷰와 PBR 렌더링에서 무결함(Zer
 ## 3. 비전 파운데이션 모델 파이프라인 (Vision-to-Grammar)
 
 1. **Meta SAM 3 & SAM 3.1 (Segment Anything with Concepts)**
-   - 체크포인트: `sam3.pt` (3.29 GB, `clone/sam3/checkpoints/sam3.pt`).
+   - 체크포인트: `sam3.pt` (3,450,062,241 B, sha256 `9999e234…`). **게이트된 배포라 어떤 스크립트도 대신 받아줄 수 없습니다** —
+     승인 후 `hf auth login` → `hf download facebook/sam3`. 출처·해시·탐색 순서는 `checkpoints/README.md`가 단일 기준입니다.
+     (`clone/sam3/checkpoints/sam3.pt`는 이 기계의 옛 배치일 뿐, 새 체크아웃이 의존할 곳이 아닙니다.)
    - 오픈 보캐뷸러리 개념 프롬프팅 (`Sam3Processor.set_text_prompt`) 지원으로 외부 디텍터 없이 텍스트(`window`, `opening`, `aperture`)로 입면 부재 직접 분할.
    - CUDA BFloat16 자동 가속 지원.
 

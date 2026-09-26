@@ -111,14 +111,58 @@ pip install -r tools/facade-vision/requirements.txt
 ```
 
 ### 3. Model Weights Setup
-If running neural vision models (SAM 3 / Grounded-SAM-2):
+If running the neural vision models (SAM 3 / Grounded-SAM-2):
 ```bash
-python scripts/download_checkpoints.py
+python scripts/download_checkpoints.py             # find, report, link into checkpoints/
+python scripts/download_checkpoints.py --verify    # sha256 against the recorded digests
+python scripts/download_checkpoints.py --download  # fetch the two that are NOT gated
 ```
+**SAM 3 is gated and no script can fetch it for you** — request access at
+<https://huggingface.co/facebook/sam3>, `hf auth login`, then
+`hf download facebook/sam3 --include "sam3.pt" --local-dir checkpoints`. SAM 2.1 and Grounding
+DINO come from direct URLs and `--download` gets them. `checkpoints/README.md` carries the
+source, size and sha256 of each file this project's drawings were made with.
 *Or set environment variables:*
 - `SAM3_CHECKPOINT=/path/to/sam3.pt`
 - `SAM2_CHECKPOINT=/path/to/sam2.1_hiera_small.pt`
 - `GDINO_CHECKPOINT=/path/to/groundingdino_swint_ogc.pth`
+
+**The weights are not the whole of it — the SAM 3 *package* is a second thing.** `import sam3`
+is not a PyPI install here: it resolves to Meta's repository (71 MB of source, separate from the
+3.3 GB checkpoint). On a machine that has it installed editable, any checkout works and nothing
+needs saying. On a fresh machine, give the segmenter one of the places it already looks, in this
+order: `SAM3_PATH=/path/to/sam3`, `<repo>/vendor/sam3`, `<repo>/clone/sam3`, `<repo>/../clone/sam3`
+— cloning Meta's repo into `vendor/sam3` is the one that needs no environment at all. The same
+holds for Grounded-SAM-2. Without the package the trace still runs: `--engine classical` needs no
+weights and no upstream source, and on a real photograph it is refused by the fidelity gate
+(measured: `mask_iou 0.802` against a floor of 0.90, where tiled SAM 3 scores 0.924) — which is
+the gate doing its job, not a broken install.
+
+### 4. Test fixtures (only for the full test suite)
+
+Part of the suite reads **finished e2e runs** — enriched GLBs, rendered views, validation
+receipts. The five the suite names weigh about 420 MB (one of them 302 MB on its own), so
+they are kept outside the repository. Point one variable at them:
+
+```bash
+ELEVATION_AGENT_FIXTURE_ROOT=/path/to/elevation-3d-e2e-results npm test
+```
+
+Measured on a clean copy of exactly what a clone carries (2026-09-22):
+
+| | tests | pass | fail |
+|---|---|---|---|
+| with the fixture root | 951 | **951** | 0 |
+| without it | 905 registered | 890 | 15, and **11 files stop at load** |
+
+Eleven files ask for a fixture path while they are being imported, so the missing tree takes
+the whole file rather than one test — which is why the counts do not simply differ by the
+fourteen tests that name a finished run. Every one of them says what is missing and which
+variable to set. **A clean clone with no fixture root is red, and that is not a defect in the
+clone**: set the variable, or expect those eleven.
+
+`npm test` is memory-bound: run it alone, and `--test-concurrency=2` keeps the browser-render
+tests from stacking.
 
 ---
 
