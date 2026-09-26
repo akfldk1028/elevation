@@ -461,6 +461,13 @@ export async function validateCompetitionElevation({ artifacts, sourceMesh, faca
 	const typedFacadeEvidence = designEvidence?.typed ? designEvidence : grammarEvidence;
 	const typedFacadeArtifact = typedFacadeEvidence.typed;
 	let authoritative;
+	// Why it could not be derived, not merely that it could not. `deriveElevationDimensions`
+	// throws six distinct sentences - a mass that no elevation is square to, an ambiguous plane,
+	// a mesh that disagrees with the GLB, a GLB it cannot read - and this catch turned all of
+	// them into one bare code. Diagnosing a refusal then costs a session: on 2026-09-22 a copy
+	// of this repo at a 272-character path (Windows stops at 260) reported exactly this code,
+	// and finding that out took an afternoon of comparing hashes that all matched.
+	let dimensionSourceError = null;
 	try {
 		authoritative = await deriveElevationDimensions({
 			sourceMesh,
@@ -469,7 +476,8 @@ export async function validateCompetitionElevation({ artifacts, sourceMesh, faca
 			view,
 			artifact: { path: selectedGlbPath, sha256: artifacts.base?.selected_glb_sha256 },
 		});
-	} catch {
+	} catch (error) {
+		dimensionSourceError = String(error?.message ?? error);
 		add(codes, "DIMENSION_SOURCE_MISSING", true);
 	}
 	if (authoritative) {
@@ -636,6 +644,8 @@ export async function validateCompetitionElevation({ artifacts, sourceMesh, faca
 		codes: kept,
 		...(waived.length ? { waived } : {}),
 		tolerance_mm: 1,
+		// Only when there IS one, so every accepted receipt stays byte-identical to the ones on disk.
+		...(dimensionSourceError ? { dimension_source_error: dimensionSourceError } : {}),
 		metrics: {
 			dimension_values: authoritative ? dimensionValues(authoritative) : null,
 			total_edge_density: diagnostics.total_edge_density ?? null,
