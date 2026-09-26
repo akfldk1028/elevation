@@ -1,0 +1,14 @@
+# Some files here are verified by their BYTES, not by parsing them: an evidence manifest is
+# hashed, a mass mesh is compared exactly, a GLB is a digest in a receipt. Git's autocrlf - the
+# default on Windows - rewrites line endings on checkout, which added one byte to
+# evidence-manifest.json and made a fresh clone refuse `prepare creative-020` while the same
+# file worked in the repository it had been committed from. Nothing under these paths may be
+# EOL-converted.
+data/datasets/** -text
+data/sources/** -text
+output/** -text
+test/fixtures/** -text
+*.glb -text
+*.obj -text
+*.png -text
+*.jpg -text
