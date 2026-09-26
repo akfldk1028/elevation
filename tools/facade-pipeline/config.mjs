@@ -66,7 +66,13 @@ export function resolveRoots(overrides = {}) {
 		];
 		const [source, rawValue] = chain.find(([, candidate]) => typeof candidate === "string" && candidate.length);
 		const resolved = anchor(rawValue);
-		if (!existsSync(resolved) && legacyPath && existsSync(legacyPath)) {
+		// The legacy fallback exists so a machine that still has the pre-2026-09-20 layout keeps
+		// working when NOBODY has said where the data is. It must never override someone who did:
+		// applied to an argument or an environment variable it silently redirected an explicit
+		// path to a hardcoded one whenever the explicit path did not exist yet, which broke the
+		// documented precedence (argument -> environment -> file -> default) and made this repo
+		// look portable on the one machine that happens to have those directories.
+		if (source === "default" && !existsSync(resolved) && legacyPath && existsSync(legacyPath)) {
 			return { source: "legacy-fallback", value: legacyPath };
 		}
 		return { source, value: resolved };

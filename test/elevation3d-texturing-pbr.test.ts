@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { fixture } from "./helpers/roots.ts";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -190,9 +191,8 @@ test("texture compression explicitly falls back when no KTX2 encoder is configur
 });
 
 test("normalized PBR transfer identifies fully matched non-glass primitives in the real Tripo artifact", async () => {
-	const sharedRoot = discoverElevation3dAssetRoot(process.cwd());
-	const authoritativeGlb = join(sharedRoot, "elevation-3d-e2e-results", "autonomous", "creative-013", "automatic-allviews-flicker-v2-20260804", "delivery", "enriched.glb");
-	const providerGlb = join(sharedRoot, "elevation-3d-e2e-results", "autonomous", "creative-013", "tripo-pbr-v1-20260804", "provider", "provider-textured.glb");
+	const authoritativeGlb = fixture("autonomous", "creative-013", "automatic-allviews-flicker-v2-20260804", "delivery", "enriched.glb");
+	const providerGlb = fixture("autonomous", "creative-013", "tripo-pbr-v1-20260804", "provider", "provider-textured.glb");
 	const report = await analyzeNormalizedPbrTransfer({ authoritativeGlb, providerGlb });
 	assert.equal(report.normalization.accepted, true);
 	assert.equal(Math.abs(report.normalization.uniformScale - 24.721488) < 0.0001, true);
@@ -207,10 +207,9 @@ test("normalized PBR transfer identifies fully matched non-glass primitives in t
 });
 
 test("PBR rebuild transfers the real normalized provider maps onto authoritative geometry", async () => {
-	const sharedRoot = discoverElevation3dAssetRoot(process.cwd());
-	const authoritativeGlb = join(sharedRoot, "elevation-3d-e2e-results", "autonomous", "creative-013", "automatic-allviews-flicker-v2-20260804", "delivery", "enriched.glb");
-	const preparedUvGlb = join(sharedRoot, "elevation-3d-e2e-results", "autonomous", "creative-013", "tripo-pbr-v1-20260804", "provider", "prepared.glb");
-	const providerGlb = join(sharedRoot, "elevation-3d-e2e-results", "autonomous", "creative-013", "tripo-pbr-v1-20260804", "provider", "provider-textured.glb");
+	const authoritativeGlb = fixture("autonomous", "creative-013", "automatic-allviews-flicker-v2-20260804", "delivery", "enriched.glb");
+	const preparedUvGlb = fixture("autonomous", "creative-013", "tripo-pbr-v1-20260804", "provider", "prepared.glb");
+	const providerGlb = fixture("autonomous", "creative-013", "tripo-pbr-v1-20260804", "provider", "provider-textured.glb");
 	const directory = await mkdtemp(join(tmpdir(), "pbr-normalized-rebuild-"));
 	try {
 		const outputGlb = join(directory, "textured.glb");

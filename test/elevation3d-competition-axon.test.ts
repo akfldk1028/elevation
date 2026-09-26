@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { fixture } from "./helpers/roots.ts";
 import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
@@ -14,7 +15,7 @@ const assets = resolveElevation3dAssets({
 	datasetOverride: process.env.ELEVATION3D_DATASET_ROOT,
 	glbOverride: process.env.ELEVATION3D_SELECTED_GLB,
 });
-const runDir = join(dirname(assets.datasetRoot), "elevation-3d-e2e-results", "creative-013", "competition-all-views-20260803-001");
+const runDir = fixture("creative-013", "competition-all-views-20260803-001");
 const cameras = {
 	axon: { name: "axon", projection: "perspective", position: [38, -38, 42.55], target: [0, 0, 4.95], up: [0, 0, 1], fov_degrees: 32 },
 	"opposite-axon": { name: "opposite-axon", projection: "perspective", position: [-38, 38, 42.55], target: [0, 0, 4.95], up: [0, 0, 1], fov_degrees: 32 },

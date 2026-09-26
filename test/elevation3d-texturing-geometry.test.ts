@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { fixture } from "./helpers/roots.ts";
 import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -128,8 +129,7 @@ test("UV preparation deterministically unwraps a GLB without texture coordinates
 });
 
 test("UV preparation preserves the accepted creative-013 surface under the provider size cap", async () => {
-	const sharedRoot = discoverElevation3dAssetRoot(process.cwd());
-	const input = join(sharedRoot, "elevation-3d-e2e-results", "autonomous", "creative-013", "automatic-allviews-flicker-v2-20260804", "delivery", "enriched.glb");
+	const input = fixture("autonomous", "creative-013", "automatic-allviews-flicker-v2-20260804", "delivery", "enriched.glb");
 	await readFile(input);
 	const directory = await mkdtemp(join(tmpdir(), "elevation3d-uv-real-"));
 	try {

@@ -11,6 +11,7 @@
  * (`ELEVATION_AGENT_DATASET_ROOT`, `ELEVATION_AGENT_FIXTURE_ROOT`), then
  * `elevation-agent.json`, then the historical default.
  */
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 import { resolveRoots } from "../../tools/facade-pipeline/config.mjs";
@@ -36,7 +37,30 @@ export function massDir(candidateId: string): string {
 	return join(DATASET_ROOT, "candidates", candidateId, "mass");
 }
 
-/** A path inside the fixture tree, named in segments rather than as one long string. */
+/**
+ * A path inside the fixture tree, named in segments rather than as one long string.
+ *
+ * Those fixtures are FINISHED e2e runs - enriched GLBs, rendered views, validation receipts -
+ * and the five the suite names weigh about 420 MB, one of them 302 MB on its own. They are
+ * deliberately not in the repository (2026-09-22, the user's call while making this repo
+ * movable): the code, the three masses and their run seeds are in, the heavy renders stay out.
+ * So when the tree is absent the fourteen tests that read it have to say WHY rather than
+ * produce a bare ENOENT on a path nobody recognises - which is exactly how they read on the
+ * day the repo was made self-contained and the fixtures were left behind.
+ */
 export function fixture(...segments: string[]): string {
-	return join(FIXTURE_ROOT, ...segments);
+	const path = join(FIXTURE_ROOT, ...segments);
+	const group = segments[0];
+	// The tree is missing, not the one file: judged on the first segment, which is the run
+	// group (a candidate id, or `autonomous`), never on the leaf a test is about to read.
+	if (group && !existsSync(join(FIXTURE_ROOT, group))) {
+		throw new Error(
+			`the finished e2e fixture tree is not at ${FIXTURE_ROOT} (no "${group}" in it).`
+			+ " Those runs are ~420 MB and are kept outside the repository on purpose; point"
+			+ " ELEVATION_AGENT_FIXTURE_ROOT at them, or fixture_root in elevation-agent.json."
+			+ " They were produced under D:/Data/50_ELE/elevation-3d-e2e-results."
+			+ " Only the tests that read a finished run need them; the rest of the suite does not.",
+		);
+	}
+	return path;
 }

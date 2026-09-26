@@ -2,7 +2,7 @@
   "_comment": "Where the elevation agent's data lives. Paths are relative to this folder by default or can be absolute. Overridden by ELEVATION_AGENT_DATASET_ROOT and ELEVATION_AGENT_OUTPUT_ROOT.",
   "dataset_root": "./data/datasets",
   "output_root": "./output",
-  "_fixture_root_comment": "Finished e2e runs the TESTS read their fixtures from. Can be overridden with ELEVATION_AGENT_FIXTURE_ROOT.",
+  "_fixture_root_comment": "Finished e2e runs the TESTS read their fixtures from - enriched GLBs, rendered views, validation receipts. The five runs the suite names weigh about 420 MB (one of them 302 MB) and are deliberately NOT in this repository: point ELEVATION_AGENT_FIXTURE_ROOT at them, or set fixture_root below. They were produced under D:/Data/50_ELE/elevation-3d-e2e-results. Fourteen tests read them; the rest of the suite does not, and the ones that do say so when the tree is absent.",
   "fixture_root": "./test/fixtures",
   "_run_dirs_comment": "Run directories are output_root/<candidate>/llm-facade-subagent-<candidate> by default. creative-020 predates that convention and keeps its historical name.",
   "run_dirs": {

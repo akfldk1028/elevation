@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { fixture } from "./helpers/roots.ts";
 import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
@@ -15,7 +16,7 @@ const assets = resolveElevation3dAssets({
 	glbOverride: process.env.ELEVATION3D_SELECTED_GLB,
 });
 const massRoot = join(assets.datasetRoot, "candidates", "creative-013", "mass");
-const stableRunRoot = join(dirname(assets.datasetRoot), "elevation-3d-e2e-results", "creative-013", "competition-all-views-20260803-001");
+const stableRunRoot = fixture("creative-013", "competition-all-views-20260803-001");
 
 async function realInputs() {
 	const [sourceMesh, cameras] = await Promise.all([

@@ -37,4 +37,24 @@ output/creative-020/llm-facade-subagent-v1/*
 !output/creative-020/llm-facade-subagent-v1/front.png
 !output/creative-020/llm-facade-subagent-v1/axon.png
 !output/creative-020/llm-facade-subagent-v1/context-summary.json
+!output/creative-004/
+!output/creative-004/llm-facade-subagent-creative-004/
+output/creative-004/llm-facade-subagent-creative-004/*
+!output/creative-004/llm-facade-subagent-creative-004/selected.glb
+!output/creative-004/llm-facade-subagent-creative-004/front.png
+!output/creative-004/llm-facade-subagent-creative-004/axon.png
+!output/creative-004/llm-facade-subagent-creative-004/context-summary.json
+!output/creative-013/
+!output/creative-013/llm-facade-subagent-creative-013/
+output/creative-013/llm-facade-subagent-creative-013/*
+!output/creative-013/llm-facade-subagent-creative-013/selected.glb
+!output/creative-013/llm-facade-subagent-creative-013/front.png
+!output/creative-013/llm-facade-subagent-creative-013/axon.png
+!output/creative-013/llm-facade-subagent-creative-013/context-summary.json
 
+# Source photographs are third-party images and this repository is public, so the pictures a
+# design was read from are supplied locally, not published here. Their ROI files ARE tracked:
+# each records the image's own sha256, so a machine can prove it has the right photograph.
+data/sources/*.jpg
+data/sources/*.jpeg
+data/sources/*.png

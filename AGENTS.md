@@ -128,6 +128,34 @@ every model comes back `not supported when using Codex with a ChatGPT account`, 
 entitlement, not a model name. Re-authenticate with `codex login` before commissioning. The
 same task hands to a Claude subagent unchanged; only image GENERATION has no substitute.
 
+## What has to be on the machine, and what is in the repo
+
+The repository is self-contained for **running**: the code, the three candidate masses
+(`data/datasets/candidates/`), their run seeds (`output/<candidate>/…`), the small grammar
+fixtures and the source photograph the fitted Broad spec was read from
+(`data/sources/the_broad.jpg`, sha `a0242053856315e2…`, the name its specs record). `roots`
+prints where it resolved them; all three land inside the repo.
+
+Three things live outside it on purpose:
+
+- **The finished e2e fixtures** — enriched GLBs and rendered views, ~420 MB across the five
+  runs the suite names (one is 302 MB). Point `ELEVATION_AGENT_FIXTURE_ROOT` at the tree
+  (here: `D:/Data/50_ELE/elevation-3d-e2e-results`). Measured on a clean copy of what a clone
+  carries: **951/951 with it; 890 pass and 15 fail without, and eleven files stop at load**
+  because they ask for a fixture path while being imported. Each one says what is missing and
+  which variable to set. A clone with no fixture root is red on purpose.
+- **The neural stack** — two separate things, and only the first is usually remembered. The
+  CHECKPOINTS: SAM 3 (3.3 GB), SAM 2.1, GroundingDINO, under `D:/Data/50_ELE/clone/…`, named by
+  `SAM3_CHECKPOINT` / `SAM2_CHECKPOINT` / `GDINO_CHECKPOINT`, also found in a repo-local
+  `checkpoints/`. And the PACKAGE: `import sam3` is not a PyPI install, it is Meta's repository
+  (71 MB of source), found through `SAM3_PATH`, `<repo>/vendor/sam3`, `<repo>/clone/sam3` or
+  `<repo>/../clone/sam3` — on this machine an editable install points at the last of those, which
+  is why a copy of this repo anywhere still traced. `trace --engine classical` needs neither, and
+  on a real photograph is refused at `mask_iou 0.802` where tiled SAM 3 scores 0.924.
+- **The retained runs** — every drawing this project has made, ~25 GB. Output, regenerable;
+  the design corpus inside it (173 grammars and specs, 3 MB, plus 25 concept images, 53 MB)
+  is the part worth carrying if this repo moves.
+
 ## Run it
 
     npm run facade:perspective -- <candidate> <run-name> --idea "..."  # mass -> generated perspective -> SAM -> grammar -> drawings -> visual correction

@@ -1,0 +1,32 @@
+{
+  "polygon_px": [
+    [
+      88,
+      357
+    ],
+    [
+      1888,
+      357
+    ],
+    [
+      1888,
+      850
+    ],
+    [
+      1625,
+      995
+    ],
+    [
+      630,
+      1090
+    ],
+    [
+      88,
+      872
+    ]
+  ],
+  "width_m": 30,
+  "height_m": 12.2,
+  "image_sha256": "a0242053856315e23e62fa9001f3228003ef92b83900b240b0fdd000d413f9a7",
+  "scale_note": "Assigned design width for comparison; not a surveyed dimension of The Broad."
+}
