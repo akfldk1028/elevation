@@ -101,6 +101,15 @@ exceptions. `fit` reads that spec off an observed facade; `apply` lays it onto a
 facet run; the cells compile to 3D funnel MODULES standing on a glass box. Spec and plan:
 `docs/superpowers/plans/2026-09-16-parametric-lattice.md`.
 
+## How to work here
+
+`memory/elevation-agent/working-rules.md` carries what this file does not: how a round is run.
+Choose the mass deliberately (nine authors in a row got the same one, and every elevation came
+out stepped); crop a drawing to its own bounds and look at the four edges before reporting it;
+one round per sheet; `npm test` alone and one draw at a time, because a killed draw is not a
+failed gate; ask the population, never `instances[0]`; and when a gate refuses work you believe
+in, check its units before its threshold. Each rule is written with what it cost.
+
 ## With this folder alone
 
 Measured on 2026-09-26 by copying exactly what a clone carries (548 files, 19 MB) into an
